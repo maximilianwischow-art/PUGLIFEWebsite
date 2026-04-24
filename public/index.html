@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fallen Tacticians</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;900&family=Cinzel+Decorative:wght@400;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-line"></div>
+      <div class="crest">✦</div>
+      <h1>The Fallen Tacticians</h1>
+      <p class="hero-sub">TBC Classic · EMEA · Semi-Hardcore PUG</p>
+      <nav class="top-nav">
+        <a href="/">Dashboard</a>
+        <a href="/events.html">Events & Signups</a>
+      </nav>
+    </header>
+
+    <main class="container">
+      <section class="panel">
+        <h2 class="section-title">Guild Dashboard</h2>
+        <p class="subtle">PUG Life Balance · Live data from latest logs</p>
+      </section>
+
+      <section id="status" class="status"></section>
+
+      <section class="card">
+        <h2 class="section-title">Player of the Raid</h2>
+        <p id="latestRaidMeta" class="subtle">Loading latest raid...</p>
+        <div class="potr-grid">
+          <article class="mini-card">
+            <h3>DPS</h3>
+            <div id="potrDps">No data yet.</div>
+          </article>
+          <article class="mini-card">
+            <h3>Healer</h3>
+            <div id="potrHeal">No data yet.</div>
+          </article>
+          <article class="mini-card">
+            <h3>Tank</h3>
+            <div id="potrTank">No data yet.</div>
+          </article>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="section-title">Overall Death Tracker</h2>
+        <p id="deathMeta" class="subtle">Loading consolidated death totals...</p>
+        <ol id="deathLeaderboard" class="death-list">
+          <li>Loading...</li>
+        </ol>
+      </section>
+
+      <section class="card">
+        <h2 class="section-title">Attendance Tracker</h2>
+        <p id="attendanceMeta" class="subtle">Loading attendance data...</p>
+        <div id="attendanceList" class="attendance-list">
+          <div>Loading...</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="section-title">Wipe Heatmap</h2>
+        <p id="wipeMeta" class="subtle">Loading wipe data...</p>
+        <div id="wipeHeatmap" class="heatmap-list">
+          <div>Loading...</div>
+        </div>
+      </section>
+
+      <section id="raidsBoard" class="raids-board">
+        <article class="card">
+          <h2>Loading...</h2>
+        </article>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>"We may fall - but we rise as Tacticians."</p>
+    </footer>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
