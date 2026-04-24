@@ -8,6 +8,7 @@ const app = express();
 const port = Number(process.env.PORT || 8787);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const publicDir = path.join(__dirname, "public");
 
 const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
@@ -52,7 +53,16 @@ let cachedTokenExpiresAt = 0;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(publicDir));
+
+// Explicit page routes keep frontend reachable in all environments.
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.get("/events.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "events.html"));
+});
 
 function parseWclTable(tableValue) {
   if (!tableValue) return null;
