@@ -425,13 +425,6 @@ body::before {
   color: var(--fel);
 }
 
-.event-raid-image {
-  width: 100%;
-  height: 120px;
-  object-fit: cover;
-  border: 1px solid var(--border-fel);
-}
-
 .event-main-row {
   display: grid;
   grid-template-columns: 180px 1fr 170px;

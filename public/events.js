@@ -102,7 +102,6 @@ async function loadEvents() {
                 <div class="event-links">${softres} · ${discordLink}</div>
               </div>
             </div>
-            <img class="event-raid-image" src="${event.raidImage || "/boss-icons/660.jpg"}" alt="${event.title}" loading="lazy" />
             ${groupedRosterHtml || `<div class="subtle">No confirmed roster yet.</div>`}
           </article>
         `;
