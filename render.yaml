@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: fallen-tacticians-api
+    env: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: WCL_CLIENT_ID
+        sync: false
+      - key: WCL_CLIENT_SECRET
+        sync: false
+      - key: WCL_ALLOWED_GAME_ZONES
+        sync: false
+      - key: RAID_HELPER_API_KEY
+        sync: false
+      - key: RAID_HELPER_SERVER_ID
+        sync: false
+      - key: RAID_HELPER_DEFAULT_EVENT_ID
+        sync: false

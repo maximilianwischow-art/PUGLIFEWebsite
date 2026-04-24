@@ -1,0 +1,39 @@
+name: fallen-tacticians-api
+region: fra
+services:
+  - name: web
+    environment_slug: node-js
+    github:
+      branch: main
+      deploy_on_push: true
+      repo: YOUR_GITHUB_USERNAME/YOUR_REPO_NAME
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    run_command: npm start
+    source_dir: /
+    envs:
+      - key: NODE_ENV
+        scope: RUN_TIME
+        value: production
+      - key: PORT
+        scope: RUN_TIME
+        value: "8080"
+      - key: WCL_CLIENT_ID
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: WCL_CLIENT_SECRET
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: WCL_ALLOWED_GAME_ZONES
+        scope: RUN_TIME
+        value: "Karazhan,Gruul's Lair,Magtheridon's Lair,Serpentshrine Cavern,Tempest Keep,Hyjal Summit,Black Temple,Sunwell Plateau,Zul'Aman"
+      - key: RAID_HELPER_API_KEY
+        scope: RUN_AND_BUILD_TIME
+        type: SECRET
+      - key: RAID_HELPER_SERVER_ID
+        scope: RUN_TIME
+        value: "711838953430319115"
+      - key: RAID_HELPER_DEFAULT_EVENT_ID
+        scope: RUN_TIME
+        value: ""
