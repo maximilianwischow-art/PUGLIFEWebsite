@@ -1047,8 +1047,7 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
       })
       .filter((entry) => entry.fightIds.length > 0);
 
-    const attendance = new Map();
-    let consideredRaids = 0;
+    const raidSnapshots = [];
 
     for (const { report, fightIds } of trackedReports) {
       const attendanceQuery = `
@@ -1064,18 +1063,36 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
       const attendeeNames = attendeeNamesFromRankings(data?.reportData?.report?.rankings);
       if (!attendeeNames.size) continue;
 
-      consideredRaids += 1;
-      for (const name of attendeeNames) {
-        attendance.set(name, (attendance.get(name) || 0) + 1);
-      }
+      raidSnapshots.push({
+        reportCode: report.code,
+        startTime: Number(report.startTime || 0),
+        attendees: attendeeNames,
+      });
     }
 
-    const leaderboard = [...attendance.entries()]
-      .map(([name, raidsAttended]) => ({
-        name,
-        raidsAttended,
-        attendanceRate: consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0,
-      }))
+    const consideredRaids = raidSnapshots.length;
+    const allPlayers = new Set();
+    for (const raid of raidSnapshots) {
+      for (const name of raid.attendees.keys()) allPlayers.add(name);
+    }
+
+    const leaderboard = [...allPlayers]
+      .map((name) => {
+        let raidsAttended = 0;
+        const attendanceHistory = [];
+        for (const raid of raidSnapshots) {
+          const attended = raid.attendees.has(name);
+          attendanceHistory.push(attended ? 1 : 0);
+          if (!attended) continue;
+          raidsAttended += 1;
+        }
+        return {
+          name,
+          raidsAttended,
+          attendanceRate: consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0,
+          attendanceHistory,
+        };
+      })
       .sort(
         (a, b) =>
           b.raidsAttended - a.raidsAttended ||
@@ -1087,6 +1104,7 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
     return res.json({
       guildId,
       consideredRaids,
+      raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
       leaderboard,
     });
   } catch (error) {
@@ -1261,6 +1279,133 @@ app.get("/api/wcl/guild/:guildId/wipe-heatmap", async (req, res) => {
         avgWipeMs: row.wipeCountForAvg > 0 ? row.totalWipeMs / row.wipeCountForAvg : null,
       }))
       .sort((a, b) => b.wipes - a.wipes || b.wipeRate - a.wipeRate || a.bossName.localeCompare(b.bossName));
+
+    return res.json({ guildId, heatmap });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+app.get("/api/wcl/guild/:guildId/death-encounter-heatmap", async (req, res) => {
+  const guildId = Number(req.params.guildId);
+  const reportLimit = Math.min(100, Math.max(10, Number(req.query.limit || 50)));
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+
+  const reportsQuery = `
+    query GuildReports($guildId: Int!, $limit: Int!) {
+      reportData {
+        reports(guildID: $guildId, limit: $limit) {
+          data {
+            code
+            fights {
+              encounterID
+              id
+              name
+              kill
+              startTime
+              endTime
+              gameZone { name }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const reportData = await queryWcl(reportsQuery, { guildId, limit: reportLimit });
+    const reports = reportData?.reportData?.reports?.data || [];
+    const byBoss = new Map();
+
+    for (const report of reports) {
+      const trackedFights = (report.fights || []).filter((fight) => {
+        const zoneName = fight?.gameZone?.name || "";
+        return Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) && Number(fight?.encounterID || 0) > 0;
+      });
+      if (!trackedFights.length) continue;
+
+      const fightIds = trackedFights
+        .map((fight) => Number(fight?.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      const fightDeaths = new Map();
+      if (fightIds.length) {
+        const deathsQuery = `
+          query ReportDeaths($code: String!, $fightIds: [Int!]) {
+            reportData {
+              report(code: $code) {
+                deaths: table(dataType: Deaths, fightIDs: $fightIds)
+              }
+            }
+          }
+        `;
+        const deathsData = await queryWcl(deathsQuery, { code: report.code, fightIds });
+        const deathsTable = parseWclTable(deathsData?.reportData?.report?.deaths);
+        const entries = deathsTable?.entries || [];
+        for (const entry of entries) {
+          const fallbackDeaths = deathCountFromEntry(entry);
+          const perFight = Array.isArray(entry?.fights) ? entry.fights : [];
+          if (perFight.length) {
+            for (const fightRow of perFight) {
+              const fightId = Number(fightRow?.id || fightRow?.fightID || fightRow?.fightId || 0);
+              if (!Number.isInteger(fightId) || fightId <= 0) continue;
+              const deaths = Number(fightRow?.deaths || fightRow?.total || fallbackDeaths || 0);
+              if (!Number.isFinite(deaths) || deaths <= 0) continue;
+              fightDeaths.set(fightId, (fightDeaths.get(fightId) || 0) + deaths);
+            }
+            continue;
+          }
+
+          const singleFightId = Number(entry?.fightID || entry?.fightId || entry?.fight || 0);
+          if (Number.isInteger(singleFightId) && singleFightId > 0 && fallbackDeaths > 0) {
+            fightDeaths.set(singleFightId, (fightDeaths.get(singleFightId) || 0) + fallbackDeaths);
+          }
+        }
+      }
+
+      for (const fight of trackedFights) {
+        const zoneName = fight?.gameZone?.name || "";
+        const fightId = Number(fight?.id || 0);
+
+        const key = `${zoneName}::${fight.name}`;
+        const row = byBoss.get(key) || {
+          raidName: zoneName,
+          bossName: fight.name,
+          attempts: 0,
+          kills: 0,
+          wipes: 0,
+          totalDeaths: 0,
+        };
+
+        const deathsForFight = fightDeaths.get(fightId) || 0;
+        row.attempts += 1;
+        row.totalDeaths += deathsForFight;
+        if (fight.kill) row.kills += 1;
+        else row.wipes += 1;
+
+        byBoss.set(key, row);
+      }
+    }
+
+    const heatmap = [...byBoss.values()]
+      .map((row) => ({
+        raidName: row.raidName,
+        bossName: row.bossName,
+        attempts: row.attempts,
+        kills: row.kills,
+        wipes: row.wipes,
+        totalDeaths: row.totalDeaths,
+        deathsPerAttempt: row.attempts > 0 ? row.totalDeaths / row.attempts : 0,
+        wipeRate: row.attempts > 0 ? (row.wipes / row.attempts) * 100 : 0,
+      }))
+      .sort(
+        (a, b) =>
+          b.deathsPerAttempt - a.deathsPerAttempt ||
+          b.totalDeaths - a.totalDeaths ||
+          b.wipeRate - a.wipeRate ||
+          a.bossName.localeCompare(b.bossName)
+      );
 
     return res.json({ guildId, heatmap });
   } catch (error) {
