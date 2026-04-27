@@ -16,6 +16,9 @@ services:
       - key: NODE_ENV
         scope: RUN_TIME
         value: production
+      - key: TRUST_PROXY
+        scope: RUN_TIME
+        value: "1"
       - key: PORT
         scope: RUN_TIME
         value: "8080"

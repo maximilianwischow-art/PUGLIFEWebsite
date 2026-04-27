@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" fill="none" aria-hidden="true">
+  <defs>
+    <radialGradient id="m_bg" cx="50%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#3b0764"/>
+      <stop offset="55%" stop-color="#1a0a24"/>
+      <stop offset="100%" stop-color="#0d0a14"/>
+    </radialGradient>
+    <linearGradient id="m_fel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="50%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+    <linearGradient id="m_ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <filter id="m_blur" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="x"/>
+      <feMerge><feMergeNode in="x"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="400" height="240" rx="14" fill="url(#m_bg)"/>
+  <!-- Fel pool -->
+  <ellipse cx="200" cy="188" rx="140" ry="38" fill="url(#m_fel)" opacity="0.22" filter="url(#m_blur)"/>
+  <ellipse cx="200" cy="182" rx="110" ry="26" fill="url(#m_fel)" opacity="0.35"/>
+  <!-- Arena ring -->
+  <ellipse cx="200" cy="168" rx="145" ry="52" stroke="url(#m_ring)" stroke-width="4" fill="none" opacity="0.65"/>
+  <ellipse cx="200" cy="168" rx="120" ry="42" stroke="#7c3aed" stroke-width="2" fill="none" opacity="0.35"/>
+  <!-- Chains hint -->
+  <path stroke="#6b7280" stroke-width="3" stroke-linecap="round" opacity="0.45" d="M75 52 L118 118 M325 52 L282 118 M200 38 L200 112"/>
+  <circle cx="75" cy="48" r="8" fill="#57534e" stroke="#78716c" stroke-width="2"/>
+  <circle cx="325" cy="48" r="8" fill="#57534e" stroke="#78716c" stroke-width="2"/>
+  <!-- Center seal -->
+  <circle cx="200" cy="168" r="24" fill="#1a1025" stroke="url(#m_fel)" stroke-width="3" opacity="0.9"/>
+  <path fill="url(#m_fel)" opacity="0.55" d="M200 152 L208 168 L200 178 L192 168 Z"/>
+</svg>

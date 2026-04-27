@@ -4,39 +4,63 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Events</title>
+    <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Rajdhani:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="hero">
-      <div class="hero-line"></div>
-      <div class="crest">✦</div>
-      <h1>PUG LIFE BALANCE</h1>
-      <p class="hero-sub">Future Events · Raid Helper Sync</p>
-      <nav class="top-nav">
-        <a href="/">Dashboard</a>
-        <a href="/events.html">Events & Signups</a>
-      </nav>
-    </header>
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/">Dashboard</a>
+          <a href="/events.html" class="nav-current" aria-current="page">Events</a>
+        </nav>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
 
-    <main class="container">
-      <section class="panel">
-        <h2 class="section-title">Future Events</h2>
-        <p id="eventsMeta" class="subtle">Loading upcoming events...</p>
-      </section>
+      <main class="container">
+        <section class="panel">
+          <div class="section-head">
+            <h2 class="section-title">Future Events</h2>
+            <div class="dots" aria-hidden="true">
+              <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+            </div>
+            <p id="eventsMeta" class="subtle">Loading upcoming events...</p>
+          </div>
+        </section>
 
-      <section id="eventsList" class="event-cards">
-        <article class="card"><h2>Loading...</h2></article>
-      </section>
-    </main>
+        <section id="eventsList" class="event-cards">
+          <article class="card"><h2>Loading...</h2></article>
+        </section>
+      </main>
 
-    <footer class="footer">
-      <p>"For the Horde"</p>
-    </footer>
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"We may fall — but we rise as Tacticians."</em></p>
+        <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
+      </footer>
+    </div>
 
-    <script src="/events.js" type="module"></script>
+    <script src="/events.js"></script>
   </body>
 </html>

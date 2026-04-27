@@ -1,3 +1,18 @@
+function initBackgroundStars() {
+  const el = document.getElementById("stars");
+  if (!el || el.childElementCount > 0) return;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 70; i += 1) {
+    const s = document.createElement("div");
+    s.className = "star";
+    const sz = Math.random() * 1.8 + 0.4;
+    const o = 0.08 + Math.random() * 0.35;
+    s.style.cssText = `width:${sz}px;height:${sz}px;top:${Math.random() * 100}%;left:${Math.random() * 100}%;--d:${2 + Math.random() * 4}s;--dl:${Math.random() * 4}s;--o:${o}`;
+    frag.appendChild(s);
+  }
+  el.appendChild(frag);
+}
+
 const eventsMeta = document.querySelector("#eventsMeta");
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/QgBNZEtHa";
@@ -114,4 +129,5 @@ async function loadEvents() {
   }
 }
 
+initBackgroundStars();
 loadEvents();

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="s_bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e3a4a"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0d0a14"/>
+    </linearGradient>
+    <linearGradient id="s_water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#155e75"/>
+    </linearGradient>
+    <linearGradient id="s_snake" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="240" rx="14" fill="url(#s_bg)"/>
+  <!-- Water surface -->
+  <path fill="url(#s_water)" opacity="0.18" d="M0 150 Q100 130 200 145 T400 138 L400 240 L0 240 Z"/>
+  <path stroke="#22d3ee" stroke-opacity="0.25" stroke-width="2" fill="none" d="M20 158 Q120 148 220 156 T380 152"/>
+  <path stroke="#22d3ee" stroke-opacity="0.15" stroke-width="1.5" fill="none" d="M40 168 Q160 158 260 166 T360 164"/>
+  <!-- Coil / serpent abstract -->
+  <path fill="none" stroke="url(#s_snake)" stroke-width="6" stroke-linecap="round" opacity="0.85"
+    d="M280 190 Q320 140 260 108 Q200 76 148 108 Q96 142 132 178 Q168 212 220 196 Q272 180 288 132"/>
+  <circle cx="148" cy="108" r="16" fill="#134e4a" stroke="#2dd4bf" stroke-width="3" opacity="0.9"/>
+  <!-- Bubbles -->
+  <circle cx="90" cy="185" r="5" fill="#67e8f9" opacity="0.35"/>
+  <circle cx="105" cy="198" r="3" fill="#67e8f9" opacity="0.25"/>
+  <circle cx="320" cy="178" r="4" fill="#a5f3fc" opacity="0.3"/>
+</svg>

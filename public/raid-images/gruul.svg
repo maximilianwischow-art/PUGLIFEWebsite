@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="g_bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d1f14"/>
+      <stop offset="100%" stop-color="#0d0a14"/>
+    </linearGradient>
+    <linearGradient id="g_stone" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#78716c"/>
+      <stop offset="50%" stop-color="#57534e"/>
+      <stop offset="100%" stop-color="#44403c"/>
+    </linearGradient>
+    <linearGradient id="g_crys" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="240" rx="14" fill="url(#g_bg)"/>
+  <!-- Cave arch -->
+  <path fill="#1c1917" d="M100 222 L100 148 Q200 72 300 148 L300 222 Z"/>
+  <path fill="url(#g_stone)" opacity="0.35" d="M108 222 L108 152 Q200 88 292 152 L292 222 Z"/>
+  <!-- Rock teeth -->
+  <path fill="#44403c" d="M130 155 L138 132 L146 148 L154 128 L162 145 L170 125 L178 142 L186 118 L194 138 L202 122 L210 145 L218 128 L226 152 L234 135 L242 155 Q200 168 158 155 Z"/>
+  <!-- Crystals -->
+  <path fill="url(#g_crys)" opacity="0.95" d="M248 210 L262 162 L276 210 L262 198 Z"/>
+  <path fill="url(#g_crys)" opacity="0.65" d="M118 205 L128 175 L138 205 L128 196 Z"/>
+  <!-- Ground -->
+  <rect y="210" width="400" height="30" fill="#0c0a10" opacity="0.9"/>
+  <ellipse cx="200" cy="212" rx="160" ry="10" fill="#292524" opacity="0.5"/>
+</svg>
