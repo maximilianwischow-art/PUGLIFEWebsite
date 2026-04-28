@@ -1958,6 +1958,40 @@ button.raid-cal-run.raid-cal-run--column:hover {
   min-width: 116px;
 }
 
+.hof-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.hof-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.hof-rank {
+  font-family: "Morpheus", serif;
+  color: var(--purple-l);
+  font-size: 18px;
+}
+
+.hof-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hof-votes {
+  font-weight: 700;
+  color: var(--text);
+}
+
 @media (max-width: 1120px) {
   .auth-top-right {
     top: 10px;
@@ -2046,6 +2080,14 @@ button.raid-cal-run.raid-cal-run--column:hover {
   .voting-row {
     grid-template-columns: 1fr 1fr;
     padding: 10px;
+  }
+
+  .hof-row {
+    grid-template-columns: 34px 1fr;
+  }
+
+  .hof-votes {
+    grid-column: 1 / -1;
   }
 
   .voting-actions {

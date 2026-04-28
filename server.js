@@ -295,6 +295,48 @@ function getUserVote(roundKey, userId) {
   return votingStoreState.votes.find((vote) => vote.roundKey === roundKey && vote.userId === userId) || null;
 }
 
+function votingHallOfFame(currentRoundKey, limit = 8) {
+  const rounds = new Map();
+  for (const vote of votingStoreState.votes) {
+    const roundKey = String(vote.roundKey || "");
+    if (!roundKey || roundKey === currentRoundKey) continue;
+    if (!rounds.has(roundKey)) {
+      rounds.set(roundKey, {
+        roundKey,
+        raidCode: String(vote.raidCode || ""),
+        raidStartTime: Number(vote.raidStartTime || 0),
+        counts: new Map(),
+      });
+    }
+    const row = rounds.get(roundKey);
+    const candidateName = String(vote.candidateName || "").trim();
+    if (!candidateName) continue;
+    row.counts.set(candidateName, (row.counts.get(candidateName) || 0) + 1);
+  }
+
+  return [...rounds.values()]
+    .map((round) => {
+      const ordered = [...round.counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      const winner = ordered[0];
+      return {
+        roundKey: round.roundKey,
+        raidCode: round.raidCode,
+        raidStartTime: round.raidStartTime,
+        winnerName: winner?.[0] || "Unknown",
+        winnerVotes: Number(winner?.[1] || 0),
+      };
+    })
+    .sort((a, b) => Number(b.raidStartTime || 0) - Number(a.raidStartTime || 0))
+    .slice(0, limit);
+}
+
+async function getHallOfFameForGuild(guildId, limit = 10) {
+  await ensureVotingStore();
+  const voting = await getLatestRaidVotingPayload(guildId);
+  const currentRoundKey = voting?.roundKey || "";
+  return votingHallOfFame(currentRoundKey, limit);
+}
+
 async function upsertVote(voteInput) {
   await ensureVotingStore();
   const now = Date.now();
@@ -580,6 +622,15 @@ app.put("/api/p2-preparation/materials/current", async (req, res) => {
   }
 });
 
+app.get("/api/voting/hall-of-fame", async (_req, res) => {
+  try {
+    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 10);
+    return res.json({ ok: true, hallOfFame });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame" });
+  }
+});
+
 app.get("/api/voting/current", async (req, res) => {
   try {
     const session = getSessionFromRequest(req);
@@ -596,6 +647,13 @@ app.get("/api/voting/current", async (req, res) => {
     const votesByCandidate = getVotingTallies(voting.roundKey);
     const myVoteRow = getUserVote(voting.roundKey, String(session.user.id));
 
+    const candidates = voting.candidates
+      .map((c) => ({
+        ...c,
+        votes: Number(votesByCandidate.get(c.name) || 0),
+      }))
+      .sort((a, b) => b.votes - a.votes || b.dps - a.dps || a.name.localeCompare(b.name));
+
     return res.json({
       ok: true,
       raid: {
@@ -606,10 +664,8 @@ app.get("/api/voting/current", async (req, res) => {
         startTime: voting.startTime,
       },
       myVote: myVoteRow?.candidateName || null,
-      candidates: voting.candidates.map((c) => ({
-        ...c,
-        votes: Number(votesByCandidate.get(c.name) || 0),
-      })),
+      candidates,
+      hallOfFame: await getHallOfFameForGuild(votingGuildId, 10),
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load voting round" });

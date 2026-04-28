@@ -63,6 +63,47 @@ function renderCandidates(payload) {
   list.hidden = false;
 }
 
+function renderHallOfFame(payload) {
+  const host = document.getElementById("votingHallOfFame");
+  const rows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
+  if (!rows.length) {
+    host.innerHTML = `<div class="subtle">No past MVP rounds yet.</div>`;
+    return;
+  }
+  host.innerHTML = rows
+    .map((row, idx) => {
+      const when = row?.raidStartTime ? new Date(row.raidStartTime).toLocaleString() : "Unknown date";
+      const raidLabel = row?.raidCode ? `Log ${row.raidCode}` : "Previous raid";
+      return `
+        <article class="hof-row">
+          <div class="hof-rank">#${idx + 1}</div>
+          <div class="hof-main">
+            <strong>${row?.winnerName || "Unknown"}</strong>
+            <span class="subtle">${raidLabel} · ${when}</span>
+          </div>
+          <div class="hof-votes">${numberFmt(row?.winnerVotes || 0)} votes</div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+async function loadHallOfFame() {
+  const host = document.getElementById("votingHallOfFame");
+  host.innerHTML = `<div class="subtle">Loading…</div>`;
+  try {
+    const res = await fetch("/api/voting/hall-of-fame", { credentials: "include" });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || payload?.ok === false) {
+      host.innerHTML = `<div class="subtle">${payload?.error || "Failed to load hall of fame."}</div>`;
+      return;
+    }
+    renderHallOfFame(payload);
+  } catch {
+    host.innerHTML = `<div class="subtle">Failed to load hall of fame.</div>`;
+  }
+}
+
 async function submitVote(candidateName) {
   const statusEl = document.getElementById("votingStatus");
   statusEl.textContent = `Submitting vote for ${candidateName}...`;
@@ -117,6 +158,7 @@ async function loadVotingRound() {
   metaEl.textContent = `${payload?.raid?.name || "Raid"} · ${new Date(payload?.raid?.startTime || Date.now()).toLocaleString()}`;
   renderRaidHeader(payload);
   renderCandidates(payload);
+  renderHallOfFame(payload);
 }
 
 document.addEventListener("click", async (event) => {
@@ -137,4 +179,5 @@ document.addEventListener("click", async (event) => {
 });
 
 initBackgroundStars();
+loadHallOfFame();
 loadVotingRound();
