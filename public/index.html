@@ -30,6 +30,7 @@
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
+          <a href="/home.html">Home</a>
           <a href="/" class="nav-current" aria-current="page">Dashboard</a>
           <a href="/events.html">Events</a>
         </nav>
@@ -37,50 +38,6 @@
       </header>
 
       <main class="container">
-      <section class="card dashboard-overview" aria-labelledby="dash-overview-title">
-        <h2 id="dash-overview-title" class="section-title">Raid overview</h2>
-        <div id="dashboardPbRow" class="pb-row"><p class="subtle pb-row-status">Loading personal bests…</p></div>
-        <div id="dashboardRosterBlock" class="roster-overview"><p class="subtle">Loading roster…</p></div>
-      </section>
-
-      <section class="card potr-section" aria-labelledby="potr-title">
-        <h2 id="potr-title" class="section-title">Player of the Raid</h2>
-        <div id="potrRaidStrip" class="potr-raid-strip">
-          <img id="potrRaidBanner" class="potr-raid-banner" alt="" loading="lazy" hidden />
-          <time id="potrRaidDate" class="potr-raid-date"></time>
-        </div>
-        <p id="potrRaidStatus" class="subtle potr-raid-status">Loading latest raid...</p>
-        <div class="potr-grid">
-          <article class="mini-card mvp-card dps">
-            <h3>DPS</h3>
-            <div id="potrDps">No data yet.</div>
-          </article>
-          <article class="mini-card mvp-card heal">
-            <h3>Healer</h3>
-            <div id="potrHeal">No data yet.</div>
-          </article>
-          <article class="mini-card mvp-card tank">
-            <h3>Tank</h3>
-            <div id="potrTank">No data yet.</div>
-          </article>
-        </div>
-      </section>
-
-      <section class="card raid-calendar-card">
-        <h2 class="section-title">Raid calendar</h2>
-        <p class="subtle raid-cal-intro">Latest 20 logs per raid (newest first).</p>
-        <div id="raidCalendarGrid" class="raid-cal raid-cal--columns" aria-live="polite">
-          <div class="subtle">Loading…</div>
-        </div>
-      </section>
-
-      <div id="raidDayBackdrop" class="raid-day-backdrop" hidden></div>
-      <div id="raidDayModal" class="raid-day-modal" role="dialog" aria-modal="true" aria-labelledby="raidDayModalTitle" hidden>
-        <button type="button" id="raidDayModalClose" class="raid-day-close" aria-label="Close">×</button>
-        <h3 id="raidDayModalTitle" class="raid-day-modal-title"></h3>
-        <div id="raidDayModalBody" class="raid-day-modal-body"></div>
-      </div>
-
       <section id="status" class="status"></section>
 
       <section class="card">

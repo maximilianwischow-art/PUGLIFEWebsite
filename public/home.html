@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PUG LIFE BALANCE · Home</title>
+    <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/home.html" class="nav-current" aria-current="page">Home</a>
+          <a href="/">Dashboard</a>
+          <a href="/events.html">Events</a>
+        </nav>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container">
+        <section class="panel phase-release-panel" aria-labelledby="phase2ReleaseTitle">
+          <div class="phase-release-head">
+            <h2 id="phase2ReleaseTitle" class="section-title">TBC Classic Phase 2</h2>
+            <p class="phase-release-sub">Release on May 14</p>
+          </div>
+          <div class="phase-release-value" id="phase2CountdownValue">--d --h --m --s</div>
+        </section>
+
+        <section class="card dashboard-overview" aria-labelledby="dash-overview-title">
+          <h2 id="dash-overview-title" class="section-title">Raid overview</h2>
+          <div id="dashboardPbRow" class="pb-row"><p class="subtle pb-row-status">Loading personal bests…</p></div>
+          <div id="dashboardRosterBlock" class="roster-overview"><p class="subtle">Loading roster…</p></div>
+        </section>
+
+        <section class="card potr-section" aria-labelledby="potr-title">
+          <h2 id="potr-title" class="section-title">MVP Last Raid</h2>
+          <div id="potrRaidStrip" class="potr-raid-strip">
+            <img id="potrRaidBanner" class="potr-raid-banner" alt="" loading="lazy" hidden />
+            <p id="potrRaidName" class="subtle">Loading raid...</p>
+            <time id="potrRaidDate" class="potr-raid-date"></time>
+          </div>
+          <p id="potrRaidStatus" class="subtle potr-raid-status">Loading latest raid...</p>
+          <div class="potr-grid">
+            <article class="mini-card mvp-card dps">
+              <h3>DPS</h3>
+              <div id="potrDps">No data yet.</div>
+            </article>
+            <article class="mini-card mvp-card heal">
+              <h3>Healer</h3>
+              <div id="potrHeal">No data yet.</div>
+            </article>
+            <article class="mini-card mvp-card tank">
+              <h3>Tank</h3>
+              <div id="potrTank">No data yet.</div>
+            </article>
+          </div>
+        </section>
+
+        <section class="card raid-calendar-card">
+          <h2 class="section-title">Raid calendar</h2>
+          <p class="subtle raid-cal-intro">Latest 20 logs per raid (newest first).</p>
+          <div id="raidCalendarGrid" class="raid-cal raid-cal--columns" aria-live="polite">
+            <div class="subtle">Loading…</div>
+          </div>
+        </section>
+
+        <div id="raidDayBackdrop" class="raid-day-backdrop" hidden></div>
+        <div
+          id="raidDayModal"
+          class="raid-day-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="raidDayModalTitle"
+          hidden
+        >
+          <button type="button" id="raidDayModalClose" class="raid-day-close" aria-label="Close">×</button>
+          <h3 id="raidDayModalTitle" class="raid-day-modal-title"></h3>
+          <div id="raidDayModalBody" class="raid-day-modal-body"></div>
+        </div>
+
+        <section id="status" class="status"></section>
+      </main>
+
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"We may fall — but we rise as Tacticians."</em></p>
+        <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
+      </footer>
+    </div>
+
+    <script src="/app.js"></script>
+    <script src="/home.js"></script>
+  </body>
+</html>

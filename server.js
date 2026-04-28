@@ -135,6 +135,10 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
+app.get("/home.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "home.html"));
+});
+
 app.get("/events.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "events.html"));
 });
@@ -570,7 +574,10 @@ function raidImageFromTitle(title) {
     text.includes("serpent shrine") ||
     text.includes("lady vashj")
   ) {
-    return "/raid-images/ssc.svg";
+    return "/raid-images/ssc.png";
+  }
+  if (text.includes("tempest keep") || text.includes("the eye") || text.includes("tk")) {
+    return "/raid-images/tk.png";
   }
   if (text.includes("kara") || text.includes("karazhan")) return "/raid-images/kara.png";
   // Distinct Blizzard encounter portraits (same boss icons WCL uses in rankings); assets.rpglogs.com hotlinks often 403 off-site.
@@ -581,11 +588,32 @@ function raidImageFromTitle(title) {
 
 function raidImageFromRaidName(raidName) {
   const text = normalizeText(raidName || "");
-  if (text.includes("serpentshrine") || text === "ssc") return "/raid-images/ssc.svg";
+  if (text.includes("serpentshrine") || text === "ssc") return "/raid-images/ssc.png";
+  if (text.includes("tempest keep") || text.includes("the eye") || text === "tk") return "/raid-images/tk.png";
   if (text.includes("karazhan") || text === "kara") return "/raid-images/kara.png";
   if (text.includes("magtheridon")) return "/raid-images/magtheridon.png";
   if (text.includes("gruul")) return "/raid-images/gruul.png";
   return raidImageFromTitle(raidName || "");
+}
+
+function raidHelperHeaderImage(detail) {
+  const candidates = [
+    detail?.headerImage,
+    detail?.header_image,
+    detail?.image,
+    detail?.imageUrl,
+    detail?.imageURL,
+    detail?.banner,
+    detail?.bannerImage,
+    detail?.template?.headerImage,
+    detail?.template?.image,
+    detail?.template?.banner,
+  ];
+  for (const value of candidates) {
+    const url = String(value || "").trim();
+    if (url) return url;
+  }
+  return null;
 }
 
 /** Calendar day for dedupe (same raid twice same evening). Align with guild locale via env. */
@@ -1222,6 +1250,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
       detailed.push({
         ...event,
         raidImage: raidImageFromTitle(`${event.title} ${event.description}`),
+        headerImage: raidHelperHeaderImage(detail),
         discord: {
           channelId: String(detail?.channelId || event?.channelId || ""),
           url:

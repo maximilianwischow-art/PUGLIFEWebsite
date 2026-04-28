@@ -19,6 +19,7 @@ const dashboardPbRow = document.querySelector("#dashboardPbRow");
 const dashboardRosterBlock = document.querySelector("#dashboardRosterBlock");
 const GUILD_ID = 817080;
 const potrRaidBanner = document.querySelector("#potrRaidBanner");
+const potrRaidName = document.querySelector("#potrRaidName");
 const potrRaidDate = document.querySelector("#potrRaidDate");
 const potrRaidStatus = document.querySelector("#potrRaidStatus");
 const potrDps = document.querySelector("#potrDps");
@@ -190,6 +191,8 @@ function raidListingImagePath(raidName) {
   if (s === "Karazhan") return "/raid-images/kara.png";
   if (s === "Gruul's Lair") return "/raid-images/gruul.png";
   if (s === "Magtheridon's Lair") return "/raid-images/magtheridon.png";
+  if (s === "Serpentshrine Cavern") return "/raid-images/ssc.png";
+  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/tk.png";
   return "/raid-images/kara.png";
 }
 
@@ -199,6 +202,8 @@ function raidPbHeaderImagePath(raidName) {
   if (s === "Karazhan") return "/raid-images/pb-header-kara.png";
   if (s === "Gruul's Lair") return "/raid-images/pb-header-gruul.png";
   if (s === "Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png";
+  if (s === "Serpentshrine Cavern") return "/raid-images/pb-header-ssc.png";
+  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/pb-header-tk.png";
   return "/raid-images/pb-header-kara.png";
 }
 
@@ -517,6 +522,7 @@ async function loadBossTimes() {
 }
 
 function renderPotr(target, label, player) {
+  if (!target) return;
   if (!player) {
     target.textContent = `No ${label.toLowerCase()} data.`;
     return;
@@ -551,10 +557,16 @@ function renderPotrRaidStrip(raid) {
     potrRaidBanner.src = raidPbHeaderImagePath(raidName);
     potrRaidBanner.alt = `${shortRaidName(raidName)}`;
     potrRaidBanner.hidden = false;
+    if (potrRaidName) {
+      potrRaidName.textContent = shortRaidName(raidName);
+    }
   } else {
     potrRaidBanner.removeAttribute("src");
     potrRaidBanner.alt = "";
     potrRaidBanner.hidden = true;
+    if (potrRaidName) {
+      potrRaidName.textContent = "";
+    }
   }
 
   if (ts) {

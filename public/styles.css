@@ -344,6 +344,52 @@ body::before {
   filter: drop-shadow(0 2px 14px rgba(0, 0, 0, 0.72));
 }
 
+.panel--events-heading {
+  margin-top: 16px;
+  padding: 14px 20px 16px;
+}
+
+.phase-release-panel {
+  margin-top: 10px;
+  padding: 20px 22px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(168, 85, 247, 0.16), transparent 55%),
+    radial-gradient(circle at 80% 100%, rgba(96, 165, 250, 0.12), transparent 60%),
+    var(--card);
+}
+
+.phase-release-head {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.phase-release-sub {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.phase-release-value {
+  margin-top: 10px;
+  font-family: "Bebas Neue", sans-serif;
+  font-size: clamp(34px, 8vw, 66px);
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: #f2ecff;
+  text-shadow:
+    0 3px 16px rgba(168, 85, 247, 0.45),
+    0 2px 10px rgba(0, 0, 0, 0.8);
+}
+
+.section-head--events-only {
+  margin-bottom: 0;
+}
+
 .subtle {
   color: var(--text-muted);
   margin: 8px 0 0;
@@ -391,7 +437,8 @@ body::before {
   width: 100%;
   height: clamp(104px, 22vw, 140px);
   object-fit: cover;
-  object-position: center;
+  /* Keep raid title text (usually on left side of art) in frame. */
+  object-position: 22% center;
   background: #06060a;
   border-bottom: 1px solid var(--border);
   display: block;
@@ -684,7 +731,7 @@ body::before {
   width: 100%;
   height: clamp(96px, 18vw, 132px);
   object-fit: cover;
-  object-position: center;
+  object-position: 22% center;
   border-radius: 12px;
   border: 1px solid rgba(168, 85, 247, 0.28);
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.38);
@@ -916,14 +963,51 @@ body::before {
 }
 
 .event-cards {
-  margin-top: 16px;
+  margin-top: 12px;
   display: grid;
   gap: 10px;
 }
 
-.event-card {
+.event-card.card {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.event-card-inner {
+  padding: 16px 18px 18px;
   display: grid;
   gap: 10px;
+}
+
+.event-raid-header {
+  width: 100%;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: #06060a;
+}
+
+.event-raid-header--split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.event-raid-header img {
+  display: block;
+  width: 100%;
+  height: clamp(130px, 24vw, 220px);
+  object-fit: cover;
+  /* Keep left raid title text and slightly upper framing visible. */
+  object-position: left 28%;
+}
+
+.event-raid-header--split img {
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.event-raid-header--split img:last-child {
+  border-right: 0;
 }
 
 .event-card p {
@@ -934,11 +1018,107 @@ body::before {
   color: var(--fel);
 }
 
+.event-countdown {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(110, 231, 183, 0.08);
+  border: 1px solid rgba(110, 231, 183, 0.22);
+}
+
+.event-countdown-label {
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.event-countdown-value {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 22px;
+  letter-spacing: 0.08em;
+  color: #a7f3d0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85);
+}
+
+.event-signup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  min-width: 128px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: #0f0a14 !important;
+  background: linear-gradient(135deg, #f9a8d4 0%, #c084fc 45%, #93c5fd 100%);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 2px 14px rgba(168, 85, 247, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.event-signup-btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 20px rgba(236, 72, 153, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.event-signup-btn--softres {
+  color: #efe8ff !important;
+  background: linear-gradient(135deg, #2a1c3e 0%, #3b2b58 50%, #493669 100%);
+  border-color: rgba(192, 132, 252, 0.45);
+  box-shadow:
+    0 2px 14px rgba(80, 38, 130, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.event-signup-btn--softres:hover {
+  box-shadow:
+    0 4px 20px rgba(124, 58, 237, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.event-signup-btn--disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
+}
+
+.event-links {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.event-links .event-signup-btn {
+  margin-top: 0;
+}
+
 .event-main-row {
   display: grid;
   grid-template-columns: 180px 1fr 170px;
   gap: 16px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .event-time-col {
@@ -973,13 +1153,25 @@ body::before {
 }
 
 .event-signup-col {
-  text-align: right;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.event-signup-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .event-signup-count {
   font-size: 28px;
   font-weight: 700;
   color: var(--fel);
+  line-height: 1;
 }
 
 .event-signup-count span {
@@ -993,12 +1185,7 @@ body::before {
   letter-spacing: 0.16em;
   color: var(--text-muted);
   text-transform: uppercase;
-}
-
-.event-links {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--text-dim);
+  line-height: 1;
 }
 
 .roster-breakdown-grid {
@@ -1461,7 +1648,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
   }
 
   .event-signup-col {
-    text-align: left;
+    text-align: center;
+    align-items: center;
+    justify-content: flex-start;
   }
 
   .raid-cal-run {
