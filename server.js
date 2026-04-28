@@ -331,6 +331,14 @@ app.get("/voting.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "voting.html"));
 });
 
+app.get("/privacy.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "privacy.html"));
+});
+
+app.get("/imprint.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "imprint.html"));
+});
+
 app.get("/auth/discord/login", (req, res) => {
   if (!discordClientId || !discordClientSecret) {
     return res.status(500).send("Discord auth is not configured on this server.");

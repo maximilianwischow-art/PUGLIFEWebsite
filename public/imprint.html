@@ -3,14 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PUG LIFE BALANCE · Events</title>
+    <title>PUG LIFE BALANCE · Imprint</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
-      rel="stylesheet"
-    />
     <link rel="stylesheet" href="/styles.css?v=20260428p" />
   </head>
   <body>
@@ -19,20 +13,13 @@
       <header class="hero">
         <div class="hero-brand">
           <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
-          <img
-            class="hero-banner"
-            src="/plb-hero-banner.png"
-            alt=""
-            width="1024"
-            height="409"
-            decoding="async"
-          />
+          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
           <a href="/home.html">Home</a>
           <a href="/">Dashboard</a>
-          <a href="/events.html" class="nav-current" aria-current="page">Events</a>
+          <a href="/events.html">Events</a>
           <a href="/voting.html">Voting</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
@@ -40,14 +27,34 @@
       </header>
 
       <main class="container">
-        <section class="panel panel--events-heading">
-          <div class="section-head section-head--events-only">
-            <h2 class="section-title">Future Events</h2>
-          </div>
-        </section>
+        <section class="card legal-card">
+          <h2 class="section-title">Imprint</h2>
+          <p class="subtle">
+            Fill this page with your legally required operator details (name/business, address, contact, and any
+            country-specific disclosures such as VAT ID).
+          </p>
 
-        <section id="eventsList" class="event-cards">
-          <article class="card"><h2>Loading...</h2></article>
+          <h3 class="legal-title">Site Operator</h3>
+          <p>
+            Highbullet / PUG LIFE BALANCE<br />
+            Address available on request
+          </p>
+
+          <h3 class="legal-title">Contact</h3>
+          <p>
+            Email: contact@wow-pug.com<br />
+            Discord: Highbullet
+          </p>
+
+          <h3 class="legal-title">Content Responsibility</h3>
+          <p>
+            Responsible for content according to applicable law: Highbullet / PUG LIFE BALANCE.
+          </p>
+
+          <h3 class="legal-title">Data Protection</h3>
+          <p>
+            See the <a href="/privacy.html">Privacy Policy</a> for details on personal data processing.
+          </p>
         </section>
       </main>
 
@@ -61,7 +68,7 @@
       </footer>
     </div>
 
-    <script src="/events.js?v=20260428k"></script>
+    <script src="/home.js?v=20260428d"></script>
     <script src="/auth-ui.js?v=20260428g"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>
