@@ -14,6 +14,7 @@ function initBackgroundStars() {
 }
 
 const eventsList = document.querySelector("#eventsList");
+const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 const CLASS_COLORS = {
   Warrior: "#a87040",
@@ -164,13 +165,10 @@ async function loadEvents() {
 
     eventsList.innerHTML = rows
       .map((event) => {
-        const signupUrl = event?.raidHelper?.url || "";
         const softresBtn = event.softres?.enabled
           ? `<a href="${escapeHtml(event.softres.url)}" target="_blank" rel="noreferrer" class="event-signup-btn event-signup-btn--softres">SoftRes</a>`
           : "";
-        const signupBtn = signupUrl
-          ? `<a href="${escapeHtml(signupUrl)}" target="_blank" rel="noreferrer" class="event-signup-btn">Sign up</a>`
-          : `<span class="event-signup-btn event-signup-btn--disabled" aria-disabled="true">Sign up</span>`;
+        const signupBtn = `<a href="${escapeHtml(DISCORD_INVITE_URL)}" target="_blank" rel="noreferrer" class="event-signup-btn">Sign up</a>`;
 
         const linksRow = event.softres?.enabled ? `${softresBtn}${signupBtn}` : signupBtn;
 
