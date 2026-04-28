@@ -395,6 +395,9 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 app.get("/api/auth/config", (_req, res) => {
+  if (isProd) {
+    return res.status(404).json({ error: "Not found" });
+  }
   return res.json({
     discordClientIdConfigured: Boolean(discordClientId),
     discordClientSecretConfigured: Boolean(discordClientSecret),
