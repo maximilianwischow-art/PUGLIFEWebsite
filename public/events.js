@@ -15,7 +15,9 @@ function initBackgroundStars() {
 
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
+const IMAGE_ASSET_VERSION = "20260428f";
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
+let authMe = null;
 const CLASS_COLORS = {
   Warrior: "#a87040",
   Paladin: "#f472b6",
@@ -59,6 +61,10 @@ function fmtEventTime(unixSec) {
     : dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+function versionedImagePath(path) {
+  return `${path}?v=${IMAGE_ASSET_VERSION}`;
+}
+
 function rosterCapacityForEvent(event) {
   const raids = detectEventRaids(event);
   if (!raids.some((raid) => raid.rosterCap === 25)) return 10;
@@ -69,25 +75,31 @@ function detectEventRaids(event) {
   const text = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
   const matches = [];
   if (text.includes("karazhan") || /\bkara\b/.test(text)) {
-    matches.push({ id: "kara", image: "/raid-images/pb-header-kara.png", rosterCap: 10 });
+    matches.push({ id: "kara", image: versionedImagePath("/raid-images/pb-header-kara.png"), rosterCap: 10 });
   }
   if (text.includes("gruul")) {
-    matches.push({ id: "gruul", image: "/raid-images/pb-header-gruul.png", rosterCap: 25 });
+    matches.push({ id: "gruul", image: versionedImagePath("/raid-images/pb-header-gruul.png"), rosterCap: 25 });
   }
   if (text.includes("magtheridon") || /\bmag\b/.test(text)) {
-    matches.push({ id: "mag", image: "/raid-images/pb-header-magtheridon.png", rosterCap: 25 });
+    matches.push({
+      id: "mag",
+      image: versionedImagePath("/raid-images/pb-header-magtheridon.png"),
+      rosterCap: 25,
+    });
   }
   if (text.includes("serpentshrine") || /\bssc\b/.test(text)) {
-    matches.push({ id: "ssc", image: "/raid-images/pb-header-ssc.png", rosterCap: 25 });
+    matches.push({ id: "ssc", image: versionedImagePath("/raid-images/pb-header-ssc.png"), rosterCap: 25 });
   }
   if (text.includes("tempest keep") || /\btk\b/.test(text) || text.includes("the eye")) {
-    matches.push({ id: "tk", image: "/raid-images/pb-header-tk.png", rosterCap: 25 });
+    matches.push({ id: "tk", image: versionedImagePath("/raid-images/pb-header-tk.png"), rosterCap: 25 });
   }
   if (text.includes("zul'aman") || text.includes("zul aman") || /\bza\b/.test(text)) {
-    matches.push({ id: "za", image: "/raid-images/pb-header-kara.png", rosterCap: 10 });
+    matches.push({ id: "za", image: versionedImagePath("/raid-images/pb-header-kara.png"), rosterCap: 10 });
   }
 
-  if (!matches.length) return [{ id: "fallback", image: "/raid-images/pb-header-kara.png", rosterCap: 25 }];
+  if (!matches.length) {
+    return [{ id: "fallback", image: versionedImagePath("/raid-images/pb-header-kara.png"), rosterCap: 25 }];
+  }
   return matches.slice(0, 2);
 }
 
@@ -149,9 +161,57 @@ function startEventCountdowns() {
   countdownIntervalId = setInterval(updateEventCountdowns, 1000);
 }
 
+async function loadAuthMe() {
+  if (authMe !== null) return authMe;
+  try {
+    const res = await fetch("/api/auth/me", { credentials: "include" });
+    const payload = await res.json().catch(() => ({}));
+    authMe = payload?.authenticated ? payload : { authenticated: false };
+  } catch {
+    authMe = { authenticated: false };
+  }
+  return authMe;
+}
+
+function signupActionsMarkup(event, isAuthenticated) {
+  const eventId = String(event?.id || "");
+  if (!isAuthenticated) {
+    const next = encodeURIComponent("/events.html");
+    return `<a href="/auth/discord/login?next=${next}" class="event-signup-btn">Login to Sign up</a>`;
+  }
+  const currentStatus = String(event?.currentUserSignup?.status || "").toLowerCase();
+  const isSignedUp = currentStatus === "primary";
+  return `
+    <button type="button" class="event-signup-btn" data-event-signup-action="${isSignedUp ? "signoff" : "signup"}" data-event-id="${escapeHtml(eventId)}">
+      ${isSignedUp ? "Sign off" : "Sign up"}
+    </button>
+    <a href="${escapeHtml(DISCORD_INVITE_URL)}" target="_blank" rel="noreferrer" class="event-signup-btn event-signup-btn--softres">Discord</a>
+  `;
+}
+
+async function submitEventSignupAction(eventId, action) {
+  const method = action === "signoff" ? "DELETE" : "POST";
+  const res = await fetch(`/api/raid-helper/events/${encodeURIComponent(eventId)}/signup`, {
+    method,
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    const next = encodeURIComponent("/events.html");
+    window.location.href = `/auth/discord/login?next=${next}`;
+    return;
+  }
+  if (!res.ok || payload?.ok === false) {
+    throw new Error(payload?.error || "Failed to update signup");
+  }
+}
+
 async function loadEvents() {
   try {
-    const res = await fetch("/api/raid-helper/future-events");
+    const me = await loadAuthMe();
+    const isAuthenticated = Boolean(me?.authenticated);
+    const res = await fetch("/api/raid-helper/future-events", { credentials: "include" });
     const payload = await res.json();
     if (!res.ok) throw new Error(payload.error || "Failed to load events");
 
@@ -168,9 +228,8 @@ async function loadEvents() {
         const softresBtn = event.softres?.enabled
           ? `<a href="${escapeHtml(event.softres.url)}" target="_blank" rel="noreferrer" class="event-signup-btn event-signup-btn--softres">SoftRes</a>`
           : "";
-        const signupBtn = `<a href="${escapeHtml(DISCORD_INVITE_URL)}" target="_blank" rel="noreferrer" class="event-signup-btn">Sign up</a>`;
-
-        const linksRow = event.softres?.enabled ? `${softresBtn}${signupBtn}` : signupBtn;
+        const directSignupMarkup = signupActionsMarkup(event, isAuthenticated);
+        const linksRow = event.softres?.enabled ? `${softresBtn}${directSignupMarkup}` : directSignupMarkup;
 
         const signups = Number(event?.signups?.total || 0);
         const rosterCapacity = rosterCapacityForEvent(event);
@@ -226,6 +285,25 @@ async function loadEvents() {
     eventsList.innerHTML = `<article class="card"><h2>Failed to load events.</h2><p class="subtle">${escapeHtml(error.message || "Unknown error")}</p></article>`;
   }
 }
+
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("[data-event-signup-action][data-event-id]");
+  if (!btn) return;
+  const eventId = String(btn.getAttribute("data-event-id") || "").trim();
+  const action = String(btn.getAttribute("data-event-signup-action") || "").trim();
+  if (!eventId || !action) return;
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = action === "signoff" ? "Signing off..." : "Signing up...";
+  try {
+    await submitEventSignupAction(eventId, action);
+    await loadEvents();
+  } catch (error) {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    window.alert(error?.message || "Failed to update signup");
+  }
+});
 
 initBackgroundStars();
 loadEvents();

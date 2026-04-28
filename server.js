@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -6,6 +6,11 @@ import compression from "compression";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import sqlite3 from "sqlite3";
+
+dotenv.config({ override: true });
 
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
@@ -129,6 +134,152 @@ const allowedTbcZones = new Set(
 
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || "";
+const discordClientSecret = process.env.DISCORD_CLIENT_SECRET?.trim() || "";
+const discordGuildId =
+  process.env.DISCORD_GUILD_ID?.trim() || process.env.RAID_HELPER_SERVER_ID?.trim() || "";
+const publicBaseUrl =
+  process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${Number(process.env.PORT || 8787)}`;
+const discordRedirectUri =
+  process.env.DISCORD_REDIRECT_URI?.trim() || `${publicBaseUrl}/auth/discord/callback`;
+const sessionCookieName = "plb_session";
+const sessionTtlMs = 1000 * 60 * 60 * 24 * 7;
+const oauthStateTtlMs = 1000 * 60 * 10;
+const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString("hex");
+const authSessions = new Map();
+const oauthStates = new Map();
+const votingGuildId = Number(process.env.VOTING_GUILD_ID || 817080);
+const dataDir = path.join(__dirname, "data");
+const votingDbPath = path.join(dataDir, "voting.sqlite");
+let votingDb = null;
+let votingDbReady = null;
+
+function parseCookieHeader(cookieHeader) {
+  const out = {};
+  for (const part of String(cookieHeader || "").split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = decodeURIComponent(part.slice(0, idx).trim());
+    const value = decodeURIComponent(part.slice(idx + 1).trim());
+    out[key] = value;
+  }
+  return out;
+}
+
+function signSessionId(sessionId) {
+  return createHmac("sha256", authSessionSecret).update(sessionId).digest("hex");
+}
+
+function serializeSessionCookie(sessionId, maxAgeSec) {
+  const value = `${sessionId}.${signSessionId(sessionId)}`;
+  const attrs = [
+    `${sessionCookieName}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${Math.max(0, Math.floor(maxAgeSec))}`,
+  ];
+  if (isProd) attrs.push("Secure");
+  return attrs.join("; ");
+}
+
+function getSessionFromRequest(req) {
+  const cookies = parseCookieHeader(req.headers.cookie || "");
+  const raw = String(cookies[sessionCookieName] || "");
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const sessionId = raw.slice(0, dot);
+  const signature = raw.slice(dot + 1);
+  const expected = signSessionId(sessionId);
+  const valid =
+    signature.length === expected.length &&
+    timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (!valid) return null;
+  const session = authSessions.get(sessionId);
+  if (!session || session.expiresAt <= Date.now()) {
+    if (session) authSessions.delete(sessionId);
+    return null;
+  }
+  return { sessionId, ...session };
+}
+
+function pruneAuthMaps() {
+  const now = Date.now();
+  for (const [k, v] of authSessions) {
+    if (!v || v.expiresAt <= now) authSessions.delete(k);
+  }
+  for (const [k, v] of oauthStates) {
+    if (!v || v.expiresAt <= now) oauthStates.delete(k);
+  }
+}
+
+async function fetchDiscordJson(pathname, accessToken) {
+  const res = await fetch(`${DISCORD_API_BASE}${pathname}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail =
+      typeof payload?.error_description === "string"
+        ? payload.error_description
+        : payload?.message || "Discord API error";
+    throw new Error(`Discord request failed (${res.status}): ${detail}`);
+  }
+  return payload;
+}
+
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    votingDb.run(sql, params, function onRun(err) {
+      if (err) return reject(err);
+      return resolve(this);
+    });
+  });
+}
+
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    votingDb.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      return resolve(row || null);
+    });
+  });
+}
+
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    votingDb.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      return resolve(rows || []);
+    });
+  });
+}
+
+async function ensureVotingDb() {
+  if (votingDbReady) return votingDbReady;
+  votingDbReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    votingDb = new sqlite3.Database(votingDbPath);
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS mvp_votes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        round_key TEXT NOT NULL,
+        raid_code TEXT NOT NULL,
+        raid_start_time INTEGER NOT NULL,
+        user_id TEXT NOT NULL,
+        candidate_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(round_key, user_id)
+      )
+    `);
+    await dbRun(
+      "CREATE INDEX IF NOT EXISTS idx_mvp_votes_round_key ON mvp_votes(round_key, candidate_name)"
+    );
+  })();
+  return votingDbReady;
+}
 
 // Explicit page routes keep frontend reachable in all environments.
 app.get("/", (_req, res) => {
@@ -141,6 +292,199 @@ app.get("/home.html", (_req, res) => {
 
 app.get("/events.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "events.html"));
+});
+
+app.get("/voting.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "voting.html"));
+});
+
+app.get("/auth/discord/login", (req, res) => {
+  if (!discordClientId || !discordClientSecret) {
+    return res.status(500).send("Discord auth is not configured on this server.");
+  }
+  pruneAuthMaps();
+  const state = randomBytes(18).toString("hex");
+  const next = String(req.query.next || "/voting.html");
+  oauthStates.set(state, { expiresAt: Date.now() + oauthStateTtlMs, next });
+
+  const qs = new URLSearchParams({
+    client_id: discordClientId,
+    redirect_uri: discordRedirectUri,
+    response_type: "code",
+    scope: "identify guilds",
+    state,
+    prompt: "consent",
+  });
+  return res.redirect(`https://discord.com/oauth2/authorize?${qs.toString()}`);
+});
+
+app.get("/auth/discord/callback", async (req, res) => {
+  try {
+    const state = String(req.query.state || "");
+    const code = String(req.query.code || "");
+    const stateRow = oauthStates.get(state);
+    oauthStates.delete(state);
+    if (!stateRow || stateRow.expiresAt <= Date.now()) {
+      return res.status(400).send("Discord login state expired. Please try again.");
+    }
+    if (!code) {
+      return res.status(400).send("Missing Discord authorization code.");
+    }
+
+    const tokenRes = await fetch(`${DISCORD_API_BASE}/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: discordClientId,
+        client_secret: discordClientSecret,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: discordRedirectUri,
+      }),
+    });
+    const tokenPayload = await tokenRes.json().catch(() => ({}));
+    if (!tokenRes.ok || !tokenPayload?.access_token) {
+      return res.status(401).send("Discord token exchange failed.");
+    }
+
+    const accessToken = tokenPayload.access_token;
+    const me = await fetchDiscordJson("/users/@me", accessToken);
+    const guilds = await fetchDiscordJson("/users/@me/guilds", accessToken);
+    const inGuild =
+      !discordGuildId || (Array.isArray(guilds) && guilds.some((g) => String(g?.id || "") === discordGuildId));
+    if (!inGuild) {
+      return res.status(403).send("Discord account is not a member of the required guild.");
+    }
+
+    const sessionId = randomBytes(24).toString("hex");
+    authSessions.set(sessionId, {
+      user: {
+        id: String(me.id || ""),
+        username: String(me.username || ""),
+        discriminator: String(me.discriminator || ""),
+        globalName: String(me.global_name || ""),
+        avatar: String(me.avatar || ""),
+      },
+      guildId: discordGuildId,
+      expiresAt: Date.now() + sessionTtlMs,
+    });
+    res.setHeader("Set-Cookie", serializeSessionCookie(sessionId, sessionTtlMs / 1000));
+    return res.redirect(stateRow.next || "/voting.html");
+  } catch (error) {
+    return res.status(500).send(`Discord login failed: ${error.message || "unknown error"}`);
+  }
+});
+
+app.post("/auth/logout", (req, res) => {
+  const current = getSessionFromRequest(req);
+  if (current?.sessionId) authSessions.delete(current.sessionId);
+  res.setHeader("Set-Cookie", serializeSessionCookie("expired", 0));
+  return res.json({ ok: true });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session) {
+    return res.json({ authenticated: false });
+  }
+  return res.json({
+    authenticated: true,
+    user: session.user,
+    guildId: session.guildId || null,
+  });
+});
+
+app.get("/api/auth/config", (_req, res) => {
+  return res.json({
+    discordClientIdConfigured: Boolean(discordClientId),
+    discordClientSecretConfigured: Boolean(discordClientSecret),
+    discordGuildIdConfigured: Boolean(discordGuildId),
+    discordRedirectUri,
+    publicBaseUrl,
+  });
+});
+
+app.get("/api/voting/current", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.status(401).json({ ok: false, error: "Login required" });
+    }
+
+    const voting = await getLatestRaidVotingPayload(votingGuildId);
+    if (!voting) {
+      return res.status(404).json({ ok: false, error: "No recent tracked raid found" });
+    }
+
+    await ensureVotingDb();
+    const talliesRaw = await dbAll(
+      "SELECT candidate_name as candidateName, COUNT(*) as votes FROM mvp_votes WHERE round_key = ? GROUP BY candidate_name",
+      [voting.roundKey]
+    );
+    const myVoteRow = await dbGet(
+      "SELECT candidate_name as candidateName FROM mvp_votes WHERE round_key = ? AND user_id = ?",
+      [voting.roundKey, String(session.user.id)]
+    );
+    const votesByCandidate = Object.fromEntries(
+      talliesRaw.map((r) => [String(r.candidateName || ""), Number(r.votes || 0)])
+    );
+
+    return res.json({
+      ok: true,
+      raid: {
+        roundKey: voting.roundKey,
+        code: voting.raidCode,
+        name: voting.raidName,
+        title: voting.title,
+        startTime: voting.startTime,
+      },
+      myVote: myVoteRow?.candidateName || null,
+      candidates: voting.candidates.map((c) => ({
+        ...c,
+        votes: Number(votesByCandidate[c.name] || 0),
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load voting round" });
+  }
+});
+
+app.post("/api/voting/vote", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.status(401).json({ ok: false, error: "Login required" });
+    }
+
+    const candidateName = String(req.body?.candidateName || "").trim();
+    if (!candidateName) {
+      return res.status(400).json({ ok: false, error: "candidateName is required" });
+    }
+
+    const voting = await getLatestRaidVotingPayload(votingGuildId);
+    if (!voting) {
+      return res.status(404).json({ ok: false, error: "No recent tracked raid found" });
+    }
+
+    const candidate = voting.candidates.find((c) => c.name.toLowerCase() === candidateName.toLowerCase());
+    if (!candidate) {
+      return res.status(400).json({ ok: false, error: "Candidate is not in the latest raid roster" });
+    }
+
+    await ensureVotingDb();
+    const now = Date.now();
+    await dbRun(
+      `INSERT INTO mvp_votes (round_key, raid_code, raid_start_time, user_id, candidate_name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(round_key, user_id)
+       DO UPDATE SET candidate_name = excluded.candidate_name, updated_at = excluded.updated_at`,
+      [voting.roundKey, voting.raidCode, voting.startTime, String(session.user.id), candidate.name, now, now]
+    );
+
+    return res.json({ ok: true, roundKey: voting.roundKey, candidateName: candidate.name });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to submit vote" });
+  }
 });
 
 function parseWclTable(tableValue) {
@@ -526,6 +870,105 @@ function primaryTrackedRaidNameFromReport(report) {
     if (key && Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, key)) return key;
   }
   return null;
+}
+
+function latestTrackedRaidReport(reports) {
+  for (const report of reports || []) {
+    const bossFights = (report?.fights || []).filter((f) => Number(f?.encounterID || 0) > 0);
+    if (!bossFights.length) continue;
+    const raidName = primaryTrackedRaidNameFromReport(report);
+    if (!raidName) continue;
+    return { report, bossFights, raidName };
+  }
+  return null;
+}
+
+function toMetricMap(entries) {
+  const out = new Map();
+  for (const e of entries || []) {
+    const name = String(e?.name || "").trim();
+    if (!name) continue;
+    out.set(name.toLowerCase(), Number(e?.total || 0));
+  }
+  return out;
+}
+
+const VOTING_ROUND_QUERY = `
+  query VotingRound($code: String!, $fightIds: [Int!]) {
+    reportData {
+      report(code: $code) {
+        damageDone: table(dataType: DamageDone, fightIDs: $fightIds)
+        healing: table(dataType: Healing, fightIDs: $fightIds)
+        damageTaken: table(dataType: DamageTaken, fightIDs: $fightIds)
+      }
+    }
+  }
+`;
+
+async function getLatestRaidVotingPayload(guildId) {
+  const reports = await getFilteredGuildReportsForGuild(guildId, 20);
+  const latest = latestTrackedRaidReport(reports);
+  if (!latest) return null;
+
+  const { report, bossFights, raidName } = latest;
+  const fightIds = bossFights.map((f) => Number(f.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!fightIds.length) return null;
+
+  const chunks = chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery());
+  const damageParts = [];
+  const healingParts = [];
+  const tankParts = [];
+
+  for (const ids of chunks) {
+    const data = await queryWcl(VOTING_ROUND_QUERY, { code: report.code, fightIds: ids });
+    damageParts.push(data?.reportData?.report?.damageDone);
+    healingParts.push(data?.reportData?.report?.healing);
+    tankParts.push(data?.reportData?.report?.damageTaken);
+  }
+
+  const dmg = mergeWclTableValuesFromApi(damageParts).entries || [];
+  const heal = mergeWclTableValuesFromApi(healingParts).entries || [];
+  const taken = mergeWclTableValuesFromApi(tankParts).entries || [];
+
+  const dpsByName = toMetricMap(dmg);
+  const hpsByName = toMetricMap(heal);
+  const takenByName = toMetricMap(taken);
+
+  const rosterNames = new Set();
+  for (const c of report?.rankedCharacters || []) {
+    const n = String(c?.name || "").trim();
+    if (n) rosterNames.add(n);
+  }
+
+  const playerClassByName = new Map();
+  for (const entry of [...dmg, ...heal, ...taken]) {
+    const n = String(entry?.name || "").trim().toLowerCase();
+    if (!n) continue;
+    if (!playerClassByName.has(n) && entry?.type) playerClassByName.set(n, String(entry.type));
+  }
+
+  const candidates = [...rosterNames]
+    .map((name) => {
+      const k = name.toLowerCase();
+      return {
+        name,
+        className: playerClassByName.get(k) || "",
+        dps: Math.round(dpsByName.get(k) || 0),
+        hps: Math.round(hpsByName.get(k) || 0),
+        damageTaken: Math.round(takenByName.get(k) || 0),
+      };
+    })
+    .sort((a, b) => b.dps - a.dps || a.name.localeCompare(b.name));
+
+  const startTime = reportStartTimeMs(report?.startTime);
+  return {
+    roundKey: `${report.code}:${startTime}`,
+    raidCode: report.code,
+    raidName,
+    title: report?.title || raidName,
+    startTime,
+    candidates,
+  };
 }
 
 function bossListMatchesFightName(bossNames, fightName) {
@@ -978,6 +1421,70 @@ async function fetchRaidHelperEventDetail(eventId) {
   }
 }
 
+async function raidHelperRequest(pathname, { method = "GET", body } = {}) {
+  const apiKey = process.env.RAID_HELPER_API_KEY;
+  if (!apiKey) throw new Error("Missing RAID_HELPER_API_KEY in .env");
+  const res = await fetch(`${RAID_HELPER_API_URL}${pathname}`, {
+    method,
+    headers: {
+      Accept: "application/json",
+      Authorization: apiKey,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const rawText = await res.text();
+  let parsed = null;
+  try {
+    parsed = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!res.ok) {
+    const detail = parsed?.error || parsed?.message || rawText || "Raid-Helper API error";
+    const err = new Error(`Raid-Helper request failed (${res.status}): ${String(detail).slice(0, 200)}`);
+    err.statusCode = res.status;
+    throw err;
+  }
+  return parsed;
+}
+
+function raidHelperSignupProfileFromEntry(entry, fallbackName = "") {
+  if (!entry) return null;
+  const className = raidHelperClassNameFromSignUpEntry(entry);
+  const roleName = String(entry?.roleName || entry?.cRoleName || "").trim();
+  const specName = String(entry?.specName || entry?.cSpecName || "").trim();
+  if (!className || !roleName) return null;
+  return {
+    userId: String(entry?.userId || "").trim(),
+    name: String(entry?.name || fallbackName || "").trim(),
+    className,
+    roleName,
+    specName,
+  };
+}
+
+async function resolveRaidHelperSignupProfileForUser(serverId, userId, fallbackName = "") {
+  const events = await fetchRaidHelperServerEvents(serverId);
+  const withTime = events
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((event) => event.id)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, 20);
+
+  for (const event of withTime) {
+    const detail = await fetchRaidHelperEventDetail(event.id);
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+    const row = signUps.find((entry) => String(entry?.userId || "") === String(userId || ""));
+    const profile = raidHelperSignupProfileFromEntry(row, fallbackName);
+    if (profile) return profile;
+  }
+  return null;
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "fallen-tacticians-api" });
 });
@@ -1200,6 +1707,8 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
   const serverId = process.env.RAID_HELPER_SERVER_ID || "711838953430319115";
   const nowSec = Math.floor(Date.now() / 1000);
   const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
+  const session = getSessionFromRequest(_req);
+  const viewerUserId = String(session?.user?.id || "");
 
   try {
     const events = await fetchRaidHelperServerEvents(serverId);
@@ -1270,6 +1779,20 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
           total: signUps.length,
           confirmed: confirmedRoster.length,
         },
+        currentUserSignup:
+          viewerUserId &&
+          signUps.find((entry) => String(entry?.userId || "") === viewerUserId && String(entry?.status || ""))
+            ? (() => {
+                const match = signUps.find((entry) => String(entry?.userId || "") === viewerUserId);
+                return {
+                  signupId: Number(match?.id || 0),
+                  status: String(match?.status || ""),
+                  className: raidHelperClassNameFromSignUpEntry(match),
+                  specName: String(match?.specName || match?.cSpecName || ""),
+                  roleName: String(match?.roleName || match?.cRoleName || ""),
+                };
+              })()
+            : null,
         rosterByRole,
         confirmedRoster,
       });
@@ -1282,6 +1805,90 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+app.post("/api/raid-helper/events/:eventId/signup", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+
+  const eventId = String(req.params.eventId || "").trim();
+  const serverId = process.env.RAID_HELPER_SERVER_ID || "711838953430319115";
+  if (!eventId) return res.status(400).json({ ok: false, error: "Missing eventId" });
+
+  try {
+    const detail = await fetchRaidHelperEventDetail(eventId);
+    if (!detail) return res.status(404).json({ ok: false, error: "Event not found" });
+    const userId = String(session.user.id || "");
+    const displayName = String(session.user.globalName || session.user.username || "").trim();
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+
+    const existingPrimary = signUps.find(
+      (entry) => String(entry?.userId || "") === userId && String(entry?.status || "").toLowerCase() === "primary"
+    );
+    if (existingPrimary) {
+      return res.json({ ok: true, alreadySignedUp: true, signupId: Number(existingPrimary.id || 0) });
+    }
+
+    const fromEvent = raidHelperSignupProfileFromEntry(
+      signUps.find((entry) => String(entry?.userId || "") === userId),
+      displayName
+    );
+    const profile = fromEvent || (await resolveRaidHelperSignupProfileForUser(serverId, userId, displayName));
+    if (!profile) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "No class/spec profile found for your user yet. Please sign up once in Raid-Helper manually, then retry.",
+      });
+    }
+
+    const payload = {
+      userId,
+      name: profile.name || displayName || userId,
+      className: profile.className,
+      specName: profile.specName || "",
+      roleName: profile.roleName,
+      status: "primary",
+    };
+    const created = await raidHelperRequest(`/events/${eventId}/signups`, { method: "POST", body: payload });
+    const nextSignUps = Array.isArray(created?.event?.signUps) ? created.event.signUps : [];
+    const myRow = nextSignUps.find((entry) => String(entry?.userId || "") === userId);
+    return res.json({
+      ok: true,
+      signupId: Number(myRow?.id || 0),
+      status: String(myRow?.status || "primary"),
+    });
+  } catch (error) {
+    const status = Number(error?.statusCode || 500);
+    return res.status(status).json({ ok: false, error: error?.message || "Signup failed" });
+  }
+});
+
+app.delete("/api/raid-helper/events/:eventId/signup", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+
+  const eventId = String(req.params.eventId || "").trim();
+  if (!eventId) return res.status(400).json({ ok: false, error: "Missing eventId" });
+
+  try {
+    const detail = await fetchRaidHelperEventDetail(eventId);
+    if (!detail) return res.status(404).json({ ok: false, error: "Event not found" });
+    const userId = String(session.user.id || "");
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+    const myPrimary = signUps.find(
+      (entry) => String(entry?.userId || "") === userId && String(entry?.status || "").toLowerCase() === "primary"
+    );
+    const myAny = myPrimary || signUps.find((entry) => String(entry?.userId || "") === userId);
+    const signupId = Number(myAny?.id || 0);
+    if (!signupId) return res.json({ ok: true, alreadySignedOff: true });
+
+    await raidHelperRequest(`/events/${eventId}/signups/${signupId}`, { method: "DELETE" });
+    return res.json({ ok: true });
+  } catch (error) {
+    const status = Number(error?.statusCode || 500);
+    return res.status(status).json({ ok: false, error: error?.message || "Signoff failed" });
   }
 });
 
@@ -2193,4 +2800,7 @@ app.post("/api/wcl/mvp", async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Fallen Tacticians API running on http://localhost:${port}`);
+  ensureVotingDb().catch((error) => {
+    console.error("Failed to initialize voting database:", error?.message || error);
+  });
 });

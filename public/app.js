@@ -18,6 +18,7 @@ const statusEl = document.querySelector("#status");
 const dashboardPbRow = document.querySelector("#dashboardPbRow");
 const dashboardRosterBlock = document.querySelector("#dashboardRosterBlock");
 const GUILD_ID = 817080;
+const IMAGE_ASSET_VERSION = "20260428f";
 const potrRaidBanner = document.querySelector("#potrRaidBanner");
 const potrRaidName = document.querySelector("#potrRaidName");
 const potrRaidDate = document.querySelector("#potrRaidDate");
@@ -186,25 +187,29 @@ function shortRaidName(raidName) {
   return s || "?";
 }
 
+function versionedImagePath(path) {
+  return `${path}?v=${IMAGE_ASSET_VERSION}`;
+}
+
 function raidListingImagePath(raidName) {
   const s = String(raidName || "");
-  if (s === "Karazhan") return "/raid-images/kara.png";
-  if (s === "Gruul's Lair") return "/raid-images/gruul.png";
-  if (s === "Magtheridon's Lair") return "/raid-images/magtheridon.png";
-  if (s === "Serpentshrine Cavern") return "/raid-images/ssc.png";
-  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/tk.png";
-  return "/raid-images/kara.png";
+  if (s === "Karazhan") return versionedImagePath("/raid-images/kara.png");
+  if (s === "Gruul's Lair") return versionedImagePath("/raid-images/gruul.png");
+  if (s === "Magtheridon's Lair") return versionedImagePath("/raid-images/magtheridon.png");
+  if (s === "Serpentshrine Cavern") return versionedImagePath("/raid-images/ssc.png");
+  if (s === "Tempest Keep" || s === "The Eye") return versionedImagePath("/raid-images/tk.png");
+  return versionedImagePath("/raid-images/kara.png");
 }
 
 /** Wide cinematic headers for dashboard personal-best tiles (_best time_ row only). */
 function raidPbHeaderImagePath(raidName) {
   const s = String(raidName || "");
-  if (s === "Karazhan") return "/raid-images/pb-header-kara.png";
-  if (s === "Gruul's Lair") return "/raid-images/pb-header-gruul.png";
-  if (s === "Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png";
-  if (s === "Serpentshrine Cavern") return "/raid-images/pb-header-ssc.png";
-  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/pb-header-tk.png";
-  return "/raid-images/pb-header-kara.png";
+  if (s === "Karazhan") return versionedImagePath("/raid-images/pb-header-kara.png");
+  if (s === "Gruul's Lair") return versionedImagePath("/raid-images/pb-header-gruul.png");
+  if (s === "Magtheridon's Lair") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
+  if (s === "Serpentshrine Cavern") return versionedImagePath("/raid-images/pb-header-ssc.png");
+  if (s === "Tempest Keep" || s === "The Eye") return versionedImagePath("/raid-images/pb-header-tk.png");
+  return versionedImagePath("/raid-images/pb-header-kara.png");
 }
 
 /** Kara + Gruul's Lair show per-encounter times in an expandable tile; Magtheridon is a single boss. */

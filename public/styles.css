@@ -185,6 +185,7 @@ body::before {
   padding: 28px 20px 0;
   border-bottom: none;
   background: transparent;
+  position: relative;
 }
 
 /* Wide hero banner (upper hero); tagline + nav below. */
@@ -314,6 +315,69 @@ body::before {
     0 0 26px rgba(168, 85, 247, 0.75),
     0 0 44px rgba(255, 110, 180, 0.52),
     inset 0 0 22px rgba(168, 85, 247, 0.18);
+}
+
+.auth-top-right {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  background: rgba(13, 10, 20, 0.58);
+  backdrop-filter: blur(8px);
+  color: #f2ecff;
+  font-family: "Inter", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.auth-chip-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.auth-chip-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-chip-link,
+.auth-chip-btn {
+  appearance: none;
+  border: 1px solid rgba(168, 85, 247, 0.5);
+  background: rgba(13, 10, 20, 0.46);
+  color: #f2ecff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  text-decoration: none;
+  font-family: "Inter", sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.auth-chip-link:hover,
+.auth-chip-btn:hover {
+  color: #fff;
+  border-color: rgba(251, 191, 36, 0.55);
 }
 
 .hero-divider {
@@ -1648,6 +1712,64 @@ button.raid-cal-run.raid-cal-run--column:hover {
   color: var(--pink-l);
 }
 
+.voting-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.voting-raid-header {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+
+.voting-raid-header img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.voting-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) repeat(4, minmax(74px, 0.8fr)) minmax(110px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.voting-row.is-selected {
+  border-color: rgba(255, 154, 200, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 154, 200, 0.25) inset;
+}
+
+.voting-player {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voting-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voting-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.voting-btn {
+  min-width: 104px;
+}
+
 @media (max-width: 900px) {
   .container {
     padding: 24px 14px 50px;
@@ -1685,6 +1807,12 @@ button.raid-cal-run.raid-cal-run--column:hover {
     justify-content: flex-start;
   }
 
+  .auth-top-right {
+    position: static;
+    margin-top: 10px;
+    justify-content: center;
+  }
+
   .raid-cal-run {
     grid-template-columns: 36px minmax(0, 1fr) auto;
     padding: 6px 8px;
@@ -1703,5 +1831,14 @@ button.raid-cal-run.raid-cal-run--column:hover {
   .raid-cal-run-badge {
     font-size: 9px;
     letter-spacing: 0.08em;
+  }
+
+  .voting-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .voting-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 }
