@@ -7,8 +7,7 @@ import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import sqlite3 from "sqlite3";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 dotenv.config({ override: true });
 
@@ -151,9 +150,10 @@ const authSessions = new Map();
 const oauthStates = new Map();
 const votingGuildId = Number(process.env.VOTING_GUILD_ID || 817080);
 const dataDir = path.join(__dirname, "data");
-const votingDbPath = path.join(dataDir, "voting.sqlite");
-let votingDb = null;
-let votingDbReady = null;
+const votingStorePath = path.join(dataDir, "mvp-votes.json");
+let votingStoreReady = null;
+let votingWriteChain = Promise.resolve();
+let votingStoreState = { votes: [] };
 
 function parseCookieHeader(cookieHeader) {
   const out = {};
@@ -229,56 +229,89 @@ async function fetchDiscordJson(pathname, accessToken) {
   return payload;
 }
 
-function dbRun(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    votingDb.run(sql, params, function onRun(err) {
-      if (err) return reject(err);
-      return resolve(this);
-    });
-  });
+async function persistVotingStore() {
+  const tmpPath = `${votingStorePath}.tmp`;
+  const json = JSON.stringify(votingStoreState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, votingStorePath);
 }
 
-function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    votingDb.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      return resolve(row || null);
-    });
-  });
-}
-
-function dbAll(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    votingDb.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      return resolve(rows || []);
-    });
-  });
-}
-
-async function ensureVotingDb() {
-  if (votingDbReady) return votingDbReady;
-  votingDbReady = (async () => {
+async function ensureVotingStore() {
+  if (votingStoreReady) return votingStoreReady;
+  votingStoreReady = (async () => {
     await mkdir(dataDir, { recursive: true });
-    votingDb = new sqlite3.Database(votingDbPath);
-    await dbRun(`
-      CREATE TABLE IF NOT EXISTS mvp_votes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        round_key TEXT NOT NULL,
-        raid_code TEXT NOT NULL,
-        raid_start_time INTEGER NOT NULL,
-        user_id TEXT NOT NULL,
-        candidate_name TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE(round_key, user_id)
-      )
-    `);
-    await dbRun(
-      "CREATE INDEX IF NOT EXISTS idx_mvp_votes_round_key ON mvp_votes(round_key, candidate_name)"
-    );
+    try {
+      const raw = await readFile(votingStorePath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed?.votes)) {
+        votingStoreState = {
+          votes: parsed.votes
+            .map((vote) => ({
+              roundKey: String(vote?.roundKey || ""),
+              raidCode: String(vote?.raidCode || ""),
+              raidStartTime: Number(vote?.raidStartTime || 0),
+              userId: String(vote?.userId || ""),
+              candidateName: String(vote?.candidateName || ""),
+              createdAt: Number(vote?.createdAt || 0),
+              updatedAt: Number(vote?.updatedAt || 0),
+            }))
+            .filter((vote) => vote.roundKey && vote.userId && vote.candidateName),
+        };
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      votingStoreState = { votes: [] };
+      await persistVotingStore();
+    }
   })();
-  return votingDbReady;
+  return votingStoreReady;
+}
+
+function getVotingTallies(roundKey) {
+  const counts = new Map();
+  for (const vote of votingStoreState.votes) {
+    if (vote.roundKey !== roundKey) continue;
+    const key = vote.candidateName;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function getUserVote(roundKey, userId) {
+  return votingStoreState.votes.find((vote) => vote.roundKey === roundKey && vote.userId === userId) || null;
+}
+
+async function upsertVote(voteInput) {
+  await ensureVotingStore();
+  const now = Date.now();
+  const userId = String(voteInput.userId || "");
+  const roundKey = String(voteInput.roundKey || "");
+  const candidateName = String(voteInput.candidateName || "");
+  if (!userId || !roundKey || !candidateName) throw new Error("Invalid vote payload");
+
+  votingWriteChain = votingWriteChain.then(async () => {
+    const idx = votingStoreState.votes.findIndex((vote) => vote.roundKey === roundKey && vote.userId === userId);
+    if (idx === -1) {
+      votingStoreState.votes.push({
+        roundKey,
+        raidCode: String(voteInput.raidCode || ""),
+        raidStartTime: Number(voteInput.raidStartTime || 0),
+        userId,
+        candidateName,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      const prev = votingStoreState.votes[idx];
+      votingStoreState.votes[idx] = {
+        ...prev,
+        candidateName,
+        updatedAt: now,
+      };
+    }
+    await persistVotingStore();
+  });
+  await votingWriteChain;
 }
 
 // Explicit page routes keep frontend reachable in all environments.
@@ -419,18 +452,9 @@ app.get("/api/voting/current", async (req, res) => {
       return res.status(404).json({ ok: false, error: "No recent tracked raid found" });
     }
 
-    await ensureVotingDb();
-    const talliesRaw = await dbAll(
-      "SELECT candidate_name as candidateName, COUNT(*) as votes FROM mvp_votes WHERE round_key = ? GROUP BY candidate_name",
-      [voting.roundKey]
-    );
-    const myVoteRow = await dbGet(
-      "SELECT candidate_name as candidateName FROM mvp_votes WHERE round_key = ? AND user_id = ?",
-      [voting.roundKey, String(session.user.id)]
-    );
-    const votesByCandidate = Object.fromEntries(
-      talliesRaw.map((r) => [String(r.candidateName || ""), Number(r.votes || 0)])
-    );
+    await ensureVotingStore();
+    const votesByCandidate = getVotingTallies(voting.roundKey);
+    const myVoteRow = getUserVote(voting.roundKey, String(session.user.id));
 
     return res.json({
       ok: true,
@@ -444,7 +468,7 @@ app.get("/api/voting/current", async (req, res) => {
       myVote: myVoteRow?.candidateName || null,
       candidates: voting.candidates.map((c) => ({
         ...c,
-        votes: Number(votesByCandidate[c.name] || 0),
+        votes: Number(votesByCandidate.get(c.name) || 0),
       })),
     });
   } catch (error) {
@@ -474,15 +498,13 @@ app.post("/api/voting/vote", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Candidate is not in the latest raid roster" });
     }
 
-    await ensureVotingDb();
-    const now = Date.now();
-    await dbRun(
-      `INSERT INTO mvp_votes (round_key, raid_code, raid_start_time, user_id, candidate_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(round_key, user_id)
-       DO UPDATE SET candidate_name = excluded.candidate_name, updated_at = excluded.updated_at`,
-      [voting.roundKey, voting.raidCode, voting.startTime, String(session.user.id), candidate.name, now, now]
-    );
+    await upsertVote({
+      roundKey: voting.roundKey,
+      raidCode: voting.raidCode,
+      raidStartTime: voting.startTime,
+      userId: String(session.user.id),
+      candidateName: candidate.name,
+    });
 
     return res.json({ ok: true, roundKey: voting.roundKey, candidateName: candidate.name });
   } catch (error) {
@@ -2803,7 +2825,7 @@ app.post("/api/wcl/mvp", async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Fallen Tacticians API running on http://localhost:${port}`);
-  ensureVotingDb().catch((error) => {
-    console.error("Failed to initialize voting database:", error?.message || error);
+  ensureVotingStore().catch((error) => {
+    console.error("Failed to initialize voting store:", error?.message || error);
   });
 });
