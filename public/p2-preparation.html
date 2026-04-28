@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PUG LIFE BALANCE · Imprint</title>
+    <title>PUG LIFE BALANCE · P2 Preparation</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=20260428q" />
+    <link rel="stylesheet" href="/styles.css?v=20260428r" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -21,41 +21,43 @@
           <a href="/">Dashboard</a>
           <a href="/events.html">Events</a>
           <a href="/voting.html">Voting</a>
-          <a href="/p2-preparation.html">P2 Preparation</a>
+          <a href="/p2-preparation.html" class="nav-current" aria-current="page">P2 Preparation</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
         <div class="hero-divider" aria-hidden="true"></div>
       </header>
 
       <main class="container">
-        <section class="card legal-card">
-          <h2 class="section-title">Imprint</h2>
+        <section class="card">
+          <h2 class="section-title">P2 Preparation</h2>
           <p class="subtle">
-            Fill this page with your legally required operator details (name/business, address, contact, and any
-            country-specific disclosures such as VAT ID).
+            Nature resistance craft progress for Main Tank (Wildguard set + The Natural Ward + Pendant of Withering).
           </p>
+          <div class="p2-overall">
+            <div class="p2-overall-label">Overall Progress</div>
+            <div class="p2-progress-bar"><span id="p2OverallBar"></span></div>
+            <div id="p2OverallText" class="p2-overall-text">0%</div>
+          </div>
+        </section>
 
-          <h3 class="legal-title">Site Operator</h3>
-          <p>
-            Highbullet / PUG LIFE BALANCE<br />
-            Address available on request
-          </p>
+        <section class="card">
+          <h3 class="section-title">Included Gear</h3>
+          <ul class="p2-gear-list">
+            <li>Wildguard Helm</li>
+            <li>Wildguard Breastplate</li>
+            <li>Wildguard Leggings</li>
+            <li>The Natural Ward (Ring)</li>
+            <li>Pendant of Withering (Neck)</li>
+          </ul>
+        </section>
 
-          <h3 class="legal-title">Contact</h3>
-          <p>
-            Email: contact@wow-pug.com<br />
-            Discord: Highbullet
+        <section class="card">
+          <h3 class="section-title">Material Tracker</h3>
+          <p class="subtle">
+            Starting values are prefilled from your screenshots; Felsteel is tracked as raw smelting materials
+            (Fel Iron Bar + Eternium Bar). Adjust current values anytime.
           </p>
-
-          <h3 class="legal-title">Content Responsibility</h3>
-          <p>
-            Responsible for content according to applicable law: Highbullet / PUG LIFE BALANCE.
-          </p>
-
-          <h3 class="legal-title">Data Protection</h3>
-          <p>
-            See the <a href="/privacy.html">Privacy Policy</a> for details on personal data processing.
-          </p>
+          <div id="p2Table" class="p2-table-wrap"></div>
         </section>
       </main>
 
@@ -72,5 +74,6 @@
     <script src="/home.js?v=20260428d"></script>
     <script src="/auth-ui.js?v=20260428g"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
+    <script src="/p2-preparation.js?v=20260428t"></script>
   </body>
 </html>

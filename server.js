@@ -154,6 +154,20 @@ const votingStorePath = path.join(dataDir, "mvp-votes.json");
 let votingStoreReady = null;
 let votingWriteChain = Promise.resolve();
 let votingStoreState = { votes: [] };
+const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
+let p2MaterialsReady = null;
+let p2MaterialsWriteChain = Promise.resolve();
+const P2_MATERIALS = [
+  { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
+  { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
+  { id: "primal_life", name: "Primal Life", required: 46, defaultCurrent: 74 },
+  { id: "primal_shadow", name: "Primal Shadow", required: 48, defaultCurrent: 190 },
+  { id: "mercurial_adamantite", name: "Mercurial Adamantite", required: 5, defaultCurrent: 5 },
+  { id: "primal_nether", name: "Primal Nether", required: 3, defaultCurrent: 0 },
+];
+let p2MaterialsState = {
+  currentById: Object.fromEntries(P2_MATERIALS.map((m) => [m.id, Number(m.defaultCurrent || 0)])),
+};
 
 function parseCookieHeader(cookieHeader) {
   const out = {};
@@ -314,6 +328,88 @@ async function upsertVote(voteInput) {
   await votingWriteChain;
 }
 
+function p2EditorIds() {
+  return String(process.env.P2_EDITOR_DISCORD_IDS || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function p2EditorNames() {
+  const raw = process.env.P2_EDITOR_DISCORD_NAMES;
+  const source = raw && raw.trim() ? raw : "highbullet";
+  return source
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isP2Editor(session) {
+  if (!session?.user) return false;
+  const userId = String(session.user.id || "").trim();
+  const ids = p2EditorIds();
+  if (userId && ids.includes(userId)) return true;
+  const nameCandidates = [session.user.globalName, session.user.username]
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+  return nameCandidates.some((n) => p2EditorNames().includes(n));
+}
+
+async function persistP2Materials() {
+  const tmpPath = `${p2MaterialsPath}.tmp`;
+  const json = JSON.stringify(p2MaterialsState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, p2MaterialsPath);
+}
+
+async function ensureP2MaterialsStore() {
+  if (p2MaterialsReady) return p2MaterialsReady;
+  p2MaterialsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(p2MaterialsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.currentById === "object") {
+        const nextCurrent = {};
+        for (const m of P2_MATERIALS) {
+          const n = Number(parsed.currentById[m.id]);
+          nextCurrent[m.id] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : Number(m.defaultCurrent || 0);
+        }
+        p2MaterialsState = { currentById: nextCurrent };
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      p2MaterialsState = {
+        currentById: Object.fromEntries(P2_MATERIALS.map((m) => [m.id, Number(m.defaultCurrent || 0)])),
+      };
+      await persistP2Materials();
+    }
+  })();
+  return p2MaterialsReady;
+}
+
+function getP2MaterialsRows() {
+  return P2_MATERIALS.map((m) => ({
+    id: m.id,
+    name: m.name,
+    required: m.required,
+    current: Number(p2MaterialsState.currentById[m.id] || 0),
+  }));
+}
+
+async function setP2MaterialCurrent(materialId, currentValue) {
+  await ensureP2MaterialsStore();
+  const exists = P2_MATERIALS.some((m) => m.id === materialId);
+  if (!exists) throw new Error("Unknown material id");
+  const safeValue = Math.max(0, Math.floor(Number(currentValue || 0)));
+
+  p2MaterialsWriteChain = p2MaterialsWriteChain.then(async () => {
+    p2MaterialsState.currentById[materialId] = safeValue;
+    await persistP2Materials();
+  });
+  await p2MaterialsWriteChain;
+}
+
 // Explicit page routes keep frontend reachable in all environments.
 app.get("/", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
@@ -329,6 +425,10 @@ app.get("/events.html", (_req, res) => {
 
 app.get("/voting.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "voting.html"));
+});
+
+app.get("/p2-preparation.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "p2-preparation.html"));
 });
 
 app.get("/privacy.html", (_req, res) => {
@@ -446,6 +546,38 @@ app.get("/api/auth/config", (_req, res) => {
     discordRedirectUri,
     publicBaseUrl,
   });
+});
+
+app.get("/api/p2-preparation/materials", async (req, res) => {
+  try {
+    await ensureP2MaterialsStore();
+    const session = getSessionFromRequest(req);
+    return res.json({
+      ok: true,
+      canEdit: isP2Editor(session),
+      materials: getP2MaterialsRows(),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load materials" });
+  }
+});
+
+app.put("/api/p2-preparation/materials/current", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!isP2Editor(session)) {
+      return res.status(403).json({ ok: false, error: "Only authorized editor can update current values" });
+    }
+    const materialId = String(req.body?.id || "").trim();
+    const current = Number(req.body?.current);
+    if (!materialId || !Number.isFinite(current) || current < 0) {
+      return res.status(400).json({ ok: false, error: "id and non-negative current are required" });
+    }
+    await setP2MaterialCurrent(materialId, current);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update material" });
+  }
 });
 
 app.get("/api/voting/current", async (req, res) => {
@@ -2835,5 +2967,8 @@ app.listen(port, () => {
   console.log(`Fallen Tacticians API running on http://localhost:${port}`);
   ensureVotingStore().catch((error) => {
     console.error("Failed to initialize voting store:", error?.message || error);
+  });
+  ensureP2MaterialsStore().catch((error) => {
+    console.error("Failed to initialize P2 materials store:", error?.message || error);
   });
 });
