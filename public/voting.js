@@ -44,13 +44,13 @@ function renderCandidates(payload) {
       return `
         <article class="voting-row ${selected ? "is-selected" : ""}">
           <div class="voting-player">
-            <strong>${c.name || "Unknown"}</strong>
+            <strong class="voting-player-name">${c.name || "Unknown"}</strong>
             <span class="subtle">${c.className || "Unknown class"}</span>
           </div>
-          <div class="voting-metric"><span class="subtle">DPS</span><strong>${numberFmt(c.dps)}</strong></div>
-          <div class="voting-metric"><span class="subtle">HPS</span><strong>${numberFmt(c.hps)}</strong></div>
-          <div class="voting-metric"><span class="subtle">Damage Taken</span><strong>${numberFmt(c.damageTaken)}</strong></div>
-          <div class="voting-metric"><span class="subtle">Votes</span><strong>${numberFmt(c.votes)}</strong></div>
+          <div class="voting-metric"><span class="subtle">DPS</span><strong class="voting-metric-value">${numberFmt(c.dps)}</strong></div>
+          <div class="voting-metric"><span class="subtle">HPS</span><strong class="voting-metric-value">${numberFmt(c.hps)}</strong></div>
+          <div class="voting-metric"><span class="subtle">Damage Taken</span><strong class="voting-metric-value">${numberFmt(c.damageTaken)}</strong></div>
+          <div class="voting-metric"><span class="subtle">Votes</span><strong class="voting-metric-value">${numberFmt(c.votes)}</strong></div>
           <div class="voting-actions">
             <button class="event-signup-btn voting-btn" data-candidate="${encodeURIComponent(c.name || "")}">
               ${selected ? "Your Vote" : "Vote"}

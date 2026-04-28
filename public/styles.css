@@ -324,6 +324,7 @@ body::before {
   display: flex;
   align-items: center;
   gap: 8px;
+  z-index: 6;
 }
 
 .auth-chip {
@@ -1729,16 +1730,17 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .voting-raid-header img {
   display: block;
   width: 100%;
-  height: auto;
-  object-fit: contain;
+  height: clamp(140px, 26vw, 230px);
+  object-fit: cover;
+  object-position: center;
 }
 
 .voting-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.2fr) repeat(4, minmax(74px, 0.8fr)) minmax(110px, auto);
-  gap: 10px;
+  grid-template-columns: minmax(160px, 1.25fr) repeat(4, minmax(84px, 0.85fr)) minmax(120px, auto);
+  gap: 12px;
   align-items: center;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-2);
@@ -1752,13 +1754,29 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .voting-player {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+}
+
+.voting-player-name {
+  font-size: 18px;
+  line-height: 1.1;
 }
 
 .voting-metric {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  min-width: 0;
+}
+
+.voting-metric .subtle {
+  font-size: 11px;
+}
+
+.voting-metric-value {
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 0.01em;
 }
 
 .voting-actions {
@@ -1767,7 +1785,35 @@ button.raid-cal-run.raid-cal-run--column:hover {
 }
 
 .voting-btn {
-  min-width: 104px;
+  min-width: 116px;
+}
+
+@media (max-width: 1120px) {
+  .auth-top-right {
+    top: 10px;
+    right: 10px;
+    gap: 6px;
+  }
+
+  .auth-chip {
+    padding: 5px 8px;
+    font-size: 10px;
+  }
+
+  .auth-chip-link,
+  .auth-chip-btn {
+    padding: 5px 8px;
+    font-size: 9px;
+  }
+
+  .voting-row {
+    grid-template-columns: minmax(150px, 1.1fr) repeat(2, minmax(92px, 1fr));
+  }
+
+  .voting-metric:nth-of-type(4),
+  .voting-actions {
+    grid-column: span 1;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1807,12 +1853,6 @@ button.raid-cal-run.raid-cal-run--column:hover {
     justify-content: flex-start;
   }
 
-  .auth-top-right {
-    position: static;
-    margin-top: 10px;
-    justify-content: center;
-  }
-
   .raid-cal-run {
     grid-template-columns: 36px minmax(0, 1fr) auto;
     padding: 6px 8px;
@@ -1835,10 +1875,19 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
   .voting-row {
     grid-template-columns: 1fr 1fr;
+    padding: 10px;
   }
 
   .voting-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+
+  .voting-player-name {
+    font-size: 16px;
+  }
+
+  .voting-metric-value {
+    font-size: 18px;
   }
 }
