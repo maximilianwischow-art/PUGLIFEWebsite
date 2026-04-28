@@ -467,10 +467,9 @@ body::before {
 
 .pb-tile > img.pb-tile-banner {
   width: 100%;
-  height: clamp(104px, 22vw, 140px);
-  object-fit: cover;
-  /* Keep raid title text (usually on left side of art) in frame. */
-  object-position: 22% center;
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
   background: #06060a;
   border-bottom: 1px solid var(--border);
   display: block;
@@ -761,9 +760,9 @@ body::before {
 
 .potr-raid-banner {
   width: 100%;
-  height: clamp(96px, 18vw, 132px);
-  object-fit: cover;
-  object-position: 22% center;
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
   border-radius: 12px;
   border: 1px solid rgba(168, 85, 247, 0.28);
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.38);
@@ -1028,10 +1027,9 @@ body::before {
 .event-raid-header img {
   display: block;
   width: 100%;
-  height: clamp(130px, 24vw, 220px);
-  object-fit: cover;
-  /* Keep left raid title text and slightly upper framing visible. */
-  object-position: left 28%;
+  height: auto;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .event-raid-header--split img {

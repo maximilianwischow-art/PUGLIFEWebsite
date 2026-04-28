@@ -68,25 +68,25 @@ function detectEventRaids(event) {
   const text = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
   const matches = [];
   if (text.includes("karazhan") || /\bkara\b/.test(text)) {
-    matches.push({ id: "kara", image: "/raid-images/event-header-kara.png", rosterCap: 10 });
+    matches.push({ id: "kara", image: "/raid-images/pb-header-kara.png", rosterCap: 10 });
   }
   if (text.includes("gruul")) {
-    matches.push({ id: "gruul", image: "/raid-images/event-header-gruul.png", rosterCap: 25 });
+    matches.push({ id: "gruul", image: "/raid-images/pb-header-gruul.png", rosterCap: 25 });
   }
   if (text.includes("magtheridon") || /\bmag\b/.test(text)) {
-    matches.push({ id: "mag", image: "/raid-images/event-header-magtheridon.png", rosterCap: 25 });
+    matches.push({ id: "mag", image: "/raid-images/pb-header-magtheridon.png", rosterCap: 25 });
   }
   if (text.includes("serpentshrine") || /\bssc\b/.test(text)) {
-    matches.push({ id: "ssc", image: "/raid-images/event-header-ssc.png", rosterCap: 25 });
+    matches.push({ id: "ssc", image: "/raid-images/pb-header-ssc.png", rosterCap: 25 });
   }
   if (text.includes("tempest keep") || /\btk\b/.test(text) || text.includes("the eye")) {
-    matches.push({ id: "tk", image: "/raid-images/event-header-tk.png", rosterCap: 25 });
+    matches.push({ id: "tk", image: "/raid-images/pb-header-tk.png", rosterCap: 25 });
   }
   if (text.includes("zul'aman") || text.includes("zul aman") || /\bza\b/.test(text)) {
-    matches.push({ id: "za", image: "/raid-images/event-header-kara.png", rosterCap: 10 });
+    matches.push({ id: "za", image: "/raid-images/pb-header-kara.png", rosterCap: 10 });
   }
 
-  if (!matches.length) return [{ id: "fallback", image: "/raid-images/event-header-kara.png", rosterCap: 25 }];
+  if (!matches.length) return [{ id: "fallback", image: "/raid-images/pb-header-kara.png", rosterCap: 25 }];
   return matches.slice(0, 2);
 }
 
