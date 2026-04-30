@@ -157,22 +157,21 @@ const renderDiskMountPath = process.env.RENDER_DISK_MOUNT_PATH?.trim() || "";
 const configuredDataDir = process.env.DATA_DIR?.trim() || "";
 const defaultDataDir = path.join(__dirname, "data");
 const tmpFallbackDataDir = path.join(process.env.TMPDIR || "/tmp", "fallen-tacticians-data");
-let dataDir = configuredDataDir || renderDiskMountPath || defaultDataDir;
-try {
-  mkdirSync(dataDir, { recursive: true });
-} catch {
-  dataDir = defaultDataDir;
-  try {
-    mkdirSync(dataDir, { recursive: true });
-  } catch {
-    dataDir = tmpFallbackDataDir;
+function pickWritableDataDir() {
+  const candidates = [configuredDataDir, renderDiskMountPath, defaultDataDir, tmpFallbackDataDir]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+  for (const candidate of candidates) {
     try {
-      mkdirSync(dataDir, { recursive: true });
+      mkdirSync(candidate, { recursive: true });
+      return candidate;
     } catch {
-      // If this still fails, downstream store initialization will surface the runtime error.
+      // try next candidate
     }
   }
+  return defaultDataDir;
 }
+const dataDir = pickWritableDataDir();
 const votingStorePath = path.join(dataDir, "mvp-votes.json");
 let votingStoreReady = null;
 let votingWriteChain = Promise.resolve();
@@ -761,6 +760,28 @@ function mergeLootItems(wclItems, gargulItems) {
   return merged;
 }
 
+function dedupeGargulEntries(entries) {
+  const out = [];
+  const seen = new Set();
+  for (const row of entries || []) {
+    if (!row || typeof row !== "object") continue;
+    const checksum = String(row?.checksum || "").trim();
+    const key = checksum
+      ? `checksum:${checksum}`
+      : [
+          String(row?.reportCode || "").trim(),
+          String(row?.timestamp || "").trim(),
+          String(row?.itemID || "").trim(),
+          String(row?.itemLink || row?.itemName || "").trim().toLowerCase(),
+          String(row?.awardedTo || "").trim().toLowerCase(),
+        ].join("|");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 // Explicit page routes keep frontend reachable in all environments.
 app.get("/", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
@@ -991,12 +1012,12 @@ app.post("/api/loot-history/gargul/import", async (req, res) => {
       .map((row) => ({ ...row, ...(reportCode ? { reportCode } : {}) }));
     await ensureGargulLootHistoryStore();
     gargulLootWriteChain = gargulLootWriteChain.then(async () => {
-      gargulLootState.entries = sanitized;
+      gargulLootState.entries = dedupeGargulEntries([...(gargulLootState.entries || []), ...sanitized]);
       await persistGargulLootHistory();
       await invalidateLootHistoryCacheEntries();
     });
     await gargulLootWriteChain;
-    return res.json({ ok: true, imported: sanitized.length });
+    return res.json({ ok: true, imported: sanitized.length, total: gargulLootState.entries.length });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to import Gargul loot history" });
   }
