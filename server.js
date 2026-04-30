@@ -7,7 +7,7 @@ import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 
 dotenv.config({ override: true });
 
@@ -64,7 +64,7 @@ app.use(
   )
 );
 
-app.use(express.json({ limit: "24kb" }));
+app.use(express.json({ limit: "8mb" }));
 
 const apiPerMinute = Math.max(
   30,
@@ -95,6 +95,7 @@ app.use(
 
 const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
+const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
 const RAID_HELPER_API_URL = "https://raid-helper.xyz/api/v4";
 const DEFAULT_TBC_ZONES = [
   "Karazhan",
@@ -133,6 +134,8 @@ const allowedTbcZones = new Set(
 
 let cachedToken = null;
 let cachedTokenExpiresAt = 0;
+let cachedBlizzardToken = null;
+let cachedBlizzardTokenExpiresAt = 0;
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || "";
 const discordClientSecret = process.env.DISCORD_CLIENT_SECRET?.trim() || "";
@@ -149,14 +152,22 @@ const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes
 const authSessions = new Map();
 const oauthStates = new Map();
 const votingGuildId = Number(process.env.VOTING_GUILD_ID || 817080);
-const dataDir = path.join(__dirname, "data");
+const renderDiskMountPath = process.env.RENDER_DISK_MOUNT_PATH?.trim() || "";
+const dataDir = process.env.DATA_DIR?.trim() || renderDiskMountPath || path.join(__dirname, "data");
 const votingStorePath = path.join(dataDir, "mvp-votes.json");
 let votingStoreReady = null;
 let votingWriteChain = Promise.resolve();
 let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
+const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
+const apiCacheDir = path.join(dataDir, "cache");
+const apiResponseCache = new Map();
+const apiResponseInflight = new Map();
 let p2MaterialsReady = null;
 let p2MaterialsWriteChain = Promise.resolve();
+let gargulLootReady = null;
+let gargulLootWriteChain = Promise.resolve();
+let gargulLootState = { entries: [], selectedReportCodes: [] };
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
   { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
@@ -179,6 +190,174 @@ function parseCookieHeader(cookieHeader) {
     out[key] = value;
   }
   return out;
+}
+
+function fileSafeCacheKey(cacheKey) {
+  return String(cacheKey || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_.-]+/g, "_")
+    .slice(0, 140);
+}
+
+function apiCacheFilePath(cacheKey) {
+  return path.join(apiCacheDir, `${fileSafeCacheKey(cacheKey)}.json`);
+}
+
+async function readApiCacheEntry(cacheKey) {
+  try {
+    const raw = await readFile(apiCacheFilePath(cacheKey), "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.at !== "number" || parsed?.data == null) return null;
+    return parsed;
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    return null;
+  }
+}
+
+async function writeApiCacheEntry(cacheKey, entry) {
+  await mkdir(apiCacheDir, { recursive: true });
+  const tmpPath = `${apiCacheFilePath(cacheKey)}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(entry, null, 2), "utf8");
+  await rename(tmpPath, apiCacheFilePath(cacheKey));
+}
+
+async function invalidateLootHistoryCacheEntries() {
+  for (const key of [...apiResponseCache.keys()]) {
+    if (String(key).startsWith("loot-history-v2-")) apiResponseCache.delete(key);
+  }
+  for (const key of [...apiResponseInflight.keys()]) {
+    if (String(key).startsWith("loot-history-v2-")) apiResponseInflight.delete(key);
+  }
+  try {
+    const files = await readdir(apiCacheDir);
+    const tasks = files
+      .filter((name) => String(name).startsWith("loot-history-v2-"))
+      .map((name) => unlink(path.join(apiCacheDir, name)).catch(() => {}));
+    await Promise.all(tasks);
+  } catch {
+    // Cache dir may not exist yet; nothing to invalidate.
+  }
+}
+
+function lootHistoryCacheTtlMs() {
+  const n = Number(process.env.LOOT_HISTORY_CACHE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(3600_000, n);
+  return 120_000;
+}
+
+function wowClassicRegion() {
+  const region = String(process.env.BLIZZARD_REGION || "eu")
+    .trim()
+    .toLowerCase();
+  return region || "eu";
+}
+
+function wowClassicLocale() {
+  return String(process.env.BLIZZARD_LOCALE || "en_GB").trim() || "en_GB";
+}
+
+function wowClassicNamespace() {
+  const configured = String(process.env.BLIZZARD_CLASSIC_NAMESPACE || "").trim();
+  if (configured) return configured;
+  return `static-classic-${wowClassicRegion()}`;
+}
+
+function blizzardApiBaseUrl() {
+  return `https://${wowClassicRegion()}.api.blizzard.com`;
+}
+
+function itemMetadataCacheTtlMs() {
+  const n = Number(process.env.ITEM_METADATA_CACHE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(7 * 24 * 3600_000, n);
+  return 24 * 3600_000;
+}
+
+function wowheadTooltipEnabled() {
+  return String(process.env.WOWHEAD_TOOLTIP_ENABLED || "1").trim() !== "0";
+}
+
+function wowheadFlavorPath() {
+  const flavor = String(process.env.WOWHEAD_GAME_FLAVOR || "tbc")
+    .trim()
+    .toLowerCase();
+  return flavor && flavor !== "retail" ? `/${flavor}` : "";
+}
+
+function wowheadTooltipLocaleKey() {
+  const locale = wowClassicLocale().toLowerCase();
+  if (locale.startsWith("de")) return "tooltip_dede";
+  if (locale.startsWith("fr")) return "tooltip_frfr";
+  if (locale.startsWith("es")) return "tooltip_eses";
+  if (locale.startsWith("ru")) return "tooltip_ruru";
+  return "tooltip_enus";
+}
+
+function extractWowheadTooltipHtml(html, itemId, preferredKey) {
+  const keyCandidates = [preferredKey, "tooltip_enus", "tooltip_dede", "tooltip_frfr", "tooltip_eses", "tooltip_ruru"];
+  for (const key of keyCandidates) {
+    const rx = new RegExp(`g_items\\[${Number(itemId)}\\]\\.${key}\\s*=\\s*\"((?:\\\\.|[^\"\\\\])*)\";`);
+    const m = String(html || "").match(rx);
+    if (!m?.[1]) continue;
+    try {
+      return JSON.parse(`"${m[1]}"`);
+    } catch {
+      continue;
+    }
+  }
+  return "";
+}
+
+function lootHistoryMaxStaleMs() {
+  return 1000 * 60 * 60 * 12;
+}
+
+function lootHistoryCacheKey(guildId, reportLimit) {
+  return `loot-history-v2-${Number(guildId)}-${Number(reportLimit)}`;
+}
+
+async function getOrRefreshCachedPayload(cacheKey, { ttlMs, maxStaleMs = ttlMs, loader }) {
+  const now = Date.now();
+  const mem = apiResponseCache.get(cacheKey);
+  if (mem && now - Number(mem.at || 0) <= ttlMs) return mem.data;
+
+  const triggerRefresh = () => {
+    const existing = apiResponseInflight.get(cacheKey);
+    if (existing) return existing;
+    const run = (async () => {
+      const data = await loader();
+      const entry = { at: Date.now(), data };
+      apiResponseCache.set(cacheKey, entry);
+      await writeApiCacheEntry(cacheKey, entry).catch(() => {});
+      return data;
+    })().finally(() => {
+      apiResponseInflight.delete(cacheKey);
+    });
+    apiResponseInflight.set(cacheKey, run);
+    return run;
+  };
+
+  if (mem && now - Number(mem.at || 0) <= maxStaleMs) {
+    void triggerRefresh();
+    return mem.data;
+  }
+
+  const disk = await readApiCacheEntry(cacheKey);
+  if (disk && now - Number(disk.at || 0) <= maxStaleMs) {
+    apiResponseCache.set(cacheKey, disk);
+    if (now - Number(disk.at || 0) > ttlMs) void triggerRefresh();
+    return disk.data;
+  }
+
+  return triggerRefresh();
+}
+
+async function forceRefreshCachedPayload(cacheKey, loader) {
+  const data = await loader();
+  const entry = { at: Date.now(), data };
+  apiResponseCache.set(cacheKey, entry);
+  await writeApiCacheEntry(cacheKey, entry).catch(() => {});
+  return data;
 }
 
 function signSessionId(sessionId) {
@@ -397,6 +576,19 @@ function isP2Editor(session) {
   return nameCandidates.some((n) => p2EditorNames().includes(n));
 }
 
+function requireAdminSession(req, res) {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    res.status(401).json({ ok: false, error: "Login required" });
+    return null;
+  }
+  if (!isP2Editor(session)) {
+    res.status(403).json({ ok: false, error: "Admin access required" });
+    return null;
+  }
+  return session;
+}
+
 async function persistP2Materials() {
   const tmpPath = `${p2MaterialsPath}.tmp`;
   const json = JSON.stringify(p2MaterialsState, null, 2);
@@ -452,6 +644,84 @@ async function setP2MaterialCurrent(materialId, currentValue) {
   await p2MaterialsWriteChain;
 }
 
+async function persistGargulLootHistory() {
+  const tmpPath = `${gargulLootHistoryPath}.tmp`;
+  const json = JSON.stringify(gargulLootState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, gargulLootHistoryPath);
+}
+
+async function ensureGargulLootHistoryStore() {
+  if (gargulLootReady) return gargulLootReady;
+  gargulLootReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(gargulLootHistoryPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+      const selected = Array.isArray(parsed?.selectedReportCodes)
+        ? parsed.selectedReportCodes.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      gargulLootState = { entries: Array.isArray(list) ? list : [], selectedReportCodes: selected };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      gargulLootState = { entries: [], selectedReportCodes: [] };
+      await persistGargulLootHistory();
+    }
+  })();
+  return gargulLootReady;
+}
+
+function normalizeGargulItemName(itemLink, fallback) {
+  const link = String(itemLink || "").trim();
+  const m = link.match(/\[(.+?)\]/);
+  const picked = m?.[1] || fallback || "";
+  return String(picked || "").trim() || "Unknown item";
+}
+
+function normalizeGargulPlayerName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/-.+$/, "");
+}
+
+function gargulEntryToLootItem(entry, reportByDayKey, reportByCode) {
+  const timestampSec = Number(entry?.timestamp || 0);
+  if (!Number.isFinite(timestampSec) || timestampSec <= 0) return null;
+  const timestampMs = Math.floor(timestampSec * 1000);
+  const pinnedReportCode = String(entry?.reportCode || "").trim();
+  const pinnedReport = pinnedReportCode ? reportByCode.get(pinnedReportCode) || null : null;
+  const dayKey = raidCalendarDayKey(timestampMs);
+  const matchedRaid = pinnedReport || reportByDayKey.get(dayKey) || null;
+  return {
+    reportCode: matchedRaid?.reportCode || pinnedReportCode || `gargul-${dayKey || timestampSec}`,
+    reportTitle: matchedRaid?.reportTitle || `Gargul Export ${dayKey || "unknown"}`,
+    reportRaidName: matchedRaid?.reportRaidName || null,
+    reportStartTime: Number(matchedRaid?.reportStartTime || timestampMs),
+    itemId: Number(entry?.itemID || 0) > 0 ? Number(entry.itemID) : null,
+    itemName: normalizeGargulItemName(entry?.itemLink, entry?.itemName),
+    recipient: normalizeGargulPlayerName(entry?.awardedTo),
+    rawType: "gargul",
+    source: "gargul",
+    rollType: String(entry?.winningRollType || ""),
+    checksum: String(entry?.checksum || ""),
+  };
+}
+
+function mergeLootItems(wclItems, gargulItems) {
+  const merged = [];
+  const seen = new Set();
+  for (const row of [...(wclItems || []), ...(gargulItems || [])]) {
+    const key = row?.checksum
+      ? `checksum:${row.checksum}`
+      : `${row?.reportCode || ""}|${row?.itemId || ""}|${row?.itemName || ""}|${row?.recipient || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(row);
+  }
+  return merged;
+}
+
 // Explicit page routes keep frontend reachable in all environments.
 app.get("/", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
@@ -471,6 +741,21 @@ app.get("/voting.html", (_req, res) => {
 
 app.get("/p2-preparation.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "p2-preparation.html"));
+});
+
+app.get("/loot-history.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "loot-history.html"));
+});
+
+app.get("/admin.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect("/auth/discord/login?next=%2Fadmin.html");
+  }
+  if (!isP2Editor(session)) {
+    return res.status(403).send("Admin access required.");
+  }
+  return res.sendFile(path.join(publicDir, "admin.html"));
 });
 
 app.get("/privacy.html", (_req, res) => {
@@ -568,10 +853,11 @@ app.post("/auth/logout", (req, res) => {
 app.get("/api/auth/me", (req, res) => {
   const session = getSessionFromRequest(req);
   if (!session) {
-    return res.json({ authenticated: false });
+    return res.json({ authenticated: false, isAdmin: false });
   }
   return res.json({
     authenticated: true,
+    isAdmin: isP2Editor(session),
     user: session.user,
     guildId: session.guildId || null,
   });
@@ -619,6 +905,93 @@ app.put("/api/p2-preparation/materials/current", async (req, res) => {
     return res.json({ ok: true });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to update material" });
+  }
+});
+
+app.get("/api/loot-history/gargul", async (_req, res) => {
+  try {
+    const session = requireAdminSession(_req, res);
+    if (!session) return;
+    await ensureGargulLootHistoryStore();
+    return res.json({
+      ok: true,
+      entries: gargulLootState.entries.length,
+      rows: gargulLootState.entries,
+      selectedReportCodes: gargulLootState.selectedReportCodes || [],
+      lastTimestamp: gargulLootState.entries.reduce((max, row) => Math.max(max, Number(row?.timestamp || 0)), 0),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to read Gargul store" });
+  }
+});
+
+app.post("/api/loot-history/gargul/import", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const payload = req.body;
+    const entries = Array.isArray(payload) ? payload : payload?.entries;
+    const reportCode = String(payload?.reportCode || "").trim();
+    if (!Array.isArray(entries)) {
+      return res.status(400).json({ ok: false, error: "Body must be a JSON array or { entries: [...] }" });
+    }
+    const sanitized = entries
+      .filter((row) => row && typeof row === "object")
+      .map((row) => ({ ...row, ...(reportCode ? { reportCode } : {}) }));
+    await ensureGargulLootHistoryStore();
+    gargulLootWriteChain = gargulLootWriteChain.then(async () => {
+      gargulLootState.entries = sanitized;
+      await persistGargulLootHistory();
+      await invalidateLootHistoryCacheEntries();
+    });
+    await gargulLootWriteChain;
+    return res.json({ ok: true, imported: sanitized.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to import Gargul loot history" });
+  }
+});
+
+app.put("/api/loot-history/gargul/entries", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : null;
+    if (!entries) {
+      return res.status(400).json({ ok: false, error: "Body must be { entries: [...] }" });
+    }
+    const sanitized = entries.filter((row) => row && typeof row === "object");
+    await ensureGargulLootHistoryStore();
+    gargulLootWriteChain = gargulLootWriteChain.then(async () => {
+      gargulLootState.entries = sanitized;
+      await persistGargulLootHistory();
+      await invalidateLootHistoryCacheEntries();
+    });
+    await gargulLootWriteChain;
+    return res.json({ ok: true, saved: sanitized.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save Gargul entries" });
+  }
+});
+
+app.put("/api/loot-history/events/selection", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const selected = Array.isArray(req.body?.reportCodes) ? req.body.reportCodes : null;
+    if (!selected) {
+      return res.status(400).json({ ok: false, error: "Body must be { reportCodes: [] }" });
+    }
+    const sanitized = selected.map((x) => String(x || "").trim()).filter(Boolean);
+    await ensureGargulLootHistoryStore();
+    gargulLootWriteChain = gargulLootWriteChain.then(async () => {
+      gargulLootState.selectedReportCodes = [...new Set(sanitized)];
+      await persistGargulLootHistory();
+      await invalidateLootHistoryCacheEntries();
+    });
+    await gargulLootWriteChain;
+    return res.json({ ok: true, selected: gargulLootState.selectedReportCodes.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save event selection" });
   }
 });
 
@@ -898,6 +1271,97 @@ async function getAccessToken() {
   cachedToken = payload.access_token;
   cachedTokenExpiresAt = now + (Number(payload.expires_in || 3600) * 1000);
   return cachedToken;
+}
+
+async function getBlizzardAccessToken() {
+  const now = Date.now();
+  if (cachedBlizzardToken && cachedBlizzardTokenExpiresAt > now + 30_000) {
+    return cachedBlizzardToken;
+  }
+  const clientId = process.env.BLIZZARD_CLIENT_ID?.trim() || "";
+  const clientSecret = process.env.BLIZZARD_CLIENT_SECRET?.trim() || "";
+  if (!clientId || !clientSecret) {
+    throw new Error("Blizzard API credentials are not configured (BLIZZARD_CLIENT_ID/BLIZZARD_CLIENT_SECRET)");
+  }
+  const auth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  const res = await fetch(BLIZZARD_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || !payload?.access_token) {
+    throw new Error(`Blizzard OAuth failed (${res.status}): ${payload?.error_description || payload?.error || "unknown error"}`);
+  }
+  cachedBlizzardToken = payload.access_token;
+  cachedBlizzardTokenExpiresAt = now + Number(payload.expires_in || 3600) * 1000;
+  return cachedBlizzardToken;
+}
+
+function buildItemTooltipLines(itemData) {
+  const out = [];
+  const quality = String(itemData?.quality?.name || "").trim();
+  const itemLevel = Number(itemData?.level || 0);
+  const reqLevel = Number(itemData?.required_level || 0);
+  const typeName = String(itemData?.item_subclass?.name || itemData?.item_class?.name || "").trim();
+  const slotName = String(itemData?.inventory_type?.name || "").trim();
+  if (quality) out.push(quality);
+  if (itemLevel > 0) out.push(`Item Level ${itemLevel}`);
+  if (reqLevel > 0) out.push(`Requires Level ${reqLevel}`);
+  if (typeName || slotName) out.push([slotName, typeName].filter(Boolean).join(" · "));
+  if (typeof itemData?.sell_price?.display_strings?.header === "string") {
+    out.push(String(itemData.sell_price.display_strings.header));
+  }
+  return out.slice(0, 6);
+}
+
+async function fetchClassicItemMetadata(itemId) {
+  const id = Number(itemId || 0);
+  if (!Number.isInteger(id) || id <= 0) return { itemId: id || null };
+  const token = await getBlizzardAccessToken();
+  const namespace = wowClassicNamespace();
+  const locale = wowClassicLocale();
+  const base = blizzardApiBaseUrl();
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const itemUrl = `${base}/data/wow/item/${id}?namespace=${encodeURIComponent(namespace)}&locale=${encodeURIComponent(locale)}`;
+  const mediaUrl = `${base}/data/wow/media/item/${id}?namespace=${encodeURIComponent(namespace)}&locale=${encodeURIComponent(locale)}`;
+  const [itemRes, mediaRes] = await Promise.all([
+    fetch(itemUrl, { headers: authHeaders }),
+    fetch(mediaUrl, { headers: authHeaders }),
+  ]);
+  const itemData = await itemRes.json().catch(() => ({}));
+  const mediaData = await mediaRes.json().catch(() => ({}));
+  const mediaAssets = Array.isArray(mediaData?.assets) ? mediaData.assets : [];
+  const icon = mediaAssets.find((a) => String(a?.key || "").toLowerCase() === "icon")?.value || mediaAssets[0]?.value || null;
+  const baseMeta = {
+    itemId: id,
+    name: String(itemData?.name || "").trim() || null,
+    icon,
+    quality: String(itemData?.quality?.name || "").trim() || null,
+    itemLevel: Number(itemData?.level || 0) || null,
+    requiredLevel: Number(itemData?.required_level || 0) || null,
+    tooltip: buildItemTooltipLines(itemData),
+  };
+  if (!wowheadTooltipEnabled()) return baseMeta;
+  const key = wowheadTooltipLocaleKey();
+  const whUrl = `https://www.wowhead.com${wowheadFlavorPath()}/item=${id}?power`;
+  const whRes = await fetch(whUrl, {
+    headers: { "User-Agent": "fallen-tacticians-api/1.0 (+loot-history-tooltip)" },
+  });
+  const html = await whRes.text().catch(() => "");
+  const tooltipHtml = extractWowheadTooltipHtml(html, id, key);
+  if (!tooltipHtml) return baseMeta;
+  const sanitizedTooltipHtml = String(tooltipHtml || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+="[^"]*"/gi, "");
+  return {
+    ...baseMeta,
+    tooltipHtml: sanitizedTooltipHtml || null,
+    tooltipSource: sanitizedTooltipHtml ? "wowhead" : "blizzard",
+  };
 }
 
 function sleepMs(ms) {
@@ -1725,6 +2189,7 @@ app.get("/api/wcl/guild/:guildId/reports", async (req, res) => {
             code
             title
             startTime
+            endTime
             rankedCharacters {
               name
             }
@@ -1791,12 +2256,17 @@ app.get("/api/sync/wcl-raid-helper/:guildId/relevant-ids", async (req, res) => {
             code
             title
             startTime
+            owner {
+              name
+            }
             rankedCharacters {
               name
             }
             fights {
               id
               encounterID
+              startTime
+              endTime
               gameZone { name }
             }
           }
@@ -2867,13 +3337,8 @@ app.get("/api/wcl/guild/:guildId/death-encounter-heatmap", async (req, res) => {
   }
 });
 
-app.get("/api/wcl/guild/:guildId/loot-received", async (req, res) => {
-  const guildId = Number(req.params.guildId);
-  const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
-  if (!Number.isInteger(guildId) || guildId <= 0) {
-    return res.status(400).json({ error: "guildId must be a positive integer" });
-  }
-
+async function fetchGuildLootReceived(guildId, reportLimit) {
+  await ensureGargulLootHistoryStore();
   const reportsQuery = `
     query GuildReports($guildId: Int!, $limit: Int!) {
       reportData {
@@ -2896,75 +3361,210 @@ app.get("/api/wcl/guild/:guildId/loot-received", async (req, res) => {
     }
   `;
 
-  try {
-    const reportData = await queryWcl(reportsQuery, { guildId, limit: reportLimit });
-    const reports = filterGuildRaidReports(reportData?.reportData?.reports?.data || []);
-    const trackedReports = reports
-      .map((report) => {
-        const fightIds = (report.fights || [])
-          .filter((fight) => {
-            const zoneName = fight?.gameZone?.name || "";
-            return (
-              Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
-              Number(fight?.encounterID || 0) > 0
-            );
-          })
-          .map((fight) => Number(fight.id))
-          .filter((id) => Number.isInteger(id) && id > 0);
-        return { report, fightIds };
-      })
-      .filter((entry) => entry.fightIds.length > 0);
+  const reportData = await queryWcl(reportsQuery, { guildId, limit: reportLimit });
+  const reports = filterGuildRaidReports(reportData?.reportData?.reports?.data || []);
+  const trackedReports = reports
+    .map((report) => {
+      const raidName = primaryTrackedRaidNameFromReport(report);
+      const fightIds = (report.fights || [])
+        .filter((fight) => {
+          const zoneName = fight?.gameZone?.name || "";
+          return Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) && Number(fight?.encounterID || 0) > 0;
+        })
+        .map((fight) => Number(fight.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      const queryFightIds = [0, ...fightIds];
+      return { report, fightIds, queryFightIds, raidName };
+    })
+    .filter((entry) => entry.fightIds.length > 0);
 
-    const receivedItems = [];
-    const lootEventsCap = wclLootEventsLimit();
-    for (const { report, fightIds } of trackedReports.slice(0, wclPerReportDetailCap())) {
-      const lootQuery = `
-        query LootEvents($code: String!, $fightIds: [Int!], $lootLimit: Int!) {
-          reportData {
-            report(code: $code) {
-              events(fightIDs: $fightIds, dataType: All, limit: $lootLimit, filterExpression: "type='loot'") {
-                data
-              }
+  const receivedItems = [];
+  const lootEventsCap = wclLootEventsLimit();
+  for (const { report, queryFightIds, raidName } of trackedReports.slice(0, wclPerReportDetailCap())) {
+    const lootQuery = `
+      query LootEvents($code: String!, $fightIds: [Int!], $lootLimit: Int!, $startTime: Float) {
+        reportData {
+          report(code: $code) {
+            events(
+              dataType: All
+              fightIDs: $fightIds
+              limit: $lootLimit
+              startTime: $startTime
+              filterExpression: "type='loot'"
+            ) {
+              data
+              nextPageTimestamp
             }
           }
         }
-      `;
-      const events = [];
-      for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
-        const lootData = await queryWcl(lootQuery, {
-          code: report.code,
-          fightIds: chunk,
-          lootLimit: lootEventsCap,
-        });
-        events.push(...(lootData?.reportData?.report?.events?.data || []));
       }
-
-      for (const event of events) {
-        const itemId = Number(event?.itemID || event?.itemId || 0);
-        const recipient = String(event?.target?.name || event?.targetName || event?.name || "").trim();
-        receivedItems.push({
-          reportCode: report.code,
-          reportTitle: report.title,
-          reportStartTime: report.startTime,
-          itemId: itemId > 0 ? itemId : null,
-          itemName: event?.itemName || null,
-          recipient: recipient || null,
-          rawType: event?.type || null,
-        });
-      }
+    `;
+    const events = [];
+    let nextStart = null;
+    const seenPageStarts = new Set();
+    for (let page = 0; page < 8; page += 1) {
+      const lootData = await queryWcl(lootQuery, {
+        code: report.code,
+        fightIds: queryFightIds,
+        lootLimit: lootEventsCap,
+        startTime: nextStart,
+      });
+      const pageData = lootData?.reportData?.report?.events?.data || [];
+      events.push(...pageData);
+      const nextPage = lootData?.reportData?.report?.events?.nextPageTimestamp;
+      if (!Number.isFinite(Number(nextPage))) break;
+      const nextTs = Number(nextPage);
+      if (seenPageStarts.has(nextTs)) break;
+      seenPageStarts.add(nextTs);
+      nextStart = nextTs;
     }
 
-    return res.json({
-      guildId,
-      reportsChecked: trackedReports.length,
-      items: receivedItems,
-      note:
-        receivedItems.length === 0
-          ? "No loot receipt events were returned by Warcraft Logs for the checked reports."
-          : null,
+    for (const event of events) {
+      const itemId = Number(event?.itemID || event?.itemId || 0);
+      const recipient = String(event?.target?.name || event?.targetName || event?.name || "").trim();
+      if (!itemId && !event?.itemName) continue;
+      receivedItems.push({
+        reportCode: report.code,
+        reportTitle: report.title,
+        reportRaidName: raidName || null,
+        reportStartTime: report.startTime,
+        itemId: itemId > 0 ? itemId : null,
+        itemName: event?.itemName || null,
+        recipient: recipient || null,
+        rawType: event?.type || null,
+      });
+    }
+  }
+
+  const reportByDayKey = new Map();
+  const reportByCode = new Map();
+  for (const { report, raidName } of trackedReports) {
+    const dayKey = raidCalendarDayKey(Number(report?.startTime || 0));
+    const row = {
+      reportCode: report.code,
+      reportTitle: report.title,
+      reportRaidName: raidName || null,
+      reportStartTime: Number(report.startTime || 0),
+      reportUploader: report?.owner?.name ? String(report.owner.name) : null,
+    };
+    reportByCode.set(String(report.code), row);
+    if (!dayKey || reportByDayKey.has(dayKey)) continue;
+    reportByDayKey.set(dayKey, row);
+  }
+  const gargulItems = gargulLootState.entries
+    .filter((entry) => entry && typeof entry === "object" && entry.received !== false)
+    .map((entry) => gargulEntryToLootItem(entry, reportByDayKey, reportByCode))
+    .filter(Boolean);
+  const mergedItems = mergeLootItems(receivedItems, gargulItems);
+
+  const syntheticRaids = new Map();
+  for (const row of gargulItems) {
+    if (!row?.reportCode) continue;
+    if (syntheticRaids.has(row.reportCode)) continue;
+    syntheticRaids.set(row.reportCode, {
+      reportCode: row.reportCode,
+      reportTitle: row.reportTitle,
+      reportStartTime: Number(row.reportStartTime || 0),
     });
+  }
+
+  const allRaids = [
+    ...trackedReports.map(({ report, raidName }) => ({
+      reportCode: report.code,
+      reportTitle: report.title,
+      reportRaidName: raidName || null,
+      reportStartTime: Number(report.startTime || 0),
+      reportUploader: report?.owner?.name ? String(report.owner.name) : null,
+    })),
+    ...[...syntheticRaids.values()].filter(
+      (row) => !trackedReports.some(({ report }) => String(report.code) === String(row.reportCode))
+    ),
+  ];
+  const selectedSet = new Set((gargulLootState.selectedReportCodes || []).map((x) => String(x)));
+  const visibleRaids = selectedSet.size
+    ? allRaids.filter((raid) => selectedSet.has(String(raid.reportCode)))
+    : allRaids;
+  const visibleItems = selectedSet.size
+    ? mergedItems.filter((item) => selectedSet.has(String(item?.reportCode || "")))
+    : mergedItems;
+
+  return {
+    guildId,
+    reportsChecked: trackedReports.length,
+    selectedReportCodes: [...selectedSet],
+    raids: visibleRaids,
+    allRaids,
+    items: visibleItems,
+    note:
+      visibleItems.length === 0
+        ? "No loot receipt events were returned by Warcraft Logs, and no Gargul import data is stored yet."
+        : null,
+  };
+}
+
+app.get("/api/wcl/guild/:guildId/loot-received", async (req, res) => {
+  const guildId = Number(req.params.guildId);
+  const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
+  const forceRefresh = String(req.query.refresh || "") === "1";
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+  try {
+    const key = lootHistoryCacheKey(guildId, reportLimit);
+    const loader = () => fetchGuildLootReceived(guildId, reportLimit);
+    const payload = forceRefresh
+      ? await forceRefreshCachedPayload(key, loader)
+      : await getOrRefreshCachedPayload(key, {
+          ttlMs: lootHistoryCacheTtlMs(),
+          maxStaleMs: lootHistoryMaxStaleMs(),
+          loader,
+        });
+    return res.json(payload);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+app.get("/api/loot-history", async (req, res) => {
+  const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
+  const forceRefresh = String(req.query.refresh || "") === "1";
+  try {
+    const key = lootHistoryCacheKey(votingGuildId, reportLimit);
+    const loader = () => fetchGuildLootReceived(votingGuildId, reportLimit);
+    const payload = forceRefresh
+      ? await forceRefreshCachedPayload(key, loader)
+      : await getOrRefreshCachedPayload(key, {
+          ttlMs: lootHistoryCacheTtlMs(),
+          maxStaleMs: lootHistoryMaxStaleMs(),
+          loader,
+        });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+app.get("/api/wow-classic/items", async (req, res) => {
+  try {
+    const idsRaw = String(req.query.ids || "")
+      .split(",")
+      .map((x) => Number(String(x || "").trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    const uniqueIds = [...new Set(idsRaw)].slice(0, 80);
+    if (!uniqueIds.length) return res.json({ ok: true, items: [] });
+    const items = [];
+    for (const itemId of uniqueIds) {
+      const key = `item-meta-v2-${wowClassicRegion()}-${wowClassicNamespace()}-${wowClassicLocale()}-${itemId}`;
+      const payload = await getOrRefreshCachedPayload(key, {
+        ttlMs: itemMetadataCacheTtlMs(),
+        maxStaleMs: 30 * 24 * 3600_000,
+        loader: () => fetchClassicItemMetadata(itemId),
+      });
+      items.push(payload);
+    }
+    return res.json({ ok: true, items });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load item metadata" });
   }
 });
 
@@ -3021,10 +3621,14 @@ app.post("/api/wcl/mvp", async (req, res) => {
 
 app.listen(port, () => {
   console.log(`Fallen Tacticians API running on http://localhost:${port}`);
+  console.log(`Persistent data directory: ${dataDir}`);
   ensureVotingStore().catch((error) => {
     console.error("Failed to initialize voting store:", error?.message || error);
   });
   ensureP2MaterialsStore().catch((error) => {
     console.error("Failed to initialize P2 materials store:", error?.message || error);
+  });
+  ensureGargulLootHistoryStore().catch((error) => {
+    console.error("Failed to initialize Gargul loot history store:", error?.message || error);
   });
 });

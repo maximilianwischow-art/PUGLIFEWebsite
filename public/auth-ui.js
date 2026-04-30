@@ -41,6 +41,18 @@ async function mountAuthHeaderWidget() {
       await fetch("/auth/logout", { method: "POST", credentials: "include" });
       window.location.reload();
     });
+
+    const nav = document.querySelector(".top-nav");
+    if (payload?.isAdmin && nav && !nav.querySelector('a[href="/admin.html"]')) {
+      const a = document.createElement("a");
+      a.href = "/admin.html";
+      a.textContent = "Admin";
+      if ((window.location.pathname || "") === "/admin.html") {
+        a.className = "nav-current";
+        a.setAttribute("aria-current", "page");
+      }
+      nav.appendChild(a);
+    }
   } catch {
     renderLoggedOut();
   }

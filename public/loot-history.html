@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PUG LIFE BALANCE · P2 Preparation</title>
+    <title>PUG LIFE BALANCE · Loot History</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=20260428r" />
+    <link rel="stylesheet" href="/styles.css?v=20260430e" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -21,8 +21,8 @@
           <a href="/">Dashboard</a>
           <a href="/events.html">Events</a>
           <a href="/voting.html">Voting</a>
-          <a href="/loot-history.html">Loot History</a>
-          <a href="/p2-preparation.html" class="nav-current" aria-current="page">P2 Preparation</a>
+          <a href="/loot-history.html" class="nav-current" aria-current="page">Loot History</a>
+          <a href="/p2-preparation.html">P2 Preparation</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
         <div class="hero-divider" aria-hidden="true"></div>
@@ -30,35 +30,12 @@
 
       <main class="container">
         <section class="card">
-          <h2 class="section-title">P2 Preparation</h2>
-          <p class="subtle">
-            Nature resistance craft progress for Main Tank (Wildguard set + The Natural Ward + Pendant of Withering).
-          </p>
-          <div class="p2-overall">
-            <div class="p2-overall-label">Overall Progress</div>
-            <div class="p2-progress-bar"><span id="p2OverallBar"></span></div>
-            <div id="p2OverallText" class="p2-overall-text">0%</div>
-          </div>
+          <h2 class="section-title">Loot History</h2>
+          <p id="lootHistoryMeta" class="subtle">Loading loot history...</p>
         </section>
 
-        <section class="card">
-          <h3 class="section-title">Included Gear</h3>
-          <ul class="p2-gear-list">
-            <li>Wildguard Helm</li>
-            <li>Wildguard Breastplate</li>
-            <li>Wildguard Leggings</li>
-            <li>The Natural Ward (Ring)</li>
-            <li>Pendant of Withering (Neck)</li>
-          </ul>
-        </section>
-
-        <section class="card">
-          <h3 class="section-title">Material Tracker</h3>
-          <p class="subtle">
-            Starting values are prefilled from your screenshots; Felsteel is tracked as raw smelting materials
-            (Fel Iron Bar + Eternium Bar). Adjust current values anytime.
-          </p>
-          <div id="p2Table" class="p2-table-wrap"></div>
+        <section id="lootHistoryList" class="loot-history-list" aria-live="polite">
+          <article class="card"><p class="subtle">Loading...</p></article>
         </section>
       </main>
 
@@ -73,8 +50,8 @@
     </div>
 
     <script src="/home.js?v=20260428d"></script>
+    <script src="/loot-history.js?v=20260430g"></script>
     <script src="/auth-ui.js?v=20260428g"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
-    <script src="/p2-preparation.js?v=20260428t"></script>
   </body>
 </html>

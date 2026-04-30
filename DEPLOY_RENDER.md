@@ -36,6 +36,20 @@ In Render dashboard -> service -> Environment, set:
 - `RAID_HELPER_API_KEY`
 - `RAID_HELPER_SERVER_ID`
 - `RAID_HELPER_DEFAULT_EVENT_ID` (optional)
+- `AUTH_SESSION_SECRET` (required in production)
+- `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (if voting login is enabled)
+- `PUBLIC_BASE_URL` (your Render service URL, e.g. `https://fallen-tacticians-api.onrender.com`)
+
+### Persistent voting/P2 storage (Starter+)
+
+To keep `mvp-votes.json` and `p2-materials.json` across deploys/restarts:
+
+1. In Render service settings, add a **Persistent Disk** (Starter plan supports this).
+2. Set the mount path (recommended: `/var/data`).
+3. In environment variables, set:
+   - `DATA_DIR=/var/data`
+
+If you skip `DATA_DIR`, the app will still try to use `RENDER_DISK_MOUNT_PATH` automatically when present.
 
 Notes:
 - `PORT` is handled by Render automatically; do not hardcode your local port in production logic.

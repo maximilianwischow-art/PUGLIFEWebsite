@@ -1992,6 +1992,270 @@ button.raid-cal-run.raid-cal-run--column:hover {
   color: var(--text);
 }
 
+.loot-history-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.loot-raid-card {
+  padding: 16px 18px;
+}
+
+.loot-raid-head h3 {
+  margin: 0;
+  font-family: "Morpheus", serif;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.loot-raid-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.loot-raid-head-main {
+  min-width: 0;
+}
+
+.loot-expand-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(168, 85, 247, 0.55);
+  background: rgba(13, 10, 20, 0.5);
+  color: #f7f2ff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.loot-item-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+[data-loot-body][hidden] {
+  display: none !important;
+}
+
+.loot-item-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(24, 21, 32, 0.8);
+  padding: 10px 12px;
+}
+
+.loot-item-name {
+  font-weight: 700;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.loot-item-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
+  object-fit: cover;
+}
+
+.loot-item-icon--fallback {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.loot-tooltip-panel {
+  position: fixed;
+  z-index: 120;
+  max-width: min(420px, calc(100vw - 24px));
+  pointer-events: none;
+  border: 1px solid rgba(145, 112, 255, 0.55);
+  border-radius: 8px;
+  background: rgba(10, 8, 16, 0.96);
+  box-shadow:
+    0 12px 34px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 196, 255, 0.08) inset;
+  padding: 10px 12px;
+  color: #ddd7f7;
+}
+
+.loot-tooltip-line {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.loot-tooltip-wowhead table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.loot-tooltip-wowhead td,
+.loot-tooltip-wowhead th {
+  font-size: 12px;
+  line-height: 1.32;
+  color: #ddd7f7;
+}
+
+.loot-tooltip-wowhead .q0 {
+  color: #9d9d9d;
+}
+
+.loot-tooltip-wowhead .q1 {
+  color: #ffffff;
+}
+
+.loot-tooltip-wowhead .q2 {
+  color: #1eff00;
+}
+
+.loot-tooltip-wowhead .q3 {
+  color: #0070dd;
+}
+
+.loot-tooltip-wowhead .q4 {
+  color: #a335ee;
+}
+
+.loot-tooltip-wowhead .q5 {
+  color: #ff8000;
+}
+
+.loot-item-recipients {
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.loot-recipient-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: rgba(13, 10, 20, 0.5);
+}
+
+.loot-roll-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--yellow);
+}
+
+.admin-textarea {
+  width: 100%;
+  min-height: 180px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(13, 10, 20, 0.55);
+  color: var(--text);
+  padding: 10px 12px;
+  font-family: "Inter", sans-serif;
+  font-size: 12px;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-actions--tight {
+  margin-top: 0;
+}
+
+.admin-grid-note {
+  margin-top: 8px;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.admin-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-table th {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.admin-input {
+  width: 100%;
+  min-width: 96px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(13, 10, 20, 0.5);
+  color: var(--text);
+  padding: 6px 8px;
+}
+
+.admin-events-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-event-block.card {
+  margin-top: 0;
+  padding: 12px 14px;
+}
+
+.admin-event-title {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--purple-l);
+}
+
+.admin-event-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-event-toolbar {
+  margin-top: 10px;
+}
+
+[data-admin-loot-body][hidden] {
+  display: none !important;
+}
+
 @media (max-width: 1120px) {
   .auth-top-right {
     top: 10px;
@@ -2088,6 +2352,10 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
   .hof-votes {
     grid-column: 1 / -1;
+  }
+
+  .loot-item-row {
+    grid-template-columns: 1fr;
   }
 
   .voting-actions {
