@@ -7,6 +7,7 @@ import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 
 dotenv.config({ override: true });
@@ -153,7 +154,25 @@ const authSessions = new Map();
 const oauthStates = new Map();
 const votingGuildId = Number(process.env.VOTING_GUILD_ID || 817080);
 const renderDiskMountPath = process.env.RENDER_DISK_MOUNT_PATH?.trim() || "";
-const dataDir = process.env.DATA_DIR?.trim() || renderDiskMountPath || path.join(__dirname, "data");
+const configuredDataDir = process.env.DATA_DIR?.trim() || "";
+const defaultDataDir = path.join(__dirname, "data");
+const tmpFallbackDataDir = path.join(process.env.TMPDIR || "/tmp", "fallen-tacticians-data");
+let dataDir = configuredDataDir || renderDiskMountPath || defaultDataDir;
+try {
+  mkdirSync(dataDir, { recursive: true });
+} catch {
+  dataDir = defaultDataDir;
+  try {
+    mkdirSync(dataDir, { recursive: true });
+  } catch {
+    dataDir = tmpFallbackDataDir;
+    try {
+      mkdirSync(dataDir, { recursive: true });
+    } catch {
+      // If this still fails, downstream store initialization will surface the runtime error.
+    }
+  }
+}
 const votingStorePath = path.join(dataDir, "mvp-votes.json");
 let votingStoreReady = null;
 let votingWriteChain = Promise.resolve();
