@@ -1917,7 +1917,7 @@ function raidHelperClassNameFromSignUpEntry(entry) {
 function wclGuildReportsCacheTtlMs() {
   const n = Number(process.env.WCL_GUILD_REPORTS_CACHE_MS);
   if (Number.isFinite(n) && n >= 0) return Math.min(600_000, n);
-  return 45_000;
+  return 180_000;
 }
 
 const GUILD_REPORTS_QUERY_DASHBOARD = `

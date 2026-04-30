@@ -19,6 +19,8 @@ const dashboardPbRow = document.querySelector("#dashboardPbRow");
 const dashboardRosterBlock = document.querySelector("#dashboardRosterBlock");
 const GUILD_ID = 817080;
 const IMAGE_ASSET_VERSION = "20260428f";
+const DASHBOARD_REPORT_LIMIT = 25;
+const DASHBOARD_CALENDAR_LIMIT = 60;
 const potrRaidBanner = document.querySelector("#potrRaidBanner");
 const potrRaidName = document.querySelector("#potrRaidName");
 const potrRaidDate = document.querySelector("#potrRaidDate");
@@ -449,7 +451,7 @@ async function loadRecentRaidsCalendar() {
   if (!raidCalendarGrid) return;
   raidCalendarGrid.innerHTML = '<div class="subtle">Loading…</div>';
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=120`);
+    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=${DASHBOARD_CALENDAR_LIMIT}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to fetch raid calendar");
@@ -507,7 +509,7 @@ function buildBestTimeRow(boss) {
 async function loadBossTimes() {
   setStatus("Loading best kill times...");
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/boss-times?limit=50`);
+    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/boss-times?limit=${DASHBOARD_REPORT_LIMIT}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to fetch boss times");
@@ -591,7 +593,7 @@ function renderPotrRaidStrip(raid) {
 
 async function loadLatestRaidMvp() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/latest-raid-mvp?limit=20`);
+    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/latest-raid-mvp?limit=15`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to fetch latest raid MVP");
@@ -619,7 +621,7 @@ async function loadLatestRaidMvp() {
 
 async function loadDeathLeaderboard() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/death-leaderboard?limit=50`);
+    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/death-leaderboard?limit=${DASHBOARD_REPORT_LIMIT}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to fetch death leaderboard");
@@ -648,7 +650,7 @@ async function loadDeathLeaderboard() {
 
 async function loadAttendanceTracker() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/attendance?limit=40&top=12`);
+    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/attendance?limit=${DASHBOARD_REPORT_LIMIT}&top=12`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to fetch attendance");
@@ -686,7 +688,7 @@ async function loadAttendanceTracker() {
 
 async function loadDeathEncounterHeatmap() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/death-encounter-heatmap?limit=50`);
+    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/death-encounter-heatmap?limit=${DASHBOARD_REPORT_LIMIT}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to fetch death encounter heatmap");

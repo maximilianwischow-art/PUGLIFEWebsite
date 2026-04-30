@@ -327,7 +327,7 @@ async function loadAdminData() {
   }
   status(`Logged in as ${me?.user?.globalName || me?.user?.username || "Admin"}`);
   const gargul = await getJson("/api/loot-history/gargul");
-  const loot = await getJson("/api/loot-history?limit=40&refresh=1");
+  const loot = await getJson("/api/loot-history?limit=25");
   const p2 = await getJson("/api/p2-preparation/materials");
   allRaidsState = Array.isArray(loot?.allRaids) ? loot.allRaids : Array.isArray(loot?.raids) ? loot.raids : [];
   selectedReportCodesState = new Set(Array.isArray(gargul?.selectedReportCodes) ? gargul.selectedReportCodes : []);
