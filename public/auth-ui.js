@@ -43,6 +43,16 @@ async function mountAuthHeaderWidget() {
     });
 
     const nav = document.querySelector(".top-nav");
+    if (nav && !nav.querySelector('a[href="/nether-vortex.html"]')) {
+      const vortex = document.createElement("a");
+      vortex.href = "/nether-vortex.html";
+      vortex.textContent = "Nether Vortex";
+      if ((window.location.pathname || "") === "/nether-vortex.html") {
+        vortex.className = "nav-current";
+        vortex.setAttribute("aria-current", "page");
+      }
+      nav.appendChild(vortex);
+    }
     if (nav && !nav.querySelector('a[href="/admin.html"]')) {
       const a = document.createElement("a");
       a.href = "/admin.html";

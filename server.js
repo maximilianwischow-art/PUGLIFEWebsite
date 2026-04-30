@@ -97,6 +97,7 @@ app.use(
 const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
 const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
+const WOWHEAD_TBC_NETHER_VORTEX_URL = "https://www.wowhead.com/tbc/item=30183/nether-vortex#reagent-for";
 const RAID_HELPER_API_URL = "https://raid-helper.xyz/api/v4";
 const DEFAULT_TBC_ZONES = [
   "Karazhan",
@@ -178,6 +179,7 @@ let votingWriteChain = Promise.resolve();
 let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
+const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 const apiCacheDir = path.join(dataDir, "cache");
 const apiResponseCache = new Map();
 const apiResponseInflight = new Map();
@@ -185,7 +187,10 @@ let p2MaterialsReady = null;
 let p2MaterialsWriteChain = Promise.resolve();
 let gargulLootReady = null;
 let gargulLootWriteChain = Promise.resolve();
+let netherVortexReady = null;
+let netherVortexWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
+let netherVortexState = { entries: [] };
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
   { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
@@ -262,6 +267,12 @@ function lootHistoryCacheTtlMs() {
   const n = Number(process.env.LOOT_HISTORY_CACHE_MS);
   if (Number.isFinite(n) && n >= 0) return Math.min(3600_000, n);
   return 120_000;
+}
+
+function votingRoundCacheTtlMs() {
+  const n = Number(process.env.VOTING_ROUND_CACHE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(15 * 60_000, n);
+  return 90_000;
 }
 
 function wowClassicRegion() {
@@ -529,7 +540,7 @@ function votingHallOfFame(currentRoundKey, limit = 8) {
 
 async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureVotingStore();
-  const voting = await getLatestRaidVotingPayload(guildId);
+  const voting = await getCurrentVotingRoundCached(guildId);
   const currentRoundKey = voting?.roundKey || "";
   return votingHallOfFame(currentRoundKey, limit);
 }
@@ -710,6 +721,89 @@ async function ensureGargulLootHistoryStore() {
   return gargulLootReady;
 }
 
+async function persistNetherVortexStore() {
+  const tmpPath = `${netherVortexNeedsPath}.tmp`;
+  const json = JSON.stringify(netherVortexState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, netherVortexNeedsPath);
+}
+
+async function ensureNetherVortexStore() {
+  if (netherVortexReady) return netherVortexReady;
+  netherVortexReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(netherVortexNeedsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+      netherVortexState = {
+        entries: Array.isArray(list) ? list.filter((row) => row && typeof row === "object") : [],
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      netherVortexState = { entries: [] };
+      await persistNetherVortexStore();
+    }
+  })();
+  return netherVortexReady;
+}
+
+function sanitizeNetherVortexItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((row) => {
+      if (typeof row === "string") {
+        return { itemName: String(row || "").trim(), profession: "" };
+      }
+      if (!row || typeof row !== "object") return null;
+      return {
+        itemID: Number(row.itemID || row.itemId || 0),
+        itemName: String(row.itemName || row.name || "").trim(),
+        profession: String(row.profession || "").trim(),
+      };
+    })
+    .map((row) => (row ? { ...row, itemID: Number.isFinite(Number(row.itemID)) ? Math.max(0, Number(row.itemID)) : 0 } : null))
+    .filter((row) => row && row.itemName)
+    .slice(0, 30);
+}
+
+function parseWowheadReagentForItems(html) {
+  const text = String(html || "");
+  const listviewBlocks = [...text.matchAll(/new Listview\(\{([\s\S]*?)\}\);/gi)].map((m) => m?.[1] || "");
+  const candidate =
+    listviewBlocks.find((block) => /id:\s*['"]reagent[-_]?for['"]/i.test(block)) ||
+    listviewBlocks.find((block) => /name:\s*WH\.TERMS\.reagentfor/i.test(block)) ||
+    "";
+  if (!candidate) return [];
+  const dataMatch = candidate.match(/data:\s*(\[[\s\S]*\])\s*$/i) || candidate.match(/data:\s*(\[[\s\S]*?\])\s*,/i);
+  if (!dataMatch?.[1]) return [];
+  let parsed = [];
+  try {
+    parsed = JSON.parse(dataMatch[1]);
+  } catch {
+    // Fallback: parse id/name pairs directly from JS-like payload.
+    const fallback = [];
+    const rx = /"id"\s*:\s*(\d+)[\s\S]*?"name"\s*:\s*"((?:\\.|[^"\\])+)"/gi;
+    let m;
+    while ((m = rx.exec(candidate))) {
+      const itemID = Number(m[1] || 0);
+      const itemName = String(m[2] || "").replace(/\\"/g, '"').trim();
+      if (itemID > 0 && itemName) fallback.push({ itemID, itemName, profession: "" });
+    }
+    return fallback
+      .filter((row, idx, arr) => arr.findIndex((x) => x.itemID === row.itemID) === idx)
+      .sort((a, b) => a.itemName.localeCompare(b.itemName));
+  }
+  return parsed
+    .map((row) => ({
+      itemID: Number(row?.id || 0),
+      itemName: String(row?.name || "").trim(),
+      profession: String(row?.reqskill || row?.skill || "").trim(),
+    }))
+    .filter((row) => row.itemID > 0 && row.itemName)
+    .sort((a, b) => a.itemName.localeCompare(b.itemName));
+}
+
 function normalizeGargulItemName(itemLink, fallback) {
   const link = String(itemLink || "").trim();
   const m = link.match(/\[(.+?)\]/);
@@ -805,6 +899,10 @@ app.get("/p2-preparation.html", (_req, res) => {
 
 app.get("/loot-history.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "loot-history.html"));
+});
+
+app.get("/nether-vortex.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "nether-vortex.html"));
 });
 
 app.get("/admin.html", (req, res) => {
@@ -962,6 +1060,91 @@ app.get("/api/p2-preparation/materials", async (req, res) => {
   }
 });
 
+app.get("/api/nether-vortex/needs", async (req, res) => {
+  try {
+    await ensureNetherVortexStore();
+    const session = getSessionFromRequest(req);
+    const userId = String(session?.user?.id || "").trim();
+    const rows = [...(netherVortexState.entries || [])]
+      .map((row) => ({
+        userId: String(row.userId || ""),
+        displayName: String(row.displayName || "Unknown"),
+        neededCount: Math.max(0, Number(row.neededCount || 0)),
+        items: sanitizeNetherVortexItems(row.items),
+        updatedAt: Number(row.updatedAt || 0),
+      }))
+      .filter((row) => row.userId)
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    const myEntry = userId ? rows.find((row) => row.userId === userId) || null : null;
+    const totalNeeded = rows.reduce((sum, row) => sum + Math.max(0, Number(row.neededCount || 0)), 0);
+    return res.json({
+      ok: true,
+      authenticated: Boolean(userId),
+      entries: rows,
+      myEntry,
+      totalNeeded,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Nether Vortex tracker" });
+  }
+});
+
+app.get("/api/nether-vortex/craftables", async (_req, res) => {
+  try {
+    const key = "nether-vortex-craftables-v2";
+    const payload = await getOrRefreshCachedPayload(key, {
+      ttlMs: 24 * 3600_000,
+      maxStaleMs: 7 * 24 * 3600_000,
+      loader: async () => {
+        const wowheadRes = await fetch(WOWHEAD_TBC_NETHER_VORTEX_URL, {
+          headers: { "User-Agent": "fallen-tacticians-api/1.0 (+nether-vortex-tracker)" },
+        });
+        if (!wowheadRes.ok) {
+          throw new Error(`Failed to fetch Wowhead craftables (${wowheadRes.status})`);
+        }
+        const html = await wowheadRes.text();
+        const items = parseWowheadReagentForItems(html);
+        if (!items.length) {
+          throw new Error("Could not parse craftable items from Wowhead reagent-for list");
+        }
+        return { source: WOWHEAD_TBC_NETHER_VORTEX_URL, items };
+      },
+    });
+    return res.json({ ok: true, ...payload });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load craftable items" });
+  }
+});
+
+app.put("/api/nether-vortex/needs/my", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.status(401).json({ ok: false, error: "Login required" });
+    }
+    const neededCountRaw = Number(req.body?.neededCount);
+    const neededCount = Number.isFinite(neededCountRaw) ? Math.max(0, Math.floor(neededCountRaw)) : 0;
+    const items = sanitizeNetherVortexItems(req.body?.items);
+    await ensureNetherVortexStore();
+    // Recover from a prior rejected persist so the queue does not stay broken forever.
+    netherVortexWriteChain = netherVortexWriteChain.catch(() => {}).then(async () => {
+      const userId = String(session.user.id || "");
+      const displayName = String(session.user.globalName || session.user.username || "Unknown");
+      const nextEntry = { userId, displayName, neededCount, items, updatedAt: Date.now() };
+      const prev = netherVortexState.entries || [];
+      const idx = prev.findIndex((row) => String(row?.userId || "") === userId);
+      if (idx >= 0) prev[idx] = nextEntry;
+      else prev.push(nextEntry);
+      netherVortexState.entries = prev;
+      await persistNetherVortexStore();
+    });
+    await netherVortexWriteChain;
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save Nether Vortex need" });
+  }
+});
+
 app.put("/api/p2-preparation/materials/current", async (req, res) => {
   try {
     const session = getSessionFromRequest(req);
@@ -1083,7 +1266,7 @@ app.get("/api/voting/current", async (req, res) => {
       return res.status(401).json({ ok: false, error: "Login required" });
     }
 
-    const voting = await getLatestRaidVotingPayload(votingGuildId);
+    const voting = await getCurrentVotingRoundCached(votingGuildId);
     if (!voting) {
       return res.status(404).json({ ok: false, error: "No recent tracked raid found" });
     }
@@ -1110,7 +1293,7 @@ app.get("/api/voting/current", async (req, res) => {
       },
       myVote: myVoteRow?.candidateName || null,
       candidates,
-      hallOfFame: await getHallOfFameForGuild(votingGuildId, 10),
+      hallOfFame: votingHallOfFame(voting.roundKey, 10),
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load voting round" });
@@ -1129,7 +1312,7 @@ app.post("/api/voting/vote", async (req, res) => {
       return res.status(400).json({ ok: false, error: "candidateName is required" });
     }
 
-    const voting = await getLatestRaidVotingPayload(votingGuildId);
+    const voting = await getCurrentVotingRoundCached(votingGuildId);
     if (!voting) {
       return res.status(404).json({ ok: false, error: "No recent tracked raid found" });
     }
@@ -1726,6 +1909,16 @@ async function getLatestRaidVotingPayload(guildId) {
     startTime,
     candidates,
   };
+}
+
+async function getCurrentVotingRoundCached(guildId) {
+  const key = `voting-round-v1-${Number(guildId)}`;
+  const ttlMs = votingRoundCacheTtlMs();
+  return getOrRefreshCachedPayload(key, {
+    ttlMs,
+    maxStaleMs: Math.max(ttlMs * 10, 15 * 60_000),
+    loader: async () => getLatestRaidVotingPayload(guildId),
+  });
 }
 
 function bossListMatchesFightName(bossNames, fightName) {
@@ -3702,5 +3895,8 @@ app.listen(port, () => {
   });
   ensureGargulLootHistoryStore().catch((error) => {
     console.error("Failed to initialize Gargul loot history store:", error?.message || error);
+  });
+  ensureNetherVortexStore().catch((error) => {
+    console.error("Failed to initialize Nether Vortex store:", error?.message || error);
   });
 });

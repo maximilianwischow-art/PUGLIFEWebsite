@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PUG LIFE BALANCE · Nether Vortex</title>
+    <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
+    <link rel="stylesheet" href="/styles.css?v=20260430f" />
+  </head>
+  <body>
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/home.html">Home</a>
+          <a href="/">Dashboard</a>
+          <a href="/events.html">Events</a>
+          <a href="/voting.html">Voting</a>
+          <a href="/loot-history.html">Loot History</a>
+          <a href="/p2-preparation.html">P2 Preparation</a>
+        </nav>
+        <div class="auth-top-right" data-auth-widget></div>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container">
+        <section class="card">
+          <h2 class="section-title">Nether Vortex Tracker</h2>
+          <p id="vortexMeta" class="subtle">Loading tracker...</p>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">Your Need</h3>
+          <p class="subtle">Share how many Nether Vortex you still need and what items you want crafted.</p>
+          <div id="vortexAuthNotice" class="subtle"></div>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <tbody>
+                <tr>
+                  <td><strong>Needed Count</strong></td>
+                  <td><input id="vortexNeededCount" class="admin-input" type="number" min="0" step="1" value="0" /></td>
+                </tr>
+                <tr>
+                  <td><strong>Craftable Items</strong></td>
+                  <td>
+                    <div class="admin-actions admin-actions--tight">
+                      <input
+                        id="vortexCraftableSearch"
+                        class="admin-input"
+                        type="text"
+                        placeholder="Search craftable item..."
+                      />
+                      <select id="vortexCraftableSelect" class="admin-input" style="min-width: 260px;"></select>
+                      <button type="button" class="event-signup-btn event-signup-btn--softres" id="vortexAddItemBtn">Add Item</button>
+                    </div>
+                    <div id="vortexSelectedItems" class="loot-item-recipients" style="margin-top:10px;"></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="admin-actions">
+            <button type="button" class="event-signup-btn" id="vortexSaveBtn">Save Need</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">Guild Needs</h3>
+          <div id="vortexList" class="admin-grid-note">Loading entries...</div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"We may fall — but we rise as Tacticians."</em></p>
+        <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
+        <p class="footer-legal-links"><a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a></p>
+      </footer>
+    </div>
+
+    <script src="/home.js?v=20260428d"></script>
+    <script src="/auth-ui.js?v=20260430f"></script>
+    <script src="/cookie-notice.js?v=20260428p"></script>
+    <script src="/nether-vortex.js?v=20260430g"></script>
+  </body>
+</html>
