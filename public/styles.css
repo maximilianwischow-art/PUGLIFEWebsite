@@ -1193,6 +1193,24 @@ body::before {
   box-shadow: none;
 }
 
+.event-signup-btn[data-feedback-active="1"][data-feedback-tone="loading"] {
+  opacity: 0.85;
+}
+
+.event-signup-btn[data-feedback-active="1"][data-feedback-tone="success"] {
+  border-color: rgba(110, 231, 183, 0.7);
+  box-shadow:
+    0 4px 20px rgba(16, 185, 129, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.event-signup-btn[data-feedback-active="1"][data-feedback-tone="error"] {
+  border-color: rgba(248, 113, 113, 0.7);
+  box-shadow:
+    0 4px 20px rgba(248, 113, 113, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
 .event-links {
   display: flex;
   flex-direction: column;

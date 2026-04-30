@@ -33,6 +33,45 @@ function status(msg) {
   if (el) el.textContent = msg;
 }
 
+function setButtonFeedback(btn, text, tone = "info") {
+  if (!btn) return;
+  btn.setAttribute("data-feedback-tone", tone);
+  btn.setAttribute("data-feedback-active", "1");
+  btn.textContent = text;
+}
+
+function resetButtonFeedback(btn, defaultText) {
+  if (!btn) return;
+  btn.removeAttribute("data-feedback-tone");
+  btn.removeAttribute("data-feedback-active");
+  btn.textContent = defaultText;
+}
+
+async function runWithButtonFeedback(btn, labels, run) {
+  if (!btn) return run();
+  const {
+    idle = btn.textContent || "Run",
+    loading = "Working...",
+    success = "Done",
+    failure = "Failed",
+  } = labels || {};
+  btn.disabled = true;
+  setButtonFeedback(btn, loading, "loading");
+  try {
+    const out = await run();
+    setButtonFeedback(btn, success, "success");
+    return out;
+  } catch (error) {
+    setButtonFeedback(btn, failure, "error");
+    throw error;
+  } finally {
+    window.setTimeout(() => {
+      btn.disabled = false;
+      resetButtonFeedback(btn, idle);
+    }, 1200);
+  }
+}
+
 function raidLabel(raid) {
   const title = String(raid?.reportTitle || raid?.reportCode || "Raid");
   const dt = fmtTs(raid?.reportStartTime);
@@ -315,9 +354,16 @@ async function importJsonFromTextarea() {
 }
 
 document.getElementById("gargulImportBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("gargulImportBtn");
   try {
-    await importJsonFromTextarea();
-    await loadAdminData();
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Import JSON", loading: "Importing...", success: "Import complete", failure: "Import failed" },
+      async () => {
+        await importJsonFromTextarea();
+        await loadAdminData();
+      }
+    );
     status("Gargul loot imported successfully.");
   } catch (error) {
     status(error?.message || "Import failed");
@@ -325,8 +371,15 @@ document.getElementById("gargulImportBtn")?.addEventListener("click", async () =
 });
 
 document.getElementById("gargulReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("gargulReloadBtn");
   try {
-    await loadAdminData();
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload Entries", loading: "Reloading...", success: "Reloaded", failure: "Reload failed" },
+      async () => {
+        await loadAdminData();
+      }
+    );
     status("Reloaded admin data.");
   } catch (error) {
     status(error?.message || "Reload failed");
@@ -334,13 +387,20 @@ document.getElementById("gargulReloadBtn")?.addEventListener("click", async () =
 });
 
 document.getElementById("gargulSaveBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("gargulSaveBtn");
   try {
     const entries = readLootEditorEntries();
-    await getJson("/api/loot-history/gargul/entries", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entries }),
-    });
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Save Corrections", loading: "Saving...", success: "Saved", failure: "Save failed" },
+      async () => {
+        await getJson("/api/loot-history/gargul/entries", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries }),
+        });
+      }
+    );
     status(`Saved ${entries.length} loot entries.`);
   } catch (error) {
     status(error?.message || "Save failed");
@@ -348,15 +408,22 @@ document.getElementById("gargulSaveBtn")?.addEventListener("click", async () => 
 });
 
 document.getElementById("saveEventSelectionBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("saveEventSelectionBtn");
   try {
     const checked = [...document.querySelectorAll("[data-event-report]:checked")].map((el) =>
       String(el.getAttribute("data-event-report") || "").trim()
     );
-    await getJson("/api/loot-history/events/selection", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reportCodes: checked }),
-    });
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Save Event Selection", loading: "Saving...", success: "Events updated", failure: "Update failed" },
+      async () => {
+        await getJson("/api/loot-history/events/selection", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reportCodes: checked }),
+        });
+      }
+    );
     selectedReportCodesState = new Set(checked);
     status(`Saved event visibility (${checked.length} selected).`);
   } catch (error) {

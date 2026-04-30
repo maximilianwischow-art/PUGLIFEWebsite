@@ -43,7 +43,7 @@ async function mountAuthHeaderWidget() {
     });
 
     const nav = document.querySelector(".top-nav");
-    if (payload?.isAdmin && nav && !nav.querySelector('a[href="/admin.html"]')) {
+    if (nav && !nav.querySelector('a[href="/admin.html"]')) {
       const a = document.createElement("a");
       a.href = "/admin.html";
       a.textContent = "Admin";
