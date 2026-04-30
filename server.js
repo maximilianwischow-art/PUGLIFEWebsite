@@ -595,6 +595,26 @@ function isP2Editor(session) {
   return nameCandidates.some((n) => p2EditorNames().includes(n));
 }
 
+function p2EditorDebug(session) {
+  const configuredIds = p2EditorIds();
+  const configuredNames = p2EditorNames();
+  const userId = String(session?.user?.id || "").trim();
+  const normalizedNames = [session?.user?.globalName, session?.user?.username]
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+  const matchedById = Boolean(userId && configuredIds.includes(userId));
+  const matchedByName = normalizedNames.some((name) => configuredNames.includes(name));
+  return {
+    isAdmin: matchedById || matchedByName,
+    matchedById,
+    matchedByName,
+    userId,
+    normalizedNames,
+    configuredIdsCount: configuredIds.length,
+    configuredNames,
+  };
+}
+
 function requireAdminSession(req, res) {
   const session = getSessionFromRequest(req);
   if (!session?.user?.id) {
@@ -879,6 +899,18 @@ app.get("/api/auth/me", (req, res) => {
     isAdmin: isP2Editor(session),
     user: session.user,
     guildId: session.guildId || null,
+  });
+});
+
+app.get("/api/admin/health", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.status(401).json({ ok: false, error: "Login required" });
+  }
+  return res.json({
+    ok: true,
+    authenticated: true,
+    ...p2EditorDebug(session),
   });
 });
 
