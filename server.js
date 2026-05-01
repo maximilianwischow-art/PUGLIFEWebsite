@@ -1693,6 +1693,44 @@ function normalizeWowItemIconUrl(iconUrl) {
   return s;
 }
 
+/** Spell media icon URL from Battle.net `static-classic-*` namespace (TBC Classic game data). */
+async function fetchClassicSpellIcon(spellId) {
+  const id = Number(spellId || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  try {
+    const token = await getBlizzardAccessToken();
+    const namespace = wowClassicNamespace();
+    const locale = wowClassicLocale();
+    const base = blizzardApiBaseUrl();
+    const url = `${base}/data/wow/media/spell/${id}?namespace=${encodeURIComponent(namespace)}&locale=${encodeURIComponent(locale)}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const mediaData = await res.json().catch(() => ({}));
+    const mediaAssets = Array.isArray(mediaData?.assets) ? mediaData.assets : [];
+    let rawIcon = mediaAssets.find((a) => String(a?.key || "").toLowerCase() === "icon")?.value || null;
+    if (!rawIcon) {
+      rawIcon =
+        mediaAssets.find((a) => /\.(jpg|png)(?:\?|$)/i.test(String(a?.value || "")))?.value || null;
+    }
+    if (!rawIcon) rawIcon = mediaAssets[0]?.value || null;
+    if (!rawIcon) return null;
+    return normalizeWowItemIconUrl(rawIcon) || rawIcon;
+  } catch {
+    return null;
+  }
+}
+
+async function getCachedClassicSpellIcon(spellId) {
+  const id = Number(spellId || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const key = `spell-icon-v1-${wowClassicRegion()}-${wowClassicNamespace()}-${id}`;
+  return getOrRefreshCachedPayload(key, {
+    ttlMs: 7 * 24 * 3600_000,
+    maxStaleMs: 60 * 24 * 3600_000,
+    loader: () => fetchClassicSpellIcon(id),
+  });
+}
+
 async function fetchClassicItemMetadata(itemId) {
   const id = Number(itemId || 0);
   if (!Number.isInteger(id) || id <= 0) return { itemId: id || null };
@@ -2320,6 +2358,206 @@ function raidHelperGenderFromSignUpEntry(entry) {
   return "";
 }
 
+/** Canonical labels for roster grouping + stats (RH sends Tank/Tanks, DE Schutz, etc.). */
+function normalizeRaidHelperRoleLabel(roleName) {
+  const raw = String(roleName || "").trim();
+  const low = raw.toLowerCase();
+  if (low === "tank" || low === "tanks" || low === "schutz") return "Tanks";
+  if (low === "healer" || low === "healers") return "Healers";
+  if (low === "melee" || low === "mdps") return "Melee";
+  if (low === "ranged" || low === "rdps" || low === "caster" || low === "casters") return "Ranged";
+  return raw;
+}
+
+/** Realm/server from Raid-Helper signup row (field names vary). Used with Raider.io / Blizzard profile. */
+function raidHelperRealmFromSignUpEntry(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const candidates = [
+    entry.realm,
+    entry.realmName,
+    entry.characterRealm,
+    entry.server,
+    entry.serverName,
+    entry.world,
+    entry.realmSlug,
+    entry.homeRealm,
+    entry.character?.realm,
+    entry.character?.realmName,
+    entry.wowRealm,
+    entry.wowServer,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (s && !/^\d+$/.test(s)) return s;
+  }
+  return "";
+}
+
+function defaultWowRealmForRoster() {
+  return String(process.env.WOW_GUILD_REALM || process.env.WOW_DEFAULT_REALM || "").trim();
+}
+
+function wowRosterRegion() {
+  return String(process.env.WOW_PROFILE_REGION || process.env.BLIZZARD_REGION || "eu")
+    .trim()
+    .toLowerCase() || "eu";
+}
+
+function wowRealmSlugForLookup(realmRaw) {
+  return String(realmRaw || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function raiderIoClassicApiBase() {
+  return String(process.env.RAIDER_IO_CLASSIC_API_BASE || "https://classic.raider.io/api/v1").replace(/\/$/, "");
+}
+
+function blizzardProfileClientConfigured() {
+  return Boolean(process.env.BLIZZARD_CLIENT_ID?.trim() && process.env.BLIZZARD_CLIENT_SECRET?.trim());
+}
+
+function wowExternalSpecLookupEnabled() {
+  const v = String(process.env.WOW_EXTERNAL_SPEC_LOOKUP || "").trim().toLowerCase();
+  if (v === "0" || v === "false" || v === "off" || v === "no") return false;
+  return true;
+}
+
+async function loadRaiderIoClassicProfileRaw(region, realmSlug, characterName) {
+  const base = raiderIoClassicApiBase();
+  const url = new URL(`${base}/characters/profile`);
+  url.searchParams.set("region", region);
+  url.searchParams.set("realm", realmSlug);
+  url.searchParams.set("name", characterName);
+  url.searchParams.append("fields", "gear");
+  const res = await fetch(url.toString(), {
+    headers: { "User-Agent": "fallen-tacticians-api/1.0 (+roster spec)" },
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  if (!data || typeof data !== "object" || Number(data.statusCode) >= 400) return null;
+  return data;
+}
+
+function specNameFromRaiderIoClassicProfile(data) {
+  if (!data || typeof data !== "object") return null;
+  const direct =
+    data.active_spec_name ||
+    data.activeSpecName ||
+    data.active_spec_name_classic ||
+    data.spec_name ||
+    data.activeSpecializationName;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const fromNested =
+    data.spec?.name ||
+    data.specialization?.name ||
+    data.active_spec?.name ||
+    data.character?.active_spec_name;
+  if (typeof fromNested === "string" && fromNested.trim()) return fromNested.trim();
+  return null;
+}
+
+function parseBlizzardActiveSpecializationName(data) {
+  if (!data || typeof data !== "object") return null;
+  const groups = data.specializations;
+  if (!Array.isArray(groups)) return null;
+  for (const g of groups) {
+    const specs = g?.specializations;
+    if (!Array.isArray(specs)) continue;
+    const selected = specs.find((s) => s?.selected === true || s?.enabled === true);
+    if (selected) {
+      const n =
+        selected.specialization?.name ||
+        selected.playable_specialization?.name ||
+        selected.specialization_name ||
+        selected.name;
+      if (typeof n === "string" && n.trim()) return n.trim();
+    }
+  }
+  return null;
+}
+
+/** Blizzard profile namespace for Classic progression / TBC — override with BLIZZARD_PROFILE_NAMESPACE (e.g. classicann-eu for some realms). */
+async function fetchBlizzardClassicActiveSpecName(realmSlug, characterName) {
+  if (!blizzardProfileClientConfigured()) return null;
+  const token = await getBlizzardAccessToken();
+  const region = wowClassicRegion();
+  const ns =
+    String(process.env.BLIZZARD_PROFILE_NAMESPACE || "").trim() ||
+    `profile-classic-${region}`;
+  const locale = wowClassicLocale();
+  const base = blizzardApiBaseUrl();
+  const r = encodeURIComponent(String(realmSlug || "").toLowerCase());
+  const c = encodeURIComponent(String(characterName || "").toLowerCase());
+  const url = `${base}/profile/wow/character/${r}/${c}/specializations?namespace=${encodeURIComponent(ns)}&locale=${encodeURIComponent(locale)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return parseBlizzardActiveSpecializationName(data);
+}
+
+async function enrichRosterRowExternalSpec(row) {
+  if (!wowExternalSpecLookupEnabled()) return row;
+  const realmRaw = String(row.realm || "").trim() || defaultWowRealmForRoster();
+  const name = String(row.name || "").trim();
+  if (!realmRaw || !name) return row;
+  const region = wowRosterRegion();
+  const realmSlug = wowRealmSlugForLookup(realmRaw);
+  const cacheSlug = slugifyLocaleText(name);
+
+  let specName = null;
+  const rioKey = `raiderio-classic-profile-v1-${region}-${realmSlug}-${cacheSlug}`;
+  try {
+    const profile = await getOrRefreshCachedPayload(rioKey, {
+      ttlMs: Math.min(3600_000, Math.max(60_000, Number(process.env.WOW_RIO_CACHE_TTL_MS || 900_000))),
+      maxStaleMs: Math.min(7 * 86400_000, Math.max(3600_000, Number(process.env.WOW_RIO_CACHE_STALE_MS || 86400_000))),
+      loader: () => loadRaiderIoClassicProfileRaw(region, realmSlug, name),
+    });
+    specName = specNameFromRaiderIoClassicProfile(profile);
+  } catch {
+    specName = null;
+  }
+
+  if (!specName && blizzardProfileClientConfigured()) {
+    const bKey = `bnet-classic-active-spec-v1-${region}-${realmSlug}-${cacheSlug}`;
+    try {
+      specName = await getOrRefreshCachedPayload(bKey, {
+        ttlMs: 3600_000,
+        maxStaleMs: 86400_000,
+        loader: () => fetchBlizzardClassicActiveSpecName(realmSlug, name),
+      });
+    } catch {
+      specName = null;
+    }
+  }
+
+  if (specName) return { ...row, specName };
+  return row;
+}
+
+async function enrichConfirmedRosterExternalSpecs(rows) {
+  if (!wowExternalSpecLookupEnabled()) return rows;
+  const conc = Math.min(
+    16,
+    Math.max(1, Number(process.env.WOW_EXTERNAL_SPEC_CONCURRENCY || 6) || 6)
+  );
+  const out = [];
+  for (let i = 0; i < rows.length; i += conc) {
+    const slice = rows.slice(i, i + conc);
+    out.push(...(await Promise.all(slice.map((row) => enrichRosterRowExternalSpec(row)))));
+  }
+  return out;
+}
+
+function stripInternalRosterFields(row) {
+  const { realm: _r, ...rest } = row;
+  return rest;
+}
+
 /** Absolute icon URL when Raid-Helper embeds one on the signup row. */
 function raidHelperSpecIconUrlFromSignUpEntry(entry) {
   if (!entry || typeof entry !== "object") return "";
@@ -2337,6 +2575,53 @@ function raidHelperSpecIconUrlFromSignUpEntry(entry) {
     if (/^https?:\/\//i.test(s)) return s;
   }
   return "";
+}
+
+/** Spec / class / role text: EU diacritics (e.g. Protéction) + Raid-Helper spacing. */
+function slugifyLocaleText(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\u2019/g, "'")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/** TBC Classic spell IDs (game data) for spec badges when Raid-Helper has no image. */
+const TBC_CLASSIC_SPEC_SPELL_ID = {
+  paladin_protection: 20911, // Holy Shield
+  warrior_protection: 71, // Defensive Stance
+};
+
+/**
+ * Fetches spell icon from `static-classic-*` if the row is a Prot Pala / Prot War
+ * and no absolute `specIconUrl` was provided by Raid-Helper.
+ */
+async function attachClassicSpecSpellIconIfNeeded(row) {
+  const existing = String(row?.specIconUrl || "").trim();
+  const cls = slugifyLocaleText(row?.className);
+  const role = slugifyLocaleText(row?.roleName);
+  const spec = slugifyLocaleText(row?.specName);
+  const isTankRole = role === "tank" || role === "tanks" || role === "schutz";
+  const protLike =
+    spec.includes("protection") ||
+    spec === "prot" ||
+    spec === "schutz" ||
+    spec === "tank" ||
+    spec === "tanks";
+  let spellId = 0;
+  if (cls === "paladin" && (isTankRole || protLike)) spellId = TBC_CLASSIC_SPEC_SPELL_ID.paladin_protection;
+  else if (cls === "warrior" && (isTankRole || protLike)) spellId = TBC_CLASSIC_SPEC_SPELL_ID.warrior_protection;
+  if (!spellId) return row;
+  try {
+    const icon = await getCachedClassicSpellIcon(spellId);
+    if (icon) return { ...row, specIconUrl: icon };
+  } catch {
+    // Blizzard unavailable — client falls back to zamimg spell filenames.
+  }
+  if (/^https?:\/\//i.test(existing)) return { ...row, specIconUrl: existing };
+  return row;
 }
 
 /** Reuse filtered guild reports across endpoints so the dashboard does not queue 6 identical WCL pulls (GraphQL calls are serialized). */
@@ -2635,7 +2920,9 @@ async function raidHelperRequest(pathname, { method = "GET", body } = {}) {
 function raidHelperSignupProfileFromEntry(entry, fallbackName = "") {
   if (!entry) return null;
   const className = raidHelperClassNameFromSignUpEntry(entry);
-  const roleName = String(entry?.roleName || entry?.cRoleName || "").trim();
+  const roleName = normalizeRaidHelperRoleLabel(
+    String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+  );
   const specName = String(entry?.specName || entry?.cSpecName || "").trim();
   if (!className || !roleName) return null;
   return {
@@ -2923,7 +3210,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
       const detail = await fetchRaidHelperEventDetail(event.id);
       const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
 
-      const confirmedRoster = signUps
+      const rosterBase = signUps
         .filter(
           (entry) =>
             String(entry?.status || "").toLowerCase() === "primary" &&
@@ -2933,13 +3220,20 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
           name: String(entry?.name || ""),
           className: raidHelperClassNameFromSignUpEntry(entry),
           specName: String(entry?.specName || entry?.cSpecName || "").trim(),
-          roleName: String(entry?.roleName || entry?.cRoleName || ""),
+          roleName: normalizeRaidHelperRoleLabel(
+            String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+          ),
           race: raidHelperRaceFromSignUpEntry(entry),
           gender: raidHelperGenderFromSignUpEntry(entry),
           specIconUrl: raidHelperSpecIconUrlFromSignUpEntry(entry),
+          realm: raidHelperRealmFromSignUpEntry(entry) || defaultWowRealmForRoster(),
         }))
         .filter((entry) => entry.name)
         .sort((a, b) => a.name.localeCompare(b.name));
+
+      let confirmedRoster = await enrichConfirmedRosterExternalSpecs(rosterBase);
+      confirmedRoster = await Promise.all(confirmedRoster.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
+      confirmedRoster = confirmedRoster.map(stripInternalRosterFields);
 
       const rosterByRole = {
         Tanks: confirmedRoster.filter((x) => x.roleName === "Tanks").length,
@@ -2981,7 +3275,9 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
                   status: String(match?.status || ""),
                   className: raidHelperClassNameFromSignUpEntry(match),
                   specName: String(match?.specName || match?.cSpecName || ""),
-                  roleName: String(match?.roleName || match?.cRoleName || ""),
+                  roleName: normalizeRaidHelperRoleLabel(
+                    String(match?.roleName || match?.role || match?.cRoleName || match?.cRole || "").trim()
+                  ),
                 };
               })()
             : null,

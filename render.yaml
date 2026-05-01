@@ -26,3 +26,7 @@ services:
         sync: false
       - key: RAID_HELPER_DEFAULT_EVENT_ID
         sync: false
+      - key: WOW_GUILD_REALM
+        sync: false
+      - key: WOW_PROFILE_REGION
+        sync: false

@@ -48,7 +48,8 @@ const SPEC_SPELL_ICON = {
   warrior_fury: "ability_warrior_innerrage",
   warrior_protection: "ability_warrior_defensivestance",
   paladin_holy: "spell_holy_holybolt",
-  paladin_protection: "spell_holy_devotionaura",
+  /** Matches TBC Holy Shield (Blizzard spell 20911 uses same artwork family). */
+  paladin_protection: "spell_holy_sealofprotection",
   paladin_retribution: "spell_holy_auraoflight",
   hunter_beastmastery: "ability_hunter_beasttaming",
   hunter_marksmanship: "ability_marksmanship",
@@ -75,11 +76,20 @@ const SPEC_SPELL_ICON = {
 
 function normalizeSlug(s) {
   return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase()
     .replace(/\u2019/g, "'")
     .replace(/[^a-z0-9]+/g, "");
 }
+
+/** Extra zamimg textures if primary 404 (CDN edge cases). Keys match {@link resolvedSpecIconKey}. */
+const SPEC_ZAMIMG_FALLBACK = {
+  paladin_protection: ["spell_holy_devotionaura", "spell_holy_sealofvengeance"],
+  /** Primary is defensive stance; fallbacks must differ so onerror can advance. */
+  warrior_protection: ["ability_warrior_shieldwall", "inv_shield_06"],
+};
 
 /** Map common Raid-Helper / player shorthand to canonical spec slug for icon lookup. */
 function canonicalSpecSlug(classSlug, specSlug) {
@@ -134,25 +144,46 @@ function canonicalSpecSlug(classSlug, specSlug) {
   return spec;
 }
 
+/** Raid-Helper uses both `Tank` and `Tanks` depending on template/version. */
+function isTankRoleSlug(roleSlug) {
+  return roleSlug === "tank" || roleSlug === "tanks" || roleSlug === "schutz";
+}
+
+/** RH sends singular/plural/alternate labels; normalize so slug checks match. */
+function normalizedRoleSlugForSpec(player) {
+  const raw = String(player?.roleName || "").trim();
+  const low = raw.toLowerCase();
+  if (low === "tank" || low === "tanks" || low === "schutz") return "tanks";
+  if (low === "healer" || low === "healers") return "healers";
+  if (low === "melee" || low === "mdps") return "melee";
+  if (low === "ranged" || low === "rdps" || low === "caster" || low === "casters") return "ranged";
+  return normalizeSlug(raw);
+}
+
 function inferSpecSlugFromRole(classSlug, roleSlug, specSlug) {
   let raw = specSlug;
   if (raw) return raw;
-  if (classSlug === "warrior" && roleSlug === "tanks") return "protection";
-  if (classSlug === "paladin" && roleSlug === "tanks") return "protection";
+  if (classSlug === "warrior" && isTankRoleSlug(roleSlug)) return "protection";
+  if (classSlug === "paladin" && isTankRoleSlug(roleSlug)) return "protection";
   return "";
 }
 
-function specSpellIconFile(className, specName, roleName) {
-  const cls = normalizeSlug(className);
-  const roleSlug = normalizeSlug(roleName);
-  let rawSpec = normalizeSlug(specName);
-  if ((cls === "warrior" || cls === "paladin") && rawSpec === "schutz") rawSpec = "protection";
-  rawSpec = inferSpecSlugFromRole(cls, roleSlug, rawSpec) || rawSpec;
-  if ((cls === "warrior" || cls === "paladin") && rawSpec === "tank") rawSpec = "protection";
+/** Resolves `warrior_protection` / `paladin_protection` etc.; tanks override wrong RH spec labels. */
+function resolvedSpecIconKey(player) {
+  const cls = normalizeSlug(player?.className);
+  const roleSlug = normalizedRoleSlugForSpec(player);
+  let rawSpec = normalizeSlug(player?.specName);
+  if ((cls === "warrior" || cls === "paladin") && rawSpec.includes("protection")) rawSpec = "protection";
+  if (cls === "paladin" && isTankRoleSlug(roleSlug)) rawSpec = "protection";
+  else if (cls === "warrior" && isTankRoleSlug(roleSlug)) rawSpec = "protection";
+  else {
+    if ((cls === "warrior" || cls === "paladin") && rawSpec === "schutz") rawSpec = "protection";
+    rawSpec = inferSpecSlugFromRole(cls, roleSlug, rawSpec) || rawSpec;
+    if ((cls === "warrior" || cls === "paladin") && rawSpec === "tank") rawSpec = "protection";
+  }
   if (!cls || !rawSpec) return "";
   const spec = canonicalSpecSlug(cls, rawSpec);
-  const key = `${cls}_${spec}`;
-  return SPEC_SPELL_ICON[key] || "";
+  return `${cls}_${spec}`;
 }
 
 function classIconFallbackUrl(className) {
@@ -202,13 +233,26 @@ function championPortraitFallbackChain(player) {
   return [...new Set(chain)].filter(Boolean);
 }
 
-/** Small attachment: spec spell icon (or RH absolute URL). */
-function specBadgePortraitUrl(player) {
+/** Ordered URLs for the spec badge: API URL first (if any), then zamimg spell chain, then class crest.
+ * Never return only the API URL — Blizzard/RH links often 404 or block hotlinks; `onerror` must have targets. */
+function specBadgePortraitChain(player) {
   const fromApi = String(player?.specIconUrl || "").trim();
-  if (/^https?:\/\//i.test(fromApi)) return fromApi;
-  const spell = specSpellIconFile(player?.className, player?.specName, player?.roleName);
-  if (spell) return `${ZAM_ICON_LARGE}/${spell}.jpg`;
-  return classIconFallbackUrl(player?.className);
+  const key = resolvedSpecIconKey(player);
+  const spell = key ? SPEC_SPELL_ICON[key] : "";
+  const urls = [];
+  if (/^https?:\/\//i.test(fromApi)) urls.push(fromApi);
+  if (spell) urls.push(`${ZAM_ICON_LARGE}/${spell}.jpg`);
+  const extras = key && SPEC_ZAMIMG_FALLBACK[key] ? SPEC_ZAMIMG_FALLBACK[key] : [];
+  for (const f of extras) urls.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  urls.push(classIconFallbackUrl(player?.className));
+  const seen = new Set();
+  const out = [];
+  for (const u of urls) {
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    out.push(u);
+  }
+  return out;
 }
 
 const RAIDER_BADGE_SLOTS = 4;
@@ -230,8 +274,12 @@ function rosterRaiderCard(player) {
   const champFb = championPortraitFallbackChain(player)
     .map((u) => escapeHtml(u))
     .join("|");
-  const specBadgeSrc = escapeHtml(specBadgePortraitUrl(player));
-  const specBadgeFb = escapeHtml(classIconFallbackUrl(className));
+  const specChain = specBadgePortraitChain(player);
+  const specBadgeSrc = escapeHtml(specChain[0] || classIconFallbackUrl(className));
+  const specBadgeFb = specChain
+    .slice(1)
+    .map((u) => escapeHtml(u))
+    .join("|");
   const specAlt = specLabel ? `${className} · ${specLabel}` : className;
   const priestGlow = className === "Priest" ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);" : "";
 
@@ -247,6 +295,7 @@ function rosterRaiderCard(player) {
             height="56"
             loading="lazy"
             decoding="async"
+            referrerpolicy="no-referrer"
             data-champ-fallbacks="${champFb}"
             onerror="(function(el){var raw=el.getAttribute('data-champ-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.champI||0);if(i<parts.length){el.dataset.champI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
           />
@@ -258,8 +307,9 @@ function rosterRaiderCard(player) {
             height="22"
             loading="lazy"
             decoding="async"
-            data-fallback-src="${specBadgeFb}"
-            onerror="if(!this.dataset._sfb){this.dataset._sfb='1';var u=this.getAttribute('data-fallback-src');if(u)this.src=u;}else{this.onerror=null;}"
+            referrerpolicy="no-referrer"
+            data-spec-fallbacks="${specBadgeFb}"
+            onerror="(function(el){var raw=el.getAttribute('data-spec-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.specI||0);if(i<parts.length){el.dataset.specI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
           />
         </div>
         <div class="raider-text">
@@ -345,10 +395,20 @@ function eventHeaderMarkup(event) {
   `;
 }
 
+function rosterBucketRoleName(roleName) {
+  const low = String(roleName || "").trim().toLowerCase();
+  if (low === "tank" || low === "tanks" || low === "schutz") return "Tanks";
+  if (low === "healer" || low === "healers") return "Healers";
+  if (low === "melee" || low === "mdps") return "Melee";
+  if (low === "ranged" || low === "rdps" || low === "caster" || low === "casters") return "Ranged";
+  const r = String(roleName || "").trim();
+  return ROLE_ORDER.includes(r) ? r : "Ranged";
+}
+
 function groupedRosterByRole(confirmedRoster) {
   const grouped = new Map(ROLE_ORDER.map((role) => [role, []]));
   for (const player of confirmedRoster || []) {
-    const role = ROLE_ORDER.includes(player?.roleName) ? player.roleName : "Ranged";
+    const role = rosterBucketRoleName(player?.roleName);
     grouped.get(role).push(player);
   }
   for (const role of ROLE_ORDER) {
