@@ -36,5 +36,89 @@ function startPhase2Countdown() {
   setInterval(update, 1000);
 }
 
+function initWelcomePopup() {
+  const card = document.getElementById("welcomePopupCard");
+  const backdrop = document.getElementById("welcomePopupBackdrop");
+  const closeBtn = document.getElementById("welcomePopupClose");
+  const enterBtn = document.getElementById("welcomePopupEnter");
+  if (!card || !backdrop || !closeBtn || !enterBtn) return;
+
+  /** Detach from nested layout so `position:fixed` + hit-testing matches true viewport overlays (avoids trapped stacking contexts). */
+  if (backdrop.parentElement !== document.body || card.parentElement !== document.body) {
+    document.body.appendChild(backdrop);
+    document.body.appendChild(card);
+  }
+
+  /** Once dismissed (any control), never show again on this origin. Bump key when popup markup/behavior changes. */
+  const dismissKey = "plb_welcome_popup_dismissed_v3";
+
+  let dismissedInMemory = false;
+
+  function readDismissed() {
+    try {
+      if (window.localStorage.getItem(dismissKey) === "1") return true;
+    } catch {}
+    try {
+      if (window.sessionStorage.getItem(dismissKey) === "1") return true;
+    } catch {}
+    return dismissedInMemory;
+  }
+
+  function persistDismissed() {
+    dismissedInMemory = true;
+    try {
+      window.localStorage.setItem(dismissKey, "1");
+    } catch {}
+    try {
+      window.sessionStorage.setItem(dismissKey, "1");
+    } catch {}
+  }
+
+  function pathLooksLikeHome() {
+    const p = String(window.location.pathname || "").replace(/\/+$/, "") || "/";
+    return p === "/home.html" || p.endsWith("/home.html");
+  }
+
+  if (!readDismissed()) {
+    backdrop.removeAttribute("hidden");
+    card.removeAttribute("hidden");
+    card.setAttribute("aria-hidden", "false");
+    backdrop.setAttribute("aria-hidden", "false");
+  }
+
+  const hidePopup = () => {
+    backdrop.setAttribute("hidden", "");
+    card.setAttribute("hidden", "");
+    card.setAttribute("aria-hidden", "true");
+    backdrop.setAttribute("aria-hidden", "true");
+  };
+
+  const dismiss = () => {
+    hidePopup();
+    persistDismissed();
+  };
+
+  /** Enter: dismiss permanently; reload Home only if we are not already there (avoids reload loops). */
+  const enterGoHome = () => {
+    dismiss();
+    if (!pathLooksLikeHome()) window.location.assign("/home.html");
+  };
+
+  /** Capture phase: runs before other document handlers that might interfere with closing. */
+  const cap = true;
+  closeBtn.addEventListener("click", dismiss, cap);
+  enterBtn.addEventListener("click", enterGoHome, cap);
+  backdrop.addEventListener("click", dismiss, cap);
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (card.hidden) return;
+      if (event.key === "Escape") dismiss();
+    },
+    cap
+  );
+}
+
 initBackgroundStars();
 startPhase2Countdown();
+initWelcomePopup();

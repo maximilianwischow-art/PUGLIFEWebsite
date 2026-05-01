@@ -2,3 +2,5 @@ node_modules/
 .env
 npm-debug.log*
 .DS_Store
+data/cache/
+tmp_raid_assets/

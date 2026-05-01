@@ -1,14 +1,15 @@
-function esc(v) {
-  return String(v ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+const esc = window.WowItemTooltip.escapeHtml;
+const tooltipText = window.WowItemTooltip.tooltipText;
 
 function n(v) {
   const x = Number(v);
   return Number.isFinite(x) ? Math.max(0, Math.floor(x)) : 0;
+}
+
+function vortexNeeded(v) {
+  const x = Number(v);
+  if (!Number.isFinite(x)) return 1;
+  return Math.max(1, Math.min(20, Math.floor(x)));
 }
 
 async function getJson(url, opts) {
@@ -22,57 +23,58 @@ let craftables = [];
 let selectedItems = [];
 let itemMetaById = new Map();
 let vortexCanEdit = false;
-let tooltipEl = null;
+let netherVortexIcon = "";
+const NETHER_VORTEX_ITEM_ID = 30183;
 
-function ensureTooltipEl() {
-  if (tooltipEl) return tooltipEl;
-  tooltipEl = document.createElement("div");
-  tooltipEl.className = "loot-tooltip-panel";
-  tooltipEl.hidden = true;
-  document.body.appendChild(tooltipEl);
-  return tooltipEl;
+function canonicalItemId(itemName, fallbackId) {
+  const trimmed = String(itemName || "").trim();
+  if (trimmed && craftables.length) {
+    const match = craftables.find((c) => String(c.itemName || "").trim() === trimmed);
+    if (match && n(match.itemID) > 0) return n(match.itemID);
+  }
+  return n(fallbackId);
 }
 
-function positionTooltip(event) {
-  if (!tooltipEl || tooltipEl.hidden) return;
-  const pad = 14;
-  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-  const rect = tooltipEl.getBoundingClientRect();
-  let x = event.clientX + 12;
-  let y = event.clientY + 14;
-  if (x + rect.width + pad > vw) x = Math.max(pad, event.clientX - rect.width - 16);
-  if (y + rect.height + pad > vh) y = Math.max(pad, event.clientY - rect.height - 16);
-  tooltipEl.style.left = `${x}px`;
-  tooltipEl.style.top = `${y}px`;
+function collectMissingMetaIds(entries, myItems) {
+  const ids = [];
+  for (const entry of entries || []) {
+    for (const it of entry.items || []) {
+      ids.push(canonicalItemId(it.itemName, it.itemID));
+    }
+  }
+  for (const it of myItems || []) {
+    ids.push(canonicalItemId(it.itemName, it.itemID));
+  }
+  return [...new Set(ids.map((id) => n(id)).filter((id) => id > 0))].filter((id) => !itemMetaById.has(id));
 }
 
-function hideTooltip() {
-  if (tooltipEl) tooltipEl.hidden = true;
+async function fetchItemMetaChunk(ids) {
+  const want = [...new Set((ids || []).map((id) => n(id)).filter((id) => id > 0))].filter((id) => !itemMetaById.has(id));
+  if (!want.length) return;
+  for (let i = 0; i < want.length; i += 80) {
+    const chunk = want.slice(i, i + 80);
+    const metaPayload = await getJson(`/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`);
+    for (const row of metaPayload?.items || []) {
+      if (n(row?.itemId) > 0) itemMetaById.set(n(row.itemId), row);
+    }
+  }
 }
 
-function showTooltip(event, itemId) {
-  const panel = ensureTooltipEl();
-  const meta = itemMetaById.get(Number(itemId));
-  const html = meta?.tooltipHtml
-    ? `<div class="loot-tooltip-wowhead">${meta.tooltipHtml}</div>`
-    : (Array.isArray(meta?.tooltip) ? meta.tooltip : [])
-        .map((line) => `<div class="loot-tooltip-line">${esc(line)}</div>`)
-        .join("") || `<div class="loot-tooltip-line">No tooltip available.</div>`;
-  panel.innerHTML = html;
-  panel.hidden = false;
-  positionTooltip(event);
+function renderVortexCost(cost) {
+  const icon = netherVortexIcon
+    ? `<img class="vortex-inline-icon" src="${esc(netherVortexIcon)}" alt="" loading="lazy" decoding="async" />`
+    : "";
+  return `<span class="vortex-cost-badge">${icon}<span>${n(cost)} Nether Vortex</span></span>`;
 }
 
-function bindTooltipTargets() {
-  document.querySelectorAll("[data-vortex-item-id]").forEach((el) => {
-    el.addEventListener("mouseenter", (event) => {
-      const itemId = Number(el.getAttribute("data-vortex-item-id") || 0);
-      if (itemId > 0) showTooltip(event, itemId);
-    });
-    el.addEventListener("mousemove", (event) => positionTooltip(event));
-    el.addEventListener("mouseleave", () => hideTooltip());
-  });
+function renderItemChip(itemId, itemName, profession = "") {
+  const id = canonicalItemId(itemName, itemId);
+  const meta = itemMetaById.get(id);
+  const icon = meta?.icon
+    ? `<img class="loot-item-icon" src="${esc(meta.icon)}" alt="" loading="lazy" decoding="async" />`
+    : `<span class="loot-item-icon loot-item-icon--fallback" aria-hidden="true"></span>`;
+  const namePart = `${esc(itemName)}${profession ? ` (${esc(profession)})` : ""}`;
+  return `<div class="loot-item-name" data-loot-item-id="${id}" title="${esc(tooltipText(meta))}">${icon}${namePart}</div>`;
 }
 
 function updateCraftableOptions() {
@@ -113,12 +115,31 @@ function renderSelectedItems() {
   host.innerHTML = selectedItems
     .map(
       (row, idx) =>
-        `<span class="loot-recipient-pill" data-vortex-item-id="${n(row.itemID)}">${esc(row.itemName)}${
-          row.profession ? ` (${esc(row.profession)})` : ""
-        } <button type="button" class="auth-chip-btn" data-remove-item="${idx}" style="padding:2px 6px;">x</button></span>`
+        `<span class="loot-recipient-pill">
+          <span class="vortex-selected-item-main">
+            ${renderItemChip(row.itemID, row.itemName, row.profession)}
+            ${renderVortexCost(vortexNeeded(row.vortexNeeded))}
+          </span>
+          <label class="subtle" style="display:inline-flex; align-items:center; gap:6px; margin-left:8px;">
+            Vortex
+            <input
+              type="number"
+              min="1"
+              max="20"
+              step="1"
+              value="${vortexNeeded(row.vortexNeeded)}"
+              data-item-vortex-needed="${idx}"
+              class="admin-input"
+              style="width:64px; padding:2px 6px;"
+            />
+          </label>
+          <button type="button" class="auth-chip-btn" data-remove-item="${idx}" style="padding:2px 6px;">x</button>
+        </span>`
     )
     .join("");
-  bindTooltipTargets();
+  window.WowItemTooltip.bindLootTooltipHandlers(document.getElementById("vortexSelectedItems"), (id) =>
+    itemMetaById.get(Number(id))
+  );
 }
 
 async function loadCraftables() {
@@ -126,6 +147,7 @@ async function loadCraftables() {
   craftables = Array.isArray(payload?.items) ? payload.items : [];
   updateCraftableOptions();
   const ids = [...new Set(craftables.map((row) => n(row.itemID)).filter((id) => id > 0))];
+  if (NETHER_VORTEX_ITEM_ID > 0) ids.push(NETHER_VORTEX_ITEM_ID);
   itemMetaById = new Map();
   if (!ids.length) return;
   for (let i = 0; i < ids.length; i += 80) {
@@ -135,6 +157,7 @@ async function loadCraftables() {
       if (n(row?.itemId) > 0) itemMetaById.set(n(row.itemId), row);
     }
   }
+  netherVortexIcon = String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim();
 }
 
 function renderList(entries) {
@@ -155,9 +178,7 @@ function renderList(entries) {
               const items = (Array.isArray(row.items) ? row.items : [])
                 .map(
                   (it) =>
-                    `<span data-vortex-item-id="${n(it.itemID)}">${esc(it.itemName)}</span>${
-                      it.profession ? ` <span class="subtle">(${esc(it.profession)})</span>` : ""
-                    }`
+                    `${renderItemChip(it.itemID, it.itemName, it.profession)} ${renderVortexCost(vortexNeeded(it.vortexNeeded))}`
                 )
                 .join("<br/>");
               const updated = row.updatedAt ? new Date(Number(row.updatedAt)).toLocaleString() : "-";
@@ -175,7 +196,7 @@ function renderList(entries) {
       </table>
     </div>
   `;
-  bindTooltipTargets();
+  window.WowItemTooltip.bindLootTooltipHandlers(document.getElementById("vortexList"), (id) => itemMetaById.get(Number(id)));
 }
 
 async function loadTracker() {
@@ -196,13 +217,23 @@ async function loadTracker() {
     craftablesError = String(error?.message || "Failed to load craftable items");
   }
   const payload = await getJson("/api/nether-vortex/needs");
+  try {
+    await fetchItemMetaChunk(collectMissingMetaIds(payload?.entries, payload?.myEntry?.items));
+  } catch {}
+  netherVortexIcon = String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim();
   const total = n(payload?.totalNeeded);
   meta.textContent = `Total guild need: ${total} Nether Vortex`;
   renderList(payload?.entries);
 
   const my = payload?.myEntry || null;
   if (neededInput) neededInput.value = String(n(my?.neededCount || 0));
-  selectedItems = Array.isArray(my?.items) ? my.items.map((row) => ({ ...row, itemID: n(row?.itemID) })) : [];
+  selectedItems = Array.isArray(my?.items)
+    ? my.items.map((row) => ({
+        ...row,
+        itemID: canonicalItemId(row.itemName, row?.itemID),
+        vortexNeeded: vortexNeeded(row?.vortexNeeded),
+      }))
+    : [];
   renderSelectedItems();
 
   const canEdit = Boolean(payload?.authenticated);
@@ -244,6 +275,7 @@ document.getElementById("vortexSaveBtn")?.addEventListener("click", async () => 
           itemID: n(row.itemID),
           itemName: String(row.itemName || ""),
           profession: String(row.profession || ""),
+          vortexNeeded: vortexNeeded(row.vortexNeeded),
         })),
       }),
     });
@@ -282,6 +314,7 @@ document.getElementById("vortexAddItemBtn")?.addEventListener("click", () => {
     itemID: n(picked.itemID),
     itemName: String(picked.itemName || ""),
     profession: String(picked.profession || ""),
+    vortexNeeded: 1,
   });
   renderSelectedItems();
 });
@@ -297,6 +330,15 @@ document.addEventListener("click", (event) => {
   if (!Number.isInteger(idx) || idx < 0 || idx >= selectedItems.length) return;
   selectedItems.splice(idx, 1);
   renderSelectedItems();
+});
+
+document.addEventListener("input", (event) => {
+  const input = event.target.closest("[data-item-vortex-needed]");
+  if (!input) return;
+  const idx = Number(input.getAttribute("data-item-vortex-needed"));
+  if (!Number.isInteger(idx) || idx < 0 || idx >= selectedItems.length) return;
+  selectedItems[idx].vortexNeeded = vortexNeeded(input.value);
+  input.value = String(vortexNeeded(input.value));
 });
 
 loadTracker().catch((error) => {

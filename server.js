@@ -753,22 +753,54 @@ function sanitizeNetherVortexItems(items) {
   return items
     .map((row) => {
       if (typeof row === "string") {
-        return { itemName: String(row || "").trim(), profession: "" };
+        return { itemName: String(row || "").trim(), profession: "", vortexNeeded: 1 };
       }
       if (!row || typeof row !== "object") return null;
       return {
         itemID: Number(row.itemID || row.itemId || 0),
         itemName: String(row.itemName || row.name || "").trim(),
         profession: String(row.profession || "").trim(),
+        vortexNeeded: Number(row.vortexNeeded || row.vortexCount || row.count || row.quantity || 1),
       };
     })
-    .map((row) => (row ? { ...row, itemID: Number.isFinite(Number(row.itemID)) ? Math.max(0, Number(row.itemID)) : 0 } : null))
+    .map((row) =>
+      row
+        ? {
+            ...row,
+            itemID: Number.isFinite(Number(row.itemID)) ? Math.max(0, Number(row.itemID)) : 0,
+            vortexNeeded: Number.isFinite(Number(row.vortexNeeded))
+              ? Math.max(1, Math.min(20, Math.floor(Number(row.vortexNeeded))))
+              : 1,
+          }
+        : null
+    )
     .filter((row) => row && row.itemName)
     .slice(0, 30);
 }
 
 function parseWowheadReagentForItems(html) {
   const text = String(html || "");
+  const nameToId = new Map();
+  const itemDictRx = /"(\d+)":\{"name_enus":"((?:\\.|[^"\\])+)"/g;
+  let dictMatch;
+  while ((dictMatch = itemDictRx.exec(text))) {
+    const maybeId = Number(dictMatch[1] || 0);
+    const rawName = String(dictMatch[2] || "");
+    const itemName = rawName.replace(/\\"/g, '"').trim();
+    if (maybeId > 0 && itemName && !nameToId.has(itemName)) {
+      nameToId.set(itemName, maybeId);
+    }
+  }
+  // Prefer explicit TBC item links when present; these are the most reliable IDs.
+  const linkRx = /<a[^>]+href="\/tbc\/item=(\d+)\/[^"]*"[^>]*>([^<]+)<\/a>/gi;
+  let linkMatch;
+  while ((linkMatch = linkRx.exec(text))) {
+    const maybeId = Number(linkMatch[1] || 0);
+    const itemName = String(linkMatch[2] || "").replace(/&amp;/g, "&").trim();
+    if (maybeId > 0 && itemName) {
+      nameToId.set(itemName, maybeId);
+    }
+  }
   const listviewBlocks = [...text.matchAll(/new Listview\(\{([\s\S]*?)\}\);/gi)].map((m) => m?.[1] || "");
   const candidate =
     listviewBlocks.find((block) => /id:\s*['"]reagent[-_]?for['"]/i.test(block)) ||
@@ -795,11 +827,16 @@ function parseWowheadReagentForItems(html) {
       .sort((a, b) => a.itemName.localeCompare(b.itemName));
   }
   return parsed
-    .map((row) => ({
-      itemID: Number(row?.id || 0),
-      itemName: String(row?.name || "").trim(),
-      profession: String(row?.reqskill || row?.skill || "").trim(),
-    }))
+    .map((row) => {
+      const itemName = String(row?.name || "").trim();
+      const parsedId = Number(row?.id || 0);
+      const mappedId = Number(nameToId.get(itemName) || 0);
+      return {
+        itemID: mappedId > 0 ? mappedId : parsedId,
+        itemName,
+        profession: String(row?.reqskill || row?.skill || "").trim(),
+      };
+    })
     .filter((row) => row.itemID > 0 && row.itemName)
     .sort((a, b) => a.itemName.localeCompare(b.itemName));
 }
@@ -883,6 +920,10 @@ app.get("/", (_req, res) => {
 
 app.get("/home.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "home.html"));
+});
+
+app.get("/landing.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "landing.html"));
 });
 
 app.get("/events.html", (_req, res) => {
@@ -1091,7 +1132,7 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
 
 app.get("/api/nether-vortex/craftables", async (_req, res) => {
   try {
-    const key = "nether-vortex-craftables-v2";
+    const key = "nether-vortex-craftables-v4";
     const payload = await getOrRefreshCachedPayload(key, {
       ttlMs: 24 * 3600_000,
       maxStaleMs: 7 * 24 * 3600_000,
@@ -1107,7 +1148,20 @@ app.get("/api/nether-vortex/craftables", async (_req, res) => {
         if (!items.length) {
           throw new Error("Could not parse craftable items from Wowhead reagent-for list");
         }
-        return { source: WOWHEAD_TBC_NETHER_VORTEX_URL, items };
+        const normalized = [];
+        for (const row of items) {
+          let resolvedId = Number(row?.itemID || 0);
+          try {
+            const byName = await resolveClassicItemIdByName(row?.itemName);
+            if (byName > 0) resolvedId = byName;
+          } catch {}
+          normalized.push({
+            itemID: resolvedId > 0 ? resolvedId : Number(row?.itemID || 0),
+            itemName: String(row?.itemName || "").trim(),
+            profession: String(row?.profession || "").trim(),
+          });
+        }
+        return { source: WOWHEAD_TBC_NETHER_VORTEX_URL, items: normalized };
       },
     });
     return res.json({ ok: true, ...payload });
@@ -1617,6 +1671,32 @@ async function fetchClassicItemMetadata(itemId) {
     tooltipHtml: sanitizedTooltipHtml || null,
     tooltipSource: sanitizedTooltipHtml ? "wowhead" : "blizzard",
   };
+}
+
+async function resolveClassicItemIdByName(itemName) {
+  const name = String(itemName || "").trim();
+  if (!name) return 0;
+  const token = await getBlizzardAccessToken();
+  const namespace = wowClassicNamespace();
+  const locale = wowClassicLocale();
+  const base = blizzardApiBaseUrl();
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const searchFields = [...new Set([`name.${locale}`, "name.en_US"])];
+  const lowerName = name.toLowerCase();
+  for (const field of searchFields) {
+    const url = `${base}/data/wow/search/item?namespace=${encodeURIComponent(namespace)}&locale=${encodeURIComponent(
+      locale
+    )}&${encodeURIComponent(field)}=${encodeURIComponent(name)}&_pageSize=8`;
+    const res = await fetch(url, { headers: authHeaders });
+    if (!res.ok) continue;
+    const payload = await res.json().catch(() => ({}));
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    const exact = results.find((row) => String(row?.data?.name || "").trim().toLowerCase() === lowerName);
+    const picked = exact || results[0] || null;
+    const resolved = Number(picked?.data?.id || 0);
+    if (resolved > 0) return resolved;
+  }
+  return 0;
 }
 
 function sleepMs(ms) {

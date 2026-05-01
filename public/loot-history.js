@@ -1,10 +1,5 @@
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+const escapeHtml = window.WowItemTooltip.escapeHtml;
+const tooltipText = window.WowItemTooltip.tooltipText;
 
 function formatRaidDate(ts) {
   const dt = new Date(Number(ts || 0));
@@ -53,67 +48,7 @@ function displayRaidName(row) {
   return fallback || String(row?.reportCode || "").trim() || "Unknown raid";
 }
 
-function tooltipText(meta) {
-  const lines = Array.isArray(meta?.tooltip) ? meta.tooltip : [];
-  return lines.filter(Boolean).join("\n");
-}
-
-let lootTooltipEl = null;
 let lootItemMetaMap = new Map();
-
-function ensureLootTooltipEl() {
-  if (lootTooltipEl) return lootTooltipEl;
-  lootTooltipEl = document.createElement("div");
-  lootTooltipEl.className = "loot-tooltip-panel";
-  lootTooltipEl.hidden = true;
-  document.body.appendChild(lootTooltipEl);
-  return lootTooltipEl;
-}
-
-function positionLootTooltip(event) {
-  if (!lootTooltipEl || lootTooltipEl.hidden) return;
-  const pad = 14;
-  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-  const rect = lootTooltipEl.getBoundingClientRect();
-  let x = event.clientX + 14;
-  let y = event.clientY + 16;
-  if (x + rect.width + pad > vw) x = Math.max(pad, event.clientX - rect.width - 18);
-  if (y + rect.height + pad > vh) y = Math.max(pad, event.clientY - rect.height - 18);
-  lootTooltipEl.style.left = `${x}px`;
-  lootTooltipEl.style.top = `${y}px`;
-}
-
-function showLootTooltip(event, itemId) {
-  const panel = ensureLootTooltipEl();
-  const meta = lootItemMetaMap.get(Number(itemId));
-  const fallback = `<div class="loot-tooltip-line">${escapeHtml("No item tooltip available.")}</div>`;
-  const html = meta?.tooltipHtml
-    ? `<div class="loot-tooltip-wowhead">${meta.tooltipHtml}</div>`
-    : (Array.isArray(meta?.tooltip) ? meta.tooltip : [])
-        .map((line) => `<div class="loot-tooltip-line">${escapeHtml(line)}</div>`)
-        .join("") || fallback;
-  panel.innerHTML = html;
-  panel.hidden = false;
-  positionLootTooltip(event);
-}
-
-function hideLootTooltip() {
-  if (!lootTooltipEl) return;
-  lootTooltipEl.hidden = true;
-}
-
-function bindLootTooltipHandlers() {
-  const triggers = document.querySelectorAll("[data-loot-item-id]");
-  triggers.forEach((el) => {
-    el.addEventListener("mouseenter", (event) => {
-      const itemId = Number(el.getAttribute("data-loot-item-id") || 0);
-      showLootTooltip(event, itemId);
-    });
-    el.addEventListener("mousemove", (event) => positionLootTooltip(event));
-    el.addEventListener("mouseleave", () => hideLootTooltip());
-  });
-}
 
 function bindEventExpandHandlers() {
   const triggers = document.querySelectorAll("[data-loot-toggle]");
@@ -266,7 +201,7 @@ async function loadLootHistory() {
     }
     lootItemMetaMap = itemMetaById;
     renderLootHistory(payload, itemMetaById);
-    bindLootTooltipHandlers();
+    window.WowItemTooltip.bindLootTooltipHandlers(document, (id) => lootItemMetaMap.get(Number(id)));
   } catch (error) {
     const message = error?.message || "Failed to load loot history";
     const meta = document.getElementById("lootHistoryMeta");
