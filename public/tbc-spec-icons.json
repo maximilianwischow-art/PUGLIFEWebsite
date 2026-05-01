@@ -1,0 +1,468 @@
+{
+  "version": "20260511b",
+  "fetchedAt": "2026-05-01T22:31:12.529Z",
+  "note": "Mostly Wowhead TBC spell pages (rel=image_src). Prot Paladin + Prot Warrior use canonical zamimg URLs aligned with server.js (same texture everywhere).",
+  "entries": [
+    {
+      "key": "warrior_arms",
+      "className": "Warrior",
+      "specName": "Arms",
+      "spellId": 12294,
+      "spellName": "Mortal Strike",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=12294",
+      "icon": "ability_warrior_savageblow.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_savageblow.jpg"
+    },
+    {
+      "key": "warrior_fury",
+      "className": "Warrior",
+      "specName": "Fury",
+      "spellId": 23881,
+      "spellName": "Bloodthirst",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=23881",
+      "icon": "spell_nature_bloodlust.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_bloodlust.jpg"
+    },
+    {
+      "key": "warrior_protection",
+      "className": "Warrior",
+      "specName": "Protection",
+      "spellId": 71,
+      "spellName": "Defensive Stance",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=71",
+      "icon": "ability_warrior_defensivestance.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_defensivestance.jpg"
+    },
+    {
+      "key": "paladin_holy",
+      "className": "Paladin",
+      "specName": "Holy",
+      "spellId": 635,
+      "spellName": "Holy Light",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=635",
+      "icon": "spell_holy_holybolt.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_holybolt.jpg"
+    },
+    {
+      "key": "paladin_protection",
+      "className": "Paladin",
+      "specName": "Protection",
+      "spellId": 27179,
+      "spellName": "Protection",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=27179",
+      "icon": "spell_holy_sealofprotection.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_sealofprotection.jpg"
+    },
+    {
+      "key": "paladin_retribution",
+      "className": "Paladin",
+      "specName": "Retribution",
+      "spellId": 31884,
+      "spellName": "Avenging Wrath",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=31884",
+      "icon": "spell_holy_avenginewrath.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_avenginewrath.jpg"
+    },
+    {
+      "key": "hunter_beastmastery",
+      "className": "Hunter",
+      "specName": "Beast Mastery",
+      "spellId": 1515,
+      "spellName": "Tame Beast",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=1515",
+      "icon": "ability_hunter_beasttaming.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_hunter_beasttaming.jpg"
+    },
+    {
+      "key": "hunter_marksmanship",
+      "className": "Hunter",
+      "specName": "Marksmanship",
+      "spellId": 19506,
+      "spellName": "Trueshot Aura",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=19506",
+      "icon": "ability_trueshot.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_trueshot.jpg"
+    },
+    {
+      "key": "hunter_survival",
+      "className": "Hunter",
+      "specName": "Survival",
+      "spellId": 1495,
+      "spellName": "Mongoose Bite",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=1495",
+      "icon": "ability_hunter_swiftstrike.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_hunter_swiftstrike.jpg"
+    },
+    {
+      "key": "rogue_assassination",
+      "className": "Rogue",
+      "specName": "Assassination",
+      "spellId": 2098,
+      "spellName": "Eviscerate",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=2098",
+      "icon": "ability_rogue_eviscerate.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_rogue_eviscerate.jpg"
+    },
+    {
+      "key": "rogue_combat",
+      "className": "Rogue",
+      "specName": "Combat",
+      "spellId": 53,
+      "spellName": "Backstab",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=53",
+      "icon": "ability_backstab.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_backstab.jpg"
+    },
+    {
+      "key": "rogue_subtlety",
+      "className": "Rogue",
+      "specName": "Subtlety",
+      "spellId": 1784,
+      "spellName": "Stealth",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=1784",
+      "icon": "ability_stealth.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_stealth.jpg"
+    },
+    {
+      "key": "priest_discipline",
+      "className": "Priest",
+      "specName": "Discipline",
+      "spellId": 17,
+      "spellName": "Power Word: Shield",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=17",
+      "icon": "spell_holy_powerwordshield.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_powerwordshield.jpg"
+    },
+    {
+      "key": "priest_holy",
+      "className": "Priest",
+      "specName": "Holy",
+      "spellId": 6064,
+      "spellName": "Heal",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=6064",
+      "icon": "spell_holy_heal02.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_heal02.jpg"
+    },
+    {
+      "key": "priest_shadow",
+      "className": "Priest",
+      "specName": "Shadow",
+      "spellId": 589,
+      "spellName": "Shadow Word: Pain",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=589",
+      "icon": "spell_shadow_shadowwordpain.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_shadowwordpain.jpg"
+    },
+    {
+      "key": "shaman_elemental",
+      "className": "Shaman",
+      "specName": "Elemental",
+      "spellId": 403,
+      "spellName": "Lightning Bolt",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=403",
+      "icon": "spell_nature_lightning.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightning.jpg"
+    },
+    {
+      "key": "shaman_enhancement",
+      "className": "Shaman",
+      "specName": "Enhancement",
+      "spellId": 324,
+      "spellName": "Lightning Shield",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=324",
+      "icon": "spell_nature_lightningshield.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightningshield.jpg"
+    },
+    {
+      "key": "shaman_restoration",
+      "className": "Shaman",
+      "specName": "Restoration",
+      "spellId": 331,
+      "spellName": "Healing Wave",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=331",
+      "icon": "spell_nature_magicimmunity.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_magicimmunity.jpg"
+    },
+    {
+      "key": "mage_arcane",
+      "className": "Mage",
+      "specName": "Arcane",
+      "spellId": 1459,
+      "spellName": "Arcane Intellect",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=1459",
+      "icon": "spell_holy_magicalsentry.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_magicalsentry.jpg"
+    },
+    {
+      "key": "mage_fire",
+      "className": "Mage",
+      "specName": "Fire",
+      "spellId": 133,
+      "spellName": "Fireball",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=133",
+      "icon": "spell_fire_flamebolt.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_fire_flamebolt.jpg"
+    },
+    {
+      "key": "mage_frost",
+      "className": "Mage",
+      "specName": "Frost",
+      "spellId": 116,
+      "spellName": "Frostbolt",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=116",
+      "icon": "spell_frost_frostbolt02.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_frost_frostbolt02.jpg"
+    },
+    {
+      "key": "warlock_affliction",
+      "className": "Warlock",
+      "specName": "Affliction",
+      "spellId": 6789,
+      "spellName": "Death Coil",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=6789",
+      "icon": "spell_shadow_deathcoil.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_deathcoil.jpg"
+    },
+    {
+      "key": "warlock_demonology",
+      "className": "Warlock",
+      "specName": "Demonology",
+      "spellId": 30146,
+      "spellName": "Summon Felguard",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=30146",
+      "icon": "spell_shadow_summonfelguard.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_summonfelguard.jpg"
+    },
+    {
+      "key": "warlock_destruction",
+      "className": "Warlock",
+      "specName": "Destruction",
+      "spellId": 5740,
+      "spellName": "Rain of Fire",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=5740",
+      "icon": "spell_shadow_rainoffire.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_rainoffire.jpg"
+    },
+    {
+      "key": "druid_balance",
+      "className": "Druid",
+      "specName": "Balance",
+      "spellId": 24858,
+      "spellName": "Moonkin Form",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=24858",
+      "icon": "spell_nature_forceofnature.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_forceofnature.jpg"
+    },
+    {
+      "key": "druid_feralcombat",
+      "className": "Druid",
+      "specName": "Feral",
+      "spellId": 768,
+      "spellName": "Cat Form",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=768",
+      "icon": "ability_druid_catform.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_druid_catform.jpg"
+    },
+    {
+      "key": "druid_restoration",
+      "className": "Druid",
+      "specName": "Restoration",
+      "spellId": 5185,
+      "spellName": "Healing Touch",
+      "wowheadUrl": "https://www.wowhead.com/tbc/spell=5185",
+      "icon": "spell_nature_healingtouch.jpg",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_healingtouch.jpg"
+    }
+  ],
+  "byKey": {
+    "warrior_arms": {
+      "className": "Warrior",
+      "specName": "Arms",
+      "spellId": 12294,
+      "spellName": "Mortal Strike",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_savageblow.jpg"
+    },
+    "warrior_fury": {
+      "className": "Warrior",
+      "specName": "Fury",
+      "spellId": 23881,
+      "spellName": "Bloodthirst",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_bloodlust.jpg"
+    },
+    "warrior_protection": {
+      "className": "Warrior",
+      "specName": "Protection",
+      "spellId": 71,
+      "spellName": "Defensive Stance",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_defensivestance.jpg"
+    },
+    "paladin_holy": {
+      "className": "Paladin",
+      "specName": "Holy",
+      "spellId": 635,
+      "spellName": "Holy Light",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_holybolt.jpg"
+    },
+    "paladin_protection": {
+      "className": "Paladin",
+      "specName": "Protection",
+      "spellId": 27179,
+      "spellName": "Protection",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_sealofprotection.jpg"
+    },
+    "paladin_retribution": {
+      "className": "Paladin",
+      "specName": "Retribution",
+      "spellId": 31884,
+      "spellName": "Avenging Wrath",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_avenginewrath.jpg"
+    },
+    "hunter_beastmastery": {
+      "className": "Hunter",
+      "specName": "Beast Mastery",
+      "spellId": 1515,
+      "spellName": "Tame Beast",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_hunter_beasttaming.jpg"
+    },
+    "hunter_marksmanship": {
+      "className": "Hunter",
+      "specName": "Marksmanship",
+      "spellId": 19506,
+      "spellName": "Trueshot Aura",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_trueshot.jpg"
+    },
+    "hunter_survival": {
+      "className": "Hunter",
+      "specName": "Survival",
+      "spellId": 1495,
+      "spellName": "Mongoose Bite",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_hunter_swiftstrike.jpg"
+    },
+    "rogue_assassination": {
+      "className": "Rogue",
+      "specName": "Assassination",
+      "spellId": 2098,
+      "spellName": "Eviscerate",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_rogue_eviscerate.jpg"
+    },
+    "rogue_combat": {
+      "className": "Rogue",
+      "specName": "Combat",
+      "spellId": 53,
+      "spellName": "Backstab",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_backstab.jpg"
+    },
+    "rogue_subtlety": {
+      "className": "Rogue",
+      "specName": "Subtlety",
+      "spellId": 1784,
+      "spellName": "Stealth",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_stealth.jpg"
+    },
+    "priest_discipline": {
+      "className": "Priest",
+      "specName": "Discipline",
+      "spellId": 17,
+      "spellName": "Power Word: Shield",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_powerwordshield.jpg"
+    },
+    "priest_holy": {
+      "className": "Priest",
+      "specName": "Holy",
+      "spellId": 6064,
+      "spellName": "Heal",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_heal02.jpg"
+    },
+    "priest_shadow": {
+      "className": "Priest",
+      "specName": "Shadow",
+      "spellId": 589,
+      "spellName": "Shadow Word: Pain",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_shadowwordpain.jpg"
+    },
+    "shaman_elemental": {
+      "className": "Shaman",
+      "specName": "Elemental",
+      "spellId": 403,
+      "spellName": "Lightning Bolt",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightning.jpg"
+    },
+    "shaman_enhancement": {
+      "className": "Shaman",
+      "specName": "Enhancement",
+      "spellId": 324,
+      "spellName": "Lightning Shield",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_lightningshield.jpg"
+    },
+    "shaman_restoration": {
+      "className": "Shaman",
+      "specName": "Restoration",
+      "spellId": 331,
+      "spellName": "Healing Wave",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_magicimmunity.jpg"
+    },
+    "mage_arcane": {
+      "className": "Mage",
+      "specName": "Arcane",
+      "spellId": 1459,
+      "spellName": "Arcane Intellect",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_magicalsentry.jpg"
+    },
+    "mage_fire": {
+      "className": "Mage",
+      "specName": "Fire",
+      "spellId": 133,
+      "spellName": "Fireball",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_fire_flamebolt.jpg"
+    },
+    "mage_frost": {
+      "className": "Mage",
+      "specName": "Frost",
+      "spellId": 116,
+      "spellName": "Frostbolt",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_frost_frostbolt02.jpg"
+    },
+    "warlock_affliction": {
+      "className": "Warlock",
+      "specName": "Affliction",
+      "spellId": 6789,
+      "spellName": "Death Coil",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_deathcoil.jpg"
+    },
+    "warlock_demonology": {
+      "className": "Warlock",
+      "specName": "Demonology",
+      "spellId": 30146,
+      "spellName": "Summon Felguard",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_summonfelguard.jpg"
+    },
+    "warlock_destruction": {
+      "className": "Warlock",
+      "specName": "Destruction",
+      "spellId": 5740,
+      "spellName": "Rain of Fire",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_shadow_rainoffire.jpg"
+    },
+    "druid_balance": {
+      "className": "Druid",
+      "specName": "Balance",
+      "spellId": 24858,
+      "spellName": "Moonkin Form",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_forceofnature.jpg"
+    },
+    "druid_feralcombat": {
+      "className": "Druid",
+      "specName": "Feral",
+      "spellId": 768,
+      "spellName": "Cat Form",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/ability_druid_catform.jpg"
+    },
+    "druid_restoration": {
+      "className": "Druid",
+      "specName": "Restoration",
+      "spellId": 5185,
+      "spellName": "Healing Touch",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_healingtouch.jpg"
+    }
+  }
+}

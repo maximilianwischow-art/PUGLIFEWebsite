@@ -16,9 +16,6 @@ function initBackgroundStars() {
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
 const IMAGE_ASSET_VERSION = "20260428f";
-/** Same guild as dashboard (`public/app.js`) — Warcraft Logs attendance for tier badges. */
-const EVENTS_WCL_GUILD_ID = 817080;
-const BADGE_FRAME_VERSION = "20260502a";
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 let authMe = null;
 /** Official WoW class colours (default UI palette). */
@@ -43,15 +40,122 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * Mirrors server `LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG` — Raid-Helper can send DE/FR/ES class names.
+ * Without this, `classicon_krieger.jpg` etc. 404 and prot detection never matches `warrior` / `paladin`.
+ */
+const LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG = {
+  warrior: "warrior",
+  paladin: "paladin",
+  hunter: "hunter",
+  rogue: "rogue",
+  priest: "priest",
+  shaman: "shaman",
+  mage: "mage",
+  warlock: "warlock",
+  druid: "druid",
+  deathknight: "deathknight",
+  krieger: "warrior",
+  jaeger: "hunter",
+  jager: "hunter",
+  schurke: "rogue",
+  priester: "priest",
+  schamane: "shaman",
+  magier: "mage",
+  hexenmeister: "warlock",
+  druide: "druid",
+  todesritter: "deathknight",
+  guerrier: "warrior",
+  chasseur: "hunter",
+  voleur: "rogue",
+  pretre: "priest",
+  chaman: "shaman",
+  demoniste: "warlock",
+  chevalierdelamort: "deathknight",
+  guerrero: "warrior",
+  cazador: "hunter",
+  picaro: "rogue",
+  sacerdote: "priest",
+  brujo: "warlock",
+  druida: "druid",
+};
+
+const CANONICAL_SLUG_TO_COLOR_CLASS = {
+  warrior: "Warrior",
+  paladin: "Paladin",
+  hunter: "Hunter",
+  rogue: "Rogue",
+  priest: "Priest",
+  shaman: "Shaman",
+  mage: "Mage",
+  warlock: "Warlock",
+  druid: "Druid",
+  deathknight: "Death Knight",
+};
+
+/** Same as server `RAID_HELPER_FALSE_CLASS_SLUGS` — RH sometimes puts "Tank" in the class field. */
+const RAID_HELPER_FALSE_CLASS_SLUGS = new Set([
+  "tank",
+  "tanks",
+  "schutz",
+  "healer",
+  "healers",
+  "melee",
+  "ranged",
+  "caster",
+  "casters",
+  "mdps",
+  "rdps",
+]);
+
+/** Zamimg uses English race ids in filenames (`raceicon_human_male.jpg`). */
+const LOCALIZED_RACE_SLUG_TO_ENGLISH = {
+  human: "human",
+  orc: "orc",
+  dwarf: "dwarf",
+  nightelf: "nightelf",
+  gnome: "gnome",
+  tauren: "tauren",
+  troll: "troll",
+  scourge: "scourge",
+  undead: "scourge",
+  forsaken: "scourge",
+  bloodelf: "bloodelf",
+  draenei: "draenei",
+  mensch: "human",
+  zwerg: "dwarf",
+  nachtelf: "nightelf",
+  gnom: "gnome",
+  untoter: "scourge",
+  untote: "scourge",
+  blutelf: "bloodelf",
+  humain: "human",
+  elfedelanuit: "nightelf",
+  elfe: "nightelf",
+  mortvivant: "scourge",
+};
+
 const ZAM_ICON_LARGE = "https://wow.zamimg.com/images/wow/icons/large";
 
-/** TBC-style spell icons for talents/specs (fallback when Raid-Helper does not send `specIconUrl`). */
-const SPEC_SPELL_ICON = {
+/** Same URLs as server `ZAMIMG_PROT_SPEC_ICON_URL` — always works even before `/tbc-spec-icons.json` loads. */
+const CANONICAL_PROT_SPEC_BADGE_URL = {
+  warrior_protection: `${ZAM_ICON_LARGE}/ability_warrior_defensivestance.jpg`,
+  paladin_protection: `${ZAM_ICON_LARGE}/spell_holy_sealofprotection.jpg`,
+};
+
+/** Bust when regenerating `public/tbc-spec-icons.json` via `scripts/fetch-tbc-spec-icons.mjs`. */
+const TBC_SPEC_ICONS_JSON_VER = "20260511b";
+
+/** Populated from `/tbc-spec-icons.json` (Wowhead TBC spell pages → zamimg large icon). */
+let tbcSpecIconByKey = null;
+
+/** Texture-only fallback if JSON missing or fetch failed (same filenames as zamimg `large/`). */
+const SPEC_SPELL_ICON_TEXTURE_FALLBACK = {
   warrior_arms: "ability_warrior_savageblow",
   warrior_fury: "ability_warrior_innerrage",
   warrior_protection: "ability_warrior_defensivestance",
   paladin_holy: "spell_holy_holybolt",
-  /** Matches TBC Holy Shield (Blizzard spell 20911 uses same artwork family). */
+  /** Used only if `tbc-spec-icons.json` unavailable; live icons come from Wowhead spell pages. */
   paladin_protection: "spell_holy_sealofprotection",
   paladin_retribution: "spell_holy_auraoflight",
   hunter_beastmastery: "ability_hunter_beasttaming",
@@ -77,6 +181,31 @@ const SPEC_SPELL_ICON = {
   druid_restoration: "spell_nature_healingtouch",
 };
 
+async function loadTbcSpecIconMap() {
+  if (tbcSpecIconByKey) return tbcSpecIconByKey;
+  try {
+    const res = await fetch(`/tbc-spec-icons.json?v=${TBC_SPEC_ICONS_JSON_VER}`, { credentials: "same-origin" });
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json().catch(() => ({}));
+    tbcSpecIconByKey = data?.byKey && typeof data.byKey === "object" ? data.byKey : {};
+  } catch {
+    tbcSpecIconByKey = {};
+  }
+  return tbcSpecIconByKey;
+}
+
+/** Preferred icon URL for a `warrior_arms`-style key (Wowhead JSON first, then texture table). */
+function specIconZamimgUrlForKey(key) {
+  if (!key) return "";
+  const prot = CANONICAL_PROT_SPEC_BADGE_URL[key];
+  if (prot) return prot;
+  const row = tbcSpecIconByKey?.[key];
+  const u = row?.iconUrl ? String(row.iconUrl).trim() : "";
+  if (/^https?:\/\//i.test(u)) return u;
+  const t = SPEC_SPELL_ICON_TEXTURE_FALLBACK[key];
+  return t ? `${ZAM_ICON_LARGE}/${t}.jpg` : "";
+}
+
 function normalizeSlug(s) {
   return String(s || "")
     .normalize("NFD")
@@ -85,6 +214,18 @@ function normalizeSlug(s) {
     .toLowerCase()
     .replace(/\u2019/g, "'")
     .replace(/[^a-z0-9]+/g, "");
+}
+
+function canonicalWowClassSlug(classRaw) {
+  const slug = normalizeSlug(classRaw);
+  if (slug && RAID_HELPER_FALSE_CLASS_SLUGS.has(slug)) return "";
+  return LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG[slug] || slug;
+}
+
+function wowClassColor(classNameRaw) {
+  const slug = canonicalWowClassSlug(classNameRaw);
+  const colorKey = CANONICAL_SLUG_TO_COLOR_CLASS[slug];
+  return colorKey ? WOW_CLASS_COLORS[colorKey] || "var(--text)" : "var(--text)";
 }
 
 /** Extra zamimg textures if primary 404 (CDN edge cases). Keys match {@link resolvedSpecIconKey}. */
@@ -173,9 +314,10 @@ function inferSpecSlugFromRole(classSlug, roleSlug, specSlug) {
 
 /** Resolves `warrior_protection` / `paladin_protection` etc.; tanks override wrong RH spec labels. */
 function resolvedSpecIconKey(player) {
-  const cls = normalizeSlug(player?.className);
+  const cls = canonicalWowClassSlug(player?.className);
   const roleSlug = normalizedRoleSlugForSpec(player);
   let rawSpec = normalizeSlug(player?.specName);
+  if (/^protection\d+$/.test(rawSpec)) rawSpec = "protection";
   if ((cls === "warrior" || cls === "paladin") && rawSpec.includes("protection")) rawSpec = "protection";
   if (cls === "paladin" && isTankRoleSlug(roleSlug)) rawSpec = "protection";
   else if (cls === "warrior" && isTankRoleSlug(roleSlug)) rawSpec = "protection";
@@ -190,7 +332,7 @@ function resolvedSpecIconKey(player) {
 }
 
 function classIconFallbackUrl(className) {
-  const cls = normalizeSlug(className).replace(/[^a-z]/g, "") || "warrior";
+  const cls = canonicalWowClassSlug(className).replace(/[^a-z]/g, "") || "warrior";
   return `${ZAM_ICON_LARGE}/classicon_${cls}.jpg`;
 }
 
@@ -205,8 +347,9 @@ function genderForRacePortrait(genderRaw) {
 function normalizeRacePortraitKey(raceRaw) {
   const s = normalizeSlug(raceRaw);
   if (!s) return "";
-  if (s === "undead" || s === "forsaken") return "scourge";
-  return s;
+  const mapped = LOCALIZED_RACE_SLUG_TO_ENGLISH[s] || s;
+  if (mapped === "undead" || mapped === "forsaken") return "scourge";
+  return mapped;
 }
 
 function championPortraitCandidates(raceRaw, genderRaw) {
@@ -219,40 +362,68 @@ function championPortraitCandidates(raceRaw, genderRaw) {
   return [...new Set(urls)];
 }
 
-/** Large portrait: race/gender champion icon, else class crest. Spec icon is layered separately (smaller). */
-function championPortraitPrimaryUrl(player) {
-  const race = String(player?.race || "").trim();
-  const gender = String(player?.gender || "").trim();
-  const cands = championPortraitCandidates(race, gender);
-  if (cands.length) return cands[0];
-  return classIconFallbackUrl(player?.className);
+/** Ordered URLs for the spec badge: WCL Damage Done icon when present, then Raid-Helper/API URL, zamimg chain, class crest.
+ * Never rely on a single URL — Blizzard/RH links often 404 or block hotlinks; `onerror` must have targets.
+ * Unknown tank + prot-like text: canonical prot spell art unless WCL already supplied an icon. */
+/** When WCL texture disagrees with RH class (both tanks are "Protection"), ignore WCL so canonical prot badge wins. */
+function wclProtIconConflictsWithRosterClass(wclUrl, player) {
+  const cls = canonicalWowClassSlug(player?.className);
+  const u = String(wclUrl || "").toLowerCase();
+  const war =
+    u.includes("ability_warrior_defensivestance") ||
+    u.includes("ability_warrior_shieldwall") ||
+    u.includes("inv_shield_06") ||
+    u.includes("inv_shield_05");
+  const pal =
+    u.includes("spell_holy_sealofprotection") ||
+    u.includes("spell_holy_devotionaura") ||
+    u.includes("spell_holy_sealofvengeance") ||
+    u.includes("spell_holy_righteousfury");
+  if (cls === "paladin" && war && !pal) return true;
+  if (cls === "warrior" && pal && !war) return true;
+  return false;
 }
 
-function championPortraitFallbackChain(player) {
-  const race = String(player?.race || "").trim();
-  const gender = String(player?.gender || "").trim();
-  const cands = championPortraitCandidates(race, gender);
-  const chain = [...cands.slice(1), classIconFallbackUrl(player?.className)];
-  return [...new Set(chain)].filter(Boolean);
+function displaySpecNameForRoster(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const slug = normalizeSlug(s);
+  if (/^protection\d+$/.test(slug)) return "Protection";
+  return s;
 }
 
-/** Ordered URLs for the spec badge: API URL first (if any), then zamimg spell chain, then class crest.
- * Never return only the API URL — Blizzard/RH links often 404 or block hotlinks; `onerror` must have targets.
- * Prot pala / warrior: put Wowhead spell textures first so broken CDN URLs from RH never paint first. */
 function specBadgePortraitChain(player) {
+  const fromWcl = String(player?.wclSpecIconUrl || "").trim();
+  const wclOk = /^https?:\/\//i.test(fromWcl) && !wclProtIconConflictsWithRosterClass(fromWcl, player);
   const fromApi = String(player?.specIconUrl || "").trim();
   const key = resolvedSpecIconKey(player);
-  const spell = key ? SPEC_SPELL_ICON[key] : "";
+  const roleSlug = normalizedRoleSlugForSpec(player);
+  const rawSpec = normalizeSlug(player?.specName);
+  const protLike =
+    rawSpec.includes("protection") || /^protection\d+$/.test(rawSpec) || rawSpec === "prot" || rawSpec === "schutz";
+  const unknownTankProt =
+    !key &&
+    !canonicalWowClassSlug(player?.className) &&
+    isTankRoleSlug(roleSlug) &&
+    protLike;
+  const primaryZam = key ? specIconZamimgUrlForKey(key) : "";
   const extras = key && SPEC_ZAMIMG_FALLBACK[key] ? SPEC_ZAMIMG_FALLBACK[key] : [];
-  const protKey = key === "paladin_protection" || key === "warrior_protection";
+  const extraUrls = extras.map((f) => `${ZAM_ICON_LARGE}/${f}.jpg`);
+  let protKey = key === "paladin_protection" || key === "warrior_protection";
   const urls = [];
-  if (protKey && spell) {
-    urls.push(`${ZAM_ICON_LARGE}/${spell}.jpg`);
-    for (const f of extras) urls.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  if (wclOk) urls.push(fromWcl);
+  if (!wclOk && unknownTankProt) {
+    urls.push(CANONICAL_PROT_SPEC_BADGE_URL.warrior_protection);
+    urls.push(CANONICAL_PROT_SPEC_BADGE_URL.paladin_protection);
+    protKey = true;
+  }
+  if (protKey && primaryZam) {
+    urls.push(primaryZam);
+    for (const u of extraUrls) urls.push(u);
   }
   if (/^https?:\/\//i.test(fromApi)) urls.push(fromApi);
-  if (!protKey && spell) urls.push(`${ZAM_ICON_LARGE}/${spell}.jpg`);
-  if (!protKey) for (const f of extras) urls.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  if (!protKey && primaryZam) urls.push(primaryZam);
+  if (!protKey) for (const u of extraUrls) urls.push(u);
   urls.push(classIconFallbackUrl(player?.className));
   const seen = new Set();
   const out = [];
@@ -264,79 +435,37 @@ function specBadgePortraitChain(player) {
   return out;
 }
 
-const RAIDER_BADGE_SLOTS = 4;
-
-function rosterLookupKey(name) {
-  return String(name || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
-/** Tier from WCL-tracked attendance (tune thresholds for your guild). */
-function attendanceBadgeTier(raidsAttended, consideredRaids) {
-  const r = Math.max(0, Number(raidsAttended || 0));
-  const c = Math.max(1, Number(consideredRaids || 0));
-  const rate = r / c;
-  if (r < 1) return "";
-  if (r >= 14 || rate >= 0.82) return "gold";
-  if (r >= 6 || rate >= 0.42) return "silver";
-  return "bronze";
-}
-
-function tierFrameUrl(tier) {
-  const file = tier === "gold" ? "gold.png" : tier === "silver" ? "silver.png" : "bronze.png";
-  return `/images/badge-tiers/${file}?v=${BADGE_FRAME_VERSION}`;
-}
-
-function rosterAchievementBadgesMarkup(player, attendanceByName, consideredRaids) {
-  const row = attendanceByName.get(rosterLookupKey(player.name));
-  const raids = row ? Math.max(0, Number(row.raidsAttended || 0)) : 0;
-  const c = Math.max(0, Number(consideredRaids || 0));
-  const tier = attendanceBadgeTier(raids, c);
-
-  const slots = [];
-  if (tier && raids >= 1) {
-    const title = `Warcraft Logs attendance: ${raids} raid${raids === 1 ? "" : "s"} in last ${c} tracked raid${c === 1 ? "" : "s"}`;
-    slots.push(`<div class="raider-badge-tier" role="img" aria-label="${escapeHtml(title)}">
-        <div class="raider-badge-tier-hole" aria-hidden="true">
-          <span class="raider-badge-tier-n">${escapeHtml(String(raids))}</span>
-          <span class="raider-badge-tier-sub">raids</span>
-        </div>
-        <img class="raider-badge-tier-frame" src="${escapeHtml(tierFrameUrl(tier))}" alt="" width="48" height="48" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
-      </div>`);
-  } else {
-    slots.push(
-      `<span class="raider-badge-slot raider-badge-slot--pending" title="No Warcraft Logs attendance yet (need ≥1 tracked raid)" aria-hidden="true"></span>`
-    );
+/** One portrait: spec icons first (when known), then race champion art, deduped — removes nested “badge” overlay. */
+function rosterPortraitChain(player) {
+  const specUrls = specBadgePortraitChain(player);
+  const race = String(player?.race || "").trim();
+  const gender = String(player?.gender || "").trim();
+  const raceUrls = championPortraitCandidates(race, gender);
+  const seen = new Set();
+  const out = [];
+  for (const u of [...specUrls, ...raceUrls]) {
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    out.push(u);
   }
-
-  while (slots.length < RAIDER_BADGE_SLOTS) {
-    slots.push(
-      `<span class="raider-badge-slot raider-badge-slot--locked" title="Achievement slot — coming soon" aria-hidden="true"></span>`
-    );
-  }
-
-  return slots.join("");
+  return out.length ? out : [classIconFallbackUrl(player?.className)];
 }
 
-function rosterRaiderCard(player, attendanceByName, consideredRaids) {
+function rosterRaiderCard(player) {
   const className = String(player.className || "").trim();
-  const color = WOW_CLASS_COLORS[className] || "var(--text)";
-  const specLabel = String(player.specName || "").trim();
-  const champSrc = escapeHtml(championPortraitPrimaryUrl(player));
-  const champFb = championPortraitFallbackChain(player)
-    .map((u) => escapeHtml(u))
-    .join("|");
-  const specChain = specBadgePortraitChain(player);
-  const specBadgeSrc = escapeHtml(specChain[0] || classIconFallbackUrl(className));
-  const specBadgeFb = specChain
+  const color = wowClassColor(className);
+  const specLabel = displaySpecNameForRoster(String(player.specName || "").trim());
+  const portraitChain = rosterPortraitChain(player);
+  const portraitSrc = escapeHtml(portraitChain[0] || "");
+  const portraitFb = portraitChain
     .slice(1)
     .map((u) => escapeHtml(u))
     .join("|");
-  const specAlt = specLabel ? `${className} · ${specLabel}` : className;
-  const priestGlow = className === "Priest" ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);" : "";
+  const portraitAlt = specLabel ? `${className} · ${specLabel}` : className;
+  const priestGlow =
+    canonicalWowClassSlug(className) === "priest"
+      ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);"
+      : "";
 
   return `
     <div class="raider-card">
@@ -344,37 +473,27 @@ function rosterRaiderCard(player, attendanceByName, consideredRaids) {
         <div class="raider-portrait-stack">
           <img
             class="raider-champion-img"
-            src="${champSrc}"
-            alt=""
+            src="${portraitSrc}"
+            alt="${escapeHtml(portraitAlt)}"
             width="56"
             height="56"
             loading="lazy"
             decoding="async"
-            referrerpolicy="no-referrer"
-            data-champ-fallbacks="${champFb}"
+            data-champ-fallbacks="${portraitFb}"
             onerror="(function(el){var raw=el.getAttribute('data-champ-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.champI||0);if(i<parts.length){el.dataset.champI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
-          />
-          <img
-            class="raider-spec-attach"
-            src="${specBadgeSrc}"
-            alt="${escapeHtml(specAlt)}"
-            width="22"
-            height="22"
-            loading="lazy"
-            decoding="async"
-            referrerpolicy="no-referrer"
-            data-spec-fallbacks="${specBadgeFb}"
-            onerror="(function(el){var raw=el.getAttribute('data-spec-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.specI||0);if(i<parts.length){el.dataset.specI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
           />
         </div>
         <div class="raider-text">
           <div class="raider-name-line">
             <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(player.name)}</span>
           </div>
-          ${specLabel ? `<div class="raider-spec-line">${escapeHtml(specLabel)} · ${escapeHtml(className)}</div>` : `<div class="raider-spec-line">${escapeHtml(className)}</div>`}
+          ${
+            specLabel && className
+              ? `<div class="raider-spec-line">${escapeHtml(specLabel)} · ${escapeHtml(className)}</div>`
+              : `<div class="raider-spec-line">${escapeHtml(specLabel || className)}</div>`
+          }
         </div>
       </div>
-      <div class="raider-badges" role="group" aria-label="Achievement badges">${rosterAchievementBadgesMarkup(player, attendanceByName, consideredRaids)}</div>
     </div>
   `;
 }
@@ -553,26 +672,12 @@ async function submitEventSignupAction(eventId, action) {
 
 async function loadEvents() {
   try {
+    await loadTbcSpecIconMap();
     const me = await loadAuthMe();
     const isAuthenticated = Boolean(me?.authenticated);
-    const [res, attRes] = await Promise.all([
-      fetch("/api/raid-helper/future-events", { credentials: "include" }),
-      fetch(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=80`).catch(() => null),
-    ]);
+    const res = await fetch("/api/raid-helper/future-events", { credentials: "include" });
     const payload = await res.json();
     if (!res.ok) throw new Error(payload.error || "Failed to load events");
-
-    const attendanceByName = new Map();
-    let attendanceConsidered = 0;
-    if (attRes && attRes.ok) {
-      const attPayload = await attRes.json().catch(() => ({}));
-      if (Array.isArray(attPayload?.leaderboard)) {
-        attendanceConsidered = Number(attPayload.consideredRaids || 0);
-        for (const row of attPayload.leaderboard) {
-          attendanceByName.set(rosterLookupKey(row.name), row);
-        }
-      }
-    }
 
     const rows = (payload?.events || []).filter(
       (event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids"
@@ -593,7 +698,7 @@ async function loadEvents() {
         const signups = Number(event?.signups?.total || 0);
         const rosterCapacity = rosterCapacityForEvent(event);
         const groupedRoster = groupedRosterByRole(event.confirmedRoster);
-        const card = (p) => rosterRaiderCard(p, attendanceByName, attendanceConsidered);
+        const card = (p) => rosterRaiderCard(p);
         const groupedRosterHtml = ROLE_ORDER.filter((role) => groupedRoster.get(role).length > 0)
           .map(
             (role) => `

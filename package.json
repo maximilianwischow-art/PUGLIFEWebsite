@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "validate": "node --check server.js"
+    "validate": "node --check server.js",
+    "fetch-spec-icons": "node scripts/fetch-tbc-spec-icons.mjs"
   },
   "dependencies": {
     "compression": "^1.8.1",

@@ -98,6 +98,7 @@ const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
 const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
 const WOWHEAD_TBC_NETHER_VORTEX_URL = "https://www.wowhead.com/tbc/item=30183/nether-vortex#reagent-for";
+const NETHER_VORTEX_WOW_ITEM_ID = 30183;
 const RAID_HELPER_API_URL = "https://raid-helper.xyz/api/v4";
 const DEFAULT_TBC_ZONES = [
   "Karazhan",
@@ -825,6 +826,68 @@ function sanitizeNetherVortexItems(items) {
     .slice(0, 30);
 }
 
+/** Wowhead embeds `new Listview({ id: 'reagent-for', data: [...] })` with nested `reagents:[[30183,n],...]` — regex must balance brackets. */
+function extractWowheadListviewDataArray(html, listId) {
+  const text = String(html || "");
+  const needles = [`id:'${listId}'`, `id:"${listId}"`, `id: '${listId}'`, `id: "${listId}"`];
+  let pos = -1;
+  for (const n of needles) {
+    const i = text.indexOf(n);
+    if (i >= 0) {
+      pos = i;
+      break;
+    }
+  }
+  if (pos < 0) return null;
+  const dataPos = text.indexOf("data:", pos);
+  if (dataPos < 0) return null;
+  const start = text.indexOf("[", dataPos);
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function netherVortexCountFromWowheadReagents(reagents) {
+  const pairs = Array.isArray(reagents) ? reagents : [];
+  for (const p of pairs) {
+    if (Array.isArray(p) && p.length >= 2 && Number(p[0]) === NETHER_VORTEX_WOW_ITEM_ID) {
+      const n = Number(p[1]);
+      if (Number.isFinite(n) && n > 0) return Math.max(1, Math.min(20, Math.floor(n)));
+    }
+  }
+  return 1;
+}
+
+const WOWHEAD_SPELL_SKILL_TO_PROFESSION = {
+  164: "Blacksmithing",
+  165: "Leatherworking",
+  171: "Alchemy",
+  197: "Tailoring",
+};
+
+function professionFromWowheadSpellRow(row) {
+  const sk = Array.isArray(row?.skill) ? row.skill : [];
+  for (const sid of sk) {
+    const id = Number(sid);
+    if (WOWHEAD_SPELL_SKILL_TO_PROFESSION[id]) return WOWHEAD_SPELL_SKILL_TO_PROFESSION[id];
+  }
+  return String(row?.reqskill || "").trim();
+}
+
 function parseWowheadReagentForItems(html) {
   const text = String(html || "");
   const nameToId = new Map();
@@ -838,7 +901,6 @@ function parseWowheadReagentForItems(html) {
       nameToId.set(itemName, maybeId);
     }
   }
-  // Prefer explicit TBC item links when present; these are the most reliable IDs.
   const linkRx = /<a[^>]+href="\/tbc\/item=(\d+)\/[^"]*"[^>]*>([^<]+)<\/a>/gi;
   let linkMatch;
   while ((linkMatch = linkRx.exec(text))) {
@@ -848,6 +910,25 @@ function parseWowheadReagentForItems(html) {
       nameToId.set(itemName, maybeId);
     }
   }
+
+  const spellRows = extractWowheadListviewDataArray(text, "reagent-for");
+  if (Array.isArray(spellRows) && spellRows.length) {
+    const fromSpells = spellRows
+      .map((row) => {
+        const itemName = String(row?.name || "").trim();
+        const creates = row?.creates;
+        const createdItemId = Array.isArray(creates) && creates.length ? Number(creates[0]) : 0;
+        const mappedId = Number(nameToId.get(itemName) || 0);
+        const itemID = mappedId > 0 ? mappedId : createdItemId > 0 ? createdItemId : 0;
+        const vortexNeeded = netherVortexCountFromWowheadReagents(row?.reagents);
+        const profession = professionFromWowheadSpellRow(row);
+        return { itemID, itemName, profession, vortexNeeded };
+      })
+      .filter((row) => row.itemID > 0 && row.itemName)
+      .sort((a, b) => a.itemName.localeCompare(b.itemName));
+    if (fromSpells.length) return fromSpells;
+  }
+
   const listviewBlocks = [...text.matchAll(/new Listview\(\{([\s\S]*?)\}\);/gi)].map((m) => m?.[1] || "");
   const candidate =
     listviewBlocks.find((block) => /id:\s*['"]reagent[-_]?for['"]/i.test(block)) ||
@@ -860,14 +941,13 @@ function parseWowheadReagentForItems(html) {
   try {
     parsed = JSON.parse(dataMatch[1]);
   } catch {
-    // Fallback: parse id/name pairs directly from JS-like payload.
     const fallback = [];
     const rx = /"id"\s*:\s*(\d+)[\s\S]*?"name"\s*:\s*"((?:\\.|[^"\\])+)"/gi;
     let m;
     while ((m = rx.exec(candidate))) {
       const itemID = Number(m[1] || 0);
       const itemName = String(m[2] || "").replace(/\\"/g, '"').trim();
-      if (itemID > 0 && itemName) fallback.push({ itemID, itemName, profession: "" });
+      if (itemID > 0 && itemName) fallback.push({ itemID, itemName, profession: "", vortexNeeded: 1 });
     }
     return fallback
       .filter((row, idx, arr) => arr.findIndex((x) => x.itemID === row.itemID) === idx)
@@ -878,10 +958,14 @@ function parseWowheadReagentForItems(html) {
       const itemName = String(row?.name || "").trim();
       const parsedId = Number(row?.id || 0);
       const mappedId = Number(nameToId.get(itemName) || 0);
+      const creates = row?.creates;
+      const createdItemId = Array.isArray(creates) && creates.length ? Number(creates[0]) : 0;
+      const itemID = mappedId > 0 ? mappedId : createdItemId > 0 ? createdItemId : parsedId;
       return {
-        itemID: mappedId > 0 ? mappedId : parsedId,
+        itemID,
         itemName,
-        profession: String(row?.reqskill || row?.skill || "").trim(),
+        profession: professionFromWowheadSpellRow(row) || String(row?.reqskill || "").trim(),
+        vortexNeeded: netherVortexCountFromWowheadReagents(row?.reagents),
       };
     })
     .filter((row) => row.itemID > 0 && row.itemName)
@@ -1179,7 +1263,7 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
 
 app.get("/api/nether-vortex/craftables", async (_req, res) => {
   try {
-    const key = "nether-vortex-craftables-v4";
+    const key = "nether-vortex-craftables-v5";
     const payload = await getOrRefreshCachedPayload(key, {
       ttlMs: 24 * 3600_000,
       maxStaleMs: 7 * 24 * 3600_000,
@@ -1206,6 +1290,7 @@ app.get("/api/nether-vortex/craftables", async (_req, res) => {
             itemID: resolvedId > 0 ? resolvedId : Number(row?.itemID || 0),
             itemName: String(row?.itemName || "").trim(),
             profession: String(row?.profession || "").trim(),
+            vortexNeeded: Math.max(1, Math.min(20, Math.floor(Number(row?.vortexNeeded || 1)))),
           });
         }
         return { source: WOWHEAD_TBC_NETHER_VORTEX_URL, items: normalized };
@@ -1693,44 +1778,6 @@ function normalizeWowItemIconUrl(iconUrl) {
   return s;
 }
 
-/** Spell media icon URL from Battle.net `static-classic-*` namespace (TBC Classic game data). */
-async function fetchClassicSpellIcon(spellId) {
-  const id = Number(spellId || 0);
-  if (!Number.isInteger(id) || id <= 0) return null;
-  try {
-    const token = await getBlizzardAccessToken();
-    const namespace = wowClassicNamespace();
-    const locale = wowClassicLocale();
-    const base = blizzardApiBaseUrl();
-    const url = `${base}/data/wow/media/spell/${id}?namespace=${encodeURIComponent(namespace)}&locale=${encodeURIComponent(locale)}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return null;
-    const mediaData = await res.json().catch(() => ({}));
-    const mediaAssets = Array.isArray(mediaData?.assets) ? mediaData.assets : [];
-    let rawIcon = mediaAssets.find((a) => String(a?.key || "").toLowerCase() === "icon")?.value || null;
-    if (!rawIcon) {
-      rawIcon =
-        mediaAssets.find((a) => /\.(jpg|png)(?:\?|$)/i.test(String(a?.value || "")))?.value || null;
-    }
-    if (!rawIcon) rawIcon = mediaAssets[0]?.value || null;
-    if (!rawIcon) return null;
-    return normalizeWowItemIconUrl(rawIcon) || rawIcon;
-  } catch {
-    return null;
-  }
-}
-
-async function getCachedClassicSpellIcon(spellId) {
-  const id = Number(spellId || 0);
-  if (!Number.isInteger(id) || id <= 0) return null;
-  const key = `spell-icon-v1-${wowClassicRegion()}-${wowClassicNamespace()}-${id}`;
-  return getOrRefreshCachedPayload(key, {
-    ttlMs: 7 * 24 * 3600_000,
-    maxStaleMs: 60 * 24 * 3600_000,
-    loader: () => fetchClassicSpellIcon(id),
-  });
-}
-
 async function fetchClassicItemMetadata(itemId) {
   const id = Number(itemId || 0);
   if (!Number.isInteger(id) || id <= 0) return { itemId: id || null };
@@ -2132,6 +2179,113 @@ async function getCurrentVotingRoundCached(guildId) {
   });
 }
 
+function eventsWclSpecIconsEnabled() {
+  return String(process.env.EVENTS_WCL_SPEC_ICONS || "1").trim() !== "0";
+}
+
+function eventsWclSpecIconGuildId() {
+  const override = Number(process.env.EVENTS_WCL_SPEC_ICON_GUILD_ID || 0);
+  if (Number.isInteger(override) && override > 0) return override;
+  return Number.isInteger(votingGuildId) && votingGuildId > 0 ? votingGuildId : 0;
+}
+
+function wclRosterIconCacheTtlMs() {
+  const n = Number(process.env.WCL_ROSTER_ICON_CACHE_MS || 900_000);
+  return Number.isFinite(n) && n > 0 ? n : 900_000;
+}
+
+/** Lowercase + diacritic-folded keys so WCL / Raid-Helper names can match. */
+function wclIconMapKeysFromPlayerName(name) {
+  const raw = String(name || "").trim();
+  const keys = [];
+  if (!raw) return keys;
+  const lower = raw.toLowerCase();
+  keys.push(lower);
+  const folded = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+  if (folded && folded !== lower) keys.push(folded);
+  return keys;
+}
+
+function pickWclIconHit(iconMap, playerName) {
+  if (!iconMap || typeof iconMap !== "object") return null;
+  for (const k of wclIconMapKeysFromPlayerName(playerName)) {
+    const hit = iconMap[k];
+    if (hit && hit.icon) return hit;
+  }
+  return null;
+}
+
+async function loadWclGuildRosterSpecIconMapUncached(guildId) {
+  const gid = Number(guildId);
+  if (!Number.isInteger(gid) || gid <= 0) return {};
+
+  const reports = await getFilteredGuildReportsForGuild(gid, 20);
+  const latest = latestTrackedRaidReport(reports);
+  if (!latest) return {};
+
+  const { report, bossFights } = latest;
+  const fightIds = bossFights.map((f) => Number(f.id)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!fightIds.length) return {};
+
+  const chunks = chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery());
+  const damageParts = [];
+  for (const ids of chunks) {
+    const data = await queryWcl(VOTING_ROUND_QUERY, { code: report.code, fightIds: ids });
+    damageParts.push(data?.reportData?.report?.damageDone);
+  }
+
+  const merged = mergeWclTableValuesFromApi(damageParts);
+  const out = Object.create(null);
+
+  for (const entry of merged.entries || []) {
+    const icon = String(entry?.icon || "").trim();
+    if (!icon || !/^https?:\/\//i.test(icon)) continue;
+    const type = String(entry?.type || "").trim();
+    const payload = { icon, type };
+    for (const k of wclIconMapKeysFromPlayerName(entry.name)) {
+      if (!out[k]) out[k] = payload;
+    }
+  }
+  return out;
+}
+
+async function getWclGuildRosterSpecIconMap(guildId) {
+  const gid = Number(guildId);
+  if (!Number.isInteger(gid) || gid <= 0) return {};
+  const key = `wcl-guild-roster-spec-icons-v1-${gid}`;
+  const ttlMs = wclRosterIconCacheTtlMs();
+  return getOrRefreshCachedPayload(key, {
+    ttlMs,
+    maxStaleMs: Math.max(ttlMs * 10, 15 * 60_000),
+    loader: async () => loadWclGuildRosterSpecIconMapUncached(gid),
+  });
+}
+
+async function enrichConfirmedRosterWithWclSpecIcons(rows) {
+  if (!eventsWclSpecIconsEnabled()) return rows;
+  const gid = eventsWclSpecIconGuildId();
+  if (!gid || !Array.isArray(rows) || !rows.length) return rows;
+
+  let iconMap;
+  try {
+    iconMap = await getWclGuildRosterSpecIconMap(gid);
+  } catch {
+    return rows;
+  }
+  if (!iconMap || typeof iconMap !== "object") return rows;
+
+  return rows.map((row) => {
+    const hit = pickWclIconHit(iconMap, row?.name);
+    if (!hit?.icon) return row;
+    if (!wclProtIconAgreesWithRosterClass(hit.icon, row)) return row;
+    return { ...row, wclSpecIconUrl: hit.icon, wclCombatSpecType: hit.type || "" };
+  });
+}
+
 function bossListMatchesFightName(bossNames, fightName) {
   const fn = normalizeWclLabel(fightName);
   return bossNames.some((b) => normalizeWclLabel(b) === fn);
@@ -2311,10 +2465,91 @@ const RH_SIGNUP_EXCLUDED_CLASSES = new Set(["Absence", "Bench", "Tentative", "La
  */
 function raidHelperClassNameFromSignUpEntry(entry) {
   const s = String(
-    entry?.className ?? entry?.class ?? entry?.wowClass ?? entry?.playerClass ?? ""
+    entry?.className ??
+      entry?.class ??
+      entry?.wowClass ??
+      entry?.playerClass ??
+      entry?.characterClass ??
+      entry?.character?.className ??
+      entry?.character?.class ??
+      ""
   ).trim();
   if (/^\d+$/.test(s)) return "";
   return s;
+}
+
+/**
+ * Raid-Helper returns locale-specific class labels (e.g. DE "Krieger"); roster icons + prot detection need English slugs.
+ * Keys = slugifyLocaleText(lower-case, diacritics stripped).
+ */
+const LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG = {
+  warrior: "warrior",
+  paladin: "paladin",
+  hunter: "hunter",
+  rogue: "rogue",
+  priest: "priest",
+  shaman: "shaman",
+  mage: "mage",
+  warlock: "warlock",
+  druid: "druid",
+  deathknight: "deathknight",
+  krieger: "warrior",
+  jaeger: "hunter",
+  jager: "hunter",
+  schurke: "rogue",
+  priester: "priest",
+  schamane: "shaman",
+  magier: "mage",
+  hexenmeister: "warlock",
+  druide: "druid",
+  todesritter: "deathknight",
+  guerrier: "warrior",
+  chasseur: "hunter",
+  voleur: "rogue",
+  pretre: "priest",
+  chaman: "shaman",
+  demoniste: "warlock",
+  chevalierdelamort: "deathknight",
+  guerrero: "warrior",
+  cazador: "hunter",
+  picaro: "rogue",
+  sacerdote: "priest",
+  brujo: "warlock",
+  druida: "druid",
+};
+
+const ENGLISH_CLASS_SLUG_TO_DISPLAY = {
+  warrior: "Warrior",
+  paladin: "Paladin",
+  hunter: "Hunter",
+  rogue: "Rogue",
+  priest: "Priest",
+  shaman: "Shaman",
+  mage: "Mage",
+  warlock: "Warlock",
+  druid: "Druid",
+  deathknight: "Death Knight",
+};
+
+function englishCanonicalClassSlugFromLocalizedDisplay(raw) {
+  const slug = slugifyLocaleText(raw);
+  if (!slug) return "";
+  return LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG[slug] || slug;
+}
+
+/** Stable English UI label + consistent keys for guild tooling. */
+function englishWowClassDisplayFromRaidHelper(raw) {
+  const probe = slugifyLocaleText(raw);
+  /** RH sometimes puts role bucket labels in the class column — never show those as a “class”. */
+  if (
+    probe &&
+    /^(tank|tanks|schutz|healer|healers|melee|ranged|caster|casters|mdps|rdps)$/.test(probe)
+  ) {
+    return "";
+  }
+  const can = englishCanonicalClassSlugFromLocalizedDisplay(raw);
+  if (!can) return String(raw || "").trim();
+  return ENGLISH_CLASS_SLUG_TO_DISPLAY[can] || String(raw || "").trim();
 }
 
 /** Race display string when Raid-Helper provides it (field names vary by API version). */
@@ -2501,27 +2736,42 @@ async function fetchBlizzardClassicActiveSpecName(realmSlug, characterName) {
 }
 
 async function enrichRosterRowExternalSpec(row) {
-  if (!wowExternalSpecLookupEnabled()) return row;
   const realmRaw = String(row.realm || "").trim() || defaultWowRealmForRoster();
   const name = String(row.name || "").trim();
   if (!realmRaw || !name) return row;
+
+  const needsClassRepair = raidHelperClassFieldLooksLikeRoleNotClass(row.className);
+  const needsSpecLookup = wowExternalSpecLookupEnabled();
+  if (!needsClassRepair && !needsSpecLookup) return row;
+
   const region = wowRosterRegion();
   const realmSlug = wowRealmSlugForLookup(realmRaw);
   const cacheSlug = slugifyLocaleText(name);
-
-  let specName = null;
   const rioKey = `raiderio-classic-profile-v1-${region}-${realmSlug}-${cacheSlug}`;
+
+  let profile = null;
   try {
-    const profile = await getOrRefreshCachedPayload(rioKey, {
+    profile = await getOrRefreshCachedPayload(rioKey, {
       ttlMs: Math.min(3600_000, Math.max(60_000, Number(process.env.WOW_RIO_CACHE_TTL_MS || 900_000))),
       maxStaleMs: Math.min(7 * 86400_000, Math.max(3600_000, Number(process.env.WOW_RIO_CACHE_STALE_MS || 86400_000))),
       loader: () => loadRaiderIoClassicProfileRaw(region, realmSlug, name),
     });
-    specName = specNameFromRaiderIoClassicProfile(profile);
   } catch {
-    specName = null;
+    profile = null;
   }
 
+  let out = { ...row };
+
+  if (needsClassRepair && profile) {
+    const rioClass = classNameFromRaiderIoClassicProfile(profile);
+    if (rioClass) {
+      out.className = englishWowClassDisplayFromRaidHelper(rioClass);
+    }
+  }
+
+  if (!needsSpecLookup) return out;
+
+  let specName = specNameFromRaiderIoClassicProfile(profile);
   if (!specName && blizzardProfileClientConfigured()) {
     const bKey = `bnet-classic-active-spec-v1-${region}-${realmSlug}-${cacheSlug}`;
     try {
@@ -2535,12 +2785,11 @@ async function enrichRosterRowExternalSpec(row) {
     }
   }
 
-  if (specName) return { ...row, specName };
-  return row;
+  if (specName) out = { ...out, specName };
+  return out;
 }
 
 async function enrichConfirmedRosterExternalSpecs(rows) {
-  if (!wowExternalSpecLookupEnabled()) return rows;
   const conc = Math.min(
     16,
     Math.max(1, Number(process.env.WOW_EXTERNAL_SPEC_CONCURRENCY || 6) || 6)
@@ -2588,25 +2837,95 @@ function slugifyLocaleText(s) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-/** TBC Classic spell IDs (game data) for spec badges when Raid-Helper has no image. */
-const TBC_CLASSIC_SPEC_SPELL_ID = {
-  paladin_protection: 20911, // Holy Shield
-  warrior_protection: 71, // Defensive Stance
-};
+/** RH uses Protection1 / Protection2 when two players pick the same spec name — normalize for display and slug logic. */
+function normalizeProtectionSpecLabel(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return "";
+  const slug = slugifyLocaleText(t);
+  if (/^protection\d+$/.test(slug)) return "Protection";
+  return t;
+}
 
-/** Reliable Wowhead CDN icons when Blizzard spell media fails on live (hotlink / token). */
+/** Raid Helper sometimes stores the role bucket ("Tank", "Healer") in the class field — breaks zamimg class icons. */
+const RAID_HELPER_FALSE_CLASS_SLUGS = new Set([
+  "tank",
+  "tanks",
+  "schutz",
+  "healer",
+  "healers",
+  "melee",
+  "ranged",
+  "caster",
+  "casters",
+  "mdps",
+  "rdps",
+]);
+
+function raidHelperClassFieldLooksLikeRoleNotClass(classRaw) {
+  const s = slugifyLocaleText(classRaw);
+  return s !== "" && RAID_HELPER_FALSE_CLASS_SLUGS.has(s);
+}
+
+function classNameFromRaiderIoClassicProfile(data) {
+  if (!data || typeof data !== "object") return "";
+  const c = data.class;
+  if (typeof c === "string" && c.trim()) return c.trim();
+  if (c && typeof c === "object" && typeof c.name === "string" && c.name.trim()) return c.name.trim();
+  const ch = data.character;
+  if (ch && typeof ch === "object") {
+    const cc = ch.class;
+    if (typeof cc === "string" && cc.trim()) return cc.trim();
+    if (cc && typeof cc === "object" && typeof cc.name === "string" && cc.name.trim()) return cc.name.trim();
+  }
+  return "";
+}
+
+/**
+ * Canonical prot spec badges — same URLs as `public/tbc-spec-icons.json` (see `scripts/fetch-tbc-spec-icons.mjs`).
+ * Blizzard spell media can differ by patch; we always send one zamimg texture per spec.
+ */
 const ZAMIMG_PROT_SPEC_ICON_URL = {
   paladin: "https://wow.zamimg.com/images/wow/icons/large/spell_holy_sealofprotection.jpg",
   warrior: "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_defensivestance.jpg",
 };
 
+function protIconTextureLooksWarrior(iconUrl) {
+  const u = String(iconUrl || "").toLowerCase();
+  return (
+    u.includes("ability_warrior_defensivestance") ||
+    u.includes("ability_warrior_shieldwall") ||
+    u.includes("inv_shield_06") ||
+    u.includes("inv_shield_05")
+  );
+}
+
+function protIconTextureLooksPaladin(iconUrl) {
+  const u = String(iconUrl || "").toLowerCase();
+  return (
+    u.includes("spell_holy_sealofprotection") ||
+    u.includes("spell_holy_devotionaura") ||
+    u.includes("spell_holy_sealofvengeance") ||
+    u.includes("spell_holy_righteousfury")
+  );
+}
+
 /**
- * Fetches spell icon from `static-classic-*` if the row is a Prot Pala / Prot War
- * and no absolute `specIconUrl` was provided by Raid-Helper.
+ * WCL Damage Done uses one "Protection" type for both classes; the icon can disagree with Raid-Helper class.
+ * Skip WCL badge when the texture clearly belongs to the other tank class so canonical specIconUrl wins client-side.
  */
-async function attachClassicSpecSpellIconIfNeeded(row) {
-  const existing = String(row?.specIconUrl || "").trim();
-  const cls = slugifyLocaleText(row?.className);
+function wclProtIconAgreesWithRosterClass(iconUrl, row) {
+  const cls = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
+  if (cls !== "paladin" && cls !== "warrior") return true;
+  const war = protIconTextureLooksWarrior(iconUrl);
+  const pal = protIconTextureLooksPaladin(iconUrl);
+  if (cls === "paladin" && war && !pal) return false;
+  if (cls === "warrior" && pal && !war) return false;
+  return true;
+}
+
+/** Always set Raid-Helper rows to the canonical texture so API matches events UI (overwrites wrong RH icons). */
+function attachClassicSpecSpellIconIfNeeded(row) {
+  const cls = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
   const role = slugifyLocaleText(row?.roleName);
   const spec = slugifyLocaleText(row?.specName);
   const isTankRole = role === "tank" || role === "tanks" || role === "schutz";
@@ -2616,20 +2935,12 @@ async function attachClassicSpecSpellIconIfNeeded(row) {
     spec === "schutz" ||
     spec === "tank" ||
     spec === "tanks";
-  let spellId = 0;
-  if (cls === "paladin" && (isTankRole || protLike)) spellId = TBC_CLASSIC_SPEC_SPELL_ID.paladin_protection;
-  else if (cls === "warrior" && (isTankRole || protLike)) spellId = TBC_CLASSIC_SPEC_SPELL_ID.warrior_protection;
-  if (!spellId) return row;
-  try {
-    const icon = await getCachedClassicSpellIcon(spellId);
-    if (icon) return { ...row, specIconUrl: icon };
-  } catch {
-    // Blizzard unavailable — zamimg / client chain below.
+  if (cls === "paladin" && (isTankRole || protLike)) {
+    return { ...row, specIconUrl: ZAMIMG_PROT_SPEC_ICON_URL.paladin };
   }
-  const zam =
-    cls === "paladin" ? ZAMIMG_PROT_SPEC_ICON_URL.paladin : cls === "warrior" ? ZAMIMG_PROT_SPEC_ICON_URL.warrior : "";
-  if (zam) return { ...row, specIconUrl: zam };
-  if (/^https?:\/\//i.test(existing)) return { ...row, specIconUrl: existing };
+  if (cls === "warrior" && (isTankRole || protLike)) {
+    return { ...row, specIconUrl: ZAMIMG_PROT_SPEC_ICON_URL.warrior };
+  }
   return row;
 }
 
@@ -2932,12 +3243,12 @@ function raidHelperSignupProfileFromEntry(entry, fallbackName = "") {
   const roleName = normalizeRaidHelperRoleLabel(
     String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
   );
-  const specName = String(entry?.specName || entry?.cSpecName || "").trim();
+  const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
   if (!className || !roleName) return null;
   return {
     userId: String(entry?.userId || "").trim(),
     name: String(entry?.name || fallbackName || "").trim(),
-    className,
+    className: englishWowClassDisplayFromRaidHelper(className),
     roleName,
     specName,
   };
@@ -3227,8 +3538,8 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         )
         .map((entry) => ({
           name: String(entry?.name || ""),
-          className: raidHelperClassNameFromSignUpEntry(entry),
-          specName: String(entry?.specName || entry?.cSpecName || "").trim(),
+          className: englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry)),
+          specName: normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim()),
           roleName: normalizeRaidHelperRoleLabel(
             String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
           ),
@@ -3242,6 +3553,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
 
       let confirmedRoster = await enrichConfirmedRosterExternalSpecs(rosterBase);
       confirmedRoster = await Promise.all(confirmedRoster.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
+      confirmedRoster = await enrichConfirmedRosterWithWclSpecIcons(confirmedRoster);
       confirmedRoster = confirmedRoster.map(stripInternalRosterFields);
 
       const rosterByRole = {
@@ -3282,8 +3594,8 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
                 return {
                   signupId: Number(match?.id || 0),
                   status: String(match?.status || ""),
-                  className: raidHelperClassNameFromSignUpEntry(match),
-                  specName: String(match?.specName || match?.cSpecName || ""),
+                  className: englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(match)),
+                  specName: normalizeProtectionSpecLabel(String(match?.specName || match?.cSpecName || "").trim()),
                   roleName: normalizeRaidHelperRoleLabel(
                     String(match?.roleName || match?.role || match?.cRoleName || match?.cRole || "").trim()
                   ),

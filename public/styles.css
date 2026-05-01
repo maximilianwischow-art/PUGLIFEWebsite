@@ -2327,25 +2327,29 @@ button.raid-cal-run.raid-cal-run--column:hover {
   background: var(--panel-2);
 }
 
+/* Full banner visible (no edge crop); split Gruul+Mag stay readable side-by-side */
 .voting-raid-header img {
   display: block;
-  width: 100%;
-  height: clamp(140px, 26vw, 230px);
-  object-fit: cover;
+  margin: 0 auto;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: clamp(160px, 34vw, 280px);
+  object-fit: contain;
   object-position: center;
 }
 
 .voting-raid-header-inner--split {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
 }
 
 .voting-raid-header-inner--split img {
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.voting-raid-header-inner--split img:last-child {
-  border-right: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
 }
 
 .voting-row {

@@ -59,6 +59,21 @@ function canonicalItemId(itemName, fallbackId) {
   return n(fallbackId);
 }
 
+/** Per-item vortex counts come from the API (Wowhead `reagent-for` spell data). */
+function applyCraftableVortexCounts(items) {
+  if (!Array.isArray(items) || !craftables.length) {
+    return Array.isArray(items) ? items.map((row) => ({ ...row, vortexNeeded: vortexNeeded(row?.vortexNeeded) })) : [];
+  }
+  return items.map((row) => {
+    const id = canonicalItemId(row.itemName, row.itemID);
+    const c = craftables.find((x) => n(x.itemID) === id);
+    if (c && Number(c.vortexNeeded) > 0) {
+      return { ...row, vortexNeeded: vortexNeeded(c.vortexNeeded) };
+    }
+    return { ...row, vortexNeeded: vortexNeeded(row?.vortexNeeded) };
+  });
+}
+
 function collectMissingMetaIds(entries, myItems) {
   const ids = [];
   for (const entry of entries || []) {
@@ -121,10 +136,10 @@ function updateCraftableOptions() {
   }
   select.innerHTML = [
     `<option value="">Select an item...</option>`,
-    ...rows.map(
-      (row) =>
-        `<option value="${n(row.itemID)}">${esc(row.itemName)}${row.profession ? ` (${esc(row.profession)})` : ""}</option>`
-    ),
+    ...rows.map((row) => {
+      const nv = vortexNeeded(row.vortexNeeded);
+      return `<option value="${n(row.itemID)}">${esc(row.itemName)}${row.profession ? ` (${esc(row.profession)})` : ""} — ${nv} NV</option>`;
+    }),
   ].join("");
   if (previousValue && rows.some((row) => String(n(row.itemID)) === previousValue)) {
     select.value = previousValue;
@@ -144,21 +159,10 @@ function renderSelectedItems() {
         `<span class="loot-recipient-pill">
           <span class="vortex-selected-item-main">
             ${renderItemChip(row.itemID, row.itemName, row.profession)}
+            <span class="vortex-cost-wrap" title="Per craft — from TBC recipe data (Nether Vortex count).">
             ${renderVortexCost(vortexNeeded(row.vortexNeeded))}
+            </span>
           </span>
-          <label class="subtle" style="display:inline-flex; align-items:center; gap:6px; margin-left:8px;">
-            Vortex
-            <input
-              type="number"
-              min="1"
-              max="20"
-              step="1"
-              value="${vortexNeeded(row.vortexNeeded)}"
-              data-item-vortex-needed="${idx}"
-              class="admin-input"
-              style="width:64px; padding:2px 6px;"
-            />
-          </label>
           <button type="button" class="auth-chip-btn" data-remove-item="${idx}" style="padding:2px 6px;">x</button>
         </span>`
     )
@@ -254,11 +258,13 @@ async function loadTracker() {
   const my = payload?.myEntry || null;
   if (neededInput) neededInput.value = String(n(my?.neededCount || 0));
   selectedItems = Array.isArray(my?.items)
-    ? my.items.map((row) => ({
-        ...row,
-        itemID: canonicalItemId(row.itemName, row?.itemID),
-        vortexNeeded: vortexNeeded(row?.vortexNeeded),
-      }))
+    ? applyCraftableVortexCounts(
+        my.items.map((row) => ({
+          ...row,
+          itemID: canonicalItemId(row.itemName, row?.itemID),
+          vortexNeeded: vortexNeeded(row?.vortexNeeded),
+        }))
+      )
     : [];
   renderSelectedItems();
 
@@ -340,7 +346,7 @@ document.getElementById("vortexAddItemBtn")?.addEventListener("click", () => {
     itemID: n(picked.itemID),
     itemName: String(picked.itemName || ""),
     profession: String(picked.profession || ""),
-    vortexNeeded: 1,
+    vortexNeeded: vortexNeeded(picked.vortexNeeded),
   });
   renderSelectedItems();
 });
@@ -356,15 +362,6 @@ document.addEventListener("click", (event) => {
   if (!Number.isInteger(idx) || idx < 0 || idx >= selectedItems.length) return;
   selectedItems.splice(idx, 1);
   renderSelectedItems();
-});
-
-document.addEventListener("input", (event) => {
-  const input = event.target.closest("[data-item-vortex-needed]");
-  if (!input) return;
-  const idx = Number(input.getAttribute("data-item-vortex-needed"));
-  if (!Number.isInteger(idx) || idx < 0 || idx >= selectedItems.length) return;
-  selectedItems[idx].vortexNeeded = vortexNeeded(input.value);
-  input.value = String(vortexNeeded(input.value));
 });
 
 loadTracker().catch((error) => {
