@@ -18,17 +18,18 @@ const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
 const IMAGE_ASSET_VERSION = "20260428f";
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 let authMe = null;
-const CLASS_COLORS = {
-  Warrior: "#a87040",
-  Paladin: "#f472b6",
-  Hunter: "#3ddc6e",
-  Rogue: "#c9b430",
-  Priest: "#e8e0d0",
-  "Death Knight": "#c41e3a",
-  Shaman: "#6366f1",
-  Mage: "#60a5fa",
-  Warlock: "#8b5cf6",
-  Druid: "#e8943a",
+/** Official WoW class colours (default UI palette). */
+const WOW_CLASS_COLORS = {
+  Warrior: "#C79C6E",
+  Paladin: "#F58CBA",
+  Hunter: "#ABD473",
+  Rogue: "#FFF569",
+  Priest: "#FFFFFF",
+  "Death Knight": "#C41F3B",
+  Shaman: "#0070DD",
+  Mage: "#69CCF0",
+  Warlock: "#9482C9",
+  Druid: "#FF7D0A",
 };
 
 function escapeHtml(s) {
@@ -39,10 +40,238 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
-function rosterLine(player) {
+const ZAM_ICON_LARGE = "https://wow.zamimg.com/images/wow/icons/large";
+
+/** TBC-style spell icons for talents/specs (fallback when Raid-Helper does not send `specIconUrl`). */
+const SPEC_SPELL_ICON = {
+  warrior_arms: "ability_warrior_savageblow",
+  warrior_fury: "ability_warrior_innerrage",
+  warrior_protection: "ability_warrior_defensivestance",
+  paladin_holy: "spell_holy_holybolt",
+  paladin_protection: "spell_holy_devotionaura",
+  paladin_retribution: "spell_holy_auraoflight",
+  hunter_beastmastery: "ability_hunter_beasttaming",
+  hunter_marksmanship: "ability_marksmanship",
+  hunter_survival: "ability_hunter_swiftstrike",
+  rogue_assassination: "ability_rogue_eviscerate",
+  rogue_combat: "ability_backstab",
+  rogue_subtlety: "ability_stealth",
+  priest_discipline: "spell_holy_powerwordshield",
+  priest_holy: "spell_holy_heal02",
+  priest_shadow: "spell_shadow_shadowwordpain",
+  shaman_elemental: "spell_nature_lightning",
+  shaman_enhancement: "spell_nature_lightningshield",
+  shaman_restoration: "spell_nature_magicimmunity",
+  mage_arcane: "spell_holy_magicalsentry",
+  mage_fire: "spell_fire_firebolt02",
+  mage_frost: "spell_frost_frostbolt02",
+  warlock_affliction: "spell_shadow_deathcoil",
+  warlock_demonology: "spell_shadow_metamorphosis",
+  warlock_destruction: "spell_shadow_rainoffire",
+  druid_balance: "spell_nature_starfall",
+  druid_feralcombat: "ability_druid_catform",
+  druid_restoration: "spell_nature_healingtouch",
+};
+
+function normalizeSlug(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\u2019/g, "'")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/** Map common Raid-Helper / player shorthand to canonical spec slug for icon lookup. */
+function canonicalSpecSlug(classSlug, specSlug) {
+  const base = specSlug;
+  const aliases = {
+    arms: "arms",
+    fury: "fury",
+    prot: "protection",
+    schutz: "protection",
+    protection: "protection",
+    holy: "holy",
+    ret: "retribution",
+    retribution: "retribution",
+    bm: "beastmastery",
+    beast: "beastmastery",
+    beastmastery: "beastmastery",
+    mm: "marksmanship",
+    marksmanship: "marksmanship",
+    survival: "survival",
+    mut: "assassination",
+    assassination: "assassination",
+    combat: "combat",
+    subtlety: "subtlety",
+    disc: "discipline",
+    discipline: "discipline",
+    shadow: "shadow",
+    ele: "elemental",
+    elemental: "elemental",
+    enh: "enhancement",
+    enhancement: "enhancement",
+    resto: "restoration",
+    restoration: "restoration",
+    arcane: "arcane",
+    fire: "fire",
+    frost: "frost",
+    aff: "affliction",
+    affliction: "affliction",
+    demo: "demonology",
+    demonology: "demonology",
+    destro: "destruction",
+    destruction: "destruction",
+    balance: "balance",
+    boomkin: "balance",
+    feral: "feralcombat",
+    feralcombat: "feralcombat",
+    guardian: "feralcombat",
+  };
+  let spec = aliases[base] || base;
+  if (classSlug === "druid" && spec === "guardian") spec = "feralcombat";
+  if (classSlug === "druid" && (base === "feral" || base === "cat")) spec = "feralcombat";
+  if ((classSlug === "warrior" || classSlug === "paladin") && spec === "tank") spec = "protection";
+  return spec;
+}
+
+function inferSpecSlugFromRole(classSlug, roleSlug, specSlug) {
+  let raw = specSlug;
+  if (raw) return raw;
+  if (classSlug === "warrior" && roleSlug === "tanks") return "protection";
+  if (classSlug === "paladin" && roleSlug === "tanks") return "protection";
+  return "";
+}
+
+function specSpellIconFile(className, specName, roleName) {
+  const cls = normalizeSlug(className);
+  const roleSlug = normalizeSlug(roleName);
+  let rawSpec = normalizeSlug(specName);
+  if ((cls === "warrior" || cls === "paladin") && rawSpec === "schutz") rawSpec = "protection";
+  rawSpec = inferSpecSlugFromRole(cls, roleSlug, rawSpec) || rawSpec;
+  if ((cls === "warrior" || cls === "paladin") && rawSpec === "tank") rawSpec = "protection";
+  if (!cls || !rawSpec) return "";
+  const spec = canonicalSpecSlug(cls, rawSpec);
+  const key = `${cls}_${spec}`;
+  return SPEC_SPELL_ICON[key] || "";
+}
+
+function classIconFallbackUrl(className) {
+  const cls = normalizeSlug(className).replace(/[^a-z]/g, "") || "warrior";
+  return `${ZAM_ICON_LARGE}/classicon_${cls}.jpg`;
+}
+
+function genderForRacePortrait(genderRaw) {
+  const g = String(genderRaw || "").trim().toLowerCase();
+  if (g === "female" || g === "f") return "female";
+  if (g === "male" || g === "m") return "male";
+  return "";
+}
+
+/** Race slug for `raceicon_<race>_<gender>` textures (UI-internal names). */
+function normalizeRacePortraitKey(raceRaw) {
+  const s = normalizeSlug(raceRaw);
+  if (!s) return "";
+  if (s === "undead" || s === "forsaken") return "scourge";
+  return s;
+}
+
+function championPortraitCandidates(raceRaw, genderRaw) {
+  const rk = normalizeRacePortraitKey(raceRaw);
+  if (!rk) return [];
+  let g = genderForRacePortrait(genderRaw);
+  if (!g) g = "male";
+  const urls = [`${ZAM_ICON_LARGE}/raceicon_${rk}_${g}.jpg`];
+  if (rk === "scourge") urls.push(`${ZAM_ICON_LARGE}/raceicon_undead_${g}.jpg`);
+  return [...new Set(urls)];
+}
+
+/** Large portrait: race/gender champion icon, else class crest. Spec icon is layered separately (smaller). */
+function championPortraitPrimaryUrl(player) {
+  const race = String(player?.race || "").trim();
+  const gender = String(player?.gender || "").trim();
+  const cands = championPortraitCandidates(race, gender);
+  if (cands.length) return cands[0];
+  return classIconFallbackUrl(player?.className);
+}
+
+function championPortraitFallbackChain(player) {
+  const race = String(player?.race || "").trim();
+  const gender = String(player?.gender || "").trim();
+  const cands = championPortraitCandidates(race, gender);
+  const chain = [...cands.slice(1), classIconFallbackUrl(player?.className)];
+  return [...new Set(chain)].filter(Boolean);
+}
+
+/** Small attachment: spec spell icon (or RH absolute URL). */
+function specBadgePortraitUrl(player) {
+  const fromApi = String(player?.specIconUrl || "").trim();
+  if (/^https?:\/\//i.test(fromApi)) return fromApi;
+  const spell = specSpellIconFile(player?.className, player?.specName, player?.roleName);
+  if (spell) return `${ZAM_ICON_LARGE}/${spell}.jpg`;
+  return classIconFallbackUrl(player?.className);
+}
+
+const RAIDER_BADGE_SLOTS = 4;
+
+function rosterAchievementBadgeSlots() {
+  return Array.from({ length: RAIDER_BADGE_SLOTS })
+    .map(
+      () =>
+        `<span class="raider-badge-slot" title="Achievement badge slot" aria-hidden="true"></span>`
+    )
+    .join("");
+}
+
+function rosterRaiderCard(player) {
   const className = String(player.className || "").trim();
-  const color = CLASS_COLORS[className] || "var(--text)";
-  return `<span class="roster-pill"><span class="roster-name" style="color:${color}">${escapeHtml(player.name)}</span> · ${escapeHtml(className)}${player.specName ? ` (${escapeHtml(player.specName)})` : ""}</span>`;
+  const color = WOW_CLASS_COLORS[className] || "var(--text)";
+  const specLabel = String(player.specName || "").trim();
+  const champSrc = escapeHtml(championPortraitPrimaryUrl(player));
+  const champFb = championPortraitFallbackChain(player)
+    .map((u) => escapeHtml(u))
+    .join("|");
+  const specBadgeSrc = escapeHtml(specBadgePortraitUrl(player));
+  const specBadgeFb = escapeHtml(classIconFallbackUrl(className));
+  const specAlt = specLabel ? `${className} · ${specLabel}` : className;
+  const priestGlow = className === "Priest" ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);" : "";
+
+  return `
+    <div class="raider-card">
+      <div class="raider-card-main">
+        <div class="raider-portrait-stack">
+          <img
+            class="raider-champion-img"
+            src="${champSrc}"
+            alt=""
+            width="56"
+            height="56"
+            loading="lazy"
+            decoding="async"
+            data-champ-fallbacks="${champFb}"
+            onerror="(function(el){var raw=el.getAttribute('data-champ-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.champI||0);if(i<parts.length){el.dataset.champI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
+          />
+          <img
+            class="raider-spec-attach"
+            src="${specBadgeSrc}"
+            alt="${escapeHtml(specAlt)}"
+            width="22"
+            height="22"
+            loading="lazy"
+            decoding="async"
+            data-fallback-src="${specBadgeFb}"
+            onerror="if(!this.dataset._sfb){this.dataset._sfb='1';var u=this.getAttribute('data-fallback-src');if(u)this.src=u;}else{this.onerror=null;}"
+          />
+        </div>
+        <div class="raider-text">
+          <div class="raider-name-line">
+            <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(player.name)}</span>
+          </div>
+          ${specLabel ? `<div class="raider-spec-line">${escapeHtml(specLabel)} · ${escapeHtml(className)}</div>` : `<div class="raider-spec-line">${escapeHtml(className)}</div>`}
+        </div>
+      </div>
+      <div class="raider-badges" role="group" aria-label="Achievement badges">${rosterAchievementBadgeSlots()}</div>
+    </div>
+  `;
 }
 
 function fmtEventDate(unixSec) {
@@ -239,7 +468,7 @@ async function loadEvents() {
             (role) => `
               <div class="roster-role-group">
                 <div class="roster-role-title">${escapeHtml(role)} (${groupedRoster.get(role).length})</div>
-                <div class="roster-grid">${groupedRoster.get(role).map(rosterLine).join("")}</div>
+                <div class="raider-grid">${groupedRoster.get(role).map(rosterRaiderCard).join("")}</div>
               </div>
             `
           )

@@ -6,6 +6,30 @@ function n(v) {
   return Number.isFinite(x) ? Math.max(0, Math.floor(x)) : 0;
 }
 
+/** Match server: Blizzard render CDN → Wowhead mirror (reliable for `<img>` on strict browsers/CDNs). */
+function normalizeItemIconUrl(url) {
+  const s = String(url || "").trim();
+  if (!s) return "";
+  const m = s.match(/\/([a-z0-9_-]+)\.(jpg|png)(?:\?|$)/i);
+  if (
+    m &&
+    (/render\.worldofwarcraft\.com/i.test(s) ||
+      /blz-static/i.test(s) ||
+      /blizzard\.com\/.*?\/icons\//i.test(s))
+  ) {
+    return `https://wow.zamimg.com/images/wow/icons/large/${m[1]}.jpg`;
+  }
+  return s;
+}
+
+/** Guild row + totals: pool count + sum of per-item vortex (same formula as API totalNeeded). */
+function entryNetherVortexTotal(row) {
+  const pool = n(row?.neededCount);
+  const items = Array.isArray(row?.items) ? row.items : [];
+  const fromItems = items.reduce((sum, it) => sum + vortexNeeded(it?.vortexNeeded), 0);
+  return pool + fromItems;
+}
+
 function vortexNeeded(v) {
   const x = Number(v);
   if (!Number.isFinite(x)) return 1;
@@ -61,8 +85,9 @@ async function fetchItemMetaChunk(ids) {
 }
 
 function renderVortexCost(cost) {
-  const icon = netherVortexIcon
-    ? `<img class="vortex-inline-icon" src="${esc(netherVortexIcon)}" alt="" loading="lazy" decoding="async" />`
+  const vortexIconSrc = normalizeItemIconUrl(netherVortexIcon);
+  const icon = vortexIconSrc
+    ? `<img class="vortex-inline-icon" src="${esc(vortexIconSrc)}" alt="" width="18" height="18" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
     : "";
   return `<span class="vortex-cost-badge">${icon}<span>${n(cost)} Nether Vortex</span></span>`;
 }
@@ -70,8 +95,9 @@ function renderVortexCost(cost) {
 function renderItemChip(itemId, itemName, profession = "") {
   const id = canonicalItemId(itemName, itemId);
   const meta = itemMetaById.get(id);
-  const icon = meta?.icon
-    ? `<img class="loot-item-icon" src="${esc(meta.icon)}" alt="" loading="lazy" decoding="async" />`
+  const iconUrl = normalizeItemIconUrl(meta?.icon || "");
+  const icon = iconUrl
+    ? `<img class="loot-item-icon" src="${esc(iconUrl)}" alt="" width="36" height="36" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
     : `<span class="loot-item-icon loot-item-icon--fallback" aria-hidden="true"></span>`;
   const namePart = `${esc(itemName)}${profession ? ` (${esc(profession)})` : ""}`;
   return `<div class="loot-item-name" data-loot-item-id="${id}" title="${esc(tooltipText(meta))}">${icon}${namePart}</div>`;
@@ -157,7 +183,7 @@ async function loadCraftables() {
       if (n(row?.itemId) > 0) itemMetaById.set(n(row.itemId), row);
     }
   }
-  netherVortexIcon = String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim();
+  netherVortexIcon = normalizeItemIconUrl(String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim());
 }
 
 function renderList(entries) {
@@ -185,7 +211,7 @@ function renderList(entries) {
               return `
                 <tr>
                   <td>${esc(row.displayName || "Unknown")}</td>
-                  <td>${n(row.neededCount)}</td>
+                  <td>${n(entryNetherVortexTotal(row))}</td>
                   <td>${items || "<span class='subtle'>-</span>"}</td>
                   <td>${esc(updated)}</td>
                 </tr>
@@ -220,7 +246,7 @@ async function loadTracker() {
   try {
     await fetchItemMetaChunk(collectMissingMetaIds(payload?.entries, payload?.myEntry?.items));
   } catch {}
-  netherVortexIcon = String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim();
+  netherVortexIcon = normalizeItemIconUrl(String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim());
   const total = n(payload?.totalNeeded);
   meta.textContent = `Total guild need: ${total} Nether Vortex`;
   renderList(payload?.entries);

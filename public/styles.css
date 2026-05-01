@@ -1592,6 +1592,122 @@ body::before {
   gap: 6px;
 }
 
+/* Events roster — champion portrait + spec badge, WoW class colours, badge slots */
+.raider-grid {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.raider-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(16, 12, 24, 0.92), rgba(10, 8, 16, 0.75));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+.raider-card-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.raider-portrait-stack {
+  position: relative;
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+}
+
+.raider-champion-img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  object-fit: cover;
+  image-rendering: auto;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 4px 16px rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.raider-spec-attach {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  object-fit: cover;
+  border: 2px solid rgba(12, 10, 18, 0.95);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.55);
+  background: rgba(8, 6, 14, 0.9);
+}
+
+.raider-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.raider-name-line {
+  line-height: 1.2;
+}
+
+.raider-name {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.raider-spec-line {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.raider-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.raider-badge-slot {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px dashed rgba(200, 180, 255, 0.22);
+  background: rgba(0, 0, 0, 0.22);
+  box-sizing: border-box;
+}
+
+@media (max-width: 520px) {
+  .raider-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .raider-badges {
+    justify-content: flex-start;
+  }
+}
+
 .roster-role-group {
   margin-top: 6px;
   padding-top: 6px;

@@ -780,6 +780,21 @@ async function ensureNetherVortexStore() {
   return netherVortexReady;
 }
 
+/** Sum vortex units from craft rows (each item defaults to at least 1). */
+function netherVortexUnitsFromItems(items) {
+  return (Array.isArray(items) ? items : []).reduce((sum, it) => {
+    const v = Number(it?.vortexNeeded ?? 1);
+    const n = Number.isFinite(v) ? Math.max(1, Math.min(20, Math.floor(v))) : 1;
+    return sum + n;
+  }, 0);
+}
+
+/** Total Nether Vortex for one guild member: explicit pool + each craft line. */
+function netherVortexEntryTotal(row) {
+  const pool = Math.max(0, Number(row?.neededCount || 0));
+  return pool + netherVortexUnitsFromItems(row?.items);
+}
+
 function sanitizeNetherVortexItems(items) {
   if (!Array.isArray(items)) return [];
   return items
@@ -1149,7 +1164,7 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
       .filter((row) => row.userId)
       .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
     const myEntry = userId ? rows.find((row) => row.userId === userId) || null : null;
-    const totalNeeded = rows.reduce((sum, row) => sum + Math.max(0, Number(row.neededCount || 0)), 0);
+    const totalNeeded = rows.reduce((sum, row) => sum + netherVortexEntryTotal(row), 0);
     return res.json({
       ok: true,
       authenticated: Boolean(userId),
@@ -1659,6 +1674,25 @@ function buildItemTooltipLines(itemData) {
   return out.slice(0, 6);
 }
 
+/**
+ * Blizzard `render.worldofwarcraft.com` icon URLs often fail as hotlinked `<img src>`
+ * (referrer / CDN rules). Same artwork is served reliably from Wowhead's CDN.
+ */
+function normalizeWowItemIconUrl(iconUrl) {
+  const s = String(iconUrl || "").trim();
+  if (!s) return null;
+  const m = s.match(/\/([a-z0-9_-]+)\.(jpg|png)(?:\?|$)/i);
+  if (
+    m &&
+    (/render\.worldofwarcraft\.com/i.test(s) ||
+      /blz-static/i.test(s) ||
+      /blizzard\.com\/.*?\/icons\//i.test(s))
+  ) {
+    return `https://wow.zamimg.com/images/wow/icons/large/${m[1]}.jpg`;
+  }
+  return s;
+}
+
 async function fetchClassicItemMetadata(itemId) {
   const id = Number(itemId || 0);
   if (!Number.isInteger(id) || id <= 0) return { itemId: id || null };
@@ -1676,7 +1710,8 @@ async function fetchClassicItemMetadata(itemId) {
   const itemData = await itemRes.json().catch(() => ({}));
   const mediaData = await mediaRes.json().catch(() => ({}));
   const mediaAssets = Array.isArray(mediaData?.assets) ? mediaData.assets : [];
-  const icon = mediaAssets.find((a) => String(a?.key || "").toLowerCase() === "icon")?.value || mediaAssets[0]?.value || null;
+  const rawIcon = mediaAssets.find((a) => String(a?.key || "").toLowerCase() === "icon")?.value || mediaAssets[0]?.value || null;
+  const icon = normalizeWowItemIconUrl(rawIcon);
   const baseMeta = {
     itemId: id,
     name: String(itemData?.name || "").trim() || null,
@@ -2242,6 +2277,66 @@ function raidHelperClassNameFromSignUpEntry(entry) {
   ).trim();
   if (/^\d+$/.test(s)) return "";
   return s;
+}
+
+/** Race display string when Raid-Helper provides it (field names vary by API version). */
+function raidHelperRaceFromSignUpEntry(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const candidates = [
+    entry.race,
+    entry.raceName,
+    entry.cRaceName,
+    entry.characterRace,
+    entry.wowRace,
+    entry.raceDisplayName,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+/** `male` | `female` | "" — used with race for WoW race portrait icons when Raid-Helper sends it. */
+function raidHelperGenderFromSignUpEntry(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const candidates = [
+    entry.gender,
+    entry.sex,
+    entry.characterGender,
+    entry.wowGender,
+    entry.genderName,
+    entry.cGender,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (!s) continue;
+    const low = s.toLowerCase();
+    if (low === "female" || low === "f") return "female";
+    if (low === "male" || low === "m") return "male";
+    if (low.includes("female")) return "female";
+    if (low.includes("male") && !low.includes("fe")) return "male";
+  }
+  return "";
+}
+
+/** Absolute icon URL when Raid-Helper embeds one on the signup row. */
+function raidHelperSpecIconUrlFromSignUpEntry(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const candidates = [
+    entry.specIcon,
+    entry.specIconUrl,
+    entry.specIconURL,
+    entry.iconUrl,
+    entry.iconURL,
+    entry.classIconUrl,
+    entry.specImage,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (/^https?:\/\//i.test(s)) return s;
+  }
+  return "";
 }
 
 /** Reuse filtered guild reports across endpoints so the dashboard does not queue 6 identical WCL pulls (GraphQL calls are serialized). */
@@ -2837,8 +2932,11 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         .map((entry) => ({
           name: String(entry?.name || ""),
           className: raidHelperClassNameFromSignUpEntry(entry),
-          specName: String(entry?.specName || ""),
-          roleName: String(entry?.roleName || ""),
+          specName: String(entry?.specName || entry?.cSpecName || "").trim(),
+          roleName: String(entry?.roleName || entry?.cRoleName || ""),
+          race: raidHelperRaceFromSignUpEntry(entry),
+          gender: raidHelperGenderFromSignUpEntry(entry),
+          specIconUrl: raidHelperSpecIconUrlFromSignUpEntry(entry),
         }))
         .filter((entry) => entry.name)
         .sort((a, b) => a.name.localeCompare(b.name));
