@@ -17,21 +17,63 @@ function numberFmt(v) {
   return new Intl.NumberFormat("en-US").format(Number(v || 0));
 }
 
-function votingRaidHeaderImagePath(raidName) {
-  const s = String(raidName || "").trim();
-  if (s === "Gruul's Lair + Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png?v=20260503a";
-  if (s === "Karazhan") return "/raid-images/pb-header-kara.png?v=20260503a";
-  if (s === "Gruul's Lair") return "/raid-images/pb-header-gruul.png?v=20260503a";
-  if (s === "Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png?v=20260503a";
-  if (s === "Serpentshrine Cavern") return "/raid-images/pb-header-ssc.png?v=20260503a";
-  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/pb-header-tk.png?v=20260503a";
-  return "/raid-images/pb-header-kara.png?v=20260503a";
+function escapeHtmlAttr(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
+/** Normalize labels so WCL/Unicode apostrophes still match (strict === used to fall through to Kara). */
+function normalizedRaidBannerKey(s) {
+  return String(s || "")
+    .replace(/\u2019/g, "'")
+    .replace(/\u2018/g, "'")
+    .trim()
+    .toLowerCase();
+}
+
+const VOTING_RAID_BANNER_VER = "20260509a";
+
+/** Split Gruul + Mag into two headers; substring matching for combined nights. */
+function votingRaidHeaderInnerHtml(raidName) {
+  const raw = String(raidName || "").trim();
+  const n = normalizedRaidBannerKey(raw);
+  const bust = `?v=${VOTING_RAID_BANNER_VER}`;
+  const img = (src, alt) =>
+    `<img src="${src}${bust}" alt="${escapeHtmlAttr(alt)}" loading="lazy" decoding="async" />`;
+
+  const hasGruul = n.includes("gruul");
+  const hasMag = n.includes("magtheridon");
+
+  if (hasGruul && hasMag) {
+    return `<div class="voting-raid-header-inner voting-raid-header-inner--split">
+      ${img("/raid-images/pb-header-gruul.png", "Gruul's Lair")}
+      ${img("/raid-images/pb-header-magtheridon.png", "Magtheridon's Lair")}
+    </div>`;
+  }
+  if (n.includes("karazhan") || /\bkara\b/.test(n)) {
+    return img("/raid-images/pb-header-kara.png", raw || "Karazhan");
+  }
+  if (n.includes("serpentshrine") || n.includes("ssc")) {
+    return img("/raid-images/pb-header-ssc.png", raw || "Serpentshrine Cavern");
+  }
+  if (n.includes("tempest") || n.includes("the eye") || /\btk\b/.test(n)) {
+    return img("/raid-images/pb-header-tk.png", raw || "Tempest Keep");
+  }
+  if (hasMag && !hasGruul) {
+    return img("/raid-images/pb-header-magtheridon.png", raw || "Magtheridon's Lair");
+  }
+  if (hasGruul) {
+    return img("/raid-images/pb-header-gruul.png", raw || "Gruul's Lair");
+  }
+  return img("/raid-images/pb-header-kara.png", raw || "Raid");
 }
 
 function renderRaidHeader(payload) {
   const host = document.getElementById("votingRaidHeader");
   const raidName = payload?.raid?.name || "Raid";
-  host.innerHTML = `<img src="${votingRaidHeaderImagePath(raidName)}" alt="${raidName}" loading="lazy" decoding="async" />`;
+  host.innerHTML = votingRaidHeaderInnerHtml(raidName);
   host.hidden = false;
 }
 

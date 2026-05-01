@@ -194,26 +194,48 @@ function versionedImagePath(path) {
   return `${path}?v=${IMAGE_ASSET_VERSION}`;
 }
 
+/** Same normalization as voting page — WCL strings may use curly apostrophes. */
+function normalizedRaidBannerKey(s) {
+  return String(s || "")
+    .replace(/\u2019/g, "'")
+    .replace(/\u2018/g, "'")
+    .trim()
+    .toLowerCase();
+}
+
+function raidBannerKindFromLabel(raidName) {
+  const n = normalizedRaidBannerKey(raidName);
+  const hasGruul = n.includes("gruul");
+  const hasMag = n.includes("magtheridon");
+  if (hasGruul && hasMag) return "gruul_mag";
+  if (n.includes("karazhan") || /\bkara\b/.test(n)) return "kara";
+  if (n.includes("serpentshrine") || n.includes("ssc")) return "ssc";
+  if (n.includes("tempest") || n.includes("the eye") || /\btk\b/.test(n)) return "tk";
+  if (hasMag) return "mag";
+  if (hasGruul) return "gruul";
+  return "unknown";
+}
+
 function raidListingImagePath(raidName) {
-  const s = String(raidName || "");
-  if (s === "Gruul's Lair + Magtheridon's Lair") return versionedImagePath("/raid-images/magtheridon.png");
-  if (s === "Karazhan") return versionedImagePath("/raid-images/kara.png");
-  if (s === "Gruul's Lair") return versionedImagePath("/raid-images/gruul.png");
-  if (s === "Magtheridon's Lair") return versionedImagePath("/raid-images/magtheridon.png");
-  if (s === "Serpentshrine Cavern") return versionedImagePath("/raid-images/ssc.png");
-  if (s === "Tempest Keep" || s === "The Eye") return versionedImagePath("/raid-images/tk.png");
+  const kind = raidBannerKindFromLabel(raidName);
+  if (kind === "gruul_mag") return versionedImagePath("/raid-images/magtheridon.png");
+  if (kind === "kara") return versionedImagePath("/raid-images/kara.png");
+  if (kind === "gruul") return versionedImagePath("/raid-images/gruul.png");
+  if (kind === "mag") return versionedImagePath("/raid-images/magtheridon.png");
+  if (kind === "ssc") return versionedImagePath("/raid-images/ssc.png");
+  if (kind === "tk") return versionedImagePath("/raid-images/tk.png");
   return versionedImagePath("/raid-images/kara.png");
 }
 
 /** Wide cinematic headers for dashboard personal-best tiles (_best time_ row only). */
 function raidPbHeaderImagePath(raidName) {
-  const s = String(raidName || "");
-  if (s === "Gruul's Lair + Magtheridon's Lair") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
-  if (s === "Karazhan") return versionedImagePath("/raid-images/pb-header-kara.png");
-  if (s === "Gruul's Lair") return versionedImagePath("/raid-images/pb-header-gruul.png");
-  if (s === "Magtheridon's Lair") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
-  if (s === "Serpentshrine Cavern") return versionedImagePath("/raid-images/pb-header-ssc.png");
-  if (s === "Tempest Keep" || s === "The Eye") return versionedImagePath("/raid-images/pb-header-tk.png");
+  const kind = raidBannerKindFromLabel(raidName);
+  if (kind === "gruul_mag") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
+  if (kind === "kara") return versionedImagePath("/raid-images/pb-header-kara.png");
+  if (kind === "gruul") return versionedImagePath("/raid-images/pb-header-gruul.png");
+  if (kind === "mag") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
+  if (kind === "ssc") return versionedImagePath("/raid-images/pb-header-ssc.png");
+  if (kind === "tk") return versionedImagePath("/raid-images/pb-header-tk.png");
   return versionedImagePath("/raid-images/pb-header-kara.png");
 }
 

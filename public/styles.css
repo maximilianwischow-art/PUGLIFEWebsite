@@ -2335,6 +2335,19 @@ button.raid-cal-run.raid-cal-run--column:hover {
   object-position: center;
 }
 
+.voting-raid-header-inner--split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.voting-raid-header-inner--split img {
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.voting-raid-header-inner--split img:last-child {
+  border-right: 0;
+}
+
 .voting-row {
   display: grid;
   grid-template-columns: minmax(160px, 1.25fr) repeat(4, minmax(84px, 0.85fr)) minmax(120px, auto);
