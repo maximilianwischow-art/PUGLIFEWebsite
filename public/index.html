@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=20260428q" />
+    <link rel="stylesheet" href="/styles.css?v=20260502c" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -42,6 +42,23 @@
       </header>
 
       <main class="container">
+        <div id="welcomePopupBackdrop" class="welcome-popup-backdrop" hidden></div>
+        <section id="welcomePopupCard" class="welcome-popup-card" role="dialog" aria-modal="true" aria-labelledby="welcomePopupTitle" hidden>
+          <img
+            class="welcome-popup-img"
+            src="/welcome-popup-hyjal.png"
+            alt=""
+            width="1600"
+            height="900"
+            decoding="async"
+          />
+          <button type="button" id="welcomePopupClose" class="welcome-popup-close" aria-label="Close welcome popup">×</button>
+          <div class="welcome-popup-copy">
+            <h2 id="welcomePopupTitle" class="welcome-popup-title">Welcome to our lair, Friend!</h2>
+            <button type="button" id="welcomePopupEnter" class="welcome-popup-enter">Enter</button>
+          </div>
+        </section>
+
       <section id="status" class="status"></section>
 
       <section class="card">
@@ -80,7 +97,8 @@
       </footer>
     </div>
 
-    <script src="/app.js?v=20260428d"></script>
+    <script src="/app.js?v=20260503a"></script>
+    <script src="/home.js?v=20260503a"></script>
     <script src="/auth-ui.js?v=20260430f"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

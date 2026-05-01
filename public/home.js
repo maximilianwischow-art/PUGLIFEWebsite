@@ -50,7 +50,7 @@ function initWelcomePopup() {
   }
 
   /** Once dismissed (any control), never show again on this origin. Bump key when popup markup/behavior changes. */
-  const dismissKey = "plb_welcome_popup_dismissed_v3";
+  const dismissKey = "plb_welcome_popup_dismissed_v4";
 
   let dismissedInMemory = false;
 
@@ -82,8 +82,14 @@ function initWelcomePopup() {
   if (!readDismissed()) {
     backdrop.removeAttribute("hidden");
     card.removeAttribute("hidden");
+    backdrop.hidden = false;
+    card.hidden = false;
     card.setAttribute("aria-hidden", "false");
     backdrop.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => {
+      backdrop.hidden = false;
+      card.hidden = false;
+    });
   }
 
   const hidePopup = () => {

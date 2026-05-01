@@ -19,12 +19,13 @@ function numberFmt(v) {
 
 function votingRaidHeaderImagePath(raidName) {
   const s = String(raidName || "").trim();
-  if (s === "Karazhan") return "/raid-images/pb-header-kara.png?v=20260428d";
-  if (s === "Gruul's Lair") return "/raid-images/pb-header-gruul.png?v=20260428d";
-  if (s === "Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png?v=20260428d";
-  if (s === "Serpentshrine Cavern") return "/raid-images/pb-header-ssc.png?v=20260428d";
-  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/pb-header-tk.png?v=20260428d";
-  return "/raid-images/pb-header-kara.png?v=20260428d";
+  if (s === "Gruul's Lair + Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png?v=20260503a";
+  if (s === "Karazhan") return "/raid-images/pb-header-kara.png?v=20260503a";
+  if (s === "Gruul's Lair") return "/raid-images/pb-header-gruul.png?v=20260503a";
+  if (s === "Magtheridon's Lair") return "/raid-images/pb-header-magtheridon.png?v=20260503a";
+  if (s === "Serpentshrine Cavern") return "/raid-images/pb-header-ssc.png?v=20260503a";
+  if (s === "Tempest Keep" || s === "The Eye") return "/raid-images/pb-header-tk.png?v=20260503a";
+  return "/raid-images/pb-header-kara.png?v=20260503a";
 }
 
 function renderRaidHeader(payload) {

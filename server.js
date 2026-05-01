@@ -436,19 +436,51 @@ function pruneAuthMaps() {
   }
 }
 
+function discordApiMaxRetries() {
+  const n = Number(process.env.DISCORD_API_MAX_RETRIES);
+  if (Number.isFinite(n) && n >= 1) return Math.min(8, n);
+  return 4;
+}
+
 async function fetchDiscordJson(pathname, accessToken) {
-  const res = await fetch(`${DISCORD_API_BASE}${pathname}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  const maxAttempts = discordApiMaxRetries();
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const res = await fetch(`${DISCORD_API_BASE}${pathname}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok) return payload;
+
     const detail =
       typeof payload?.error_description === "string"
         ? payload.error_description
-        : payload?.message || "Discord API error";
-    throw new Error(`Discord request failed (${res.status}): ${detail}`);
+        : typeof payload?.message === "string"
+          ? payload.message
+          : "Discord API error";
+
+    const retryable =
+      res.status === 429 ||
+      res.status === 408 ||
+      res.status >= 500;
+    if (retryable && attempt < maxAttempts) {
+      const retryAfterRaw = res.headers.get("retry-after");
+      const retryAfterSec = retryAfterRaw ? Number(retryAfterRaw) : NaN;
+      let delayMs =
+        Number.isFinite(retryAfterSec) && retryAfterSec > 0
+          ? Math.min(120_000, Math.round(retryAfterSec * 1000))
+          : Math.min(15_000, 350 * 2 ** (attempt - 1));
+      delayMs += Math.floor(Math.random() * 250);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
+    }
+
+    const hint =
+      res.status >= 500
+        ? " (Discord may be temporarily unavailable — try again in a minute.)"
+        : "";
+    throw new Error(`Discord request failed (${res.status}): ${detail}${hint}`);
   }
-  return payload;
+  throw new Error("Discord request failed after retries.");
 }
 
 async function persistVotingStore() {
@@ -1892,6 +1924,31 @@ function primaryTrackedRaidNameFromReport(report) {
   return null;
 }
 
+function collectTrackedRaidZonesFromReport(report) {
+  const zones = new Set();
+  for (const fight of report?.fights || []) {
+    if (Number(fight?.encounterID || 0) <= 0) continue;
+    const key = resolvedTrackedRaidForFight(fight, report);
+    if (key && Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, key)) zones.add(key);
+  }
+  return zones;
+}
+
+/**
+ * Human-facing raid label for MVP voting / home POTR imagery.
+ * Thursday Gruul/Mag nights often upload as a Gruul-only log; still brand as the combined night.
+ */
+function mvpUiRaidName(report, primaryRaidName) {
+  const primary = String(primaryRaidName || "").trim();
+  const zones = collectTrackedRaidZonesFromReport(report);
+  const hasGruul = zones.has("Gruul's Lair");
+  const hasMag = zones.has("Magtheridon's Lair");
+  if (hasGruul && hasMag) return "Gruul's Lair + Magtheridon's Lair";
+  const wd = reportWeekdayNormalizedInCalendarZone(report?.startTime);
+  if (primary === "Gruul's Lair" && wd === "thursday") return "Gruul's Lair + Magtheridon's Lair";
+  return primary;
+}
+
 function latestTrackedRaidReport(reports) {
   for (const report of reports || []) {
     const bossFights = (report?.fights || []).filter((f) => Number(f?.encounterID || 0) > 0);
@@ -1930,7 +1987,8 @@ async function getLatestRaidVotingPayload(guildId) {
   const latest = latestTrackedRaidReport(reports);
   if (!latest) return null;
 
-  const { report, bossFights, raidName } = latest;
+  const { report, bossFights, raidName: primaryRaidName } = latest;
+  const raidName = mvpUiRaidName(report, primaryRaidName);
   const fightIds = bossFights.map((f) => Number(f.id)).filter((id) => Number.isInteger(id) && id > 0);
   if (!fightIds.length) return null;
 
@@ -3190,7 +3248,10 @@ app.get("/api/wcl/guild/:guildId/latest-raid-mvp", async (req, res) => {
       raid: {
         code: recentRaidReport.code,
         title: recentRaidReport.title,
-        raidName: primaryTrackedRaidNameFromReport(recentRaidReport),
+        raidName: mvpUiRaidName(
+          recentRaidReport,
+          primaryTrackedRaidNameFromReport(recentRaidReport)
+        ),
         startTime: reportStartTimeMs(recentRaidReport.startTime),
         endTime: reportStartTimeMs(recentRaidReport.endTime),
         fightCount: bossFightIds.length,

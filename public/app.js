@@ -186,6 +186,7 @@ function shortRaidName(raidName) {
   if (s === "Karazhan") return "Kara";
   if (s === "Gruul's Lair") return "Gruul";
   if (s === "Magtheridon's Lair") return "Mag";
+  if (s === "Gruul's Lair + Magtheridon's Lair") return "Gruul + Mag";
   return s || "?";
 }
 
@@ -195,6 +196,7 @@ function versionedImagePath(path) {
 
 function raidListingImagePath(raidName) {
   const s = String(raidName || "");
+  if (s === "Gruul's Lair + Magtheridon's Lair") return versionedImagePath("/raid-images/magtheridon.png");
   if (s === "Karazhan") return versionedImagePath("/raid-images/kara.png");
   if (s === "Gruul's Lair") return versionedImagePath("/raid-images/gruul.png");
   if (s === "Magtheridon's Lair") return versionedImagePath("/raid-images/magtheridon.png");
@@ -206,6 +208,7 @@ function raidListingImagePath(raidName) {
 /** Wide cinematic headers for dashboard personal-best tiles (_best time_ row only). */
 function raidPbHeaderImagePath(raidName) {
   const s = String(raidName || "");
+  if (s === "Gruul's Lair + Magtheridon's Lair") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
   if (s === "Karazhan") return versionedImagePath("/raid-images/pb-header-kara.png");
   if (s === "Gruul's Lair") return versionedImagePath("/raid-images/pb-header-gruul.png");
   if (s === "Magtheridon's Lair") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
