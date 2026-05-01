@@ -2594,6 +2594,12 @@ const TBC_CLASSIC_SPEC_SPELL_ID = {
   warrior_protection: 71, // Defensive Stance
 };
 
+/** Reliable Wowhead CDN icons when Blizzard spell media fails on live (hotlink / token). */
+const ZAMIMG_PROT_SPEC_ICON_URL = {
+  paladin: "https://wow.zamimg.com/images/wow/icons/large/spell_holy_sealofprotection.jpg",
+  warrior: "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_defensivestance.jpg",
+};
+
 /**
  * Fetches spell icon from `static-classic-*` if the row is a Prot Pala / Prot War
  * and no absolute `specIconUrl` was provided by Raid-Helper.
@@ -2618,8 +2624,11 @@ async function attachClassicSpecSpellIconIfNeeded(row) {
     const icon = await getCachedClassicSpellIcon(spellId);
     if (icon) return { ...row, specIconUrl: icon };
   } catch {
-    // Blizzard unavailable — client falls back to zamimg spell filenames.
+    // Blizzard unavailable — zamimg / client chain below.
   }
+  const zam =
+    cls === "paladin" ? ZAMIMG_PROT_SPEC_ICON_URL.paladin : cls === "warrior" ? ZAMIMG_PROT_SPEC_ICON_URL.warrior : "";
+  if (zam) return { ...row, specIconUrl: zam };
   if (/^https?:\/\//i.test(existing)) return { ...row, specIconUrl: existing };
   return row;
 }

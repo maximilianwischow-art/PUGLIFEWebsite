@@ -16,6 +16,9 @@ function initBackgroundStars() {
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
 const IMAGE_ASSET_VERSION = "20260428f";
+/** Same guild as dashboard (`public/app.js`) — Warcraft Logs attendance for tier badges. */
+const EVENTS_WCL_GUILD_ID = 817080;
+const BADGE_FRAME_VERSION = "20260502a";
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 let authMe = null;
 /** Official WoW class colours (default UI palette). */
@@ -234,16 +237,22 @@ function championPortraitFallbackChain(player) {
 }
 
 /** Ordered URLs for the spec badge: API URL first (if any), then zamimg spell chain, then class crest.
- * Never return only the API URL — Blizzard/RH links often 404 or block hotlinks; `onerror` must have targets. */
+ * Never return only the API URL — Blizzard/RH links often 404 or block hotlinks; `onerror` must have targets.
+ * Prot pala / warrior: put Wowhead spell textures first so broken CDN URLs from RH never paint first. */
 function specBadgePortraitChain(player) {
   const fromApi = String(player?.specIconUrl || "").trim();
   const key = resolvedSpecIconKey(player);
   const spell = key ? SPEC_SPELL_ICON[key] : "";
-  const urls = [];
-  if (/^https?:\/\//i.test(fromApi)) urls.push(fromApi);
-  if (spell) urls.push(`${ZAM_ICON_LARGE}/${spell}.jpg`);
   const extras = key && SPEC_ZAMIMG_FALLBACK[key] ? SPEC_ZAMIMG_FALLBACK[key] : [];
-  for (const f of extras) urls.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  const protKey = key === "paladin_protection" || key === "warrior_protection";
+  const urls = [];
+  if (protKey && spell) {
+    urls.push(`${ZAM_ICON_LARGE}/${spell}.jpg`);
+    for (const f of extras) urls.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  }
+  if (/^https?:\/\//i.test(fromApi)) urls.push(fromApi);
+  if (!protKey && spell) urls.push(`${ZAM_ICON_LARGE}/${spell}.jpg`);
+  if (!protKey) for (const f of extras) urls.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
   urls.push(classIconFallbackUrl(player?.className));
   const seen = new Set();
   const out = [];
@@ -257,16 +266,62 @@ function specBadgePortraitChain(player) {
 
 const RAIDER_BADGE_SLOTS = 4;
 
-function rosterAchievementBadgeSlots() {
-  return Array.from({ length: RAIDER_BADGE_SLOTS })
-    .map(
-      () =>
-        `<span class="raider-badge-slot" title="Achievement badge slot" aria-hidden="true"></span>`
-    )
-    .join("");
+function rosterLookupKey(name) {
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
-function rosterRaiderCard(player) {
+/** Tier from WCL-tracked attendance (tune thresholds for your guild). */
+function attendanceBadgeTier(raidsAttended, consideredRaids) {
+  const r = Math.max(0, Number(raidsAttended || 0));
+  const c = Math.max(1, Number(consideredRaids || 0));
+  const rate = r / c;
+  if (r < 1) return "";
+  if (r >= 14 || rate >= 0.82) return "gold";
+  if (r >= 6 || rate >= 0.42) return "silver";
+  return "bronze";
+}
+
+function tierFrameUrl(tier) {
+  const file = tier === "gold" ? "gold.png" : tier === "silver" ? "silver.png" : "bronze.png";
+  return `/images/badge-tiers/${file}?v=${BADGE_FRAME_VERSION}`;
+}
+
+function rosterAchievementBadgesMarkup(player, attendanceByName, consideredRaids) {
+  const row = attendanceByName.get(rosterLookupKey(player.name));
+  const raids = row ? Math.max(0, Number(row.raidsAttended || 0)) : 0;
+  const c = Math.max(0, Number(consideredRaids || 0));
+  const tier = attendanceBadgeTier(raids, c);
+
+  const slots = [];
+  if (tier && raids >= 1) {
+    const title = `Warcraft Logs attendance: ${raids} raid${raids === 1 ? "" : "s"} in last ${c} tracked raid${c === 1 ? "" : "s"}`;
+    slots.push(`<div class="raider-badge-tier" role="img" aria-label="${escapeHtml(title)}">
+        <div class="raider-badge-tier-hole" aria-hidden="true">
+          <span class="raider-badge-tier-n">${escapeHtml(String(raids))}</span>
+          <span class="raider-badge-tier-sub">raids</span>
+        </div>
+        <img class="raider-badge-tier-frame" src="${escapeHtml(tierFrameUrl(tier))}" alt="" width="48" height="48" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
+      </div>`);
+  } else {
+    slots.push(
+      `<span class="raider-badge-slot raider-badge-slot--pending" title="No Warcraft Logs attendance yet (need ≥1 tracked raid)" aria-hidden="true"></span>`
+    );
+  }
+
+  while (slots.length < RAIDER_BADGE_SLOTS) {
+    slots.push(
+      `<span class="raider-badge-slot raider-badge-slot--locked" title="Achievement slot — coming soon" aria-hidden="true"></span>`
+    );
+  }
+
+  return slots.join("");
+}
+
+function rosterRaiderCard(player, attendanceByName, consideredRaids) {
   const className = String(player.className || "").trim();
   const color = WOW_CLASS_COLORS[className] || "var(--text)";
   const specLabel = String(player.specName || "").trim();
@@ -319,7 +374,7 @@ function rosterRaiderCard(player) {
           ${specLabel ? `<div class="raider-spec-line">${escapeHtml(specLabel)} · ${escapeHtml(className)}</div>` : `<div class="raider-spec-line">${escapeHtml(className)}</div>`}
         </div>
       </div>
-      <div class="raider-badges" role="group" aria-label="Achievement badges">${rosterAchievementBadgeSlots()}</div>
+      <div class="raider-badges" role="group" aria-label="Achievement badges">${rosterAchievementBadgesMarkup(player, attendanceByName, consideredRaids)}</div>
     </div>
   `;
 }
@@ -500,9 +555,24 @@ async function loadEvents() {
   try {
     const me = await loadAuthMe();
     const isAuthenticated = Boolean(me?.authenticated);
-    const res = await fetch("/api/raid-helper/future-events", { credentials: "include" });
+    const [res, attRes] = await Promise.all([
+      fetch("/api/raid-helper/future-events", { credentials: "include" }),
+      fetch(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=80`).catch(() => null),
+    ]);
     const payload = await res.json();
     if (!res.ok) throw new Error(payload.error || "Failed to load events");
+
+    const attendanceByName = new Map();
+    let attendanceConsidered = 0;
+    if (attRes && attRes.ok) {
+      const attPayload = await attRes.json().catch(() => ({}));
+      if (Array.isArray(attPayload?.leaderboard)) {
+        attendanceConsidered = Number(attPayload.consideredRaids || 0);
+        for (const row of attPayload.leaderboard) {
+          attendanceByName.set(rosterLookupKey(row.name), row);
+        }
+      }
+    }
 
     const rows = (payload?.events || []).filter(
       (event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids"
@@ -523,12 +593,13 @@ async function loadEvents() {
         const signups = Number(event?.signups?.total || 0);
         const rosterCapacity = rosterCapacityForEvent(event);
         const groupedRoster = groupedRosterByRole(event.confirmedRoster);
+        const card = (p) => rosterRaiderCard(p, attendanceByName, attendanceConsidered);
         const groupedRosterHtml = ROLE_ORDER.filter((role) => groupedRoster.get(role).length > 0)
           .map(
             (role) => `
               <div class="roster-role-group">
                 <div class="roster-role-title">${escapeHtml(role)} (${groupedRoster.get(role).length})</div>
-                <div class="raider-grid">${groupedRoster.get(role).map(rosterRaiderCard).join("")}</div>
+                <div class="raider-grid">${groupedRoster.get(role).map(card).join("")}</div>
               </div>
             `
           )
