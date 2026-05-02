@@ -2295,9 +2295,25 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
       String(a.raidHelperName || "").localeCompare(String(b.raidHelperName || ""))
   );
 
+  /** Saved roster rows must always appear on Events — never truncate them behind high-attendance unlinked players. */
+  const linkedKeysFromStore = new Set(
+    links
+      .map((e) => normalizeRaidHelperDisplayKey(String(e?.raidHelperName || "")))
+      .filter(Boolean)
+  );
+  const linkedRows = [];
+  const unlinkedRows = [];
+  for (const r of rows) {
+    const k = normalizeRaidHelperDisplayKey(String(r?.raidHelperName || r?.name || ""));
+    if (linkedKeysFromStore.has(k)) linkedRows.push(r);
+    else unlinkedRows.push(r);
+  }
+  const spare = Math.max(0, top - linkedRows.length);
+  const leaderboard = [...linkedRows, ...unlinkedRows.slice(0, spare)];
+
   return {
     consideredRaids,
-    leaderboard: rows.slice(0, top),
+    leaderboard,
   };
 }
 
@@ -2840,6 +2856,44 @@ function pickWclIconHit(iconMap, playerName) {
   return null;
 }
 
+/** Warcraft Logs names from the character roster for this Raid Helper signup (main + alts). */
+function linkedWclCharacterNamesForRaidHelperName(linksState, rosterDisplayName) {
+  const key = normalizeRaidHelperDisplayKey(String(rosterDisplayName || ""));
+  if (!key) return [];
+  for (const entry of linksState?.links || []) {
+    const rh = normalizeRaidHelperDisplayKey(String(entry?.raidHelperName || ""));
+    if (rh !== key) continue;
+    const names = Array.isArray(entry?.wclCharacterNames) ? entry.wclCharacterNames : [];
+    return names.map((x) => String(x || "").trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * Prefer icons for linked log names so we do not pick another player’s row when RH ≠ WCL display
+ * (e.g. prot paladin showing warrior defensive stance from a name collision on Damage Done).
+ */
+function pickWclIconHitPreferringLinkedNames(iconMap, row, linksState) {
+  const altNames = linkedWclCharacterNamesForRaidHelperName(linksState, row?.name);
+  const cls = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
+  const strictClass = cls === "paladin" || cls === "warrior";
+
+  for (const alt of altNames) {
+    const h = pickWclIconHit(iconMap, alt);
+    if (!h?.icon) continue;
+    if (!strictClass || wclProtIconAgreesWithRosterClass(h.icon, row)) return h;
+  }
+  const primary = pickWclIconHit(iconMap, row?.name);
+  if (primary?.icon && (!strictClass || wclProtIconAgreesWithRosterClass(primary.icon, row))) return primary;
+  if (!strictClass) {
+    for (const alt of altNames) {
+      const h = pickWclIconHit(iconMap, alt);
+      if (h?.icon) return h;
+    }
+  }
+  return primary?.icon ? primary : null;
+}
+
 async function loadWclGuildRosterSpecIconMapUncached(guildId) {
   const gid = Number(guildId);
   if (!Number.isInteger(gid) || gid <= 0) return {};
@@ -2891,6 +2945,9 @@ async function enrichConfirmedRosterWithWclSpecIcons(rows) {
   const gid = eventsWclSpecIconGuildId();
   if (!gid || !Array.isArray(rows) || !rows.length) return rows;
 
+  await ensureRhWclLinksStore();
+  const linksState = rhWclLinksState;
+
   let iconMap;
   try {
     iconMap = await getWclGuildRosterSpecIconMap(gid);
@@ -2900,7 +2957,7 @@ async function enrichConfirmedRosterWithWclSpecIcons(rows) {
   if (!iconMap || typeof iconMap !== "object") return rows;
 
   return rows.map((row) => {
-    const hit = pickWclIconHit(iconMap, row?.name);
+    const hit = pickWclIconHitPreferringLinkedNames(iconMap, row, linksState);
     if (!hit?.icon) return row;
     if (!wclProtIconAgreesWithRosterClass(hit.icon, row)) return row;
     return { ...row, wclSpecIconUrl: hit.icon, wclCombatSpecType: hit.type || "" };

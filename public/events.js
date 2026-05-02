@@ -386,6 +386,9 @@ function wclProtIconConflictsWithRosterClass(wclUrl, player) {
     u.includes("spell_holy_devotionaura") ||
     u.includes("spell_holy_sealofvengeance") ||
     u.includes("spell_holy_righteousfury");
+  const key = resolvedSpecIconKey(player);
+  if (key === "paladin_protection" && war && !pal) return true;
+  if (key === "warrior_protection" && pal && !war) return true;
   if (cls === "paladin" && war && !pal) return true;
   if (cls === "warrior" && pal && !war) return true;
   return false;
@@ -546,6 +549,10 @@ async function loadWclAttendanceForEvents() {
       attendanceLeaderboardByKey.set(key, row);
       const rawLower = display.toLowerCase();
       if (rawLower !== key) attendanceLeaderboardByKey.set(rawLower, row);
+      for (const alt of Array.isArray(row?.wclCharacters) ? row.wclCharacters : []) {
+        const ak = rosterNameKey(String(alt || ""));
+        if (ak && !attendanceLeaderboardByKey.has(ak)) attendanceLeaderboardByKey.set(ak, row);
+      }
     }
   } catch {
     // optional widget — roster still renders
