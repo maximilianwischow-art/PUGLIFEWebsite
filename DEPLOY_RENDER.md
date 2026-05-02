@@ -34,7 +34,7 @@ In Render dashboard -> service -> Environment, set:
   Example:
   `Karazhan,Gruul's Lair,Magtheridon's Lair,Serpentshrine Cavern,Tempest Keep,Hyjal Summit,Black Temple,Sunwell Plateau,Zul'Aman`
 - `RAID_HELPER_API_KEY`
-- `RAID_HELPER_SERVER_ID`
+- `RAID_HELPER_SERVER_ID` **or** `DISCORD_GUILD_ID` (same Discord server id — either works)
 - `RAID_HELPER_DEFAULT_EVENT_ID` (optional)
 - `AUTH_SESSION_SECRET` (required in production)
 - `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (if voting login is enabled)

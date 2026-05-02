@@ -163,6 +163,16 @@ const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || "";
 const discordClientSecret = process.env.DISCORD_CLIENT_SECRET?.trim() || "";
 const discordGuildId =
   process.env.DISCORD_GUILD_ID?.trim() || process.env.RAID_HELPER_SERVER_ID?.trim() || "";
+
+/** Raid Helper’s “server id” is your Discord guild id — optional duplicate of {@link discordGuildId}. */
+function raidHelperDiscordGuildId() {
+  return (
+    String(process.env.RAID_HELPER_SERVER_ID || "").trim() ||
+    String(process.env.DISCORD_GUILD_ID || "").trim() ||
+    ""
+  );
+}
+
 const publicBaseUrl =
   process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${Number(process.env.PORT || 8787)}`;
 const discordRedirectUri =
@@ -1853,7 +1863,7 @@ app.put("/api/admin/rh-wcl-links/row", async (req, res) => {
 /**
  * Heuristic merge: Raid Helper signup names × recent WCL log characters (admin-only).
  * Body JSON (optional): `{ raidHelperNames?: string[], guildId?: number, minScore?: number, apply?: boolean }`
- * — if `raidHelperNames` omitted, names are pulled from Raid Helper API (`RAID_HELPER_SERVER_ID`, `RAID_HELPER_API_KEY`).
+ * — if `raidHelperNames` omitted, names are pulled from Raid Helper API (`RAID_HELPER_API_KEY` + `RAID_HELPER_SERVER_ID` or `DISCORD_GUILD_ID`).
  * Set `apply: true` to persist merged links immediately (otherwise preview only).
  */
 app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
@@ -1868,7 +1878,7 @@ app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
     );
     const minScoreRaw = Number(req.body?.minScore ?? req.query.minScore ?? 72);
     const minScore = Number.isFinite(minScoreRaw) ? minScoreRaw : 72;
-    const serverId = String(process.env.RAID_HELPER_SERVER_ID || "").trim();
+    const serverId = raidHelperDiscordGuildId();
     const raidHelperApiKey = String(process.env.RAID_HELPER_API_KEY || "").trim();
 
     if (!Number.isInteger(guildId) || guildId <= 0) {
@@ -4093,7 +4103,7 @@ app.get("/api/sync/wcl-raid-helper/:guildId/relevant-ids", async (req, res) => {
     wclMaxGuildReportsLimit(),
     Math.max(5, Number(req.query.limit || 20))
   );
-  const serverId = process.env.RAID_HELPER_SERVER_ID || "711838953430319115";
+  const serverId = raidHelperDiscordGuildId() || "711838953430319115";
   if (!Number.isInteger(guildId) || guildId <= 0) {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
@@ -4245,7 +4255,7 @@ app.get("/api/sync/wcl-raid-helper/:guildId/relevant-ids", async (req, res) => {
 });
 
 app.get("/api/raid-helper/future-events", async (_req, res) => {
-  const serverId = process.env.RAID_HELPER_SERVER_ID || "711838953430319115";
+  const serverId = raidHelperDiscordGuildId() || "711838953430319115";
   const nowSec = Math.floor(Date.now() / 1000);
   const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
   const session = getSessionFromRequest(_req);
@@ -4367,7 +4377,7 @@ app.post("/api/raid-helper/events/:eventId/signup", async (req, res) => {
   if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
 
   const eventId = String(req.params.eventId || "").trim();
-  const serverId = process.env.RAID_HELPER_SERVER_ID || "711838953430319115";
+  const serverId = raidHelperDiscordGuildId() || "711838953430319115";
   if (!eventId) return res.status(400).json({ ok: false, error: "Missing eventId" });
 
   try {
