@@ -654,8 +654,14 @@ document.getElementById("rhWclGuessBtn")?.addEventListener("click", async () => 
         const rowCount = Array.isArray(payload.links) ? payload.links.length : 0;
         const src = st.raidHelperSource ? ` · RH names: ${st.raidHelperSource}` : "";
         const wclc = typeof st.wclNameCount === "number" ? ` · ${st.wclNameCount} log name(s)` : "";
+        const apiN = st.raidHelperNamesFromApiCount;
+        const mergedN = st.rhMergeCandidateCount;
+        const unionHint =
+          typeof apiN === "number" && typeof mergedN === "number" && mergedN > apiN
+            ? ` · +${mergedN - apiN} row(s) from logs not in RH scan`
+            : "";
         status(
-          `Heuristic merge: ${rowCount} row(s), ${st.guessedPairs ?? 0} new guess(es); ${st.manualLockedWclCount ?? 0} manual WCL locked.${src}${wclc} Review before Save.`
+          `Heuristic merge: ${rowCount} row(s), ${st.guessedPairs ?? 0} new guess(es); ${st.manualLockedWclCount ?? 0} manual WCL locked.${src}${wclc}${unionHint} Review before Save.`
         );
       }
     );

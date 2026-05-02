@@ -902,6 +902,29 @@ function sanitizeRhWclLinksPayload(rawLinks) {
   return { links };
 }
 
+/**
+ * Raid Helper API scans only posted events; WCL scans recent logs — lists diverge on live.
+ * Union so every log character becomes an RH candidate row (RH spelling wins when keys match).
+ */
+function unionRaidHelperCandidatesWithWclNames(rhNames, wclNames) {
+  const byKey = new Map();
+  for (const r of Array.isArray(rhNames) ? rhNames : []) {
+    const t = String(r || "").trim();
+    if (!t) continue;
+    const k = normalizeRaidHelperDisplayKey(t);
+    if (!k) continue;
+    if (!byKey.has(k)) byKey.set(k, t);
+  }
+  for (const w of Array.isArray(wclNames) ? wclNames : []) {
+    const t = String(w || "").trim();
+    if (!t) continue;
+    const k = normalizeRaidHelperDisplayKey(t);
+    if (!k) continue;
+    if (!byKey.has(k)) byKey.set(k, t);
+  }
+  return [...byKey.values()];
+}
+
 function chunkPositiveInts(ids, chunkSize) {
   const uniq = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
   const size = Math.max(1, chunkSize);
@@ -1908,9 +1931,12 @@ app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
       });
     }
 
+    const raidHelperNamesOnlyFromApi = raidHelperNames.length;
+    const rhCandidatesForMerge = unionRaidHelperCandidatesWithWclNames(raidHelperNames, wclCharacterNames);
+
     await ensureRhWclLinksStore();
     const existing = rhWclLinksState.links || [];
-    const { links, stats } = mergeRhWclGuess(existing, raidHelperNames, wclCharacterNames, {
+    const { links, stats } = mergeRhWclGuess(existing, rhCandidatesForMerge, wclCharacterNames, {
       minScore,
       keepEmptyRaidHelperRows: true,
     });
@@ -1934,6 +1960,8 @@ app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
         raidHelperSource,
         raidHelperFetchError: raidHelperFetchError || undefined,
         wclNameCount: wclCharacterNames.length,
+        raidHelperNamesFromApiCount: raidHelperNamesOnlyFromApi,
+        rhMergeCandidateCount: rhCandidatesForMerge.length,
         raidHelperEventsScanLimit: rhWclLinkRaidHelperEventScanCount(),
         wclReportsDetailLimit: wclReportsToDetail,
       },
