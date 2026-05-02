@@ -345,10 +345,24 @@ function rhWclMatchChipsHtml(row) {
     .join("");
 }
 
+function updateRhWclLinksChrome(list) {
+  const dataCount = list.filter((r) => String(r?.raidHelperName || "").trim()).length;
+  const countEl = document.getElementById("rhWclRowCount");
+  if (countEl) {
+    countEl.textContent =
+      dataCount === 0 ? "No saved mappings" : `${dataCount} mapping${dataCount === 1 ? "" : "s"}`;
+  }
+  const hint = document.getElementById("rhWclEmptyHint");
+  if (hint) {
+    hint.hidden = dataCount > 0;
+  }
+}
+
 function renderRhWclLinksTable(rows) {
   const host = document.getElementById("rhWclLinksTableHost");
   if (!host) return;
   const list = Array.isArray(rows) && rows.length ? rows : [{ raidHelperName: "", wclCharacterNames: [] }];
+  updateRhWclLinksChrome(list);
   host.innerHTML = `
     <div class="admin-table-wrap">
       <table class="admin-table">
@@ -703,7 +717,7 @@ document.getElementById("rhWclSaveLinksBtn")?.addEventListener("click", async ()
   try {
     await runWithButtonFeedback(
       btn,
-      { idle: "Save links", loading: "Saving…", success: "Saved", failure: "Save failed" },
+      { idle: "Save all rows", loading: "Saving…", success: "Saved", failure: "Save failed" },
       async () => {
         await getJson("/api/admin/rh-wcl-links", {
           method: "PUT",
@@ -712,9 +726,49 @@ document.getElementById("rhWclSaveLinksBtn")?.addEventListener("click", async ()
         });
       }
     );
-    status(`Saved all ${links.length} row(s) to disk (same as saving each line together).`);
+    try {
+      const refreshed = await getJson("/api/admin/rh-wcl-links");
+      renderRhWclLinksTable(Array.isArray(refreshed?.links) ? refreshed.links : links);
+    } catch {
+      renderRhWclLinksTable(links);
+    }
+    status(`Saved ${links.length} mapping row(s) to disk (sorted: unassigned first).`);
   } catch (error) {
     status(error?.message || "Save failed");
+  }
+});
+
+document.getElementById("rhWclDeleteAllBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("rhWclDeleteAllBtn");
+  const n = [...document.querySelectorAll("[data-rh-wcl-row]")].filter((tr) =>
+    String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim()
+  ).length;
+  if (n === 0) {
+    status("Nothing to delete — add a Raid Helper name or run heuristic merge first.");
+    return;
+  }
+  const ok = window.confirm(
+    `Delete all ${n} character mapping(s) on the server?\n\nThis clears rh-wcl-character-links.json. Events and attendance will fall back until you save new mappings.`
+  );
+  if (!ok) return;
+  try {
+    await runWithButtonFeedback(
+      btn,
+      {
+        idle: "Delete all…",
+        loading: "Deleting…",
+        success: "Cleared",
+        failure: "Delete failed",
+      },
+      async () => {
+        await getJson("/api/admin/rh-wcl-links", { method: "DELETE" });
+      }
+    );
+    renderRhWclLinksTable([]);
+    renderRhWclRaidSources([], []);
+    status("All character mappings removed from disk.");
+  } catch (error) {
+    status(error?.message || "Delete all failed");
   }
 });
 

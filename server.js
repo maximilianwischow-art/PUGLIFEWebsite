@@ -1823,6 +1823,23 @@ app.put("/api/admin/rh-wcl-links", async (req, res) => {
   }
 });
 
+/** Clear the entire character roster on disk (admin only). */
+app.delete("/api/admin/rh-wcl-links", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclLinksStore();
+    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+      rhWclLinksState = { links: [] };
+      await persistRhWclLinksStore();
+    });
+    await rhWclLinksWriteChain;
+    return res.json({ ok: true, links: [], deleted: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to delete Raid Helper ↔ WCL links" });
+  }
+});
+
 /** Upsert one link row (merge into store by normalized Raid Helper key). Body matches one row + optional `previousRaidHelperName` when renaming the signup column. */
 app.put("/api/admin/rh-wcl-links/row", async (req, res) => {
   try {
