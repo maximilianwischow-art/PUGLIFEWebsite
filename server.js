@@ -99,6 +99,8 @@ const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
 const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
 const WOWHEAD_TBC_NETHER_VORTEX_URL = "https://www.wowhead.com/tbc/item=30183/nether-vortex#reagent-for";
 const NETHER_VORTEX_WOW_ITEM_ID = 30183;
+const NETHER_VORTEX_CRAFTABLES_CACHE_KEY = "nether-vortex-craftables-v6";
+const netherVortexCraftablesFallbackPath = path.join(__dirname, "data", "nether-vortex-craftables-fallback.json");
 const RAID_HELPER_API_URL = "https://raid-helper.xyz/api/v4";
 const DEFAULT_TBC_ZONES = [
   "Karazhan",
@@ -972,6 +974,114 @@ function parseWowheadReagentForItems(html) {
     .sort((a, b) => a.itemName.localeCompare(b.itemName));
 }
 
+async function normalizeNetherVortexCraftableRows(parsedRows) {
+  const normalized = [];
+  for (const row of parsedRows || []) {
+    let resolvedId = Number(row?.itemID || 0);
+    try {
+      const byName = await resolveClassicItemIdByName(row?.itemName);
+      if (byName > 0) resolvedId = byName;
+    } catch {
+      // keep Wowhead id
+    }
+    normalized.push({
+      itemID: resolvedId > 0 ? resolvedId : Number(row?.itemID || 0),
+      itemName: String(row?.itemName || "").trim(),
+      profession: String(row?.profession || "").trim(),
+      vortexNeeded: Math.max(1, Math.min(20, Math.floor(Number(row?.vortexNeeded || 1)))),
+    });
+  }
+  return normalized.filter((x) => x.itemID > 0 && x.itemName);
+}
+
+async function readNetherVortexCraftablesFallbackPayload() {
+  try {
+    const raw = await readFile(netherVortexCraftablesFallbackPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const normalized = await normalizeNetherVortexCraftableRows(items);
+    return {
+      source: "data/nether-vortex-craftables-fallback.json",
+      items: normalized,
+    };
+  } catch {
+    return { source: "fallback-missing", items: [] };
+  }
+}
+
+async function loadNetherVortexCraftablesPayloadFromWowhead() {
+  const wowheadRes = await fetch(WOWHEAD_TBC_NETHER_VORTEX_URL, {
+    headers: { "User-Agent": "fallen-tacticians-api/1.0 (+nether-vortex-tracker)" },
+  });
+  if (!wowheadRes.ok) {
+    throw new Error(`Failed to fetch Wowhead craftables (${wowheadRes.status})`);
+  }
+  const html = await wowheadRes.text();
+  const items = parseWowheadReagentForItems(html);
+  if (!items.length) {
+    throw new Error("Could not parse craftable items from Wowhead reagent-for list");
+  }
+  const normalized = await normalizeNetherVortexCraftableRows(items);
+  if (!normalized.length) {
+    throw new Error("Wowhead craftables normalized to empty");
+  }
+  return { source: WOWHEAD_TBC_NETHER_VORTEX_URL, items: normalized };
+}
+
+async function loadNetherVortexCraftablesPayload() {
+  try {
+    return await loadNetherVortexCraftablesPayloadFromWowhead();
+  } catch (firstError) {
+    const fb = await readNetherVortexCraftablesFallbackPayload();
+    if (fb.items.length) return fb;
+    throw firstError;
+  }
+}
+
+function netherVortexCraftableCatalogMaps(catalogItems) {
+  const byId = new Map();
+  const byNameLower = new Map();
+  for (const row of catalogItems || []) {
+    const id = Number(row?.itemID || 0);
+    if (id > 0) byId.set(id, row);
+    const nm = String(row?.itemName || "").trim().toLowerCase();
+    if (nm) byNameLower.set(nm, row);
+  }
+  return { byId, byNameLower };
+}
+
+/** Override per-line vortex counts from the TBC craft catalog (Wowhead reagent data). */
+function enrichSanitizedNetherVortexItems(items, catalogMaps) {
+  const { byId, byNameLower } = catalogMaps;
+  return (Array.isArray(items) ? items : []).map((row) => {
+    if (!row || typeof row !== "object") return row;
+    let cat = null;
+    const id = Number(row.itemID || 0);
+    if (id > 0) cat = byId.get(id) || null;
+    if (!cat) {
+      const nm = String(row.itemName || "").trim().toLowerCase();
+      if (nm) cat = byNameLower.get(nm) || null;
+    }
+    const vortexNeeded = cat
+      ? Math.max(1, Math.min(20, Math.floor(Number(cat.vortexNeeded || 1))))
+      : Math.max(1, Math.min(20, Math.floor(Number(row.vortexNeeded || 1))));
+    return {
+      ...row,
+      itemID: Number.isFinite(id) && id > 0 ? id : Number(row.itemID || 0),
+      vortexNeeded,
+    };
+  });
+}
+
+async function getNetherVortexCraftableCatalogMaps() {
+  const payload = await getOrRefreshCachedPayload(NETHER_VORTEX_CRAFTABLES_CACHE_KEY, {
+    ttlMs: 24 * 3600_000,
+    maxStaleMs: 7 * 24 * 3600_000,
+    loader: loadNetherVortexCraftablesPayload,
+  });
+  return netherVortexCraftableCatalogMaps(payload.items);
+}
+
 function normalizeGargulItemName(itemLink, fallback) {
   const link = String(itemLink || "").trim();
   const m = link.match(/\[(.+?)\]/);
@@ -1237,12 +1347,18 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
     await ensureNetherVortexStore();
     const session = getSessionFromRequest(req);
     const userId = String(session?.user?.id || "").trim();
+    let catalogMaps = { byId: new Map(), byNameLower: new Map() };
+    try {
+      catalogMaps = await getNetherVortexCraftableCatalogMaps();
+    } catch {
+      // Still return rows; per-line counts fall back to stored values.
+    }
     const rows = [...(netherVortexState.entries || [])]
       .map((row) => ({
         userId: String(row.userId || ""),
         displayName: String(row.displayName || "Unknown"),
         neededCount: Math.max(0, Number(row.neededCount || 0)),
-        items: sanitizeNetherVortexItems(row.items),
+        items: enrichSanitizedNetherVortexItems(sanitizeNetherVortexItems(row.items), catalogMaps),
         updatedAt: Number(row.updatedAt || 0),
       }))
       .filter((row) => row.userId)
@@ -1263,38 +1379,10 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
 
 app.get("/api/nether-vortex/craftables", async (_req, res) => {
   try {
-    const key = "nether-vortex-craftables-v5";
-    const payload = await getOrRefreshCachedPayload(key, {
+    const payload = await getOrRefreshCachedPayload(NETHER_VORTEX_CRAFTABLES_CACHE_KEY, {
       ttlMs: 24 * 3600_000,
       maxStaleMs: 7 * 24 * 3600_000,
-      loader: async () => {
-        const wowheadRes = await fetch(WOWHEAD_TBC_NETHER_VORTEX_URL, {
-          headers: { "User-Agent": "fallen-tacticians-api/1.0 (+nether-vortex-tracker)" },
-        });
-        if (!wowheadRes.ok) {
-          throw new Error(`Failed to fetch Wowhead craftables (${wowheadRes.status})`);
-        }
-        const html = await wowheadRes.text();
-        const items = parseWowheadReagentForItems(html);
-        if (!items.length) {
-          throw new Error("Could not parse craftable items from Wowhead reagent-for list");
-        }
-        const normalized = [];
-        for (const row of items) {
-          let resolvedId = Number(row?.itemID || 0);
-          try {
-            const byName = await resolveClassicItemIdByName(row?.itemName);
-            if (byName > 0) resolvedId = byName;
-          } catch {}
-          normalized.push({
-            itemID: resolvedId > 0 ? resolvedId : Number(row?.itemID || 0),
-            itemName: String(row?.itemName || "").trim(),
-            profession: String(row?.profession || "").trim(),
-            vortexNeeded: Math.max(1, Math.min(20, Math.floor(Number(row?.vortexNeeded || 1)))),
-          });
-        }
-        return { source: WOWHEAD_TBC_NETHER_VORTEX_URL, items: normalized };
-      },
+      loader: loadNetherVortexCraftablesPayload,
     });
     return res.json({ ok: true, ...payload });
   } catch (error) {
@@ -1310,7 +1398,13 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
     }
     const neededCountRaw = Number(req.body?.neededCount);
     const neededCount = Number.isFinite(neededCountRaw) ? Math.max(0, Math.floor(neededCountRaw)) : 0;
-    const items = sanitizeNetherVortexItems(req.body?.items);
+    let items = sanitizeNetherVortexItems(req.body?.items);
+    try {
+      const catalogMaps = await getNetherVortexCraftableCatalogMaps();
+      items = enrichSanitizedNetherVortexItems(items, catalogMaps);
+    } catch {
+      // Catalog unavailable — persist sanitized rows only.
+    }
     await ensureNetherVortexStore();
     // Recover from a prior rejected persist so the queue does not stay broken forever.
     netherVortexWriteChain = netherVortexWriteChain.catch(() => {}).then(async () => {

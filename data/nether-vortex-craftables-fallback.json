@@ -1,0 +1,126 @@
+{
+  "generatedAt": 1777748430458,
+  "source": "wowhead-tbc-item-30183",
+  "items": [
+    {
+      "itemID": 35751,
+      "itemName": "Assassin's Alchemist Stone",
+      "profession": "Alchemy",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30038,
+      "itemName": "Belt of Blasting",
+      "profession": "Tailoring",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30040,
+      "itemName": "Belt of Deep Shadow",
+      "profession": "Leatherworking",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30042,
+      "itemName": "Belt of Natural Power",
+      "profession": "Leatherworking",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30046,
+      "itemName": "Belt of the Black Eagle",
+      "profession": "Leatherworking",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30034,
+      "itemName": "Belt of the Guardian",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30036,
+      "itemName": "Belt of the Long Road",
+      "profession": "Tailoring",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 28427,
+      "itemName": "Blazefury",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 5
+    },
+    {
+      "itemID": 28436,
+      "itemName": "Bloodmoon",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 5
+    },
+    {
+      "itemID": 28485,
+      "itemName": "Bulwark of the Ancient Kings",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 28439,
+      "itemName": "Dragonstrike",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 5
+    },
+    {
+      "itemID": 23565,
+      "itemName": "Embrace of the Twisting Nether",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 35748,
+      "itemName": "Guardian's Alchemist Stone",
+      "profession": "Alchemy",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 28430,
+      "itemName": "Lionheart Executioner",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 5
+    },
+    {
+      "itemID": 30044,
+      "itemName": "Monsoon Belt",
+      "profession": "Leatherworking",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 30032,
+      "itemName": "Red Belt of Battle",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 35750,
+      "itemName": "Redeemer's Alchemist Stone",
+      "profession": "Alchemy",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 35749,
+      "itemName": "Sorcerer's Alchemist Stone",
+      "profession": "Alchemy",
+      "vortexNeeded": 2
+    },
+    {
+      "itemID": 28442,
+      "itemName": "Stormherald",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 5
+    },
+    {
+      "itemID": 28433,
+      "itemName": "Wicked Edge of the Planes",
+      "profession": "Blacksmithing",
+      "vortexNeeded": 5
+    }
+  ]
+}
