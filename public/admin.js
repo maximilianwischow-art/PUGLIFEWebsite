@@ -338,7 +338,10 @@ function rhWclMatchChipsHtml(row) {
       const cls = guess ? "admin-rh-src-guess" : s === "exact" ? "admin-rh-src-exact" : "admin-rh-src-manual";
       let lab = "Manual";
       if (s === "exact") lab = "Exact match";
-      else if (guess) lab = `Heuristic (${typeof c === "number" ? `${Math.round(c)}%` : "score"})`;
+      else if (guess)
+        lab = s.includes("_orphan")
+          ? `Best-effort (${typeof c === "number" ? `${Math.round(c)}%` : "score"})`
+          : `Heuristic (${typeof c === "number" ? `${Math.round(c)}%` : "score"})`;
       else if (s !== "manual") lab = s.replace(/^guess_/, "").replace(/_/g, " ");
       return `<span class="admin-rh-src-chip ${cls}" title="${esc(s)}"><strong>${esc(n)}</strong> · ${esc(lab)}</span>`;
     })
@@ -668,14 +671,17 @@ document.getElementById("rhWclGuessBtn")?.addEventListener("click", async () => 
         const rowCount = Array.isArray(payload.links) ? payload.links.length : 0;
         const src = st.raidHelperSource ? ` · RH names: ${st.raidHelperSource}` : "";
         const wclc = typeof st.wclNameCount === "number" ? ` · ${st.wclNameCount} log name(s)` : "";
-        const apiN = st.raidHelperNamesFromApiCount;
-        const mergedN = st.rhMergeCandidateCount;
-        const unionHint =
-          typeof apiN === "number" && typeof mergedN === "number" && mergedN > apiN
-            ? ` · +${mergedN - apiN} row(s) from logs not in RH scan`
+        const rhN = typeof st.raidHelperSignupCount === "number" ? ` · ${st.raidHelperSignupCount} signup name(s)` : "";
+        const orphanN =
+          typeof st.orphanGuessPairs === "number" && st.orphanGuessPairs > 0
+            ? ` · ${st.orphanGuessPairs} best-effort (below main threshold)`
+            : "";
+        const un =
+          typeof st.unmatchedWclCount === "number" && st.unmatchedWclCount > 0
+            ? ` · ${st.unmatchedWclCount} log name(s) still unmatched (assign manually)`
             : "";
         status(
-          `Heuristic merge: ${rowCount} row(s), ${st.guessedPairs ?? 0} new guess(es); ${st.manualLockedWclCount ?? 0} manual WCL locked.${src}${wclc}${unionHint} Review before Save.`
+          `Heuristic merge: ${rowCount} row(s), ${st.guessedPairs ?? 0} heuristic guess(es)${orphanN}; ${st.manualLockedWclCount ?? 0} manual WCL locked.${src}${wclc}${rhN}${un} Review before Save.`
         );
       }
     );

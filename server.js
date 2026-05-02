@@ -207,6 +207,13 @@ function rhWclLinkWclReportDetailCount() {
   return Number.isFinite(n) ? Math.min(100, Math.max(1, Math.floor(n))) : 6;
 }
 
+/** Second pass: map leftover log names onto closest RH signup when below main minScore (default 62). */
+function rhWclOrphanGuessMinScore() {
+  const raw = process.env.RH_WCL_ORPHAN_MIN_SCORE;
+  const n = raw !== undefined && String(raw).trim() !== "" ? Number(raw) : 62;
+  return Number.isFinite(n) ? Math.max(55, Math.min(79, Math.floor(n))) : 62;
+}
+
 const renderDiskMountPath = process.env.RENDER_DISK_MOUNT_PATH?.trim() || "";
 const configuredDataDir = process.env.DATA_DIR?.trim() || "";
 const defaultDataDir = path.join(__dirname, "data");
@@ -910,29 +917,6 @@ function sanitizeRhWclLinksPayload(rawLinks) {
     links.push(out);
   }
   return { links };
-}
-
-/**
- * Raid Helper API scans only posted events; WCL scans recent logs — lists diverge on live.
- * Union so every log character becomes an RH candidate row (RH spelling wins when keys match).
- */
-function unionRaidHelperCandidatesWithWclNames(rhNames, wclNames) {
-  const byKey = new Map();
-  for (const r of Array.isArray(rhNames) ? rhNames : []) {
-    const t = String(r || "").trim();
-    if (!t) continue;
-    const k = normalizeRaidHelperDisplayKey(t);
-    if (!k) continue;
-    if (!byKey.has(k)) byKey.set(k, t);
-  }
-  for (const w of Array.isArray(wclNames) ? wclNames : []) {
-    const t = String(w || "").trim();
-    if (!t) continue;
-    const k = normalizeRaidHelperDisplayKey(t);
-    if (!k) continue;
-    if (!byKey.has(k)) byKey.set(k, t);
-  }
-  return [...byKey.values()];
 }
 
 function chunkPositiveInts(ids, chunkSize) {
@@ -1944,27 +1928,31 @@ app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
       raidHelperSource = !raidHelperApiKey ? "missing_raid_helper_api_key" : "missing_raid_helper_server_id";
     }
 
-    /** When Raid Helper yields no signup names, use recent log character names as RH candidates so self/exact/prefix matches still produce rows. */
-    if ((!raidHelperNames || raidHelperNames.length === 0) && wclCharacterNames.length > 0) {
-      raidHelperNames = [...new Set(wclCharacterNames)].sort((a, b) => a.localeCompare(b));
-      raidHelperSource = "wcl_names_fallback";
-    }
-
     if (!raidHelperNames?.length) {
+      if (wclCharacterNames.length > 0) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "Raid Helper returned no signup names. Set RAID_HELPER_API_KEY and DISCORD_GUILD_ID (or RAID_HELPER_SERVER_ID), ensure recent posted events have signups, or POST { raidHelperNames: [...] }. Log characters are matched only onto Raid Helper names — they are not used as the left column.",
+          raidHelperSource,
+          raidHelperFetchError: raidHelperFetchError || undefined,
+          wclNameCount: wclCharacterNames.length,
+        });
+      }
       return res.status(400).json({
         ok: false,
         error:
-          "No Raid Helper names and no Warcraft Logs character names — check WCL guild reports / env keys, or POST { raidHelperNames: [...] }.",
+          "No Raid Helper signups and no Warcraft Logs names — check Raid Helper / WCL keys, guild reports, or POST { raidHelperNames: [...] }.",
+        raidHelperSource,
+        raidHelperFetchError: raidHelperFetchError || undefined,
       });
     }
 
-    const raidHelperNamesOnlyFromApi = raidHelperNames.length;
-    const rhCandidatesForMerge = unionRaidHelperCandidatesWithWclNames(raidHelperNames, wclCharacterNames);
-
     await ensureRhWclLinksStore();
     const existing = rhWclLinksState.links || [];
-    const { links, stats } = mergeRhWclGuess(existing, rhCandidatesForMerge, wclCharacterNames, {
+    const { links, stats } = mergeRhWclGuess(existing, raidHelperNames, wclCharacterNames, {
       minScore,
+      orphanMinScore: rhWclOrphanGuessMinScore(),
       keepEmptyRaidHelperRows: true,
     });
 
@@ -1987,8 +1975,7 @@ app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
         raidHelperSource,
         raidHelperFetchError: raidHelperFetchError || undefined,
         wclNameCount: wclCharacterNames.length,
-        raidHelperNamesFromApiCount: raidHelperNamesOnlyFromApi,
-        rhMergeCandidateCount: rhCandidatesForMerge.length,
+        raidHelperSignupCount: raidHelperNames.length,
         raidHelperEventsScanLimit: rhWclLinkRaidHelperEventScanCount(),
         wclReportsDetailLimit: wclReportsToDetail,
       },

@@ -7,7 +7,7 @@
  * Or pipe JSON (optional existing saved links):
  *   echo {"existing":[],"raidHelperNames":["A"],"wclCharacterNames":["Abank"]} | node scripts/guess-rh-wcl-links.mjs
  *
- * MIN_SCORE=72 (optional)
+ * MIN_SCORE=72 (optional), ORPHAN_MIN_SCORE=62 (optional second pass)
  */
 import "dotenv/config";
 import { mergeRhWclGuess } from "../lib/rh-wcl-guess.mjs";
@@ -50,12 +50,15 @@ if (!wclCharacterNames.length) {
 }
 
 if (!raidHelperNames.length) {
-  raidHelperNames = [...new Set(wclCharacterNames)].sort((a, b) => a.localeCompare(b));
+  console.error("Need RH_NAMES or JSON raidHelperNames — Raid Helper signup names, not WCL-only.");
+  process.exit(1);
 }
 
 const minScore = Number(process.env.MIN_SCORE || 68);
+const orphanMinScore = Number(process.env.ORPHAN_MIN_SCORE || 62);
 const { links, stats } = mergeRhWclGuess(existing, raidHelperNames, wclCharacterNames, {
   minScore,
+  orphanMinScore,
   keepEmptyRaidHelperRows: true,
 });
 
