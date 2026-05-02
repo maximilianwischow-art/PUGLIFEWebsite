@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mergeRhWclGuess, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
 
 dotenv.config({ override: true });
 
@@ -83,6 +84,22 @@ app.use(
     skip: (req) => req.method === "GET" && req.path === "/health",
   })
 );
+
+/**
+ * Must be registered before `express.static`: otherwise `/admin.html` is served from disk with auth bypass + long cache,
+ * and deploys can leave browsers on stale markup (missing newer admin sections).
+ */
+app.get("/admin.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect("/auth/discord/login?next=%2Fadmin.html");
+  }
+  if (!isP2Editor(session)) {
+    return res.status(403).send("Admin access required.");
+  }
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  return res.sendFile(path.join(publicDir, "admin.html"));
+});
 
 app.use(
   express.static(publicDir, {
@@ -165,6 +182,21 @@ function discordAuthHelpHtml(title, lines) {
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><body style="font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;line-height:1.5;padding:0 1rem">${inner}</body>`;
 }
 const votingGuildId = Number(process.env.VOTING_GUILD_ID || 817080);
+
+/** Raid Helper ↔ WCL heuristic: signup names from this many most recent posted Raid Helper events (default 6). */
+function rhWclLinkRaidHelperEventScanCount() {
+  const raw = process.env.RH_WCL_LINK_RAID_HELPER_EVENTS;
+  const n = raw !== undefined && String(raw).trim() !== "" ? Number(raw) : 6;
+  return Number.isFinite(n) ? Math.min(40, Math.max(1, Math.floor(n))) : 6;
+}
+
+/** Raid Helper ↔ WCL heuristic: union log characters from rankings across this many recent tracked raid reports (default 6). */
+function rhWclLinkWclReportDetailCount() {
+  const raw = process.env.RH_WCL_LINK_WCL_REPORT_DETAILS;
+  const n = raw !== undefined && String(raw).trim() !== "" ? Number(raw) : 6;
+  return Number.isFinite(n) ? Math.min(100, Math.max(1, Math.floor(n))) : 6;
+}
+
 const renderDiskMountPath = process.env.RENDER_DISK_MOUNT_PATH?.trim() || "";
 const configuredDataDir = process.env.DATA_DIR?.trim() || "";
 const defaultDataDir = path.join(__dirname, "data");
@@ -191,6 +223,7 @@ let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
+/** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
 const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
 const apiCacheDir = path.join(dataDir, "cache");
 const apiResponseCache = new Map();
@@ -204,6 +237,7 @@ let netherVortexWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
 let rhWclLinksReady = null;
+/** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
 let rhWclLinksWriteChain = Promise.resolve();
 const P2_MATERIALS = [
@@ -825,7 +859,13 @@ async function persistRhWclLinksStore() {
   await rename(tmpPath, rhWclCharacterLinksPath);
 }
 
-/** Caps and trims client-submitted Raid Helper ↔ WCL name rows. */
+/** Canonical character roster rows (sorted: unassigned first). Single source with attendance + public `/api/wcl/guild/.../characters`. */
+async function getGuildCharacterLinkRows() {
+  await ensureRhWclLinksStore();
+  return sortRhWclLinkRows(rhWclLinksState.links || []);
+}
+
+/** Caps and trims client-submitted Raid Helper ↔ WCL name rows (preserves guess provenance). */
 function sanitizeRhWclLinksPayload(rawLinks) {
   const arr = Array.isArray(rawLinks) ? rawLinks : [];
   const links = [];
@@ -833,18 +873,31 @@ function sanitizeRhWclLinksPayload(rawLinks) {
     if (!row || typeof row !== "object") continue;
     const raidHelperName = String(row?.raidHelperName || "").trim().slice(0, 96);
     if (!raidHelperName) continue;
+    const rawNames = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : [];
+    const rawSources = Array.isArray(row?.wclSources) ? row.wclSources : [];
+    const rawConf = Array.isArray(row?.wclGuessConfidence) ? row.wclGuessConfidence : [];
     const names = [];
+    const wclSources = [];
+    const wclGuessConfidence = [];
     const seenLower = new Set();
-    for (const cn of Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : []) {
-      const s = String(cn || "").trim().slice(0, 64);
+    for (let i = 0; i < rawNames.length; i++) {
+      const s = String(rawNames[i] || "").trim().slice(0, 64);
       if (!s) continue;
       const low = s.toLowerCase();
       if (seenLower.has(low)) continue;
       seenLower.add(low);
       names.push(s);
+      wclSources.push(String(rawSources[i] || "manual").trim().slice(0, 40) || "manual");
+      const c = rawConf[i];
+      wclGuessConfidence.push(
+        typeof c === "number" && Number.isFinite(c) ? Math.max(0, Math.min(100, Math.round(c))) : null
+      );
       if (names.length >= 40) break;
     }
-    links.push({ raidHelperName, wclCharacterNames: names });
+    const out = { raidHelperName, wclCharacterNames: names };
+    if (wclSources.length) out.wclSources = wclSources;
+    if (wclGuessConfidence.some((x) => typeof x === "number")) out.wclGuessConfidence = wclGuessConfidence;
+    links.push(out);
   }
   return { links };
 }
@@ -861,9 +914,13 @@ function chunkPositiveInts(ids, chunkSize) {
 
 /**
  * Builds per-raid attendee sets and display-name map — shared by attendance API and admin helpers.
- * @returns {{ raidSnapshots: Array<{ reportCode: string, startTime: number, attendeesLower: Set<string> }>, wclDisplayByLower: Map<string, string> }}
+ * @returns {{
+ *   raidSnapshots: Array<{ reportCode: string, startTime: number, attendeesLower: Set<string> }>,
+ *   wclDisplayByLower: Map<string, string>,
+ *   recentWclReports: Array<{ reportCode: string, startTime: number }>,
+ * }}
  */
-async function gatherAttendanceRaidSnapshots(guildId, reportLimit) {
+async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {}) {
   const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit);
   const trackedReports = reports
     .map((report) => {
@@ -882,7 +939,16 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit) {
     .filter((entry) => entry.fightIds.length > 0);
 
   const raidSnapshots = [];
-  const cappedForAttendance = trackedReports.slice(0, wclPerReportDetailCap());
+  const detailCapOpt = options?.maxDetailedReports;
+  const detailCap =
+    Number.isFinite(Number(detailCapOpt)) && Number(detailCapOpt) > 0
+      ? Math.min(100, Math.floor(Number(detailCapOpt)))
+      : wclPerReportDetailCap();
+  const cappedForAttendance = trackedReports.slice(0, detailCap);
+  const recentWclReports = cappedForAttendance.map(({ report }) => ({
+    reportCode: String(report?.code || ""),
+    startTime: Number(report?.startTime || 0),
+  }));
   const wclDisplayByLower = new Map();
 
   const attendanceQuery = `
@@ -917,7 +983,7 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit) {
     });
   }
 
-  return { raidSnapshots, wclDisplayByLower };
+  return { raidSnapshots, wclDisplayByLower, recentWclReports };
 }
 
 /** Sum vortex units from craft rows (each item defaults to at least 1). */
@@ -1324,17 +1390,6 @@ app.get("/nether-vortex.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "nether-vortex.html"));
 });
 
-app.get("/admin.html", (req, res) => {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect("/auth/discord/login?next=%2Fadmin.html");
-  }
-  if (!isP2Editor(session)) {
-    return res.status(403).send("Admin access required.");
-  }
-  return res.sendFile(path.join(publicDir, "admin.html"));
-});
-
 app.get("/privacy.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "privacy.html"));
 });
@@ -1710,8 +1765,8 @@ app.get("/api/admin/rh-wcl-links", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    await ensureRhWclLinksStore();
-    return res.json({ ok: true, links: rhWclLinksState.links || [] });
+    const links = await getGuildCharacterLinkRows();
+    return res.json({ ok: true, links });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load Raid Helper ↔ WCL links" });
   }
@@ -1722,15 +1777,170 @@ app.put("/api/admin/rh-wcl-links", async (req, res) => {
     const session = requireAdminSession(req, res);
     if (!session) return;
     const sanitized = sanitizeRhWclLinksPayload(req.body?.links);
+    const sorted = { links: sortRhWclLinkRows(sanitized.links) };
     await ensureRhWclLinksStore();
     rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
-      rhWclLinksState = sanitized;
+      rhWclLinksState = sorted;
       await persistRhWclLinksStore();
     });
     await rhWclLinksWriteChain;
-    return res.json({ ok: true, saved: sanitized.links.length });
+    return res.json({ ok: true, saved: sorted.links.length });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save Raid Helper ↔ WCL links" });
+  }
+});
+
+/** Upsert one link row (merge into store by normalized Raid Helper key). Body matches one row + optional `previousRaidHelperName` when renaming the signup column. */
+app.put("/api/admin/rh-wcl-links/row", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclLinksStore();
+
+    const sanitized = sanitizeRhWclLinksPayload([req.body]);
+    const row = sanitized.links[0];
+    if (!row?.raidHelperName) {
+      return res.status(400).json({ ok: false, error: "raidHelperName is required" });
+    }
+
+    const newKey = normalizeRaidHelperDisplayKey(row.raidHelperName);
+    const prevRaw = String(req.body?.previousRaidHelperName ?? "").trim();
+    const prevKey = prevRaw ? normalizeRaidHelperDisplayKey(prevRaw) : "";
+
+    const keysToRemove = new Set([newKey]);
+    if (prevKey && prevKey !== newKey) keysToRemove.add(prevKey);
+
+    const prevLinks = rhWclLinksState.links || [];
+    const filtered = prevLinks.filter((r) => !keysToRemove.has(normalizeRaidHelperDisplayKey(r.raidHelperName)));
+    filtered.push(row);
+    const sortedLinks = sortRhWclLinkRows(filtered);
+
+    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+      rhWclLinksState = { links: sortedLinks };
+      await persistRhWclLinksStore();
+    });
+    await rhWclLinksWriteChain;
+
+    return res.json({ ok: true, links: sortRhWclLinkRows(rhWclLinksState.links || []) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save row" });
+  }
+});
+
+/**
+ * Heuristic merge: Raid Helper signup names × recent WCL log characters (admin-only).
+ * Body JSON (optional): `{ raidHelperNames?: string[], guildId?: number, minScore?: number, apply?: boolean }`
+ * — if `raidHelperNames` omitted, names are pulled from Raid Helper API (`RAID_HELPER_SERVER_ID`, `RAID_HELPER_API_KEY`).
+ * Set `apply: true` to persist merged links immediately (otherwise preview only).
+ */
+app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const guildId = Number(req.query.guildId || req.body?.guildId || votingGuildId);
+    const wclReportsToDetail = rhWclLinkWclReportDetailCount();
+    const reportLimit = Math.min(
+      wclMaxGuildReportsLimit(),
+      Math.max(wclReportsToDetail + 24, Number(req.query.limit || req.body?.limit || 40))
+    );
+    const minScoreRaw = Number(req.body?.minScore ?? req.query.minScore ?? 72);
+    const minScore = Number.isFinite(minScoreRaw) ? minScoreRaw : 72;
+    const serverId = String(process.env.RAID_HELPER_SERVER_ID || "").trim();
+    const raidHelperApiKey = String(process.env.RAID_HELPER_API_KEY || "").trim();
+
+    if (!Number.isInteger(guildId) || guildId <= 0) {
+      return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
+    }
+
+    let wclCharacterNames = [];
+    let recentWarcraftLogsReports = [];
+    try {
+      const { wclDisplayByLower, recentWclReports } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
+        maxDetailedReports: wclReportsToDetail,
+      });
+      wclCharacterNames = [...wclDisplayByLower.values()];
+      recentWarcraftLogsReports = Array.isArray(recentWclReports) ? recentWclReports : [];
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        error: `Warcraft Logs attendance snapshot failed: ${String(error?.message || error).slice(0, 220)}`,
+      });
+    }
+
+    let recentRaidHelperEvents = [];
+
+    let raidHelperNames = Array.isArray(req.body?.raidHelperNames)
+      ? req.body.raidHelperNames.map((x) => String(x || "").trim()).filter(Boolean)
+      : null;
+
+    let raidHelperSource = "none";
+    let raidHelperFetchError = "";
+
+    if (raidHelperNames?.length) {
+      raidHelperSource = "request_body";
+    } else if (serverId && raidHelperApiKey) {
+      try {
+        const collected = await collectRaidHelperSignupDisplayNames(serverId, rhWclLinkRaidHelperEventScanCount());
+        raidHelperNames = collected.names;
+        recentRaidHelperEvents = collected.scannedEvents || [];
+        raidHelperSource = raidHelperNames?.length ? "raid_helper_api" : "raid_helper_api_empty";
+      } catch (error) {
+        raidHelperNames = [];
+        raidHelperFetchError = String(error?.message || error).slice(0, 200);
+        raidHelperSource = "raid_helper_api_error";
+      }
+    } else {
+      raidHelperNames = raidHelperNames || [];
+      raidHelperSource = !raidHelperApiKey ? "missing_raid_helper_api_key" : "missing_raid_helper_server_id";
+    }
+
+    /** When Raid Helper yields no signup names, use recent log character names as RH candidates so self/exact/prefix matches still produce rows. */
+    if ((!raidHelperNames || raidHelperNames.length === 0) && wclCharacterNames.length > 0) {
+      raidHelperNames = [...new Set(wclCharacterNames)].sort((a, b) => a.localeCompare(b));
+      raidHelperSource = "wcl_names_fallback";
+    }
+
+    if (!raidHelperNames?.length) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "No Raid Helper names and no Warcraft Logs character names — check WCL guild reports / env keys, or POST { raidHelperNames: [...] }.",
+      });
+    }
+
+    await ensureRhWclLinksStore();
+    const existing = rhWclLinksState.links || [];
+    const { links, stats } = mergeRhWclGuess(existing, raidHelperNames, wclCharacterNames, {
+      minScore,
+      keepEmptyRaidHelperRows: true,
+    });
+
+    const apply = Boolean(req.body?.apply);
+    if (apply) {
+      rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+        rhWclLinksState = { links };
+        await persistRhWclLinksStore();
+      });
+      await rhWclLinksWriteChain;
+    }
+
+    return res.json({
+      ok: true,
+      links,
+      recentRaidHelperEvents,
+      recentWarcraftLogsReports,
+      stats: {
+        ...stats,
+        raidHelperSource,
+        raidHelperFetchError: raidHelperFetchError || undefined,
+        wclNameCount: wclCharacterNames.length,
+        raidHelperEventsScanLimit: rhWclLinkRaidHelperEventScanCount(),
+        wclReportsDetailLimit: wclReportsToDetail,
+      },
+      applied: apply,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Guess merge failed" });
   }
 });
 
@@ -1740,16 +1950,26 @@ app.get("/api/admin/wcl-attendee-names", async (req, res) => {
     const session = requireAdminSession(req, res);
     if (!session) return;
     const guildId = Number(req.query.guildId || votingGuildId);
+    const wclReportsToDetail = rhWclLinkWclReportDetailCount();
     const reportLimit = Math.min(
       wclMaxGuildReportsLimit(),
-      Math.max(10, Number(req.query.limit || 40))
+      Math.max(wclReportsToDetail + 24, Number(req.query.limit || 40))
     );
     if (!Number.isInteger(guildId) || guildId <= 0) {
       return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
     }
-    const { wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit);
+    const { wclDisplayByLower, recentWclReports } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
+      maxDetailedReports: wclReportsToDetail,
+    });
     const characterNames = [...wclDisplayByLower.values()].sort((a, b) => a.localeCompare(b));
-    return res.json({ ok: true, guildId, characterNames, count: characterNames.length });
+    return res.json({
+      ok: true,
+      guildId,
+      characterNames,
+      count: characterNames.length,
+      wclReportsDetailLimit: wclReportsToDetail,
+      recentWarcraftLogsReports: Array.isArray(recentWclReports) ? recentWclReports : [],
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load Warcraft Logs character names" });
   }
@@ -2003,6 +2223,7 @@ function normalizeRaidHelperDisplayKey(name) {
 
 /**
  * Aggregate per-raid attendance across all WCL characters linked to one Raid Helper identity.
+ * Reads saved roster rows from {@link rhWclLinksState} / `rh-wcl-character-links.json`.
  * Leaderboard rows use `raidHelperName` for UI; `wclCharacters` lists merged log names.
  */
 function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, wclDisplayByLower) {
@@ -3609,6 +3830,45 @@ async function fetchRaidHelperEventDetail(eventId) {
   }
 }
 
+/**
+ * Unique signup display names from the most recent Raid Helper posted events (for RH ↔ WCL guessing).
+ * @returns {{ names: string[], scannedEvents: Array<{ id: string, startTime: number }> }}
+ */
+async function collectRaidHelperSignupDisplayNames(serverId, maxEvents = 6) {
+  const apiKey = process.env.RAID_HELPER_API_KEY;
+  if (!apiKey) throw new Error("Missing RAID_HELPER_API_KEY");
+
+  const events = await fetchRaidHelperServerEvents(serverId);
+  const limit = Math.max(1, Math.min(40, maxEvents));
+  const withTime = events
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((event) => event.id)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, limit);
+
+  const scannedEvents = withTime.map((e) => ({ id: e.id, startTime: e.startTime }));
+
+  const byNorm = new Map();
+  for (const event of withTime) {
+    const detail = await fetchRaidHelperEventDetail(event.id);
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+    for (const entry of signUps) {
+      const name = String(entry?.name || "").trim();
+      if (!name) continue;
+      const key = normalizeRaidHelperDisplayKey(name);
+      if (!key) continue;
+      if (!byNorm.has(key)) byNorm.set(key, name);
+    }
+  }
+  return {
+    names: [...byNorm.values()].sort((a, b) => a.localeCompare(b)),
+    scannedEvents,
+  };
+}
+
 async function raidHelperRequest(pathname, { method = "GET", body } = {}) {
   const apiKey = process.env.RAID_HELPER_API_KEY;
   if (!apiKey) throw new Error("Missing RAID_HELPER_API_KEY in .env");
@@ -4447,6 +4707,26 @@ app.get("/api/wcl/guild/:guildId/death-leaderboard", async (req, res) => {
       guildId,
       scannedReports,
       leaderboard,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/** Guild character roster from the primary `rh-wcl-character-links.json` store (Raid Helper ↔ WCL names). Read-only; edits via admin. */
+app.get("/api/wcl/guild/:guildId/characters", async (req, res) => {
+  const guildId = Number(req.params.guildId);
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+  try {
+    const characters = await getGuildCharacterLinkRows();
+    return res.json({
+      ok: true,
+      guildId,
+      rosterSource: "rh-wcl-character-links",
+      count: characters.length,
+      characters,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });

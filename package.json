@@ -10,7 +10,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "validate": "node --check server.js",
-    "fetch-spec-icons": "node scripts/fetch-tbc-spec-icons.mjs"
+    "fetch-spec-icons": "node scripts/fetch-tbc-spec-icons.mjs",
+    "guess-rh-wcl": "node scripts/guess-rh-wcl-links.mjs"
   },
   "dependencies": {
     "compression": "^1.8.1",

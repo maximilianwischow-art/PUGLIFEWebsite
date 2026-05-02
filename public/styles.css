@@ -2816,8 +2816,49 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 .admin-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 920px;
   border-collapse: collapse;
+}
+
+.admin-rh-src-cell {
+  font-size: 11px;
+  line-height: 1.45;
+  max-width: 320px;
+}
+
+.admin-rh-src-chip {
+  display: inline-block;
+  margin: 3px 8px 3px 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  vertical-align: middle;
+}
+
+.admin-rh-src-chip strong {
+  font-weight: 600;
+}
+
+.admin-rh-src-manual {
+  background: rgba(120, 120, 140, 0.22);
+  color: var(--text-muted);
+}
+
+.admin-rh-src-exact {
+  background: rgba(72, 140, 96, 0.28);
+  color: #c4efd4;
+}
+
+.admin-rh-src-guess {
+  background: rgba(130, 96, 190, 0.28);
+  color: #dfd4ff;
+}
+
+.admin-rh-actions-cell {
+  white-space: nowrap;
+}
+
+.admin-rh-actions-cell .event-signup-btn + .event-signup-btn {
+  margin-left: 8px;
 }
 
 .admin-table th,

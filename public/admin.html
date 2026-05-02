@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=20260430f" />
+    <link rel="stylesheet" href="/styles.css?v=20260503w" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -38,16 +38,22 @@
         <section class="card">
           <h3 class="section-title">Raid Helper ↔ Warcraft Logs</h3>
           <p class="subtle">
-            Attendance uses character names from logs; Events shows Raid Helper signups. For each person, enter their signup name and every log name they use (main + alts), comma-separated. If the log name matches signup, you can leave the second column empty.
+            This is the primary on-disk character roster (<code>rh-wcl-character-links.json</code>) for this deployment — same data as <code>GET /api/wcl/guild/:guildId/characters</code>. Attendance uses character names from logs; Events shows Raid Helper signups. For each person, enter their signup name and every log name they use (main + alts), comma-separated. If the log name matches signup, you can leave the second column empty.
+          </p>
+          <p class="subtle">
+            <strong>Heuristic matcher</strong> (not an LLM): compares signup names from the latest Raid Helper posted events with characters seen across recent logs — exact match, prefix/alts, fuzzy spellings. By default signups are read from the <strong>last 6</strong> events and log characters from the <strong>last 6</strong> tracked raid reports (override with <code>RH_WCL_LINK_RAID_HELPER_EVENTS</code> / <code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>). Review chips in <em>Match source</em> before relying on guesses.
           </p>
           <div class="admin-actions admin-actions--tight">
             <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclAddRowBtn">
               Add row
             </button>
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclGuessBtn">
+              Run heuristic merge
+            </button>
             <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclLoadLogNamesBtn">
               Load names from recent logs
             </button>
-            <button type="button" class="event-signup-btn" id="rhWclSaveLinksBtn">Save links</button>
+            <button type="button" class="event-signup-btn" id="rhWclSaveLinksBtn">Save all rows</button>
           </div>
           <label class="subtle" for="rhWclRecentNamesText">Reference: names seen in recent tracked raids (copy exact spellings)</label>
           <textarea
@@ -57,6 +63,7 @@
             readonly
             placeholder="Click “Load names from recent logs” (uses extra Warcraft Logs API calls)."
           ></textarea>
+          <div id="rhWclRaidSources" class="admin-grid-note subtle" hidden></div>
           <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
         </section>
 
@@ -111,7 +118,7 @@
     </div>
 
     <script src="/home.js?v=20260428d"></script>
-    <script src="/admin.js?v=20260503s"></script>
+    <script src="/admin.js?v=20260503w"></script>
     <script src="/auth-ui.js?v=20260430f"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

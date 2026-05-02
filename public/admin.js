@@ -24,6 +24,35 @@ function fmtTs(sec) {
   return Number.isNaN(dt.getTime()) ? "-" : dt.toLocaleString();
 }
 
+/** Shows Raid Helper event ids + WCL report codes used for the last N raids (same defaults as heuristic). */
+function renderRhWclRaidSources(raidHelperEvents, wclReports) {
+  const host = document.getElementById("rhWclRaidSources");
+  if (!host) return;
+  const rh = Array.isArray(raidHelperEvents) ? raidHelperEvents : [];
+  const wcl = Array.isArray(wclReports) ? wclReports : [];
+  if (!rh.length && !wcl.length) {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  let html = "";
+  if (rh.length) {
+    html += `<p class="admin-rh-wcl-sources"><strong>Raid Helper events</strong> (signups): ${rh
+      .map((e) => `<code>${esc(String(e.id || ""))}</code> · ${esc(fmtTs(e.startTime))}`)
+      .join(" · ")}</p>`;
+  }
+  if (wcl.length) {
+    html += `<p class="admin-rh-wcl-sources"><strong>Warcraft Logs reports</strong> (character names): ${wcl
+      .map(
+        (r) =>
+          `<a href="https://www.warcraftlogs.com/reports/${esc(String(r.reportCode || ""))}" target="_blank" rel="noopener noreferrer"><code>${esc(String(r.reportCode || ""))}</code></a> · ${esc(fmtTs(r.startTime))}`
+      )
+      .join(" · ")}</p>`;
+  }
+  host.innerHTML = html;
+}
+
 async function getJson(url, opts) {
   const res = await fetch(url, { credentials: "include", ...(opts || {}) });
   const payload = await res.json().catch(() => ({}));
@@ -296,6 +325,26 @@ function readLootEditorEntries() {
   });
 }
 
+function rhWclMatchChipsHtml(row) {
+  const names = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : [];
+  const src = Array.isArray(row?.wclSources) ? row.wclSources : [];
+  const conf = Array.isArray(row?.wclGuessConfidence) ? row.wclGuessConfidence : [];
+  if (!names.length) return `<span class="subtle">—</span>`;
+  return names
+    .map((n, i) => {
+      const s = String(src[i] || "manual");
+      const c = conf[i];
+      const guess = s.startsWith("guess");
+      const cls = guess ? "admin-rh-src-guess" : s === "exact" ? "admin-rh-src-exact" : "admin-rh-src-manual";
+      let lab = "Manual";
+      if (s === "exact") lab = "Exact match";
+      else if (guess) lab = `Heuristic (${typeof c === "number" ? `${Math.round(c)}%` : "score"})`;
+      else if (s !== "manual") lab = s.replace(/^guess_/, "").replace(/_/g, " ");
+      return `<span class="admin-rh-src-chip ${cls}" title="${esc(s)}"><strong>${esc(n)}</strong> · ${esc(lab)}</span>`;
+    })
+    .join("");
+}
+
 function renderRhWclLinksTable(rows) {
   const host = document.getElementById("rhWclLinksTableHost");
   if (!host) return;
@@ -307,43 +356,102 @@ function renderRhWclLinksTable(rows) {
           <tr>
             <th>Raid Helper name</th>
             <th>WCL characters (comma-separated)</th>
-            <th></th>
+            <th>Match source</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           ${list
-            .map(
-              (row, idx) => `
-            <tr data-rh-wcl-row="${idx}">
+            .map((row, idx) => {
+              const metaObj = {
+                wclSources: row.wclSources || [],
+                wclGuessConfidence: row.wclGuessConfidence || [],
+              };
+              const metaAttr =
+                metaObj.wclSources.length || metaObj.wclGuessConfidence.length
+                  ? ` data-rh-wcl-meta="${encodeURIComponent(JSON.stringify(metaObj))}"`
+                  : "";
+              const storedRh = String(row.raidHelperName ?? "");
+              return `
+            <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}"${metaAttr}>
               <td><input class="admin-input" data-rh-wcl-k="rh" value="${esc(row.raidHelperName || "")}" placeholder="As on signup" /></td>
               <td><input class="admin-input" data-rh-wcl-k="wcl" value="${esc(
                 Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames.join(", ") : ""
               )}" placeholder="Main, Alt, …" /></td>
-              <td><button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-remove="${idx}">Remove</button></td>
-            </tr>
-          `
-            )
+              <td class="admin-rh-src-cell">${rhWclMatchChipsHtml(row)}</td>
+              <td class="admin-rh-actions-cell">
+                <button type="button" class="event-signup-btn" data-rh-wcl-save title="Save this row to disk">Save row</button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-remove="${idx}">Remove</button>
+              </td>
+            </tr>`;
+            })
             .join("")}
         </tbody>
       </table>
     </div>
   `;
+  host.querySelectorAll('[data-rh-wcl-k="rh"], [data-rh-wcl-k="wcl"]').forEach((inp) => {
+    inp.addEventListener("input", () => {
+      const tr = inp.closest("tr");
+      tr?.setAttribute("data-rh-wcl-dirty", "1");
+      const td = tr?.querySelector(".admin-rh-src-cell");
+      if (td) td.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+    });
+  });
+}
+
+/** Parse one table row into the API payload shape (or null if both columns empty). */
+function readRhWclLinkRowFromTr(tr) {
+  if (!tr) return null;
+  const rh = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim();
+  const wclRaw = String(tr.querySelector('[data-rh-wcl-k="wcl"]')?.value || "").trim();
+  if (!rh && !wclRaw) return null;
+  const wclCharacterNames = wclRaw
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const dirty = tr.getAttribute("data-rh-wcl-dirty") === "1";
+  let wclSources = [];
+  let wclGuessConfidence = [];
+
+  if (!dirty && wclCharacterNames.length) {
+    try {
+      const rawMeta = tr.getAttribute("data-rh-wcl-meta");
+      if (rawMeta) {
+        const meta = JSON.parse(decodeURIComponent(rawMeta));
+        const srcArr = Array.isArray(meta.wclSources) ? meta.wclSources : [];
+        const confArr = Array.isArray(meta.wclGuessConfidence) ? meta.wclGuessConfidence : [];
+        if (srcArr.length === wclCharacterNames.length) {
+          wclSources = srcArr.map((x) => String(x || "manual"));
+          wclGuessConfidence = wclCharacterNames.map((_, i) => {
+            const c = confArr[i];
+            return typeof c === "number" && Number.isFinite(c) ? Math.round(c) : null;
+          });
+        }
+      }
+    } catch {
+      // ignore bad meta
+    }
+  }
+
+  if ((!wclSources.length || dirty) && wclCharacterNames.length) {
+    wclSources = wclCharacterNames.map(() => "manual");
+    wclGuessConfidence = wclCharacterNames.map(() => null);
+  }
+
+  const row = { raidHelperName: rh, wclCharacterNames };
+  if (wclSources.length === wclCharacterNames.length && wclCharacterNames.length > 0) {
+    row.wclSources = wclSources;
+    if (wclGuessConfidence.some((x) => typeof x === "number")) row.wclGuessConfidence = wclGuessConfidence;
+  }
+  return row;
 }
 
 function readRhWclLinksFromTable() {
-  const rows = [...document.querySelectorAll("[data-rh-wcl-row]")];
-  const links = [];
-  for (const tr of rows) {
-    const rh = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim();
-    const wclRaw = String(tr.querySelector('[data-rh-wcl-k="wcl"]')?.value || "").trim();
-    if (!rh && !wclRaw) continue;
-    const wclCharacterNames = wclRaw
-      .split(/[,;\n]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    links.push({ raidHelperName: rh, wclCharacterNames });
-  }
-  return links;
+  return [...document.querySelectorAll("[data-rh-wcl-row]")]
+    .map((tr) => readRhWclLinkRowFromTr(tr))
+    .filter(Boolean);
 }
 
 function renderP2Table(materials) {
@@ -386,7 +494,16 @@ async function loadAdminData() {
   const gargul = await getJson("/api/loot-history/gargul");
   const loot = await getJson("/api/loot-history?limit=25");
   const p2 = await getJson("/api/p2-preparation/materials");
-  const rh = await getJson("/api/admin/rh-wcl-links");
+  let rhLinks = [];
+  try {
+    const rh = await getJson("/api/admin/rh-wcl-links");
+    rhLinks = Array.isArray(rh?.links) ? rh.links : [];
+  } catch (error) {
+    status(
+      `Could not load saved Raid Helper links (${error?.message || "error"}). Add rows below and save — or redeploy latest server.`
+    );
+    rhLinks = [];
+  }
   allRaidsState = Array.isArray(loot?.allRaids) ? loot.allRaids : Array.isArray(loot?.raids) ? loot.raids : [];
   selectedReportCodesState = new Set(Array.isArray(gargul?.selectedReportCodes) ? gargul.selectedReportCodes : []);
   const entries = Array.isArray(gargul?.rows) ? gargul.rows : [];
@@ -394,7 +511,7 @@ async function loadAdminData() {
   renderTargetReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
-  renderRhWclLinksTable(Array.isArray(rh?.links) ? rh.links : []);
+  renderRhWclLinksTable(rhLinks);
 }
 
 async function importJsonFromTextarea() {
@@ -514,6 +631,39 @@ document.getElementById("rhWclAddRowBtn")?.addEventListener("click", () => {
   renderRhWclLinksTable(links);
 });
 
+document.getElementById("rhWclGuessBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("rhWclGuessBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      {
+        idle: "Run heuristic merge",
+        loading: "Matching names…",
+        success: "Merged",
+        failure: "Failed",
+      },
+      async () => {
+        const payload = await getJson("/api/admin/rh-wcl-links/guess", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guildId: ADMIN_WCL_GUILD_ID, minScore: 68 }),
+        });
+        renderRhWclLinksTable(Array.isArray(payload.links) ? payload.links : []);
+        renderRhWclRaidSources(payload.recentRaidHelperEvents, payload.recentWarcraftLogsReports);
+        const st = payload.stats || {};
+        const rowCount = Array.isArray(payload.links) ? payload.links.length : 0;
+        const src = st.raidHelperSource ? ` · RH names: ${st.raidHelperSource}` : "";
+        const wclc = typeof st.wclNameCount === "number" ? ` · ${st.wclNameCount} log name(s)` : "";
+        status(
+          `Heuristic merge: ${rowCount} row(s), ${st.guessedPairs ?? 0} new guess(es); ${st.manualLockedWclCount ?? 0} manual WCL locked.${src}${wclc} Review before Save.`
+        );
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Heuristic merge failed");
+  }
+});
+
 document.getElementById("rhWclLoadLogNamesBtn")?.addEventListener("click", async () => {
   const btn = document.getElementById("rhWclLoadLogNamesBtn");
   const ta = document.getElementById("rhWclRecentNamesText");
@@ -532,6 +682,7 @@ document.getElementById("rhWclLoadLogNamesBtn")?.addEventListener("click", async
         );
         const names = Array.isArray(payload.characterNames) ? payload.characterNames : [];
         if (ta) ta.value = names.join(", ");
+        renderRhWclRaidSources([], payload.recentWarcraftLogsReports);
         status(`Loaded ${payload.count ?? names.length} character names from recent raids.`);
       }
     );
@@ -555,16 +706,46 @@ document.getElementById("rhWclSaveLinksBtn")?.addEventListener("click", async ()
         });
       }
     );
-    status(`Saved ${links.length} Raid Helper ↔ WCL link row(s). Deploy disk must persist data/rh-wcl-character-links.json.`);
+    status(`Saved all ${links.length} row(s) to disk (same as saving each line together).`);
   } catch (error) {
     status(error?.message || "Save failed");
   }
 });
 
-document.addEventListener("click", (event) => {
-  const btn = event.target.closest("[data-rh-wcl-remove]");
-  if (!btn) return;
-  const idx = Number(btn.getAttribute("data-rh-wcl-remove"));
+document.addEventListener("click", async (event) => {
+  const saveBtn = event.target.closest("[data-rh-wcl-save]");
+  if (saveBtn) {
+    const tr = saveBtn.closest("tr");
+    const row = readRhWclLinkRowFromTr(tr);
+    if (!row?.raidHelperName?.trim()) {
+      status("Enter a Raid Helper name before saving this row.");
+      return;
+    }
+    saveBtn.disabled = true;
+    try {
+      const stored = tr?.getAttribute("data-rh-wcl-stored-name");
+      const payload = { ...row };
+      if (stored !== null && String(stored).trim() !== "") {
+        payload.previousRaidHelperName = stored;
+      }
+      const payloadOut = await getJson("/api/admin/rh-wcl-links/row", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      renderRhWclLinksTable(Array.isArray(payloadOut.links) ? payloadOut.links : []);
+      status(`Saved row “${row.raidHelperName}”.`);
+    } catch (error) {
+      status(error?.message || "Save row failed");
+    } finally {
+      saveBtn.disabled = false;
+    }
+    return;
+  }
+
+  const rm = event.target.closest("[data-rh-wcl-remove]");
+  if (!rm) return;
+  const idx = Number(rm.getAttribute("data-rh-wcl-remove"));
   const links = readRhWclLinksFromTable();
   if (!Number.isFinite(idx)) return;
   links.splice(idx, 1);
