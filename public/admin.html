@@ -36,6 +36,31 @@
         </section>
 
         <section class="card">
+          <h3 class="section-title">Raid Helper ↔ Warcraft Logs</h3>
+          <p class="subtle">
+            Attendance uses character names from logs; Events shows Raid Helper signups. For each person, enter their signup name and every log name they use (main + alts), comma-separated. If the log name matches signup, you can leave the second column empty.
+          </p>
+          <div class="admin-actions admin-actions--tight">
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclAddRowBtn">
+              Add row
+            </button>
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclLoadLogNamesBtn">
+              Load names from recent logs
+            </button>
+            <button type="button" class="event-signup-btn" id="rhWclSaveLinksBtn">Save links</button>
+          </div>
+          <label class="subtle" for="rhWclRecentNamesText">Reference: names seen in recent tracked raids (copy exact spellings)</label>
+          <textarea
+            id="rhWclRecentNamesText"
+            class="admin-textarea"
+            rows="5"
+            readonly
+            placeholder="Click “Load names from recent logs” (uses extra Warcraft Logs API calls)."
+          ></textarea>
+          <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
+        </section>
+
+        <section class="card">
           <h3 class="section-title">Visible Warcraft Log Events</h3>
           <p class="subtle">Select which raid events should appear on Loot History for all users.</p>
           <div id="eventSelectionList" class="admin-grid-note">Loading events...</div>
@@ -86,7 +111,7 @@
     </div>
 
     <script src="/home.js?v=20260428d"></script>
-    <script src="/admin.js?v=20260430i"></script>
+    <script src="/admin.js?v=20260503s"></script>
     <script src="/auth-ui.js?v=20260430f"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

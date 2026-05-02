@@ -693,7 +693,7 @@ async function loadAttendanceTracker() {
         (row, idx) => `
           <div class="attendance-row">
             <span class="attendance-rank">#${idx + 1}</span>
-            <span class="attendance-name">${row.name}</span>
+            <span class="attendance-name">${escapeHtml(row.raidHelperName || row.name)}</span>
             <span class="attendance-value">${row.raidsAttended}/${payload.consideredRaids}</span>
             <span class="attendance-rate">${row.attendanceRate.toFixed(0)}%</span>
             <span class="attendance-history">

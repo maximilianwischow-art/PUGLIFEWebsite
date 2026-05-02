@@ -10,6 +10,9 @@ let gargulEntriesState = [];
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
 
+/** Same guild as Dashboard / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
+const ADMIN_WCL_GUILD_ID = 817080;
+
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -293,6 +296,56 @@ function readLootEditorEntries() {
   });
 }
 
+function renderRhWclLinksTable(rows) {
+  const host = document.getElementById("rhWclLinksTableHost");
+  if (!host) return;
+  const list = Array.isArray(rows) && rows.length ? rows : [{ raidHelperName: "", wclCharacterNames: [] }];
+  host.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Raid Helper name</th>
+            <th>WCL characters (comma-separated)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list
+            .map(
+              (row, idx) => `
+            <tr data-rh-wcl-row="${idx}">
+              <td><input class="admin-input" data-rh-wcl-k="rh" value="${esc(row.raidHelperName || "")}" placeholder="As on signup" /></td>
+              <td><input class="admin-input" data-rh-wcl-k="wcl" value="${esc(
+                Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames.join(", ") : ""
+              )}" placeholder="Main, Alt, …" /></td>
+              <td><button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-remove="${idx}">Remove</button></td>
+            </tr>
+          `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function readRhWclLinksFromTable() {
+  const rows = [...document.querySelectorAll("[data-rh-wcl-row]")];
+  const links = [];
+  for (const tr of rows) {
+    const rh = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim();
+    const wclRaw = String(tr.querySelector('[data-rh-wcl-k="wcl"]')?.value || "").trim();
+    if (!rh && !wclRaw) continue;
+    const wclCharacterNames = wclRaw
+      .split(/[,;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    links.push({ raidHelperName: rh, wclCharacterNames });
+  }
+  return links;
+}
+
 function renderP2Table(materials) {
   const host = document.getElementById("adminP2Table");
   if (!host) return;
@@ -321,14 +374,19 @@ function renderP2Table(materials) {
 
 async function loadAdminData() {
   const me = await getJson("/api/auth/me");
+  const rhHost = document.getElementById("rhWclLinksTableHost");
   if (!me.authenticated || !me.isAdmin) {
     status("Admin access required (HighBullet editor account).");
+    if (rhHost) {
+      rhHost.innerHTML = `<p class="subtle">Log in with an authorized admin account to edit Raid Helper ↔ WCL links.</p>`;
+    }
     return;
   }
   status(`Logged in as ${me?.user?.globalName || me?.user?.username || "Admin"}`);
   const gargul = await getJson("/api/loot-history/gargul");
   const loot = await getJson("/api/loot-history?limit=25");
   const p2 = await getJson("/api/p2-preparation/materials");
+  const rh = await getJson("/api/admin/rh-wcl-links");
   allRaidsState = Array.isArray(loot?.allRaids) ? loot.allRaids : Array.isArray(loot?.raids) ? loot.raids : [];
   selectedReportCodesState = new Set(Array.isArray(gargul?.selectedReportCodes) ? gargul.selectedReportCodes : []);
   const entries = Array.isArray(gargul?.rows) ? gargul.rows : [];
@@ -336,6 +394,7 @@ async function loadAdminData() {
   renderTargetReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
+  renderRhWclLinksTable(Array.isArray(rh?.links) ? rh.links : []);
 }
 
 async function importJsonFromTextarea() {
@@ -447,6 +506,69 @@ document.addEventListener("click", (event) => {
     });
     status("Cleared all events. Save to apply.");
   }
+});
+
+document.getElementById("rhWclAddRowBtn")?.addEventListener("click", () => {
+  const links = readRhWclLinksFromTable();
+  links.push({ raidHelperName: "", wclCharacterNames: [] });
+  renderRhWclLinksTable(links);
+});
+
+document.getElementById("rhWclLoadLogNamesBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("rhWclLoadLogNamesBtn");
+  const ta = document.getElementById("rhWclRecentNamesText");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      {
+        idle: "Load names from recent logs",
+        loading: "Querying Warcraft Logs…",
+        success: "Loaded",
+        failure: "Failed",
+      },
+      async () => {
+        const payload = await getJson(
+          `/api/admin/wcl-attendee-names?guildId=${ADMIN_WCL_GUILD_ID}&limit=40`
+        );
+        const names = Array.isArray(payload.characterNames) ? payload.characterNames : [];
+        if (ta) ta.value = names.join(", ");
+        status(`Loaded ${payload.count ?? names.length} character names from recent raids.`);
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Failed to load log names");
+  }
+});
+
+document.getElementById("rhWclSaveLinksBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("rhWclSaveLinksBtn");
+  const links = readRhWclLinksFromTable();
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Save links", loading: "Saving…", success: "Saved", failure: "Save failed" },
+      async () => {
+        await getJson("/api/admin/rh-wcl-links", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ links }),
+        });
+      }
+    );
+    status(`Saved ${links.length} Raid Helper ↔ WCL link row(s). Deploy disk must persist data/rh-wcl-character-links.json.`);
+  } catch (error) {
+    status(error?.message || "Save failed");
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-rh-wcl-remove]");
+  if (!btn) return;
+  const idx = Number(btn.getAttribute("data-rh-wcl-remove"));
+  const links = readRhWclLinksFromTable();
+  if (!Number.isFinite(idx)) return;
+  links.splice(idx, 1);
+  renderRhWclLinksTable(links.length ? links : [{ raidHelperName: "", wclCharacterNames: [] }]);
 });
 
 document.addEventListener("click", async (event) => {

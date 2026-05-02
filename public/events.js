@@ -15,8 +15,15 @@ function initBackgroundStars() {
 
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260428f";
+const IMAGE_ASSET_VERSION = "20260503q";
+/** Same guild as dashboard WCL widgets — attendance tiers on roster cards. */
+const EVENTS_WCL_GUILD_ID = 817080;
+/** Generic dashed slots (beyond attendance). CSS size ≈ 56×56 px — icons should be square 1:1. */
+const GENERIC_ACHIEVEMENT_SLOT_COUNT = 3;
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
+/** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
+let attendanceLeaderboardByKey = new Map();
+let attendanceConsideredRaids = 0;
 let authMe = null;
 /** Official WoW class colours (default UI palette). */
 const WOW_CLASS_COLORS = {
@@ -451,7 +458,138 @@ function rosterPortraitChain(player) {
   return out.length ? out : [classIconFallbackUrl(player?.className)];
 }
 
-function rosterRaiderCard(player) {
+/** Match Raid-Helper names to WCL leaderboard rows (strip optional realm suffix). */
+/**
+ * Normalise Raid-Helper / Discord display names to match WCL character names.
+ * Strips "Name/Alt" (slash), then realm suffix after dash — WCL leaderboard is usually plain name.
+ */
+function rosterNameKey(name) {
+  let s = String(name || "")
+    .trim()
+    .replace(/\u00a0/g, " ");
+  const slash = s.indexOf("/");
+  if (slash > 0) s = s.slice(0, slash).trim();
+  return s
+    .replace(/\s*[-–—]\s*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-\s]*$/u, "")
+    .toLowerCase();
+}
+
+/** Lookup WCL attendance row — tries canonical key first, then rare alternate keys. */
+function attendanceRowForRosterPlayer(playerName) {
+  const primary = rosterNameKey(playerName);
+  let row = attendanceLeaderboardByKey.get(primary);
+  if (row) return row;
+  const raw = String(playerName || "").trim().toLowerCase();
+  if (raw !== primary) row = attendanceLeaderboardByKey.get(raw);
+  return row || null;
+}
+
+/**
+ * Roster-relative standing for glow colour: sort confirmed players who have WCL % (worst→best).
+ * Returns 0..5 (0 = lowest on this roster, 5 = highest). Null if this player has no WCL row.
+ */
+function rosterRelativeGlowTier(player, confirmedRoster) {
+  const roster = Array.isArray(confirmedRoster) ? confirmedRoster : [];
+  const keyed = [];
+  for (const p of roster) {
+    const row = attendanceRowForRosterPlayer(p.name);
+    if (row && Number.isFinite(Number(row.attendanceRate))) {
+      keyed.push({ key: rosterNameKey(p.name), rate: Number(row.attendanceRate) });
+    }
+  }
+  const myKey = rosterNameKey(player.name);
+  if (!keyed.some((k) => k.key === myKey)) return null;
+  if (keyed.length === 1) return 3;
+  keyed.sort((a, b) => a.rate - b.rate || a.key.localeCompare(b.key));
+  const idx = keyed.findIndex((k) => k.key === myKey);
+  if (idx < 0) return null;
+  const p = idx / (keyed.length - 1);
+  return Math.min(5, Math.floor(p * 6 - 1e-9));
+}
+
+/** If roster-relative fails, map overall WCL % to a glow band (0..5). */
+function globalAttendanceGlowTier(rate) {
+  const x = Math.max(0, Math.min(100, Number(rate || 0)));
+  return Math.min(5, Math.floor((x / 100) * 6 - 1e-9));
+}
+
+function rosterRelativeAttendanceHint(player, confirmedRoster) {
+  const roster = Array.isArray(confirmedRoster) ? confirmedRoster : [];
+  const keyed = [];
+  for (const p of roster) {
+    const row = attendanceRowForRosterPlayer(p.name);
+    if (row && Number.isFinite(Number(row.attendanceRate))) {
+      keyed.push({ key: rosterNameKey(p.name), rate: Number(row.attendanceRate) });
+    }
+  }
+  keyed.sort((a, b) => a.rate - b.rate || a.key.localeCompare(b.key));
+  const idx = keyed.findIndex((k) => k.key === rosterNameKey(player.name));
+  if (idx < 0 || keyed.length === 0) return "";
+  return ` ${idx + 1}/${keyed.length} on this roster (low→high WCL %)`;
+}
+
+async function loadWclAttendanceForEvents() {
+  attendanceLeaderboardByKey = new Map();
+  attendanceConsideredRaids = 0;
+  try {
+    const res = await fetch(
+      `/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=150`,
+      { credentials: "include" }
+    );
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    attendanceConsideredRaids = Math.max(0, Number(payload.consideredRaids || 0));
+    for (const row of payload.leaderboard || []) {
+      const display = String(row?.raidHelperName || row?.name || "").trim();
+      if (!display) continue;
+      const key = rosterNameKey(display);
+      attendanceLeaderboardByKey.set(key, row);
+      const rawLower = display.toLowerCase();
+      if (rawLower !== key) attendanceLeaderboardByKey.set(rawLower, row);
+    }
+  } catch {
+    // optional widget — roster still renders
+  }
+}
+
+function rosterAttendanceBadgeHtml(player, confirmedRoster) {
+  const row = attendanceRowForRosterPlayer(player.name);
+  const pctRounded = row ? Math.round(Number(row.attendanceRate || 0)) : null;
+  const mergedLogs =
+    Array.isArray(row?.wclCharacters) && row.wclCharacters.length > 1
+      ? ` · merged logs: ${row.wclCharacters.join(", ")}`
+      : "";
+  const titleCore = row
+    ? `WCL: ${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids || "?"} raids · ${pctRounded}% overall${mergedLogs}`
+    : "No WCL attendance match in leaderboard";
+  if (!row || attendanceConsideredRaids <= 0) {
+    return `<div class="raider-badge-slot raider-badge-slot--pending" title="${escapeHtml(titleCore)}"></div>`;
+  }
+  let glowTier = rosterRelativeGlowTier(player, confirmedRoster);
+  if (glowTier === null) glowTier = globalAttendanceGlowTier(row.attendanceRate);
+  const title = `${titleCore}${rosterRelativeAttendanceHint(player, confirmedRoster)}`;
+  const badgeSrc = `/images/badge-tiers/attendance-portal-badge.png?v=${IMAGE_ASSET_VERSION}`;
+  return `
+    <div class="raider-badge-tier raider-badge-tier--glow-${glowTier}" title="${escapeHtml(title)}">
+      <div class="raider-badge-tier-mask">
+        <img class="raider-badge-tier-portal" src="${escapeHtml(badgeSrc)}" alt="" width="56" height="56" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
+      </div>
+      <div class="raider-badge-tier-readout">
+        <span class="raider-badge-tier-pct">${pctRounded}%</span>
+      </div>
+    </div>
+  `;
+}
+
+function rosterGenericAchievementSlotsHtml() {
+  const hint =
+    "Achievement badge slot — square 1:1 icons (e.g. design at 128×128 px for ~56×56 display)";
+  return Array.from({ length: GENERIC_ACHIEVEMENT_SLOT_COUNT })
+    .map(() => `<span class="raider-badge-slot" title="${escapeHtml(hint)}"></span>`)
+    .join("");
+}
+
+function rosterRaiderCard(player, confirmedRoster) {
   const className = String(player.className || "").trim();
   const color = wowClassColor(className);
   const specLabel = displaySpecNameForRoster(String(player.specName || "").trim());
@@ -493,6 +631,10 @@ function rosterRaiderCard(player) {
               : `<div class="raider-spec-line">${escapeHtml(specLabel || className)}</div>`
           }
         </div>
+      </div>
+      <div class="raider-badges" role="group" aria-label="Achievements and attendance">
+        ${rosterAttendanceBadgeHtml(player, confirmedRoster)}
+        ${rosterGenericAchievementSlotsHtml()}
       </div>
     </div>
   `;
@@ -673,6 +815,7 @@ async function submitEventSignupAction(eventId, action) {
 async function loadEvents() {
   try {
     await loadTbcSpecIconMap();
+    await loadWclAttendanceForEvents();
     const me = await loadAuthMe();
     const isAuthenticated = Boolean(me?.authenticated);
     const res = await fetch("/api/raid-helper/future-events", { credentials: "include" });
@@ -698,7 +841,7 @@ async function loadEvents() {
         const signups = Number(event?.signups?.total || 0);
         const rosterCapacity = rosterCapacityForEvent(event);
         const groupedRoster = groupedRosterByRole(event.confirmedRoster);
-        const card = (p) => rosterRaiderCard(p);
+        const card = (p) => rosterRaiderCard(p, event.confirmedRoster);
         const groupedRosterHtml = ROLE_ORDER.filter((role) => groupedRoster.get(role).length > 0)
           .map(
             (role) => `

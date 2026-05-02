@@ -1678,22 +1678,31 @@ body::before {
   font-weight: 700;
 }
 
+/*
+ * Achievement badge slots (dashed placeholders): square 1:1 in the UI (~56×56 CSS px).
+ * Export icons at 112×112 or 128×128 px (2×) for sharp retina display.
+ * Tier frames use the same outer footprint so one row aligns cleanly.
+ */
 .raider-badges {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  flex: 0 0 auto;
+  gap: 10px;
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-top: 4px;
+  margin-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .raider-badge-slot {
   display: inline-block;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  border: 1px dashed rgba(200, 180, 255, 0.22);
-  background: rgba(0, 0, 0, 0.22);
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  border: 2px dashed rgba(200, 180, 255, 0.28);
+  background: rgba(0, 0, 0, 0.28);
   box-sizing: border-box;
 }
 
@@ -1707,55 +1716,156 @@ body::before {
   border-color: rgba(160, 140, 200, 0.14);
 }
 
-/* WCL attendance — tier frame PNG over stat readout (transparent centre in artwork). */
+/* WCL attendance — portal art clipped to the slot (transparent PNG shows roster card behind); smooth fade-in. */
+@keyframes raider-badge-portal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* WCL attendance — single portal art + fel-green %; outer glow 0..5 = worst→best on *this* roster. */
 .raider-badge-tier {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   flex: 0 0 auto;
-}
-
-.raider-badge-tier-hole {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 32px;
-  height: 32px;
   border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  z-index: 0;
-  background: radial-gradient(circle at 50% 42%, rgba(28, 18, 42, 0.96), rgba(4, 2, 10, 0.98));
+  margin: 2px;
+  overflow: visible;
+  background: transparent;
+  isolation: isolate;
 }
 
-.raider-badge-tier-n {
-  font-size: 11px;
-  font-weight: 900;
-  color: #f2ecff;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
-}
-
-.raider-badge-tier-sub {
-  margin-top: 1px;
-  font-size: 6px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(210, 190, 255, 0.88);
-}
-
-.raider-badge-tier-frame {
+/*
+ * Ring mask on the PNG: true alpha for (1) centre “socket” and (2) canvas outside the frame.
+ * Only the frame band stays opaque — roster card shows through hole + corners.
+ * Tune inner % if your art’s inner opening differs (smaller % = wider hole).
+ */
+.raider-badge-tier-mask {
   position: absolute;
   inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: transparent;
+  z-index: 0;
+}
+
+.raider-badge-tier-portal {
+  display: block;
   width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
   object-fit: contain;
-  z-index: 1;
+  object-position: center;
   pointer-events: none;
+  user-select: none;
+  background: transparent;
+  /* Tune raw Gemini export to PLB tokens (--bg / --card): darker, slightly desaturated */
+  filter: brightness(0.9) contrast(1.07) saturate(0.88);
+  -webkit-mask-image: radial-gradient(
+    circle at 50% 50%,
+    transparent 0%,
+    transparent 30%,
+    #000 34%,
+    #000 58%,
+    transparent 63%
+  );
+  mask-image: radial-gradient(
+    circle at 50% 50%,
+    transparent 0%,
+    transparent 30%,
+    #000 34%,
+    #000 58%,
+    transparent 63%
+  );
+  mask-mode: alpha;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-position: center;
+  mask-position: center;
+  animation: raider-badge-portal-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .raider-badge-tier-portal {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.raider-badge-tier-readout {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.raider-badge-tier-pct {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0 1px;
+  box-sizing: border-box;
+  font-family: "Inter", sans-serif;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: #5cff9a;
+  /* Optical center: tight glyphs + % sit slightly low in Inter at tiny sizes */
+  transform: translateY(-0.08em);
+  text-shadow:
+    0 0 3px rgba(0, 30, 12, 0.95),
+    0 0 6px rgba(52, 211, 153, 0.55),
+    0 1px 1px rgba(0, 0, 0, 0.95),
+    0 0 8px rgba(20, 255, 120, 0.35);
+}
+
+/* 0 = lowest on roster (green, “low” band) → 5 = highest (legendary orange/gold) */
+.raider-badge-tier--glow-0 {
+  box-shadow:
+    0 0 10px 2px rgba(52, 211, 153, 0.55),
+    0 0 22px 4px rgba(16, 185, 129, 0.28);
+}
+.raider-badge-tier--glow-1 {
+  box-shadow:
+    0 0 10px 2px rgba(196, 181, 253, 0.6),
+    0 0 24px 4px rgba(244, 244, 245, 0.2);
+}
+.raider-badge-tier--glow-2 {
+  box-shadow:
+    0 0 10px 2px rgba(96, 165, 250, 0.7),
+    0 0 26px 5px rgba(59, 130, 246, 0.3);
+}
+.raider-badge-tier--glow-3 {
+  box-shadow:
+    0 0 12px 3px rgba(168, 85, 247, 0.65),
+    0 0 28px 6px rgba(192, 132, 252, 0.35);
+}
+.raider-badge-tier--glow-4 {
+  box-shadow:
+    0 0 12px 3px rgba(255, 110, 180, 0.55),
+    0 0 30px 7px rgba(168, 85, 247, 0.38);
+}
+.raider-badge-tier--glow-5 {
+  box-shadow:
+    0 0 14px 4px rgba(251, 146, 60, 0.75),
+    0 0 32px 8px rgba(251, 191, 36, 0.45),
+    0 0 40px 10px rgba(251, 146, 60, 0.2);
 }
 
 @media (max-width: 520px) {
@@ -1766,6 +1876,7 @@ body::before {
 
   .raider-badges {
     justify-content: flex-start;
+    flex: 1 1 auto;
   }
 }
 

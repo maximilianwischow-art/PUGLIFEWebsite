@@ -150,12 +150,20 @@ const publicBaseUrl =
   process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${Number(process.env.PORT || 8787)}`;
 const discordRedirectUri =
   process.env.DISCORD_REDIRECT_URI?.trim() || `${publicBaseUrl}/auth/discord/callback`;
+/** Dev-only: set DISCORD_SKIP_GUILD_CHECK=1 if your Discord user is not in DISCORD_GUILD_ID while testing locally. */
+const discordSkipGuildCheck =
+  !isProd && String(process.env.DISCORD_SKIP_GUILD_CHECK || "").trim() === "1";
 const sessionCookieName = "plb_session";
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 7;
 const oauthStateTtlMs = 1000 * 60 * 10;
 const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString("hex");
 const authSessions = new Map();
 const oauthStates = new Map();
+
+function discordAuthHelpHtml(title, lines) {
+  const inner = lines.map((t) => `<p>${String(t)}</p>`).join("");
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><body style="font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;line-height:1.5;padding:0 1rem">${inner}</body>`;
+}
 const votingGuildId = Number(process.env.VOTING_GUILD_ID || 817080);
 const renderDiskMountPath = process.env.RENDER_DISK_MOUNT_PATH?.trim() || "";
 const configuredDataDir = process.env.DATA_DIR?.trim() || "";
@@ -183,6 +191,7 @@ let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
+const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
 const apiCacheDir = path.join(dataDir, "cache");
 const apiResponseCache = new Map();
 const apiResponseInflight = new Map();
@@ -194,6 +203,9 @@ let netherVortexReady = null;
 let netherVortexWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
+let rhWclLinksReady = null;
+let rhWclLinksState = { links: [] };
+let rhWclLinksWriteChain = Promise.resolve();
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
   { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
@@ -783,6 +795,131 @@ async function ensureNetherVortexStore() {
   return netherVortexReady;
 }
 
+async function ensureRhWclLinksStore() {
+  if (rhWclLinksReady) return rhWclLinksReady;
+  rhWclLinksReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(rhWclCharacterLinksPath, "utf8");
+      const parsed = JSON.parse(raw);
+      rhWclLinksState = {
+        links: Array.isArray(parsed?.links)
+          ? parsed.links.filter((row) => row && typeof row === "object")
+          : [],
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      rhWclLinksState = { links: [] };
+      const tmpPath = `${rhWclCharacterLinksPath}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(rhWclLinksState, null, 2), "utf8");
+      await rename(tmpPath, rhWclCharacterLinksPath);
+    }
+  })();
+  return rhWclLinksReady;
+}
+
+async function persistRhWclLinksStore() {
+  const tmpPath = `${rhWclCharacterLinksPath}.tmp`;
+  const json = JSON.stringify(rhWclLinksState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, rhWclCharacterLinksPath);
+}
+
+/** Caps and trims client-submitted Raid Helper ↔ WCL name rows. */
+function sanitizeRhWclLinksPayload(rawLinks) {
+  const arr = Array.isArray(rawLinks) ? rawLinks : [];
+  const links = [];
+  for (const row of arr.slice(0, 400)) {
+    if (!row || typeof row !== "object") continue;
+    const raidHelperName = String(row?.raidHelperName || "").trim().slice(0, 96);
+    if (!raidHelperName) continue;
+    const names = [];
+    const seenLower = new Set();
+    for (const cn of Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : []) {
+      const s = String(cn || "").trim().slice(0, 64);
+      if (!s) continue;
+      const low = s.toLowerCase();
+      if (seenLower.has(low)) continue;
+      seenLower.add(low);
+      names.push(s);
+      if (names.length >= 40) break;
+    }
+    links.push({ raidHelperName, wclCharacterNames: names });
+  }
+  return { links };
+}
+
+function chunkPositiveInts(ids, chunkSize) {
+  const uniq = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+  const size = Math.max(1, chunkSize);
+  const out = [];
+  for (let i = 0; i < uniq.length; i += size) {
+    out.push(uniq.slice(i, i + size));
+  }
+  return out;
+}
+
+/**
+ * Builds per-raid attendee sets and display-name map — shared by attendance API and admin helpers.
+ * @returns {{ raidSnapshots: Array<{ reportCode: string, startTime: number, attendeesLower: Set<string> }>, wclDisplayByLower: Map<string, string> }}
+ */
+async function gatherAttendanceRaidSnapshots(guildId, reportLimit) {
+  const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit);
+  const trackedReports = reports
+    .map((report) => {
+      const fightIds = (report.fights || [])
+        .filter((fight) => {
+          const zoneName = fight?.gameZone?.name || "";
+          return (
+            Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
+            Number(fight?.encounterID || 0) > 0
+          );
+        })
+        .map((fight) => Number(fight.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      return { report, fightIds };
+    })
+    .filter((entry) => entry.fightIds.length > 0);
+
+  const raidSnapshots = [];
+  const cappedForAttendance = trackedReports.slice(0, wclPerReportDetailCap());
+  const wclDisplayByLower = new Map();
+
+  const attendanceQuery = `
+    query RaidAttendance($code: String!, $fightIds: [Int!]) {
+      reportData {
+        report(code: $code) {
+          rankings: rankings(fightIDs: $fightIds, playerMetric: dps)
+        }
+      }
+    }
+  `;
+
+  for (const { report, fightIds } of cappedForAttendance) {
+    const attendeeNamesLower = new Set();
+    for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
+      const data = await queryWcl(attendanceQuery, { code: report.code, fightIds: chunk });
+      const chunkNames = attendeeNamesFromRankings(data?.reportData?.report?.rankings);
+      for (const rawName of chunkNames) {
+        const trimmed = String(rawName || "").trim();
+        if (!trimmed) continue;
+        const low = trimmed.toLowerCase();
+        attendeeNamesLower.add(low);
+        if (!wclDisplayByLower.has(low)) wclDisplayByLower.set(low, trimmed);
+      }
+    }
+    if (!attendeeNamesLower.size) continue;
+
+    raidSnapshots.push({
+      reportCode: report.code,
+      startTime: Number(report.startTime || 0),
+      attendeesLower: attendeeNamesLower,
+    });
+  }
+
+  return { raidSnapshots, wclDisplayByLower };
+}
+
 /** Sum vortex units from craft rows (each item defaults to at least 1). */
 function netherVortexUnitsFromItems(items) {
   return (Array.isArray(items) ? items : []).reduce((sum, it) => {
@@ -1208,7 +1345,15 @@ app.get("/imprint.html", (_req, res) => {
 
 app.get("/auth/discord/login", (req, res) => {
   if (!discordClientId || !discordClientSecret) {
-    return res.status(500).send("Discord auth is not configured on this server.");
+    return res
+      .status(503)
+      .type("html")
+      .send(
+        discordAuthHelpHtml("Discord login unavailable", [
+          "<strong>Discord OAuth is not configured.</strong>",
+          "Add <code>DISCORD_CLIENT_ID</code> and <code>DISCORD_CLIENT_SECRET</code> to your environment (see <code>.env.example</code>), restart the server, and try again.",
+        ])
+      );
   }
   pruneAuthMaps();
   const state = randomBytes(18).toString("hex");
@@ -1252,16 +1397,47 @@ app.get("/auth/discord/callback", async (req, res) => {
     });
     const tokenPayload = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok || !tokenPayload?.access_token) {
-      return res.status(401).send("Discord token exchange failed.");
+      const err = String(tokenPayload?.error || "");
+      const desc = String(tokenPayload?.error_description || "").replace(/\+/g, " ");
+      console.warn("[auth] Discord token exchange failed:", err || tokenRes.status, desc);
+      const lines = [
+        "<strong>Discord token exchange failed.</strong>",
+        `Callback URL registered on this server: <code>${discordRedirectUri}</code>`,
+        "In the Discord Developer Portal → OAuth2 → Redirects, add that URL <em>exactly</em> (same scheme, host, port, path). Register both <code>http://localhost:8787/auth/discord/callback</code> and <code>http://127.0.0.1:8787/auth/discord/callback</code> if you switch between them.",
+        "Set <code>PUBLIC_BASE_URL</code> (or <code>DISCORD_REDIRECT_URI</code>) so it matches the URL you use in the Portal.",
+      ];
+      if (err === "invalid_grant" || desc.toLowerCase().includes("redirect")) {
+        lines.push("Error from Discord often means <code>redirect_uri</code> mismatch.");
+      }
+      if (desc) {
+        const safe = desc.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        lines.push(`Discord said: <code>${safe}</code>`);
+      }
+      return res.status(401).type("html").send(discordAuthHelpHtml("Discord login failed", lines));
     }
 
     const accessToken = tokenPayload.access_token;
     const me = await fetchDiscordJson("/users/@me", accessToken);
     const guilds = await fetchDiscordJson("/users/@me/guilds", accessToken);
     const inGuild =
-      !discordGuildId || (Array.isArray(guilds) && guilds.some((g) => String(g?.id || "") === discordGuildId));
+      discordSkipGuildCheck ||
+      !discordGuildId ||
+      (Array.isArray(guilds) && guilds.some((g) => String(g?.id || "") === discordGuildId));
+    if (discordSkipGuildCheck && discordGuildId) {
+      console.warn("[auth] DISCORD_SKIP_GUILD_CHECK=1 — guild membership was not verified (development only).");
+    }
     if (!inGuild) {
-      return res.status(403).send("Discord account is not a member of the required guild.");
+      const lines = [
+        "<strong>This Discord account is not in the guild required by this app.</strong>",
+        `Expected guild id: <code>${discordGuildId || "(not set)"}</code>`,
+        "Join the server with this Discord account, or fix <code>DISCORD_GUILD_ID</code> / <code>RAID_HELPER_SERVER_ID</code> in your environment.",
+      ];
+      if (!isProd) {
+        lines.push(
+          "Local testing only: set <code>DISCORD_SKIP_GUILD_CHECK=1</code> in <code>.env</code> to bypass this check (never use in production)."
+        );
+      }
+      return res.status(403).type("html").send(discordAuthHelpHtml("Discord — not in guild", lines));
     }
 
     const sessionId = randomBytes(24).toString("hex");
@@ -1530,6 +1706,55 @@ app.put("/api/loot-history/events/selection", async (req, res) => {
   }
 });
 
+app.get("/api/admin/rh-wcl-links", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclLinksStore();
+    return res.json({ ok: true, links: rhWclLinksState.links || [] });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Raid Helper ↔ WCL links" });
+  }
+});
+
+app.put("/api/admin/rh-wcl-links", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const sanitized = sanitizeRhWclLinksPayload(req.body?.links);
+    await ensureRhWclLinksStore();
+    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+      rhWclLinksState = sanitized;
+      await persistRhWclLinksStore();
+    });
+    await rhWclLinksWriteChain;
+    return res.json({ ok: true, saved: sanitized.links.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save Raid Helper ↔ WCL links" });
+  }
+});
+
+/** Character names seen in recent tracked-raid reports (for mapping alts to Raid Helper signups). Admin only. */
+app.get("/api/admin/wcl-attendee-names", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const guildId = Number(req.query.guildId || votingGuildId);
+    const reportLimit = Math.min(
+      wclMaxGuildReportsLimit(),
+      Math.max(10, Number(req.query.limit || 40))
+    );
+    if (!Number.isInteger(guildId) || guildId <= 0) {
+      return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
+    }
+    const { wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit);
+    const characterNames = [...wclDisplayByLower.values()].sort((a, b) => a.localeCompare(b));
+    return res.json({ ok: true, guildId, characterNames, count: characterNames.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Warcraft Logs character names" });
+  }
+});
+
 app.get("/api/voting/hall-of-fame", async (_req, res) => {
   try {
     const hallOfFame = await getHallOfFameForGuild(votingGuildId, 10);
@@ -1764,6 +1989,97 @@ function attendeeNamesFromRankings(rankingsPayload) {
   return names;
 }
 
+/** Matches Events page `rosterNameKey` — Raid Helper display vs WCL character names. */
+function normalizeRaidHelperDisplayKey(name) {
+  let s = String(name || "")
+    .trim()
+    .replace(/\u00a0/g, " ");
+  const slash = s.indexOf("/");
+  if (slash > 0) s = s.slice(0, slash).trim();
+  return s
+    .replace(/\s*[-–—]\s*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-\s]*$/u, "")
+    .toLowerCase();
+}
+
+/**
+ * Aggregate per-raid attendance across all WCL characters linked to one Raid Helper identity.
+ * Leaderboard rows use `raidHelperName` for UI; `wclCharacters` lists merged log names.
+ */
+function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, wclDisplayByLower) {
+  const consideredRaids = raidSnapshots.length;
+  const links = Array.isArray(linksState?.links) ? linksState.links : [];
+  /** @type {Map<string, { displayName: string, wclLower: Set<string> }>} */
+  const groups = new Map();
+
+  for (const entry of links) {
+    const displayName = String(entry?.raidHelperName || "").trim();
+    if (!displayName) continue;
+    const logicalKey = normalizeRaidHelperDisplayKey(displayName);
+    const wclLower = new Set();
+    for (const cn of Array.isArray(entry?.wclCharacterNames) ? entry.wclCharacterNames : []) {
+      const low = String(cn || "").trim().toLowerCase();
+      if (low) wclLower.add(low);
+    }
+    wclLower.add(logicalKey);
+    const prev = groups.get(logicalKey);
+    if (prev) {
+      for (const n of wclLower) prev.wclLower.add(n);
+    } else {
+      groups.set(logicalKey, { displayName, wclLower });
+    }
+  }
+
+  const allWclLower = new Set();
+  for (const raid of raidSnapshots) {
+    for (const n of raid.attendeesLower) allWclLower.add(n);
+  }
+
+  const claimedLower = new Set();
+  for (const g of groups.values()) {
+    for (const n of g.wclLower) claimedLower.add(n);
+  }
+
+  for (const low of allWclLower) {
+    if (claimedLower.has(low)) continue;
+    const pretty = wclDisplayByLower.get(low) || low;
+    groups.set(low, { displayName: pretty, wclLower: new Set([low]) });
+  }
+
+  const rows = [];
+  for (const g of groups.values()) {
+    let raidsAttended = 0;
+    const attendanceHistory = [];
+    for (const raid of raidSnapshots) {
+      const attended = [...g.wclLower].some((n) => raid.attendeesLower.has(n));
+      attendanceHistory.push(attended ? 1 : 0);
+      if (attended) raidsAttended += 1;
+    }
+    const wclCharacters = [...g.wclLower].map((low) => wclDisplayByLower.get(low) || low).sort((a, b) =>
+      a.localeCompare(b)
+    );
+    rows.push({
+      name: g.displayName,
+      raidHelperName: g.displayName,
+      wclCharacters,
+      raidsAttended,
+      attendanceRate: consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0,
+      attendanceHistory,
+    });
+  }
+
+  rows.sort(
+    (a, b) =>
+      b.raidsAttended - a.raidsAttended ||
+      b.attendanceRate - a.attendanceRate ||
+      String(a.raidHelperName || "").localeCompare(String(b.raidHelperName || ""))
+  );
+
+  return {
+    consideredRaids,
+    leaderboard: rows.slice(0, top),
+  };
+}
+
 function extractReportCode(reportInput) {
   const value = String(reportInput || "").trim();
   if (!value) return "";
@@ -1987,16 +2303,6 @@ function wclLootEventsLimit() {
   const n = Number(process.env.WCL_LOOT_EVENTS_LIMIT);
   if (Number.isFinite(n) && n >= 100) return Math.min(5000, n);
   return 1500;
-}
-
-function chunkPositiveInts(ids, chunkSize) {
-  const uniq = [...new Set((ids || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
-  const size = Math.max(1, chunkSize);
-  const out = [];
-  for (let i = 0; i < uniq.length; i += size) {
-    out.push(uniq.slice(i, i + size));
-  }
-  return out;
 }
 
 /** Merge multiple `table()` payloads (damage/healing/tanking) by summing `total` per player. */
@@ -4153,93 +4459,30 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
     wclMaxGuildReportsLimit(),
     Math.max(10, Number(req.query.limit || 40))
   );
-  const top = Math.min(50, Math.max(5, Number(req.query.top || 25)));
+  /* Events roster matches many names; keep upper bound high enough that bench/alts aren’t all missing. */
+  const top = Math.min(200, Math.max(5, Number(req.query.top || 25)));
   if (!Number.isInteger(guildId) || guildId <= 0) {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
 
   try {
-    const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit);
-    const trackedReports = reports
-      .map((report) => {
-        const fightIds = (report.fights || [])
-          .filter((fight) => {
-            const zoneName = fight?.gameZone?.name || "";
-            return (
-              Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
-              Number(fight?.encounterID || 0) > 0
-            );
-          })
-          .map((fight) => Number(fight.id))
-          .filter((id) => Number.isInteger(id) && id > 0);
-        return { report, fightIds };
-      })
-      .filter((entry) => entry.fightIds.length > 0);
+    await ensureRhWclLinksStore();
+    const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit);
 
-    const raidSnapshots = [];
-    const cappedForAttendance = trackedReports.slice(0, wclPerReportDetailCap());
-
-    for (const { report, fightIds } of cappedForAttendance) {
-      const attendanceQuery = `
-        query RaidAttendance($code: String!, $fightIds: [Int!]) {
-          reportData {
-            report(code: $code) {
-              rankings: rankings(fightIDs: $fightIds, playerMetric: dps)
-            }
-          }
-        }
-      `;
-      const attendeeNames = new Set();
-      for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
-        const data = await queryWcl(attendanceQuery, { code: report.code, fightIds: chunk });
-        const chunkNames = attendeeNamesFromRankings(data?.reportData?.report?.rankings);
-        for (const name of chunkNames) attendeeNames.add(name);
-      }
-      if (!attendeeNames.size) continue;
-
-      raidSnapshots.push({
-        reportCode: report.code,
-        startTime: Number(report.startTime || 0),
-        attendees: attendeeNames,
-      });
-    }
-
-    const consideredRaids = raidSnapshots.length;
-    const allPlayers = new Set();
-    for (const raid of raidSnapshots) {
-      for (const name of raid.attendees.keys()) allPlayers.add(name);
-    }
-
-    const leaderboard = [...allPlayers]
-      .map((name) => {
-        let raidsAttended = 0;
-        const attendanceHistory = [];
-        for (const raid of raidSnapshots) {
-          const attended = raid.attendees.has(name);
-          attendanceHistory.push(attended ? 1 : 0);
-          if (!attended) continue;
-          raidsAttended += 1;
-        }
-        return {
-          name,
-          raidsAttended,
-          attendanceRate: consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0,
-          attendanceHistory,
-        };
-      })
-      .sort(
-        (a, b) =>
-          b.raidsAttended - a.raidsAttended ||
-          b.attendanceRate - a.attendanceRate ||
-          a.name.localeCompare(b.name)
-      )
-      .slice(0, top);
+    const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
+      raidSnapshots,
+      rhWclLinksState,
+      top,
+      wclDisplayByLower
+    );
 
     return res.json({
       guildId,
-      consideredRaids,
+      consideredRaids: linkedPayload.consideredRaids,
       raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
-      leaderboard,
+      leaderboard: linkedPayload.leaderboard,
+      attendanceLinking: true,
+      rhWclLinkCount: rhWclLinksState.links?.length || 0,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
@@ -4837,6 +5080,16 @@ app.post("/api/wcl/mvp", async (req, res) => {
 app.listen(port, () => {
   console.log(`Fallen Tacticians API running on http://localhost:${port}`);
   console.log(`Persistent data directory: ${dataDir}`);
+  if (discordClientId && discordClientSecret) {
+    console.log(
+      `[auth] Discord OAuth redirect (must match Developer Portal → Redirects): ${discordRedirectUri}`
+    );
+    if (discordSkipGuildCheck) {
+      console.warn("[auth] DISCORD_SKIP_GUILD_CHECK is on — guild membership checks are bypassed.");
+    }
+  } else {
+    console.warn("[auth] Discord OAuth disabled — set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET to enable login.");
+  }
   ensureVotingStore().catch((error) => {
     console.error("Failed to initialize voting store:", error?.message || error);
   });
