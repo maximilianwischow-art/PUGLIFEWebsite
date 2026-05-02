@@ -53,6 +53,47 @@ function renderRhWclRaidSources(raidHelperEvents, wclReports) {
   host.innerHTML = html;
 }
 
+/** Warcraft Logs names that could not be matched to any Raid Helper signup (after heuristic + orphan pass). */
+function renderRhWclUnmatched(stats) {
+  const host = document.getElementById("rhWclUnmatchedHost");
+  if (!host) return;
+  if (!stats || typeof stats !== "object") {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  const n = Number(stats.unmatchedWclCount || 0);
+  const sample = Array.isArray(stats.unmatchedWclSample) ? stats.unmatchedWclSample : [];
+  if (!Number.isFinite(n) || n <= 0) {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  const minSc = stats.minScore;
+  const orphanSc = stats.orphanMinScore;
+  const thresh =
+    typeof minSc === "number" && typeof orphanSc === "number"
+      ? `main ≥${Math.round(minSc)}%, best-effort ≥${Math.round(orphanSc)}%`
+      : "heuristic thresholds";
+  const extra = n > sample.length ? ` · ${n - sample.length} more not shown` : "";
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="admin-rh-unmatched-inner">
+      <div class="admin-rh-unmatched-title">Unassigned log names (${n})</div>
+      <p class="admin-rh-unmatched-help subtle">
+        Seen in recent tracked raids but not linked to any signup in column 1 (${thresh}). Add each name to the correct row’s <strong>WCL characters</strong> column, or adjust <code>RH_WCL_ORPHAN_MIN_SCORE</code> / merge min score and run again.${extra}
+      </p>
+      <div class="admin-rh-unmatched-chips">
+        ${
+          sample.length
+            ? sample.map((name) => `<span class="admin-rh-unmatched-chip">${esc(String(name || ""))}</span>`).join("")
+            : `<span class="subtle">Open browser console or re-run merge if names don’t appear.</span>`
+        }
+      </div>
+    </div>
+  `;
+}
+
 async function getJson(url, opts) {
   const res = await fetch(url, { credentials: "include", ...(opts || {}) });
   const payload = await res.json().catch(() => ({}));
@@ -528,6 +569,7 @@ async function loadAdminData() {
   renderTargetReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
+  renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
 }
 
@@ -667,6 +709,7 @@ document.getElementById("rhWclGuessBtn")?.addEventListener("click", async () => 
         });
         renderRhWclLinksTable(Array.isArray(payload.links) ? payload.links : []);
         renderRhWclRaidSources(payload.recentRaidHelperEvents, payload.recentWarcraftLogsReports);
+        renderRhWclUnmatched(payload.stats || {});
         const st = payload.stats || {};
         const rowCount = Array.isArray(payload.links) ? payload.links.length : 0;
         const src = st.raidHelperSource ? ` · RH names: ${st.raidHelperSource}` : "";
@@ -772,6 +815,7 @@ document.getElementById("rhWclDeleteAllBtn")?.addEventListener("click", async ()
     );
     renderRhWclLinksTable([]);
     renderRhWclRaidSources([], []);
+    renderRhWclUnmatched(null);
     status("All character mappings removed from disk.");
   } catch (error) {
     status(error?.message || "Delete all failed");

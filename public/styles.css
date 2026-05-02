@@ -2926,6 +2926,48 @@ button.raid-cal-run.raid-cal-run--column:hover {
   line-height: 1.45;
 }
 
+.admin-rh-unmatched {
+  margin-top: 10px;
+}
+
+.admin-rh-unmatched-inner {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(200, 160, 90, 0.35);
+  background: rgba(120, 90, 40, 0.18);
+  line-height: 1.45;
+}
+
+.admin-rh-unmatched-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #f0d9a8;
+  margin-bottom: 6px;
+}
+
+.admin-rh-unmatched-help {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.admin-rh-unmatched-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-rh-unmatched-chip {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  background: rgba(40, 28, 14, 0.55);
+  border: 1px solid rgba(220, 180, 100, 0.35);
+  color: var(--text);
+}
+
 .admin-table th,
 .admin-table td {
   border-bottom: 1px solid var(--border);
