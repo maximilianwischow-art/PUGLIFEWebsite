@@ -411,9 +411,9 @@ function renderRhWclLinksTable(rows) {
     <div class="admin-table-wrap">
       <table class="admin-table">
         <thead>
-          <tr>
+            <tr>
             <th>Raid Helper name</th>
-            <th>WCL characters (comma-separated)</th>
+            <th>WCL characters</th>
             <th>Match source</th>
             <th>Actions</th>
           </tr>
@@ -433,9 +433,24 @@ function renderRhWclLinksTable(rows) {
               return `
             <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}"${metaAttr}>
               <td><input class="admin-input" data-rh-wcl-k="rh" value="${esc(row.raidHelperName || "")}" placeholder="As on signup" /></td>
-              <td><input class="admin-input" data-rh-wcl-k="wcl" value="${esc(
-                Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames.join(", ") : ""
-              )}" placeholder="Main, Alt, …" /></td>
+              <td class="admin-rh-wcl-cell">
+                <input class="admin-input" data-rh-wcl-k="wcl" value="${esc(
+                  Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames.join(", ") : ""
+                )}" placeholder="Comma-separated, or use Add alt below" />
+                <div class="admin-rh-add-alt">
+                  <input
+                    class="admin-input"
+                    type="text"
+                    data-rh-wcl-alt-inp
+                    placeholder="WCL log name…"
+                    autocomplete="off"
+                    aria-label="Add Warcraft Logs alt name"
+                  />
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-add-alt title="Append this log name and save row (if Raid Helper name is set)">
+                    Add alt
+                  </button>
+                </div>
+              </td>
               <td class="admin-rh-src-cell">${rhWclMatchChipsHtml(row)}</td>
               <td class="admin-rh-actions-cell">
                 <button type="button" class="event-signup-btn" data-rh-wcl-save title="Save this row to disk">Save row</button>
@@ -456,6 +471,62 @@ function renderRhWclLinksTable(rows) {
       if (td) td.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
     });
   });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const inp = event.target.closest("[data-rh-wcl-alt-inp]");
+  if (!inp) return;
+  event.preventDefault();
+  const tr = inp.closest("tr");
+  if (!tr) return;
+  rhWclAppendAltForRow(tr).catch((err) => status(err?.message || "Add alt failed"));
+});
+
+/** Append a WCL alt to the row’s comma list; saves immediately when Raid Helper name is set. */
+async function rhWclAppendAltForRow(tr) {
+  const rhInp = tr.querySelector('[data-rh-wcl-k="rh"]');
+  const wclInp = tr.querySelector('[data-rh-wcl-k="wcl"]');
+  const altInp = tr.querySelector("[data-rh-wcl-alt-inp]");
+  const alt = String(altInp?.value ?? "").trim();
+  if (!alt) {
+    status("Type the Warcraft Logs character name to add.");
+    return;
+  }
+  const existing = String(wclInp?.value || "")
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const lower = new Set(existing.map((n) => n.toLowerCase()));
+  if (lower.has(alt.toLowerCase())) {
+    status(`“${alt}” is already in the list.`);
+    altInp.value = "";
+    return;
+  }
+  existing.push(alt);
+  wclInp.value = existing.join(", ");
+  altInp.value = "";
+  tr.setAttribute("data-rh-wcl-dirty", "1");
+  const tdSrc = tr.querySelector(".admin-rh-src-cell");
+  if (tdSrc) tdSrc.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+
+  const rh = String(rhInp?.value || "").trim();
+  if (!rh) {
+    status(`Added “${alt}” to the list. Enter a Raid Helper name, then Save row.`);
+    return;
+  }
+
+  const row = readRhWclLinkRowFromTr(tr);
+  const stored = tr?.getAttribute("data-rh-wcl-stored-name");
+  const payload = { ...row };
+  if (stored !== null && String(stored).trim() !== "") payload.previousRaidHelperName = stored;
+  const payloadOut = await getJson("/api/admin/rh-wcl-links/row", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  renderRhWclLinksTable(Array.isArray(payloadOut.links) ? payloadOut.links : []);
+  status(`Added alt “${alt}” and saved “${rh}”.`);
 }
 
 /** Parse one table row into the API payload shape (or null if both columns empty). */
@@ -823,6 +894,21 @@ document.getElementById("rhWclDeleteAllBtn")?.addEventListener("click", async ()
 });
 
 document.addEventListener("click", async (event) => {
+  const addAltBtn = event.target.closest("[data-rh-wcl-add-alt]");
+  if (addAltBtn) {
+    const tr = addAltBtn.closest("tr");
+    if (!tr) return;
+    addAltBtn.disabled = true;
+    try {
+      await rhWclAppendAltForRow(tr);
+    } catch (error) {
+      status(error?.message || "Add alt failed");
+    } finally {
+      addAltBtn.disabled = false;
+    }
+    return;
+  }
+
   const saveBtn = event.target.closest("[data-rh-wcl-save]");
   if (saveBtn) {
     const tr = saveBtn.closest("tr");

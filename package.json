@@ -11,7 +11,8 @@
     "dev": "node --watch server.js",
     "validate": "node --check server.js",
     "fetch-spec-icons": "node scripts/fetch-tbc-spec-icons.mjs",
-    "guess-rh-wcl": "node scripts/guess-rh-wcl-links.mjs"
+    "guess-rh-wcl": "node scripts/guess-rh-wcl-links.mjs",
+    "test:kara-roster": "node scripts/test-future-events-kara.mjs http://localhost:8787"
   },
   "dependencies": {
     "compression": "^1.8.1",

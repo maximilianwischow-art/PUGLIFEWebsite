@@ -2853,6 +2853,29 @@ button.raid-cal-run.raid-cal-run--column:hover {
   color: #dfd4ff;
 }
 
+.admin-rh-wcl-cell {
+  vertical-align: top;
+}
+
+.admin-rh-wcl-cell > .admin-input[data-rh-wcl-k="wcl"] {
+  width: 100%;
+  max-width: 22rem;
+}
+
+.admin-rh-add-alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.admin-rh-add-alt .admin-input[data-rh-wcl-alt-inp] {
+  flex: 1 1 10rem;
+  min-width: 8rem;
+  max-width: 18rem;
+}
+
 .admin-rh-actions-cell {
   white-space: nowrap;
 }

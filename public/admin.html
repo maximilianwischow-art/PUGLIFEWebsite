@@ -42,7 +42,8 @@
             <p>
               Primary character database on disk: <code>rh-wcl-character-links.json</code> — same data as
               <code>GET /api/wcl/guild/:guildId/characters</code>. Attendance uses log names; Events uses Raid Helper signups.
-              <strong>Column 1 is only Raid Helper signup names</strong> (not log names). Column 2 = Warcraft Logs names (main + alts), comma-separated. If the log name matches the signup, column 2 can stay empty.
+              For Raider.io class/spec on the Events roster, the server uses the <strong>first Warcraft Logs name</strong> listed for that Raid Helper row when present (mapped “main” armory name).
+              <strong>Column 1 is only Raid Helper signup names</strong> (not log names). Column 2 = Warcraft Logs names (main + alts), comma-separated, or use <strong>Add alt</strong> under that row to append one log name and save when the Raid Helper name is filled. If the log name matches the signup, column 2 can stay empty.
             </p>
             <p>
               <strong>Heuristic merge</strong> uses <strong>only Raid Helper signup names</strong> for column 1 (recent posted events; env <code>RH_WCL_LINK_RAID_HELPER_EVENTS</code>) and Warcraft Logs characters from recent reports (<code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>). There is no “log names only” fallback — if Raid Helper returns no signups, fix API keys / events. Loose matches may appear as <em>Best-effort</em>. Review chips, then <strong>Save all rows</strong>.

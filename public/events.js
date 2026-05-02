@@ -100,6 +100,20 @@ const CANONICAL_SLUG_TO_COLOR_CLASS = {
   deathknight: "Death Knight",
 };
 
+/** Real classes only — RH may send spec labels (e.g. Protection) in the class field; ignore those for icons. */
+const VALID_WOW_CLASS_SLUGS = new Set([
+  "warrior",
+  "paladin",
+  "hunter",
+  "rogue",
+  "priest",
+  "shaman",
+  "mage",
+  "warlock",
+  "druid",
+  "deathknight",
+]);
+
 /** Same as server `RAID_HELPER_FALSE_CLASS_SLUGS` — RH sometimes puts "Tank" in the class field. */
 const RAID_HELPER_FALSE_CLASS_SLUGS = new Set([
   "tank",
@@ -225,8 +239,12 @@ function normalizeSlug(s) {
 
 function canonicalWowClassSlug(classRaw) {
   const slug = normalizeSlug(classRaw);
-  if (slug && RAID_HELPER_FALSE_CLASS_SLUGS.has(slug)) return "";
-  return LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG[slug] || slug;
+  if (!slug) return "";
+  if (RAID_HELPER_FALSE_CLASS_SLUGS.has(slug)) return "";
+  const mapped = LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG[slug];
+  const resolved = mapped || slug;
+  if (!VALID_WOW_CLASS_SLUGS.has(resolved)) return "";
+  return resolved;
 }
 
 function wowClassColor(classNameRaw) {
@@ -319,9 +337,19 @@ function inferSpecSlugFromRole(classSlug, roleSlug, specSlug) {
   return "";
 }
 
+/** Same merge as server `englishCanonicalClassSlugForEventsIcons`: RH + Rio; Paladin vs Warrior uses Rio when they disagree. */
+function effectiveRosterClassSlug(player) {
+  const rh = canonicalWowClassSlug(player?.className);
+  const rio = canonicalWowClassSlug(player?.raiderIoClassName);
+  const plate = new Set(["paladin", "warrior"]);
+  if (plate.has(rh) && plate.has(rio) && rh !== rio) return rio;
+  if (rh) return rh;
+  return rio || "";
+}
+
 /** Resolves `warrior_protection` / `paladin_protection` etc.; tanks override wrong RH spec labels. */
 function resolvedSpecIconKey(player) {
-  const cls = canonicalWowClassSlug(player?.className);
+  const cls = effectiveRosterClassSlug(player);
   const roleSlug = normalizedRoleSlugForSpec(player);
   let rawSpec = normalizeSlug(player?.specName);
   if (/^protection\d+$/.test(rawSpec)) rawSpec = "protection";
@@ -338,8 +366,9 @@ function resolvedSpecIconKey(player) {
   return `${cls}_${spec}`;
 }
 
-function classIconFallbackUrl(className) {
-  const cls = canonicalWowClassSlug(className).replace(/[^a-z]/g, "") || "warrior";
+function rosterClassIconFallbackUrl(player) {
+  const cls = effectiveRosterClassSlug(player).replace(/[^a-z]/g, "");
+  if (!cls) return `${ZAM_ICON_LARGE}/inv_misc_questionmark.jpg`;
   return `${ZAM_ICON_LARGE}/classicon_${cls}.jpg`;
 }
 
@@ -374,7 +403,7 @@ function championPortraitCandidates(raceRaw, genderRaw) {
  * Unknown tank + prot-like text: canonical prot spell art unless WCL already supplied an icon. */
 /** When WCL texture disagrees with RH class (both tanks are "Protection"), ignore WCL so canonical prot badge wins. */
 function wclProtIconConflictsWithRosterClass(wclUrl, player) {
-  const cls = canonicalWowClassSlug(player?.className);
+  const cls = effectiveRosterClassSlug(player);
   const u = String(wclUrl || "").toLowerCase();
   const war =
     u.includes("ability_warrior_defensivestance") ||
@@ -391,6 +420,28 @@ function wclProtIconConflictsWithRosterClass(wclUrl, player) {
   if (key === "warrior_protection" && pal && !war) return true;
   if (cls === "paladin" && war && !pal) return true;
   if (cls === "warrior" && pal && !war) return true;
+  // No class on roster (RH role-as-class etc.): reject single-flavour prot textures like server-side enrichment.
+  if (!cls && war && !pal) return true;
+  if (!cls && pal && !war) return true;
+  return false;
+}
+
+/** RH embed / attachClassic spec URL must not override canonical plate-tank badge (wrong texture). */
+function rhEmbedSpecIconConflictsWithProtKey(iconUrl, key) {
+  if (key !== "paladin_protection" && key !== "warrior_protection") return false;
+  const u = String(iconUrl || "").toLowerCase();
+  const war =
+    u.includes("ability_warrior_defensivestance") ||
+    u.includes("ability_warrior_shieldwall") ||
+    u.includes("inv_shield_06") ||
+    u.includes("inv_shield_05");
+  const pal =
+    u.includes("spell_holy_sealofprotection") ||
+    u.includes("spell_holy_devotionaura") ||
+    u.includes("spell_holy_sealofvengeance") ||
+    u.includes("spell_holy_righteousfury");
+  if (key === "paladin_protection" && war && !pal) return true;
+  if (key === "warrior_protection" && pal && !war) return true;
   return false;
 }
 
@@ -407,34 +458,23 @@ function specBadgePortraitChain(player) {
   const wclOk = /^https?:\/\//i.test(fromWcl) && !wclProtIconConflictsWithRosterClass(fromWcl, player);
   const fromApi = String(player?.specIconUrl || "").trim();
   const key = resolvedSpecIconKey(player);
-  const roleSlug = normalizedRoleSlugForSpec(player);
-  const rawSpec = normalizeSlug(player?.specName);
-  const protLike =
-    rawSpec.includes("protection") || /^protection\d+$/.test(rawSpec) || rawSpec === "prot" || rawSpec === "schutz";
-  const unknownTankProt =
-    !key &&
-    !canonicalWowClassSlug(player?.className) &&
-    isTankRoleSlug(roleSlug) &&
-    protLike;
   const primaryZam = key ? specIconZamimgUrlForKey(key) : "";
   const extras = key && SPEC_ZAMIMG_FALLBACK[key] ? SPEC_ZAMIMG_FALLBACK[key] : [];
   const extraUrls = extras.map((f) => `${ZAM_ICON_LARGE}/${f}.jpg`);
   let protKey = key === "paladin_protection" || key === "warrior_protection";
   const urls = [];
-  if (wclOk) urls.push(fromWcl);
-  if (!wclOk && unknownTankProt) {
-    urls.push(CANONICAL_PROT_SPEC_BADGE_URL.warrior_protection);
-    urls.push(CANONICAL_PROT_SPEC_BADGE_URL.paladin_protection);
-    protKey = true;
-  }
+  // Canonical prot zamimg first — WCL Damage Done uses one icon type for both plate tanks.
   if (protKey && primaryZam) {
     urls.push(primaryZam);
     for (const u of extraUrls) urls.push(u);
   }
-  if (/^https?:\/\//i.test(fromApi)) urls.push(fromApi);
+  if (wclOk) urls.push(fromWcl);
+  const apiOk =
+    /^https?:\/\//i.test(fromApi) && !rhEmbedSpecIconConflictsWithProtKey(fromApi, key);
+  if (apiOk) urls.push(fromApi);
   if (!protKey && primaryZam) urls.push(primaryZam);
   if (!protKey) for (const u of extraUrls) urls.push(u);
-  urls.push(classIconFallbackUrl(player?.className));
+  urls.push(rosterClassIconFallbackUrl(player));
   const seen = new Set();
   const out = [];
   for (const u of urls) {
@@ -458,7 +498,7 @@ function rosterPortraitChain(player) {
     seen.add(u);
     out.push(u);
   }
-  return out.length ? out : [classIconFallbackUrl(player?.className)];
+  return out.length ? out : [rosterClassIconFallbackUrl(player)];
 }
 
 /** Match Raid-Helper names to WCL leaderboard rows (strip optional realm suffix). */
@@ -596,8 +636,34 @@ function rosterGenericAchievementSlotsHtml() {
     .join("");
 }
 
+/** English class label for roster text — matches {@link effectiveRosterClassSlug} (Rio wins Warrior vs Paladin disagreements). */
+function mergedClassDisplayLabel(player) {
+  const rh = String(player?.className ?? "").trim();
+  const rio = String(player?.raiderIoClassName ?? "").trim();
+  const rhSlug = canonicalWowClassSlug(rh);
+  const rioSlug = canonicalWowClassSlug(rio);
+  const plate = new Set(["paladin", "warrior"]);
+  if (plate.has(rhSlug) && plate.has(rioSlug) && rhSlug !== rioSlug) return rio;
+  if (rh) return rh;
+  return rio || "";
+}
+
+/** Hover text when Raid Helper and Raider.io disagree or supplement each other. */
+function rosterClassSpecSourcesTooltip(player) {
+  const rhC = String(player?.raidHelperClassName ?? "").trim();
+  const rhS = String(player?.raidHelperSpecName ?? "").trim();
+  const rioC = String(player?.raiderIoClassName ?? "").trim();
+  const rioS = String(player?.raiderIoSpecName ?? "").trim();
+  const parts = [];
+  if (rhC) parts.push(`Raid Helper class: ${rhC}`);
+  if (rhS) parts.push(`Raid Helper spec: ${rhS}`);
+  if (rioC) parts.push(`Raider.io class: ${rioC}`);
+  if (rioS) parts.push(`Raider.io spec: ${rioS}`);
+  return parts.join(" · ");
+}
+
 function rosterRaiderCard(player, confirmedRoster) {
-  const className = String(player.className || "").trim();
+  const className = mergedClassDisplayLabel(player);
   const color = wowClassColor(className);
   const specLabel = displaySpecNameForRoster(String(player.specName || "").trim());
   const portraitChain = rosterPortraitChain(player);
@@ -608,12 +674,14 @@ function rosterRaiderCard(player, confirmedRoster) {
     .join("|");
   const portraitAlt = specLabel ? `${className} · ${specLabel}` : className;
   const priestGlow =
-    canonicalWowClassSlug(className) === "priest"
+    effectiveRosterClassSlug(player) === "priest"
       ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);"
       : "";
+  const sourcesTip = rosterClassSpecSourcesTooltip(player);
+  const cardTitleAttr = sourcesTip ? ` title="${escapeHtml(sourcesTip)}"` : "";
 
   return `
-    <div class="raider-card">
+    <div class="raider-card"${cardTitleAttr}>
       <div class="raider-card-main">
         <div class="raider-portrait-stack">
           <img

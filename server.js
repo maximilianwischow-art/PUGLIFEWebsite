@@ -2911,13 +2911,19 @@ function linkedWclCharacterNamesForRaidHelperName(linksState, rosterDisplayName)
   return [];
 }
 
+/** First entry in `rh-wcl-character-links.json` for this signup — use as Raider.io profile name when RH display ≠ armory name. */
+function primaryMappedWclCharacterNameForRioLookup(linksState, row) {
+  const names = linkedWclCharacterNamesForRaidHelperName(linksState, row?.name);
+  return names.length ? String(names[0] || "").trim() : "";
+}
+
 /**
  * Prefer icons for linked log names so we do not pick another player’s row when RH ≠ WCL display
  * (e.g. prot paladin showing warrior defensive stance from a name collision on Damage Done).
  */
 function pickWclIconHitPreferringLinkedNames(iconMap, row, linksState) {
   const altNames = linkedWclCharacterNamesForRaidHelperName(linksState, row?.name);
-  const cls = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
+  const cls = englishCanonicalClassSlugForEventsIcons(row);
   const strictClass = cls === "paladin" || cls === "warrior";
 
   for (const alt of altNames) {
@@ -2925,7 +2931,7 @@ function pickWclIconHitPreferringLinkedNames(iconMap, row, linksState) {
     if (!h?.icon) continue;
     if (!strictClass || wclProtIconAgreesWithRosterClass(h.icon, row)) return h;
   }
-  const primary = pickWclIconHit(iconMap, row?.name);
+  const primary = pickWclIconHitForRosterDisplay(iconMap, row);
   if (primary?.icon && (!strictClass || wclProtIconAgreesWithRosterClass(primary.icon, row))) return primary;
   if (!strictClass) {
     for (const alt of altNames) {
@@ -3251,10 +3257,27 @@ const ENGLISH_CLASS_SLUG_TO_DISPLAY = {
   deathknight: "Death Knight",
 };
 
+/** Only real WoW classes — RH often puts spec names (e.g. Protection) in the class column; those must not become a “class” slug. */
+const VALID_WOW_CLASS_SLUGS = new Set([
+  "warrior",
+  "paladin",
+  "hunter",
+  "rogue",
+  "priest",
+  "shaman",
+  "mage",
+  "warlock",
+  "druid",
+  "deathknight",
+]);
+
 function englishCanonicalClassSlugFromLocalizedDisplay(raw) {
   const slug = slugifyLocaleText(raw);
   if (!slug) return "";
-  return LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG[slug] || slug;
+  const mapped = LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG[slug];
+  const resolved = mapped || slug;
+  if (!VALID_WOW_CLASS_SLUGS.has(resolved)) return "";
+  return resolved;
 }
 
 /** Stable English UI label + consistent keys for guild tooling. */
@@ -3268,8 +3291,8 @@ function englishWowClassDisplayFromRaidHelper(raw) {
     return "";
   }
   const can = englishCanonicalClassSlugFromLocalizedDisplay(raw);
-  if (!can) return String(raw || "").trim();
-  return ENGLISH_CLASS_SLUG_TO_DISPLAY[can] || String(raw || "").trim();
+  if (!can) return "";
+  return ENGLISH_CLASS_SLUG_TO_DISPLAY[can] || "";
 }
 
 /** Race display string when Raid-Helper provides it (field names vary by API version). */
@@ -3346,6 +3369,56 @@ function raidHelperRealmFromSignUpEntry(entry) {
     if (s && !/^\d+$/.test(s)) return s;
   }
   return "";
+}
+
+/** Strip optional realm suffix after em dash (matches Events `rosterNameKey`). */
+function stripRealmSuffixFromWowDisplayName(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/\u00a0/g, " ")
+    .replace(/\s*[-–—]\s*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-\s]*$/u, "")
+    .trim();
+}
+
+/**
+ * Which side of `Main/Alt` style signup names is the in-game character for Raider.io (assigned toon).
+ * `last` = segment after `/` (typical: account or tag / character). Override if your guild lists character first.
+ */
+function raidHelperSignupSlashCharacterSegment() {
+  const raw = String(process.env.RAID_HELPER_SIGNUP_SLASH_CHARACTER || "last").trim().toLowerCase();
+  if (raw === "first" || raw === "left" || raw === "0") return "first";
+  return "last";
+}
+
+/**
+ * WoW character name for Raider.io / Blizzard (not the full Discord display line).
+ * Uses explicit Raid Helper character fields when present; otherwise parses `name` using {@link raidHelperSignupSlashCharacterSegment}.
+ */
+function raidHelperCharacterNameForRaiderIoLookup(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const candidates = [
+    entry.characterName,
+    entry.character?.name,
+    entry.wowCharacterName,
+    entry.playerCharacterName,
+    entry.selectedCharacterName,
+    entry.signUpCharacterName,
+    entry.nameCharacter,
+    entry.charName,
+  ];
+  for (const c of candidates) {
+    const s = stripRealmSuffixFromWowDisplayName(String(c ?? ""));
+    if (s && !/^\d+$/.test(s)) return s;
+  }
+  const display = stripRealmSuffixFromWowDisplayName(String(entry.name || ""));
+  if (!display) return "";
+  const slash = display.indexOf("/");
+  if (slash <= 0) return display;
+  const left = display.slice(0, slash).trim();
+  const right = display.slice(slash + 1).trim();
+  const seg = raidHelperSignupSlashCharacterSegment();
+  const chosen = seg === "first" ? left || right : right || left;
+  return stripRealmSuffixFromWowDisplayName(chosen);
 }
 
 function defaultWowRealmForRoster() {
@@ -3455,18 +3528,27 @@ async function fetchBlizzardClassicActiveSpecName(realmSlug, characterName) {
   return parseBlizzardActiveSpecializationName(data);
 }
 
-async function enrichRosterRowExternalSpec(row) {
+async function enrichRosterRowExternalSpec(row, linksState) {
   const realmRaw = String(row.realm || "").trim() || defaultWowRealmForRoster();
   const name = String(row.name || "").trim();
   if (!realmRaw || !name) return row;
 
+  const mappedMain = primaryMappedWclCharacterNameForRioLookup(linksState, row);
+  const lookupName =
+    mappedMain ||
+    String(row.rioLookupCharacterName || "").trim() ||
+    stripRealmSuffixFromWowDisplayName(name);
+
   const needsClassRepair = raidHelperClassFieldLooksLikeRoleNotClass(row.className);
   const needsSpecLookup = wowExternalSpecLookupEnabled();
-  if (!needsClassRepair && !needsSpecLookup) return row;
+  /** Always expose intended Raider.io character name (Events UI + tests), even when no HTTP lookup runs. */
+  if (!needsClassRepair && !needsSpecLookup) {
+    return { ...row, rioProfileLookupName: lookupName };
+  }
 
   const region = wowRosterRegion();
   const realmSlug = wowRealmSlugForLookup(realmRaw);
-  const cacheSlug = slugifyLocaleText(name);
+  const cacheSlug = slugifyLocaleText(lookupName);
   const rioKey = `raiderio-classic-profile-v1-${region}-${realmSlug}-${cacheSlug}`;
 
   let profile = null;
@@ -3474,42 +3556,59 @@ async function enrichRosterRowExternalSpec(row) {
     profile = await getOrRefreshCachedPayload(rioKey, {
       ttlMs: Math.min(3600_000, Math.max(60_000, Number(process.env.WOW_RIO_CACHE_TTL_MS || 900_000))),
       maxStaleMs: Math.min(7 * 86400_000, Math.max(3600_000, Number(process.env.WOW_RIO_CACHE_STALE_MS || 86400_000))),
-      loader: () => loadRaiderIoClassicProfileRaw(region, realmSlug, name),
+      loader: () => loadRaiderIoClassicProfileRaw(region, realmSlug, lookupName),
     });
   } catch {
     profile = null;
   }
 
-  let out = { ...row };
+  /** Character name sent to Raider.io / Blizzard profile APIs (mapped main → RH signup parse → display strip). */
+  let out = { ...row, rioProfileLookupName: lookupName };
 
-  if (needsClassRepair && profile) {
-    const rioClass = classNameFromRaiderIoClassicProfile(profile);
-    if (rioClass) {
-      out.className = englishWowClassDisplayFromRaidHelper(rioClass);
-    }
+  const rioClassRaw = profile ? classNameFromRaiderIoClassicProfile(profile) : "";
+  const rioClassDisplay = rioClassRaw ? englishWowClassDisplayFromRaidHelper(rioClassRaw) : "";
+  const rioSpecDirect = profile ? specNameFromRaiderIoClassicProfile(profile) : null;
+
+  if (profile && rioClassDisplay) {
+    out.raiderIoClassName = rioClassDisplay;
+  }
+  if (rioSpecDirect) {
+    out.raiderIoSpecName = rioSpecDirect;
+  }
+
+  // Class: keep Raid Helper when it is a real class; otherwise fill from Raider.io (per-character).
+  if (!raidHelperClassIsTrustworthy(row.className) && rioClassDisplay) {
+    out.className = rioClassDisplay;
   }
 
   if (!needsSpecLookup) return out;
 
-  let specName = specNameFromRaiderIoClassicProfile(profile);
+  let specName = rioSpecDirect;
   if (!specName && blizzardProfileClientConfigured()) {
     const bKey = `bnet-classic-active-spec-v1-${region}-${realmSlug}-${cacheSlug}`;
     try {
       specName = await getOrRefreshCachedPayload(bKey, {
         ttlMs: 3600_000,
         maxStaleMs: 86400_000,
-        loader: () => fetchBlizzardClassicActiveSpecName(realmSlug, name),
+        loader: () => fetchBlizzardClassicActiveSpecName(realmSlug, lookupName),
       });
     } catch {
       specName = null;
     }
   }
 
-  if (specName) out = { ...out, specName };
+  if (specName && !String(out.specName || "").trim()) {
+    out = { ...out, specName };
+  }
+  if (specName && !out.raiderIoSpecName) {
+    out = { ...out, raiderIoSpecName: specName };
+  }
   return out;
 }
 
 async function enrichConfirmedRosterExternalSpecs(rows) {
+  await ensureRhWclLinksStore();
+  const linksState = rhWclLinksState;
   const conc = Math.min(
     16,
     Math.max(1, Number(process.env.WOW_EXTERNAL_SPEC_CONCURRENCY || 6) || 6)
@@ -3517,13 +3616,13 @@ async function enrichConfirmedRosterExternalSpecs(rows) {
   const out = [];
   for (let i = 0; i < rows.length; i += conc) {
     const slice = rows.slice(i, i + conc);
-    out.push(...(await Promise.all(slice.map((row) => enrichRosterRowExternalSpec(row)))));
+    out.push(...(await Promise.all(slice.map((row) => enrichRosterRowExternalSpec(row, linksState)))));
   }
   return out;
 }
 
 function stripInternalRosterFields(row) {
-  const { realm: _r, ...rest } = row;
+  const { realm: _r, rioLookupCharacterName: _lu, ...rest } = row;
   return rest;
 }
 
@@ -3583,7 +3682,39 @@ const RAID_HELPER_FALSE_CLASS_SLUGS = new Set([
 
 function raidHelperClassFieldLooksLikeRoleNotClass(classRaw) {
   const s = slugifyLocaleText(classRaw);
-  return s !== "" && RAID_HELPER_FALSE_CLASS_SLUGS.has(s);
+  if (!s) return true; // missing class — repair from Raider.io when Tank/healer filled the column wrong
+  return RAID_HELPER_FALSE_CLASS_SLUGS.has(s);
+}
+
+/** Raid Helper sent a real class name (not empty, not role-as-class). */
+function raidHelperClassIsTrustworthy(classRaw) {
+  const s = slugifyLocaleText(classRaw);
+  if (!s) return false;
+  return !RAID_HELPER_FALSE_CLASS_SLUGS.has(s);
+}
+
+/**
+ * Class slug for Events roster + WCL icons: merges Raid Helper + Raider.io.
+ * If RH says Warrior but Rio says Paladin (or vice versa), prefer Rio — matches armory for mis-clicked RH class.
+ */
+function englishCanonicalClassSlugForEventsIcons(row) {
+  const rh = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
+  const rio = englishCanonicalClassSlugFromLocalizedDisplay(row?.raiderIoClassName);
+  const plate = new Set(["paladin", "warrior"]);
+  if (plate.has(rh) && plate.has(rio) && rh !== rio) return rio;
+  if (rh) return rh;
+  return rio || "";
+}
+
+function pickWclIconHitForRosterDisplay(iconMap, row) {
+  const hitName = pickWclIconHit(iconMap, row?.name);
+  if (hitName?.icon) return hitName;
+  const lu = String(row?.rioLookupCharacterName || "").trim();
+  if (lu) {
+    const hitLu = pickWclIconHit(iconMap, lu);
+    if (hitLu?.icon) return hitLu;
+  }
+  return null;
 }
 
 function classNameFromRaiderIoClassicProfile(data) {
@@ -3634,10 +3765,14 @@ function protIconTextureLooksPaladin(iconUrl) {
  * Skip WCL badge when the texture clearly belongs to the other tank class so canonical specIconUrl wins client-side.
  */
 function wclProtIconAgreesWithRosterClass(iconUrl, row) {
-  const cls = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
-  if (cls !== "paladin" && cls !== "warrior") return true;
+  const cls = englishCanonicalClassSlugForEventsIcons(row);
   const war = protIconTextureLooksWarrior(iconUrl);
   const pal = protIconTextureLooksPaladin(iconUrl);
+  // Missing or non-plate tank class: do not attach a one-sided prot texture from WCL (plate tanks share "Protection" type).
+  if (cls !== "paladin" && cls !== "warrior") {
+    if ((war && !pal) || (pal && !war)) return false;
+    return true;
+  }
   if (cls === "paladin" && war && !pal) return false;
   if (cls === "warrior" && pal && !war) return false;
   return true;
@@ -3645,7 +3780,7 @@ function wclProtIconAgreesWithRosterClass(iconUrl, row) {
 
 /** Always set Raid-Helper rows to the canonical texture so API matches events UI (overwrites wrong RH icons). */
 function attachClassicSpecSpellIconIfNeeded(row) {
-  const cls = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
+  const cls = englishCanonicalClassSlugForEventsIcons(row);
   const role = slugifyLocaleText(row?.roleName);
   const spec = slugifyLocaleText(row?.specName);
   const isTankRole = role === "tank" || role === "tanks" || role === "schutz";
@@ -4295,18 +4430,27 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
             String(entry?.status || "").toLowerCase() === "primary" &&
             !excludedClasses.has(raidHelperClassNameFromSignUpEntry(entry))
         )
-        .map((entry) => ({
-          name: String(entry?.name || ""),
-          className: englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry)),
-          specName: normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim()),
-          roleName: normalizeRaidHelperRoleLabel(
-            String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
-          ),
-          race: raidHelperRaceFromSignUpEntry(entry),
-          gender: raidHelperGenderFromSignUpEntry(entry),
-          specIconUrl: raidHelperSpecIconUrlFromSignUpEntry(entry),
-          realm: raidHelperRealmFromSignUpEntry(entry) || defaultWowRealmForRoster(),
-        }))
+        .map((entry) => {
+          const rhClass = englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry));
+          const rhSpec = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+          return {
+            name: String(entry?.name || ""),
+            /** In-game character for Raider.io / Blizzard — explicit RH fields or slash segment (see RAID_HELPER_SIGNUP_SLASH_CHARACTER). */
+            rioLookupCharacterName: raidHelperCharacterNameForRaiderIoLookup(entry),
+            className: rhClass,
+            specName: rhSpec,
+            /** Snapshot before Raider.io merge — spec vs class stay inspectable per signup. */
+            raidHelperClassName: rhClass,
+            raidHelperSpecName: rhSpec,
+            roleName: normalizeRaidHelperRoleLabel(
+              String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+            ),
+            race: raidHelperRaceFromSignUpEntry(entry),
+            gender: raidHelperGenderFromSignUpEntry(entry),
+            specIconUrl: raidHelperSpecIconUrlFromSignUpEntry(entry),
+            realm: raidHelperRealmFromSignUpEntry(entry) || defaultWowRealmForRoster(),
+          };
+        })
         .filter((entry) => entry.name)
         .sort((a, b) => a.name.localeCompare(b.name));
 
