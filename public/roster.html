@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PUG LIFE BALANCE</title>
+    <title>PUG LIFE BALANCE · Guild Roster</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=20260509a" />
+    <link rel="stylesheet" href="/styles.css?v=20260504j" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -31,9 +31,9 @@
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
           <a href="/home.html">Home</a>
-          <a href="/" class="nav-current" aria-current="page">Dashboard</a>
+          <a href="/">Dashboard</a>
           <a href="/events.html">Events</a>
-          <a href="/roster.html">Roster</a>
+          <a href="/roster.html" class="nav-current" aria-current="page">Roster</a>
           <a href="/voting.html">Voting</a>
           <a href="/loot-history.html">Loot History</a>
           <a href="/p2-preparation.html">P2 Preparation</a>
@@ -43,49 +43,16 @@
       </header>
 
       <main class="container">
-        <div id="welcomePopupBackdrop" class="welcome-popup-backdrop" hidden></div>
-        <section id="welcomePopupCard" class="welcome-popup-card" role="dialog" aria-modal="true" aria-labelledby="welcomePopupTitle" hidden>
-          <img
-            class="welcome-popup-img"
-            src="/welcome-popup-hyjal.png"
-            alt=""
-            width="1600"
-            height="900"
-            decoding="async"
-          />
-          <button type="button" id="welcomePopupClose" class="welcome-popup-close" aria-label="Close welcome popup">×</button>
-          <div class="welcome-popup-copy">
-            <h2 id="welcomePopupTitle" class="welcome-popup-title">Welcome to our lair, Friend!</h2>
-            <button type="button" id="welcomePopupEnter" class="welcome-popup-enter">Enter</button>
+        <section class="panel panel--events-heading">
+          <div class="section-head section-head--events-only">
+            <h2 class="section-title">Guild Roster</h2>
           </div>
         </section>
 
-      <section id="status" class="status"></section>
-
-      <section class="card">
-        <h2 class="section-title">Overall Death Tracker</h2>
-        <p id="deathMeta" class="subtle">Loading consolidated death totals...</p>
-        <ol id="deathLeaderboard" class="death-list">
-          <li>Loading...</li>
-        </ol>
-      </section>
-
-      <section class="card">
-        <h2 class="section-title">Attendance Tracker</h2>
-        <p id="attendanceMeta" class="subtle">Loading attendance data...</p>
-        <div id="attendanceList" class="attendance-list">
-          <div>Loading...</div>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2 class="section-title">Death / Encounter Heatmap</h2>
-        <p id="deathEncounterMeta" class="subtle">Loading encounter death data...</p>
-        <div id="deathEncounterHeatmap" class="heatmap-list">
-          <div>Loading...</div>
-        </div>
-      </section>
-
+        <section class="card roster-active-card">
+          <p id="rosterPageMeta" class="subtle">Loading roster…</p>
+          <div id="rosterActiveGrid" class="raider-grid roster-active-grid"></div>
+        </section>
       </main>
 
       <footer class="footer">
@@ -98,8 +65,8 @@
       </footer>
     </div>
 
-    <script src="/app.js?v=20260503r"></script>
-    <script src="/home.js?v=20260503a"></script>
+    <script src="/events-roster-ui.js?v=20260504j"></script>
+    <script src="/roster.js?v=20260504j"></script>
     <script src="/auth-ui.js?v=20260430f"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

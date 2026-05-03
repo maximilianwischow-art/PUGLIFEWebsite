@@ -13,6 +13,80 @@ let selectedReportCodesState = new Set();
 /** Same guild as Dashboard / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
 const ADMIN_WCL_GUILD_ID = 817080;
 
+/** Must match `RH_WCL_GUILD_ROLES` in `lib/rh-wcl-guess.mjs` / server sanitize. */
+const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Guildlead", "Raidlead"];
+
+function rhWclGuildRoleSelectHtml(current) {
+  const sel = RH_WCL_GUILD_ROLES.includes(current) ? current : "Peon";
+  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role">${RH_WCL_GUILD_ROLES.map(
+    (r) => `<option value="${esc(r)}"${r === sel ? " selected" : ""}>${esc(r)}</option>`
+  ).join("")}</select>`;
+}
+
+const ADMIN_PANEL_IDS = ["rh-wcl", "wcl-events", "gargul-import", "loot-corrections", "p2-materials"];
+
+function parseAdminHash() {
+  const raw = (location.hash || "").replace(/^#/, "").trim();
+  if (!raw) return null;
+  const normalized = raw.startsWith("admin-") ? raw.slice(6) : raw;
+  return ADMIN_PANEL_IDS.includes(normalized) ? normalized : null;
+}
+
+function showAdminPanel(panelId, opts = {}) {
+  const replaceHash = opts.replaceHash !== false;
+  if (!panelId || !ADMIN_PANEL_IDS.includes(panelId)) return;
+  document.querySelectorAll("[data-admin-panel]").forEach((el) => {
+    const id = el.getAttribute("data-admin-panel");
+    el.classList.toggle("is-admin-panel-active", id === panelId);
+  });
+  document.querySelectorAll("[data-admin-nav]").forEach((btn) => {
+    const id = btn.getAttribute("data-admin-nav");
+    const on = id === panelId;
+    btn.classList.toggle("is-admin-submenu-active", on);
+    if (on) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+  if (replaceHash) {
+    const next = `#admin-${panelId}`;
+    if (location.hash !== next) history.replaceState(null, "", `${location.pathname}${location.search}${next}`);
+  }
+  try {
+    sessionStorage.setItem("adminPanel", panelId);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function initialAdminPanelId() {
+  const fromHash = parseAdminHash();
+  if (fromHash) return fromHash;
+  try {
+    const s = sessionStorage.getItem("adminPanel");
+    if (s && ADMIN_PANEL_IDS.includes(s)) return s;
+  } catch (_) {
+    /* ignore */
+  }
+  return "rh-wcl";
+}
+
+function initAdminSubmenu() {
+  showAdminPanel(initialAdminPanelId(), { replaceHash: false });
+
+  document.querySelectorAll("[data-admin-nav]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-admin-nav");
+      if (id && ADMIN_PANEL_IDS.includes(id)) showAdminPanel(id);
+    });
+  });
+
+  window.addEventListener("hashchange", () => {
+    const id = parseAdminHash();
+    if (id) showAdminPanel(id, { replaceHash: false });
+  });
+}
+
+initAdminSubmenu();
+
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -405,7 +479,8 @@ function updateRhWclLinksChrome(list) {
 function renderRhWclLinksTable(rows) {
   const host = document.getElementById("rhWclLinksTableHost");
   if (!host) return;
-  const list = Array.isArray(rows) && rows.length ? rows : [{ raidHelperName: "", wclCharacterNames: [] }];
+  const list =
+    Array.isArray(rows) && rows.length ? rows : [{ raidHelperName: "", wclCharacterNames: [], guildRole: "Peon" }];
   updateRhWclLinksChrome(list);
   host.innerHTML = `
     <div class="admin-table-wrap">
@@ -413,6 +488,7 @@ function renderRhWclLinksTable(rows) {
         <thead>
             <tr>
             <th>Raid Helper name</th>
+            <th>Guild role</th>
             <th>WCL characters</th>
             <th>Match source</th>
             <th>Actions</th>
@@ -433,6 +509,7 @@ function renderRhWclLinksTable(rows) {
               return `
             <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}"${metaAttr}>
               <td><input class="admin-input" data-rh-wcl-k="rh" value="${esc(row.raidHelperName || "")}" placeholder="As on signup" /></td>
+              <td class="admin-rh-role-cell">${rhWclGuildRoleSelectHtml(row.guildRole)}</td>
               <td class="admin-rh-wcl-cell">
                 <input class="admin-input" data-rh-wcl-k="wcl" value="${esc(
                   Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames.join(", ") : ""
@@ -469,6 +546,15 @@ function renderRhWclLinksTable(rows) {
       tr?.setAttribute("data-rh-wcl-dirty", "1");
       const td = tr?.querySelector(".admin-rh-src-cell");
       if (td) td.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+    });
+  });
+  host.querySelectorAll('[data-rh-wcl-k="guildRole"]').forEach((sel) => {
+    sel.addEventListener("change", () => {
+      const tr = sel.closest("tr");
+      const td = tr?.querySelector(".admin-rh-src-cell");
+      if (td && !tr?.getAttribute("data-rh-wcl-dirty")) {
+        td.innerHTML = `<span class="subtle">Guild role changed — save row or Save all</span>`;
+      }
     });
   });
 }
@@ -569,7 +655,10 @@ function readRhWclLinkRowFromTr(tr) {
     wclGuessConfidence = wclCharacterNames.map(() => null);
   }
 
-  const row = { raidHelperName: rh, wclCharacterNames };
+  const roleRaw = String(tr.querySelector('[data-rh-wcl-k="guildRole"]')?.value || "").trim();
+  const guildRole = RH_WCL_GUILD_ROLES.includes(roleRaw) ? roleRaw : "Peon";
+
+  const row = { raidHelperName: rh, wclCharacterNames, guildRole };
   if (wclSources.length === wclCharacterNames.length && wclCharacterNames.length > 0) {
     row.wclSources = wclSources;
     if (wclGuessConfidence.some((x) => typeof x === "number")) row.wclGuessConfidence = wclGuessConfidence;
@@ -615,7 +704,7 @@ async function loadAdminData() {
   if (!me.authenticated || !me.isAdmin) {
     status("Admin access required (HighBullet editor account).");
     if (rhHost) {
-      rhHost.innerHTML = `<p class="subtle">Log in with an authorized admin account to edit Raid Helper ↔ WCL links.</p>`;
+      rhHost.innerHTML = `<p class="subtle">Log in with an authorized admin account to edit Account Assignment mappings.</p>`;
     }
     return;
   }
@@ -757,7 +846,7 @@ document.addEventListener("click", (event) => {
 
 document.getElementById("rhWclAddRowBtn")?.addEventListener("click", () => {
   const links = readRhWclLinksFromTable();
-  links.push({ raidHelperName: "", wclCharacterNames: [] });
+  links.push({ raidHelperName: "", wclCharacterNames: [], guildRole: "Peon" });
   renderRhWclLinksTable(links);
 });
 
@@ -945,7 +1034,7 @@ document.addEventListener("click", async (event) => {
   const links = readRhWclLinksFromTable();
   if (!Number.isFinite(idx)) return;
   links.splice(idx, 1);
-  renderRhWclLinksTable(links.length ? links : [{ raidHelperName: "", wclCharacterNames: [] }]);
+  renderRhWclLinksTable(links.length ? links : [{ raidHelperName: "", wclCharacterNames: [], guildRole: "Peon" }]);
 });
 
 document.addEventListener("click", async (event) => {

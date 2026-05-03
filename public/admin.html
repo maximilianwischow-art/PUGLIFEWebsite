@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=20260503w" />
+    <link rel="stylesheet" href="/styles.css?v=20260504i" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -20,6 +20,7 @@
           <a href="/home.html">Home</a>
           <a href="/">Dashboard</a>
           <a href="/events.html">Events</a>
+          <a href="/roster.html">Roster</a>
           <a href="/voting.html">Voting</a>
           <a href="/loot-history.html">Loot History</a>
           <a href="/p2-preparation.html">P2 Preparation</a>
@@ -29,14 +30,23 @@
         <div class="hero-divider" aria-hidden="true"></div>
       </header>
 
-      <main class="container">
-        <section class="card">
+      <main class="container admin-page-main">
+        <section class="card admin-intro-card">
           <h2 class="section-title">Admin Panel</h2>
           <p id="adminStatus" class="subtle">Checking permissions...</p>
+          <nav class="admin-submenu" aria-label="Admin tools">
+            <div class="admin-submenu-inner">
+              <button type="button" class="admin-submenu-btn" data-admin-nav="rh-wcl">Account Assignment</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="wcl-events">Event Management</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="gargul-import">Loot import (Gargul)</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
+            </div>
+          </nav>
         </section>
 
-        <section class="card">
-          <h3 class="section-title">Raid Helper ↔ Warcraft Logs</h3>
+        <section class="card admin-panel is-admin-panel-active" data-admin-panel="rh-wcl" id="admin-panel-rh-wcl">
+          <h3 class="section-title">Account Assignment</h3>
           <details class="admin-details subtle">
             <summary class="admin-details-summary">How this roster works</summary>
             <p>
@@ -89,8 +99,8 @@
           <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
         </section>
 
-        <section class="card">
-          <h3 class="section-title">Visible Warcraft Log Events</h3>
+        <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
+          <h3 class="section-title">Event Management</h3>
           <p class="subtle">Select which raid events should appear on Loot History for all users.</p>
           <div id="eventSelectionList" class="admin-grid-note">Loading events...</div>
           <div class="admin-actions">
@@ -98,7 +108,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card admin-panel" data-admin-panel="gargul-import" id="admin-panel-gargul-import">
           <h3 class="section-title">Loot Import (Gargul JSON)</h3>
           <p class="subtle">
             Paste exported Gargul loot JSON array, then import into persistent storage (optionally mapped to a selected
@@ -113,7 +123,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card admin-panel" data-admin-panel="loot-corrections" id="admin-panel-loot-corrections">
           <h3 class="section-title">Loot Corrections</h3>
           <p class="subtle">Edit recipient/item/timestamp fields directly, then save all entries.</p>
           <div id="gargulEditor" class="admin-grid-note">Loading entries...</div>
@@ -122,7 +132,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card admin-panel" data-admin-panel="p2-materials" id="admin-panel-p2-materials">
           <h3 class="section-title">P2 Material Quantities</h3>
           <p class="subtle">Adjust current quantities for P2 tracker from one admin view.</p>
           <div id="adminP2Table" class="admin-grid-note">Loading material tracker...</div>
@@ -140,7 +150,7 @@
     </div>
 
     <script src="/home.js?v=20260428d"></script>
-    <script src="/admin.js?v=20260503w"></script>
+    <script src="/admin.js?v=20260504i"></script>
     <script src="/auth-ui.js?v=20260430f"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

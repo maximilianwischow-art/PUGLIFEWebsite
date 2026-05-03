@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { mergeRhWclGuess, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
+import { mergeRhWclGuess, normalizeRhWclGuildRole, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
 
 dotenv.config({ override: true });
 
@@ -914,7 +914,11 @@ function sanitizeRhWclLinksPayload(rawLinks) {
       );
       if (names.length >= 40) break;
     }
-    const out = { raidHelperName, wclCharacterNames: names };
+    const out = {
+      raidHelperName,
+      wclCharacterNames: names,
+      guildRole: normalizeRhWclGuildRole(row?.guildRole),
+    };
     if (wclSources.length) out.wclSources = wclSources;
     if (wclGuessConfidence.some((x) => typeof x === "number")) out.wclGuessConfidence = wclGuessConfidence;
     links.push(out);
@@ -1422,6 +1426,14 @@ app.get("/landing.html", (_req, res) => {
 
 app.get("/events.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "events.html"));
+});
+
+app.get("/roster.html", (_req, res) => {
+  res.sendFile(path.join(publicDir, "roster.html"));
+});
+
+app.get(["/roster", "/roster/"], (_req, res) => {
+  res.redirect(302, "/roster.html");
 });
 
 app.get("/voting.html", (_req, res) => {
@@ -2598,6 +2610,13 @@ function summarizeParsesForLinkedGroup(group, raidRankingPayloads, wclDisplayByL
 function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, wclDisplayByLower, raidRankingPayloads = []) {
   const consideredRaids = raidSnapshots.length;
   const links = Array.isArray(linksState?.links) ? linksState.links : [];
+  /** @type {Map<string, string>} normalized Raid Helper key → guild role */
+  const guildRoleByRhKey = new Map();
+  for (const entry of links) {
+    const k = normalizeRaidHelperDisplayKey(String(entry?.raidHelperName || ""));
+    if (!k) continue;
+    guildRoleByRhKey.set(k, normalizeRhWclGuildRole(entry?.guildRole));
+  }
   /** @type {Map<string, { displayName: string, wclLower: Set<string> }>} */
   const groups = new Map();
 
@@ -2648,6 +2667,7 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
       a.localeCompare(b)
     );
     const parseSummaries = summarizeParsesForLinkedGroup(g, raidRankingPayloads, wclDisplayByLower);
+    const rk = normalizeRaidHelperDisplayKey(g.displayName);
     rows.push({
       name: g.displayName,
       raidHelperName: g.displayName,
@@ -2656,6 +2676,7 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
       attendanceRate: consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0,
       attendanceHistory,
       parseSummaries,
+      guildRole: guildRoleByRhKey.get(rk) ?? "Peon",
     });
   }
 
@@ -5601,6 +5622,107 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
         metricNote:
           "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
       },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/**
+ * Active roster: players with ≥1 attendance hit in the same capped recent 25-player raids as `/attendance`,
+ * enriched with Raider.io / WCL spec art like Events cards. Includes `guildRole` from Account Assignment store.
+ */
+app.get("/api/wcl/guild/:guildId/active-roster", async (req, res) => {
+  const guildId = Number(req.params.guildId);
+  const reportLimit = Math.min(
+    wclMaxGuildReportsLimit(),
+    Math.max(10, Number(req.query.limit || 40))
+  );
+  const top = Math.min(300, Math.max(80, Number(req.query.top || 220)));
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+
+  try {
+    await ensureRhWclLinksStore();
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+      guildId,
+      reportLimit,
+      {
+        attendancePercentMetrics: true,
+      }
+    );
+
+    const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
+      raidSnapshots,
+      rhWclLinksState,
+      top,
+      wclDisplayByLower,
+      raidRankingPayloads
+    );
+
+    const activeRows = linkedPayload.leaderboard.filter((r) => Number(r?.raidsAttended || 0) > 0);
+    const pairs = [];
+    for (const attRow of activeRows) {
+      const name = String(attRow.raidHelperName || attRow.name || "").trim();
+      if (!name) continue;
+      pairs.push({
+        attRow,
+        base: {
+          name,
+          rioLookupCharacterName: "",
+          className: "",
+          specName: "",
+          raidHelperClassName: "",
+          raidHelperSpecName: "",
+          roleName: "Ranged",
+          race: "",
+          gender: "",
+          specIconUrl: "",
+          realm: defaultWowRealmForRoster(),
+        },
+      });
+    }
+
+    const rosterBase = pairs.map((p) => p.base);
+    let enriched = await enrichConfirmedRosterExternalSpecs(rosterBase);
+    enriched = await Promise.all(enriched.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
+    enriched = await enrichConfirmedRosterWithWclSpecIcons(enriched);
+
+    const players = enriched.map((row, i) => {
+      const att = pairs[i].attRow;
+      const stripped = stripInternalRosterFields(row);
+      return {
+        ...stripped,
+        guildRole: normalizeRhWclGuildRole(att.guildRole),
+        raidsAttended: att.raidsAttended,
+        attendanceRate: att.attendanceRate,
+        wclCharacters: att.wclCharacters,
+        parseSummaries: att.parseSummaries,
+        attendanceHistory: att.attendanceHistory,
+      };
+    });
+
+    players.sort((a, b) =>
+      String(a?.characterName || a?.name || "").localeCompare(String(b?.characterName || b?.name || ""))
+    );
+
+    return res.json({
+      guildId,
+      consideredRaids: linkedPayload.consideredRaids,
+      activeCount: players.length,
+      raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
+      attendanceScope: {
+        only25PlayerRaids: true,
+        excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
+        recentRaidCap: wclAttendanceRecentRaidCount(),
+      },
+      parseScope: {
+        sameRaidsAsAttendance: true,
+        metricNote:
+          "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
+      },
+      players,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });

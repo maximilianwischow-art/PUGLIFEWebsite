@@ -1679,7 +1679,16 @@ body::before {
 }
 
 .raider-name-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   line-height: 1.2;
+  min-width: 0;
+}
+
+.raider-name-line .raider-name {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -1692,6 +1701,19 @@ body::before {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.raider-guild-role-chip {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  color: var(--yellow);
+  background: rgba(251, 191, 36, 0.09);
 }
 
 .raider-spec-line {
@@ -2835,8 +2857,19 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 .admin-table {
   width: 100%;
-  min-width: 920px;
+  min-width: 1040px;
   border-collapse: collapse;
+}
+
+.admin-rh-role-cell {
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.admin-rh-role-select {
+  min-width: 9.5rem;
+  font-size: 12px;
+  padding: 6px 8px;
 }
 
 .admin-rh-src-cell {
@@ -3065,6 +3098,61 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 [data-admin-loot-body][hidden] {
   display: none !important;
+}
+
+/* Admin page: one tool visible; section submenu in intro card */
+.admin-page-main .admin-panel {
+  display: none;
+}
+
+.admin-page-main .admin-panel.is-admin-panel-active {
+  display: block;
+}
+
+.admin-intro-card {
+  margin-bottom: 1rem;
+}
+
+.admin-intro-card .admin-submenu {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.admin-submenu-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-submenu-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(13, 10, 20, 0.55);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.admin-submenu-btn:hover {
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.admin-submenu-btn.is-admin-submenu-active {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--yellow);
+}
+
+.admin-submenu-btn:focus-visible {
+  outline: 2px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 @media (max-width: 1120px) {
