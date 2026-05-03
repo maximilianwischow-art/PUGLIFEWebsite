@@ -1813,6 +1813,92 @@ body::before {
     0 0 40px 10px rgba(251, 146, 60, 0.2);
 }
 
+/* WCL average parse — same ring layout; glow/text hues follow approximate log percentile colours (gray→pink). */
+.raider-badge-parse {
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(14, 14, 18, 0.72) 0%,
+    rgba(8, 10, 14, 0.4) 55%,
+    transparent 72%
+  );
+}
+
+.raider-badge-parse--glow-0 {
+  box-shadow:
+    0 0 10px 2px rgba(158, 158, 158, 0.55),
+    0 0 22px 4px rgba(110, 110, 118, 0.35);
+}
+.raider-badge-parse--glow-1 {
+  box-shadow:
+    0 0 10px 2px rgba(56, 210, 72, 0.62),
+    0 0 24px 5px rgba(34, 160, 52, 0.32);
+}
+.raider-badge-parse--glow-2 {
+  box-shadow:
+    0 0 10px 2px rgba(0, 140, 230, 0.68),
+    0 0 26px 5px rgba(0, 90, 190, 0.34);
+}
+.raider-badge-parse--glow-3 {
+  box-shadow:
+    0 0 12px 3px rgba(170, 85, 235, 0.62),
+    0 0 28px 6px rgba(130, 55, 210, 0.34);
+}
+.raider-badge-parse--glow-4 {
+  box-shadow:
+    0 0 12px 3px rgba(255, 138, 0, 0.72),
+    0 0 30px 7px rgba(220, 95, 0, 0.38);
+}
+.raider-badge-parse--glow-5 {
+  box-shadow:
+    0 0 14px 4px rgba(255, 105, 180, 0.62),
+    0 0 32px 8px rgba(255, 215, 80, 0.42),
+    0 0 42px 10px rgba(230, 75, 165, 0.22);
+}
+
+.raider-badge-parse-pct--glow-0 {
+  color: #c4c4c8;
+  text-shadow:
+    0 0 4px rgba(30, 30, 36, 0.98),
+    0 0 10px rgba(150, 150, 158, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.95);
+}
+.raider-badge-parse-pct--glow-1 {
+  color: #5cff6a;
+  text-shadow:
+    0 0 4px rgba(0, 40, 12, 0.98),
+    0 0 10px rgba(52, 211, 95, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.95);
+}
+.raider-badge-parse-pct--glow-2 {
+  color: #5cb8ff;
+  text-shadow:
+    0 0 4px rgba(0, 22, 56, 0.98),
+    0 0 10px rgba(59, 140, 255, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.95);
+}
+.raider-badge-parse-pct--glow-3 {
+  color: #d890ff;
+  text-shadow:
+    0 0 4px rgba(36, 0, 48, 0.98),
+    0 0 10px rgba(168, 95, 242, 0.52),
+    0 1px 2px rgba(0, 0, 0, 0.95);
+}
+.raider-badge-parse-pct--glow-4 {
+  color: #ffb04a;
+  text-shadow:
+    0 0 4px rgba(48, 18, 0, 0.98),
+    0 0 10px rgba(255, 145, 40, 0.58),
+    0 1px 2px rgba(0, 0, 0, 0.95);
+}
+.raider-badge-parse-pct--glow-5 {
+  color: #ffa8dc;
+  text-shadow:
+    0 0 4px rgba(48, 0, 36, 0.98),
+    0 0 12px rgba(255, 120, 200, 0.55),
+    0 0 14px rgba(255, 220, 120, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.95);
+}
+
 .roster-role-group {
   margin-top: 6px;
   padding-top: 6px;

@@ -938,6 +938,7 @@ function chunkPositiveInts(ids, chunkSize) {
  *   raidSnapshots: Array<{ reportCode: string, startTime: number, attendeesLower: Set<string> }>,
  *   wclDisplayByLower: Map<string, string>,
  *   recentWclReports: Array<{ reportCode: string, startTime: number }>,
+ *   raidRankingPayloads: Array<{ mergedDps: object, mergedHps: object }>,
  * }}
  */
 async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {}) {
@@ -976,12 +977,14 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
 
   const raidSnapshots = [];
   const wclDisplayByLower = new Map();
+  const raidRankingPayloads = [];
 
   const attendanceQuery = `
     query RaidAttendance($code: String!, $fightIds: [Int!]) {
       reportData {
         report(code: $code) {
-          rankings: rankings(fightIDs: $fightIds, playerMetric: dps)
+          dpsRankings: rankings(fightIDs: $fightIds, playerMetric: dps)
+          hpsRankings: rankings(fightIDs: $fightIds, playerMetric: hps)
         }
       }
     }
@@ -989,9 +992,17 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
 
   for (const { report, fightIds } of cappedForAttendance) {
     const attendeeNamesLower = new Set();
+    const dpsParts = [];
+    const hpsParts = [];
     for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
       const data = await queryWcl(attendanceQuery, { code: report.code, fightIds: chunk });
-      const chunkNames = attendeeNamesFromRankings(data?.reportData?.report?.rankings);
+      const reportFrag = data?.reportData?.report || {};
+      dpsParts.push(reportFrag.dpsRankings);
+      hpsParts.push(reportFrag.hpsRankings);
+      const chunkNames = new Set([
+        ...attendeeNamesFromRankings(reportFrag.dpsRankings),
+        ...attendeeNamesFromRankings(reportFrag.hpsRankings),
+      ]);
       for (const rawName of chunkNames) {
         const trimmed = String(rawName || "").trim();
         if (!trimmed) continue;
@@ -1007,6 +1018,14 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
       startTime: Number(report.startTime || 0),
       attendeesLower: attendeeNamesLower,
     });
+    if (forAttendancePercent) {
+      raidRankingPayloads.push({
+        reportCode: String(report.code || ""),
+        startTime: Number(report.startTime || 0),
+        mergedDps: mergeWclRankingsPayloads(dpsParts),
+        mergedHps: mergeWclRankingsPayloads(hpsParts),
+      });
+    }
   }
 
   const recentWclReports = raidSnapshots.map((raid) => ({
@@ -1014,7 +1033,7 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
     startTime: Number(raid.startTime || 0),
   }));
 
-  return { raidSnapshots, wclDisplayByLower, recentWclReports };
+  return { raidSnapshots, wclDisplayByLower, recentWclReports, raidRankingPayloads };
 }
 
 /** Sum vortex units from craft rows (each item defaults to at least 1). */
@@ -2171,6 +2190,42 @@ function parseMaybeJson(value) {
   }
 }
 
+/** WCL rankings JSON often exposes parse as `percentile` or `rank.percentile`, not `rankPercent`. */
+function wclRankingEntryPercentile(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const a = Number(entry.rankPercent);
+  if (Number.isFinite(a)) return a;
+  const b = Number(entry.percentile);
+  if (Number.isFinite(b)) return b;
+  const rk = entry.rank;
+  if (rk && typeof rk === "object") {
+    const c = Number(rk.percentile ?? rk.rankPercent);
+    if (Number.isFinite(c)) return c;
+  }
+  return null;
+}
+
+function wclRankingCharacterDisplayName(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const n = String(entry.name || "").trim();
+  if (n) return n;
+  const ch = entry.character;
+  if (ch && typeof ch === "object") return String(ch.name || "").trim();
+  return "";
+}
+
+function fightCharactersForRole(fight, roleKeyPlural) {
+  const roles = fight?.roles;
+  if (!roles || typeof roles !== "object") return [];
+  let bucket = roles[roleKeyPlural];
+  if (!bucket?.characters) {
+    if (roleKeyPlural === "tanks") bucket = roles.tank;
+    else if (roleKeyPlural === "healers") bucket = roles.healer;
+  }
+  const chars = bucket?.characters;
+  return Array.isArray(chars) ? chars : [];
+}
+
 function collectRankPercents(node, targetName, bucket) {
   if (!node) return;
   if (Array.isArray(node)) {
@@ -2179,12 +2234,11 @@ function collectRankPercents(node, targetName, bucket) {
   }
   if (typeof node !== "object") return;
 
-  if (
-    typeof node.name === "string" &&
-    node.name.toLowerCase() === String(targetName || "").toLowerCase() &&
-    typeof node.rankPercent === "number"
-  ) {
-    bucket.push(node.rankPercent);
+  const tl = String(targetName || "").toLowerCase();
+  const nm = wclRankingCharacterDisplayName(node).toLowerCase();
+  if (nm && nm === tl) {
+    const pct = wclRankingEntryPercentile(node);
+    if (pct != null) bucket.push(pct);
   }
 
   for (const value of Object.values(node)) {
@@ -2203,20 +2257,39 @@ function averageRankPercent(rankingsPayload, playerName) {
   return values.reduce((sum, val) => sum + val, 0) / values.length;
 }
 
+/** Best fight for `playerName` by scanning each fight subtree (when role-based {@link bestRoleParse} misses). */
+function bestFightParseDeepInPayload(rankingsPayload, playerName) {
+  const parsed = parseMaybeJson(rankingsPayload);
+  const fights = Array.isArray(parsed?.data) ? parsed.data : [];
+  if (!playerName || !fights.length) return null;
+  let best = null;
+  for (const fight of fights) {
+    const bucket = [];
+    collectRankPercents(fight, playerName, bucket);
+    if (!bucket.length) continue;
+    const mx = Math.max(...bucket);
+    if (!best || mx > best.rankPercent) {
+      best = {
+        rankPercent: mx,
+        bossName: fight?.encounter?.name || fight?.name || "Unknown boss",
+        fightId: fight?.fightID ?? fight?.id ?? null,
+      };
+    }
+  }
+  return best;
+}
+
 function averageRoleRankPercent(rankingsPayload, roleKey, playerName) {
   const parsed = parseMaybeJson(rankingsPayload);
   if (!parsed || !playerName) return null;
   const fights = Array.isArray(parsed?.data) ? parsed.data : [];
   const values = [];
+  const pl = String(playerName).toLowerCase();
   for (const fight of fights) {
-    const characters = fight?.roles?.[roleKey]?.characters;
-    if (!Array.isArray(characters)) continue;
-    const match = characters.find(
-      (entry) => String(entry?.name || "").toLowerCase() === String(playerName).toLowerCase()
-    );
-    if (typeof match?.rankPercent === "number") {
-      values.push(match.rankPercent);
-    }
+    const characters = fightCharactersForRole(fight, roleKey);
+    const match = characters.find((entry) => wclRankingCharacterDisplayName(entry).toLowerCase() === pl);
+    const pct = match ? wclRankingEntryPercentile(match) : null;
+    if (pct != null) values.push(pct);
   }
   if (!values.length) return null;
   return values.reduce((sum, val) => sum + val, 0) / values.length;
@@ -2226,21 +2299,20 @@ function bestRoleParse(rankingsPayload, roleKey, playerName) {
   const parsed = parseMaybeJson(rankingsPayload);
   if (!parsed || !playerName) return null;
   const fights = Array.isArray(parsed?.data) ? parsed.data : [];
+  const pl = String(playerName).toLowerCase();
 
   let best = null;
   for (const fight of fights) {
-    const characters = fight?.roles?.[roleKey]?.characters;
-    if (!Array.isArray(characters)) continue;
-    const match = characters.find(
-      (entry) => String(entry?.name || "").toLowerCase() === String(playerName).toLowerCase()
-    );
-    if (typeof match?.rankPercent !== "number") continue;
+    const characters = fightCharactersForRole(fight, roleKey);
+    const match = characters.find((entry) => wclRankingCharacterDisplayName(entry).toLowerCase() === pl);
+    const pct = match ? wclRankingEntryPercentile(match) : null;
+    if (pct == null) continue;
 
-    if (!best || match.rankPercent > best.rankPercent) {
+    if (!best || pct > best.rankPercent) {
       best = {
-        rankPercent: match.rankPercent,
+        rankPercent: pct,
         bossName: fight?.encounter?.name || fight?.name || "Unknown boss",
-        fightId: fight?.fightID || null,
+        fightId: fight?.fightID ?? fight?.id ?? null,
       };
     }
   }
@@ -2252,12 +2324,10 @@ function attendeeNamesFromRankings(rankingsPayload) {
   const fights = Array.isArray(parsed?.data) ? parsed.data : [];
   const names = new Set();
   for (const fight of fights) {
-    const roles = fight?.roles || {};
     for (const roleKey of ["tanks", "healers", "dps"]) {
-      const chars = roles?.[roleKey]?.characters;
-      if (!Array.isArray(chars)) continue;
+      const chars = fightCharactersForRole(fight, roleKey);
       for (const char of chars) {
-        const name = String(char?.name || "").trim();
+        const name = wclRankingCharacterDisplayName(char);
         if (name) names.add(name);
       }
     }
@@ -2277,12 +2347,255 @@ function normalizeRaidHelperDisplayKey(name) {
     .toLowerCase();
 }
 
+function debugRankingsCharacterMatches(displayNameRaw, searchRaw) {
+  const dn = String(displayNameRaw || "").trim().toLowerCase();
+  const sn = String(searchRaw || "").trim().toLowerCase();
+  if (dn && sn && dn === sn) return true;
+  const kd = normalizeRaidHelperDisplayKey(displayNameRaw);
+  const ks = normalizeRaidHelperDisplayKey(searchRaw);
+  return Boolean(kd && ks && kd === ks);
+}
+
+/** Dev probe: pull merged rankings payload apart for one character name (strict + Raid-Helper-style key match). */
+function debugRankingsProbe(mergedPayload, searchName) {
+  const parsed = parseMaybeJson(mergedPayload);
+  const fights = Array.isArray(parsed?.data) ? parsed.data : [];
+  const samplesFirstFight = [];
+  const hitsStrict = [];
+  const hitsNormalized = [];
+
+  if (fights[0]?.roles && typeof fights[0].roles === "object") {
+    for (const roleKey of Object.keys(fights[0].roles)) {
+      const chars = fights[0].roles[roleKey]?.characters;
+      if (!Array.isArray(chars)) continue;
+      for (let i = 0; i < Math.min(chars.length, 8); i++) {
+        const entry = chars[i];
+        samplesFirstFight.push({
+          roleKey,
+          displayName: wclRankingCharacterDisplayName(entry),
+          percentileResolved: wclRankingEntryPercentile(entry),
+          rankPercentRaw: entry?.rankPercent,
+          percentileRaw: entry?.percentile,
+          rankObjectKeys:
+            entry?.rank && typeof entry.rank === "object" ? Object.keys(entry.rank).slice(0, 12) : [],
+          entryKeys: entry && typeof entry === "object" ? Object.keys(entry).slice(0, 18) : [],
+        });
+      }
+    }
+  }
+
+  for (let fi = 0; fi < fights.length; fi++) {
+    const fight = fights[fi];
+    const encounterName = fight?.encounter?.name || fight?.name || "";
+    const roles = fight?.roles || {};
+    for (const roleKey of Object.keys(roles)) {
+      const chars = roles[roleKey]?.characters;
+      if (!Array.isArray(chars)) continue;
+      for (const entry of chars) {
+        const disp = wclRankingCharacterDisplayName(entry);
+        const pct = wclRankingEntryPercentile(entry);
+        const payload = {
+          fightIndex: fi,
+          encounterName,
+          roleKey,
+          displayName: disp,
+          percentileResolved: pct,
+        };
+        if (disp && disp.toLowerCase() === String(searchName || "").trim().toLowerCase()) {
+          hitsStrict.push(payload);
+        } else if (disp && debugRankingsCharacterMatches(disp, searchName)) {
+          hitsNormalized.push(payload);
+        }
+      }
+    }
+  }
+
+  return {
+    fightCount: fights.length,
+    samplesFirstFight,
+    hitsStrictNameMatch: hitsStrict,
+    hitsNormalizedKeyMatch: hitsNormalized,
+    averageRoleTank: averageRoleRankPercent(mergedPayload, "tanks", searchName),
+    averageRoleHealer: averageRoleRankPercent(mergedPayload, "healers", searchName),
+    averageRoleDps: averageRoleRankPercent(mergedPayload, "dps", searchName),
+    treeAveragePercentile: averageRankPercent(mergedPayload, searchName),
+  };
+}
+
+/**
+ * One raid log: best single-encounter percentile for role bracket among linked names.
+ * Uses {@link bestRoleParse} per boss (true max encounter), then per-name fight-tree fallback — not an average.
+ */
+function bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, bracketKey, names) {
+  let best = null;
+  for (const name of names) {
+    let cand = null;
+    if (bracketKey === "heal") {
+      const b = bestRoleParse(mergedHps, "healers", name);
+      if (b?.rankPercent != null && Number.isFinite(b.rankPercent)) {
+        cand = {
+          percentile: b.rankPercent,
+          encounterName: b.bossName,
+          fightId: b.fightId,
+          wclCharacterName: name,
+          metric: "hps",
+        };
+      } else {
+        const deep = bestFightParseDeepInPayload(mergedHps, name);
+        if (deep?.rankPercent != null && Number.isFinite(deep.rankPercent)) {
+          cand = {
+            percentile: deep.rankPercent,
+            encounterName: deep.bossName,
+            fightId: deep.fightId,
+            wclCharacterName: name,
+            metric: "hps",
+          };
+        }
+      }
+    } else if (bracketKey === "tank") {
+      const b = bestRoleParse(mergedDps, "tanks", name);
+      if (b?.rankPercent != null && Number.isFinite(b.rankPercent)) {
+        cand = {
+          percentile: b.rankPercent,
+          encounterName: b.bossName,
+          fightId: b.fightId,
+          wclCharacterName: name,
+          metric: "dps",
+        };
+      } else {
+        const deep = bestFightParseDeepInPayload(mergedDps, name);
+        if (deep?.rankPercent != null && Number.isFinite(deep.rankPercent)) {
+          cand = {
+            percentile: deep.rankPercent,
+            encounterName: deep.bossName,
+            fightId: deep.fightId,
+            wclCharacterName: name,
+            metric: "dps",
+          };
+        }
+      }
+    } else {
+      const b = bestRoleParse(mergedDps, "dps", name);
+      if (b?.rankPercent != null && Number.isFinite(b.rankPercent)) {
+        cand = {
+          percentile: b.rankPercent,
+          encounterName: b.bossName,
+          fightId: b.fightId,
+          wclCharacterName: name,
+          metric: "dps",
+        };
+      } else {
+        const deep = bestFightParseDeepInPayload(mergedDps, name);
+        if (deep?.rankPercent != null && Number.isFinite(deep.rankPercent)) {
+          cand = {
+            percentile: deep.rankPercent,
+            encounterName: deep.bossName,
+            fightId: deep.fightId,
+            wclCharacterName: name,
+            metric: "dps",
+          };
+        }
+      }
+    }
+    if (cand && (!best || cand.percentile > best.percentile)) best = cand;
+  }
+  return best;
+}
+
+function pickGlobalBestParseRun(runs) {
+  let best = null;
+  for (const run of runs) {
+    if (!run || run.percentile == null || !Number.isFinite(run.percentile)) continue;
+    if (!best || run.percentile > best.percentile) best = run;
+  }
+  if (!best) {
+    return { value: null, source: null };
+  }
+  const {
+    percentile,
+    encounterName,
+    fightId,
+    reportCode,
+    reportStartTime,
+    wclCharacterName,
+    metric,
+  } = best;
+  return {
+    value: percentile,
+    source: {
+      encounterName: String(encounterName || "").trim() || "Unknown boss",
+      fightId: fightId != null ? fightId : null,
+      reportCode: String(reportCode || "").trim(),
+      reportStartTime: Number(reportStartTime || 0),
+      wclCharacterName: String(wclCharacterName || "").trim(),
+      metric: String(metric || "").trim(),
+    },
+  };
+}
+
+/** Best encounter percentile per bracket across recent raids (max boss parse then max across logs). */
+function summarizeParsesForLinkedGroup(group, raidRankingPayloads, wclDisplayByLower) {
+  const empty = {
+    bestTank: null,
+    bestDps: null,
+    bestHeal: null,
+    bestTankSource: null,
+    bestDpsSource: null,
+    bestHealSource: null,
+    raidsTank: 0,
+    raidsDps: 0,
+    raidsHeal: 0,
+  };
+  if (!Array.isArray(raidRankingPayloads) || raidRankingPayloads.length === 0) return empty;
+
+  const names = [...group.wclLower]
+    .sort()
+    .map((low) => String(wclDisplayByLower.get(low) || low || "").trim())
+    .filter(Boolean);
+
+  const tankRuns = [];
+  const dpsRuns = [];
+  const healRuns = [];
+
+  for (const entry of raidRankingPayloads) {
+    const reportCode = String(entry?.reportCode || "");
+    const reportStartTime = Number(entry?.startTime || 0);
+    const mergedDps = entry?.mergedDps;
+    const mergedHps = entry?.mergedHps;
+
+    const td = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "tank", names);
+    if (td) tankRuns.push({ ...td, reportCode, reportStartTime });
+
+    const dd = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "dps", names);
+    if (dd) dpsRuns.push({ ...dd, reportCode, reportStartTime });
+
+    const hd = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "heal", names);
+    if (hd) healRuns.push({ ...hd, reportCode, reportStartTime });
+  }
+
+  const tankPick = pickGlobalBestParseRun(tankRuns);
+  const dpsPick = pickGlobalBestParseRun(dpsRuns);
+  const healPick = pickGlobalBestParseRun(healRuns);
+
+  return {
+    bestTank: tankPick.value,
+    bestDps: dpsPick.value,
+    bestHeal: healPick.value,
+    bestTankSource: tankPick.source,
+    bestDpsSource: dpsPick.source,
+    bestHealSource: healPick.source,
+    raidsTank: tankRuns.length,
+    raidsDps: dpsRuns.length,
+    raidsHeal: healRuns.length,
+  };
+}
+
 /**
  * Aggregate per-raid attendance across all WCL characters linked to one Raid Helper identity.
  * Reads saved roster rows from {@link rhWclLinksState} / `rh-wcl-character-links.json`.
  * Leaderboard rows use `raidHelperName` for UI; `wclCharacters` lists merged log names.
  */
-function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, wclDisplayByLower) {
+function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, wclDisplayByLower, raidRankingPayloads = []) {
   const consideredRaids = raidSnapshots.length;
   const links = Array.isArray(linksState?.links) ? linksState.links : [];
   /** @type {Map<string, { displayName: string, wclLower: Set<string> }>} */
@@ -2334,6 +2647,7 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
     const wclCharacters = [...g.wclLower].map((low) => wclDisplayByLower.get(low) || low).sort((a, b) =>
       a.localeCompare(b)
     );
+    const parseSummaries = summarizeParsesForLinkedGroup(g, raidRankingPayloads, wclDisplayByLower);
     rows.push({
       name: g.displayName,
       raidHelperName: g.displayName,
@@ -2341,6 +2655,7 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
       raidsAttended,
       attendanceRate: consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0,
       attendanceHistory,
+      parseSummaries,
     });
   }
 
@@ -2582,6 +2897,11 @@ function wclAttendanceRecentRaidCount() {
   const raw = process.env.WCL_ATTENDANCE_RECENT_RAIDS;
   const n = raw !== undefined && String(raw).trim() !== "" ? Number(raw) : 6;
   return Number.isFinite(n) ? Math.min(40, Math.max(1, Math.floor(n))) : 6;
+}
+
+/** When `1`, exposes `/api/wcl/guild/:guildId/debug-character-rankings` for probing rankings JSON by character name. */
+function wclDebugRankingsRoutesEnabled() {
+  return String(process.env.WCL_DEBUG_RANKINGS || "").trim() === "1";
 }
 
 /** Guild report list size for heavy `reports { data { fights { ... }}}` queries — large pulls exceed WCL max complexity (~50k). */
@@ -5248,15 +5568,20 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
 
   try {
     await ensureRhWclLinksStore();
-    const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
-      attendancePercentMetrics: true,
-    });
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+      guildId,
+      reportLimit,
+      {
+        attendancePercentMetrics: true,
+      }
+    );
 
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
       rhWclLinksState,
       top,
-      wclDisplayByLower
+      wclDisplayByLower,
+      raidRankingPayloads
     );
 
     return res.json({
@@ -5271,6 +5596,141 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
         excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
         recentRaidCap: wclAttendanceRecentRaidCount(),
       },
+      parseScope: {
+        sameRaidsAsAttendance: true,
+        metricNote:
+          "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/**
+ * Debug: fetch rankings for latest (or chosen) guild report and show whether WCL returns parse data for `name`.
+ * Enable with WCL_DEBUG_RANKINGS=1. Example: `/api/wcl/guild/817080/debug-character-rankings?name=Mooman`
+ */
+app.get("/api/wcl/guild/:guildId/debug-character-rankings", async (req, res) => {
+  if (!wclDebugRankingsRoutesEnabled()) {
+    return res.status(404).json({
+      error: "Route disabled. Set WCL_DEBUG_RANKINGS=1 in .env and restart the server.",
+    });
+  }
+
+  const guildId = Number(req.params.guildId);
+  const characterName = String(req.query.name || "").trim();
+  const explicitCode = String(req.query.reportCode || "").trim();
+  const limit = Math.min(wclMaxGuildReportsLimit(), Math.max(10, Number(req.query.limit || 30)));
+
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+  if (!characterName) {
+    return res.status(400).json({ error: "Missing query param: name (exact Warcraft Logs character name as in rankings)" });
+  }
+
+  const parseQuery = `
+    query DebugRaidRankings($code: String!, $fightIds: [Int!]) {
+      reportData {
+        report(code: $code) {
+          dpsRankings: rankings(fightIDs: $fightIds, playerMetric: dps)
+          hpsRankings: rankings(fightIDs: $fightIds, playerMetric: hps)
+        }
+      }
+    }
+  `;
+
+  try {
+    const reports = await getFilteredGuildReportsForGuild(guildId, limit);
+    let report = null;
+    if (explicitCode) {
+      const low = explicitCode.toLowerCase();
+      report = reports.find((r) => String(r.code || "").toLowerCase() === low) || null;
+    } else {
+      report =
+        reports.find((r) =>
+          (r.fights || []).some((fight) => {
+            const zoneName = fight?.gameZone?.name || "";
+            return (
+              Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
+              Number(fight?.encounterID || 0) > 0
+            );
+          })
+        ) || null;
+    }
+
+    if (!report?.code) {
+      return res.json({
+        ok: false,
+        guildId,
+        characterName,
+        message: explicitCode
+          ? `No report with code ${explicitCode} in filtered guild list (raise limit=).`
+          : "No tracked-zone raid report with boss fights found.",
+      });
+    }
+
+    const bossFightIds = (report.fights || [])
+      .filter((fight) => {
+        const zoneName = fight?.gameZone?.name || "";
+        return (
+          Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
+          Number(fight?.encounterID || 0) > 0
+        );
+      })
+      .map((fight) => Number(fight.id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+
+    if (!bossFightIds.length) {
+      return res.json({
+        ok: false,
+        guildId,
+        characterName,
+        reportCode: report.code,
+        message: "Report has no boss fights in tracked zones.",
+      });
+    }
+
+    const dpsParts = [];
+    const hpsParts = [];
+    for (const chunk of chunkPositiveInts(bossFightIds, wclMaxFightIdsPerQuery())) {
+      const parseData = await queryWcl(parseQuery, { code: report.code, fightIds: chunk });
+      const frag = parseData?.reportData?.report || {};
+      dpsParts.push(frag.dpsRankings);
+      hpsParts.push(frag.hpsRankings);
+    }
+
+    const mergedDps = mergeWclRankingsPayloads(dpsParts);
+    const mergedHps = mergeWclRankingsPayloads(hpsParts);
+
+    const dpsProbe = debugRankingsProbe(mergedDps, characterName);
+    const hpsProbe = debugRankingsProbe(mergedHps, characterName);
+
+    const rankedHint = Array.isArray(report.rankedCharacters)
+      ? report.rankedCharacters
+          .map((c) => String(c?.name || "").trim())
+          .filter(Boolean)
+          .slice(0, 40)
+      : [];
+
+    return res.json({
+      ok: true,
+      guildId,
+      characterName,
+      reportCode: report.code,
+      reportTitle: report.title || "",
+      rankedCharactersSample: rankedHint,
+      bossFightCount: bossFightIds.length,
+      interpretation: {
+        anyStrictHits: dpsProbe.hitsStrictNameMatch.length > 0 || hpsProbe.hitsStrictNameMatch.length > 0,
+        anyNormalizedHits:
+          dpsProbe.hitsNormalizedKeyMatch.length > 0 || hpsProbe.hitsNormalizedKeyMatch.length > 0,
+        useDPSMetricForTankAndDps: true,
+        useHPSMetricForHealers: true,
+      },
+      dpsMetric: dpsProbe,
+      hpsMetric: hpsProbe,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });

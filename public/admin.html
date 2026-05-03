@@ -41,8 +41,10 @@
             <summary class="admin-details-summary">How this roster works</summary>
             <p>
               Primary character database on disk: <code>rh-wcl-character-links.json</code> — same data as
-              <code>GET /api/wcl/guild/:guildId/characters</code>. Attendance uses log names; Events uses Raid Helper signups.
-              For Raider.io class/spec on the Events roster, the server uses the <strong>first Warcraft Logs name</strong> listed for that Raid Helper row when present (mapped “main” armory name).
+              <code>GET /api/wcl/guild/:guildId/characters</code>.
+              <strong>Attendance %</strong> uses the latest <code>WCL_ATTENDANCE_RECENT_RAIDS</code> logs (default 6), <strong>25-player raids only</strong> (Karazhan and Zul'Aman excluded); Events roster badges read that same leaderboard. Heuristic merge still scans broader logs via <code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>.
+              For Raider.io class/spec on the Events roster, the server tries character names in order: <strong>first Warcraft Logs name</strong> (mapped main), then Raid Helper’s parsed character field, then the signup display name (realm stripped). The first name that returns a profile wins; <code>rioProfileLookupName</code> on the API reflects that hit.
+              With Battle.net credentials set, it also reads <strong>Battle.net character profile</strong> for English class (and sometimes active spec) when Raid Helper’s class column is wrong or Raider.io misses.
               <strong>Column 1 is only Raid Helper signup names</strong> (not log names). Column 2 = Warcraft Logs names (main + alts), comma-separated, or use <strong>Add alt</strong> under that row to append one log name and save when the Raid Helper name is filled. If the log name matches the signup, column 2 can stay empty.
             </p>
             <p>

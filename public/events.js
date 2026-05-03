@@ -15,7 +15,7 @@ function initBackgroundStars() {
 
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260504b";
+const IMAGE_ASSET_VERSION = "20260504e";
 /** Same guild as dashboard WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Generic dashed slots (beyond attendance). CSS footprint ≈ 44×44 px — icons square 1:1. */
@@ -717,6 +717,100 @@ function attendancePercentGlowTier(rate) {
   return Math.min(5, Math.floor((x / 100) * 6 - 1e-9));
 }
 
+/** WCL-style percentile colour bands (approximate item-quality breakpoints). */
+function wclParseGlowTier(parse) {
+  const x = Math.max(0, Math.min(100, Number(parse || 0)));
+  if (x >= 99) return 5;
+  if (x >= 95) return 4;
+  if (x >= 75) return 3;
+  if (x >= 50) return 2;
+  if (x >= 25) return 1;
+  return 0;
+}
+
+function rosterParseBracketForRole(roleNameRaw) {
+  const r = rosterBucketRoleName(roleNameRaw);
+  if (r === "Healers") return "heal";
+  if (r === "Tanks") return "tank";
+  return "dps";
+}
+
+function rosterParseBracketTooltipLabel(bracket) {
+  if (bracket === "heal") return "healing (HPS)";
+  if (bracket === "tank") return "tank (DPS metric)";
+  return "DPS";
+}
+
+function rosterParseSourceForBracket(ps, bracket, usedFallback) {
+  if (!ps || typeof ps !== "object") return null;
+  if (bracket === "heal") return usedFallback ? ps.bestDpsSource || null : ps.bestHealSource || null;
+  if (bracket === "tank") return usedFallback ? ps.bestDpsSource || null : ps.bestTankSource || null;
+  return ps.bestDpsSource || null;
+}
+
+/** Hover line: boss + WCL report + fight + log character (from server best*Source). */
+function rosterParseSourceTooltipFragment(src) {
+  if (!src || typeof src !== "object") return "";
+  const boss = String(src.encounterName || "").trim() || "Boss";
+  const code = String(src.reportCode || "").trim();
+  const fid = src.fightId != null && src.fightId !== "" ? String(src.fightId) : "";
+  const who = String(src.wclCharacterName || "").trim();
+  const metric = String(src.metric || "").trim().toUpperCase();
+  const parts = [boss];
+  if (code) parts.push(`report ${code}`);
+  if (fid) parts.push(`fight #${fid}`);
+  if (who) parts.push(`log name ${who}`);
+  if (metric) parts.push(metric);
+  let frag = ` · Source: ${parts.join(" · ")}`;
+  if (code && fid) {
+    frag += ` · https://www.warcraftlogs.com/reports/${encodeURIComponent(code)}#fight=${encodeURIComponent(fid)}`;
+  } else if (code) {
+    frag += ` · https://www.warcraftlogs.com/reports/${encodeURIComponent(code)}`;
+  }
+  return frag;
+}
+
+function rosterParseForDisplay(player, row) {
+  const ps = row?.parseSummaries;
+  const bracket = rosterParseBracketForRole(player?.roleName);
+  if (!ps || typeof ps !== "object") {
+    return { value: null, bracket, usedFallback: false, raidsWithBracket: 0, parseSource: null };
+  }
+
+  let value = null;
+  let usedFallback = false;
+  let raidsWithBracket = 0;
+
+  const bt = ps.bestTank ?? ps.avgTank;
+  const bd = ps.bestDps ?? ps.avgDps;
+  const bh = ps.bestHeal ?? ps.avgHeal;
+
+  if (bracket === "heal") {
+    raidsWithBracket = Number(ps.raidsHeal || 0);
+    value = bh != null ? bh : bd;
+    usedFallback = bh == null && bd != null;
+    if (usedFallback) raidsWithBracket = Number(ps.raidsDps || 0);
+  } else if (bracket === "tank") {
+    raidsWithBracket = Number(ps.raidsTank || 0);
+    value = bt != null ? bt : bd;
+    usedFallback = bt == null && bd != null;
+    if (usedFallback) raidsWithBracket = Number(ps.raidsDps || 0);
+  } else {
+    value = bd;
+    raidsWithBracket = Number(ps.raidsDps || 0);
+  }
+
+  const parseSource = rosterParseSourceForBracket(ps, bracket, usedFallback);
+
+  return {
+    value: typeof value === "number" && Number.isFinite(value) ? value : null,
+    bracket,
+    usedFallback,
+    raidsWithBracket,
+    parseSource,
+  };
+}
+
 function rosterRelativeAttendanceHint(player, confirmedRoster) {
   const roster = Array.isArray(confirmedRoster) ? confirmedRoster : [];
   const keyed = [];
@@ -779,6 +873,34 @@ function rosterAttendanceBadgeHtml(player, confirmedRoster) {
   return `
     <div class="raider-badge-tier raider-badge-tier--glow-${glowTier}" title="${escapeHtml(title)}">
       <span class="raider-badge-tier-pct">${pctRounded}%</span>
+    </div>
+  `;
+}
+
+function rosterParseBadgeHtml(player) {
+  const row = attendanceRowForRosterPlayerResolved(player);
+  const { value, bracket, usedFallback, raidsWithBracket, parseSource } = rosterParseForDisplay(player, row);
+  const pctRounded = value != null ? Math.round(Number(value)) : null;
+  const mergedLogs =
+    Array.isArray(row?.wclCharacters) && row.wclCharacters.length > 1
+      ? ` · merged logs: ${row.wclCharacters.join(", ")}`
+      : "";
+  const bracketLabel = rosterParseBracketTooltipLabel(bracket);
+  const sourceFrag = rosterParseSourceTooltipFragment(parseSource);
+  const titleCore = row
+    ? value != null
+      ? `Best ${pctRounded}% (${bracketLabel}) — single boss parse, max across last ${attendanceConsideredRaids || "?"} tracked 25-player raids · logs with rank data ${raidsWithBracket}/${attendanceConsideredRaids || "?"}${mergedLogs}${sourceFrag}`
+      : `No WCL parse for ${bracketLabel} bracket in recent raids${mergedLogs}`
+    : "No WCL attendance row — parse unavailable";
+  const fb = usedFallback ? " · used DPS bracket (heal/tank role had no HPS/tank row)" : "";
+  const parseTitle = `Parse — ${titleCore}${fb}`;
+  if (!row || attendanceConsideredRaids <= 0 || pctRounded == null) {
+    return `<div class="raider-badge-slot raider-badge-slot--pending" title="${escapeHtml(parseTitle)}"></div>`;
+  }
+  const glowTier = wclParseGlowTier(value);
+  return `
+    <div class="raider-badge-tier raider-badge-parse raider-badge-parse--glow-${glowTier}" title="${escapeHtml(parseTitle)}">
+      <span class="raider-badge-tier-pct raider-badge-parse-pct raider-badge-parse-pct--glow-${glowTier}">${pctRounded}%</span>
     </div>
   `;
 }
@@ -882,8 +1004,9 @@ function rosterRaiderCard(player, confirmedRoster) {
           }
         </div>
       </div>
-      <div class="raider-badges" role="group" aria-label="Achievements and attendance">
+      <div class="raider-badges" role="group" aria-label="Attendance, parse, and achievements">
         ${rosterAttendanceBadgeHtml(player, confirmedRoster)}
+        ${rosterParseBadgeHtml(player)}
         ${rosterGenericAchievementSlotsHtml()}
       </div>
     </div>

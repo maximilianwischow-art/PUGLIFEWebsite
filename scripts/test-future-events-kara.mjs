@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
  * Calls GET /api/raid-helper/future-events and prints Kara tanks + Highbullet,
- * including rioProfileLookupName (name passed to Raider.io).
+ * including rioProfileLookupName (mapping-first canonical name for the signup — same as Events card label).
  *
  * Usage:
  *   npm run test:kara-roster
  *   node scripts/test-future-events-kara.mjs
  *   node scripts/test-future-events-kara.mjs http://127.0.0.1:8787
+ *   node scripts/test-future-events-kara.mjs http://127.0.0.1:8787 --all   # full roster + Armory class fields
  *
  * Env: PUBLIC_BASE_URL or PORT (default http://localhost:8787)
  */
 import process from "node:process";
 
-const argvBase = String(process.argv[2] || "").trim().replace(/\/$/, "");
+const argvRest = process.argv.slice(2).filter((a) => a !== "--all");
+const dumpAll = process.argv.includes("--all");
+const argvBase = String(argvRest[0] || "").trim().replace(/\/$/, "");
 const base =
   argvBase ||
   String(process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "") ||
@@ -59,28 +62,36 @@ function pick(nameFragment) {
 const tanks = roster.filter((p) => p.roleName === "Tanks");
 const highbullet = pick("highbullet");
 
-const rows = [...tanks, ...highbullet.filter((h) => !tanks.some((t) => t.name === h.name))];
+const subsetRows = [...tanks, ...highbullet.filter((h) => !tanks.some((t) => t.name === h.name))];
 
 function line(p) {
   return {
     raidHelperDisplayName: p.name,
+    characterName: p.characterName ?? "",
     // Name passed to Raider.io /characters/profile (+ Blizzard spec when configured).
     rioProfileLookupName:
       p.rioProfileLookupName ??
       "(not set — row skipped external enrich, or server predates rioProfileLookupName)",
     className: p.className || "",
     raiderIoClassName: p.raiderIoClassName ?? "",
+    blizzardClassName: p.blizzardClassName ?? "",
     specName: p.specName || "",
     roleName: p.roleName || "",
   };
 }
 
-console.log("Tanks + Highbullet (unique):\n");
-for (const p of rows.length ? rows : roster.slice(0, 15)) {
+const rowsToPrint = dumpAll
+  ? [...roster].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+  : subsetRows.length
+    ? subsetRows
+    : roster.slice(0, 15);
+
+console.log(dumpAll ? "Full Kara roster:\n" : "Tanks + Highbullet (unique):\n");
+for (const p of rowsToPrint) {
   console.log(JSON.stringify(line(p), null, 2));
   console.log("");
 }
 
-if (!rows.length) {
+if (!dumpAll && !subsetRows.length) {
   console.log("(No matching roster rows.)");
 }
