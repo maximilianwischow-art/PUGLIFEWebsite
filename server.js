@@ -147,6 +147,9 @@ const TRACKED_RAIDS = {
   "Gruul's Lair": ["High King Maulgar", "Gruul the Dragonkiller"],
   "Magtheridon's Lair": ["Magtheridon"],
 };
+
+/** 10-player raids — omitted from guild attendance % (`attendancePercentMetrics` mode only). */
+const WCL_ATTENDANCE_EXCLUDED_RAIDS = new Set(["Karazhan", "Zul'Aman"]);
 const allowedTbcZones = new Set(
   (process.env.WCL_ALLOWED_GAME_ZONES || DEFAULT_TBC_ZONES.join(","))
     .split(",")
@@ -938,16 +941,17 @@ function chunkPositiveInts(ids, chunkSize) {
  * }}
  */
 async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {}) {
+  const forAttendancePercent = Boolean(options.attendancePercentMetrics);
   const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit);
   const trackedReports = reports
     .map((report) => {
       const fightIds = (report.fights || [])
         .filter((fight) => {
-          const zoneName = fight?.gameZone?.name || "";
-          return (
-            Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
-            Number(fight?.encounterID || 0) > 0
-          );
+          if (Number(fight?.encounterID || 0) <= 0) return false;
+          const raidKey = resolvedTrackedRaidForFight(fight, report);
+          if (!raidKey || !Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, raidKey)) return false;
+          if (forAttendancePercent && WCL_ATTENDANCE_EXCLUDED_RAIDS.has(raidKey)) return false;
+          return true;
         })
         .map((fight) => Number(fight.id))
         .filter((id) => Number.isInteger(id) && id > 0);
@@ -955,17 +959,22 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
     })
     .filter((entry) => entry.fightIds.length > 0);
 
-  const raidSnapshots = [];
+  if (forAttendancePercent) {
+    trackedReports.sort(
+      (a, b) => reportStartTimeMs(b.report?.startTime) - reportStartTimeMs(a.report?.startTime)
+    );
+  }
+
   const detailCapOpt = options?.maxDetailedReports;
   const detailCap =
     Number.isFinite(Number(detailCapOpt)) && Number(detailCapOpt) > 0
       ? Math.min(100, Math.floor(Number(detailCapOpt)))
       : wclPerReportDetailCap();
-  const cappedForAttendance = trackedReports.slice(0, detailCap);
-  const recentWclReports = cappedForAttendance.map(({ report }) => ({
-    reportCode: String(report?.code || ""),
-    startTime: Number(report?.startTime || 0),
-  }));
+  const attendanceRecentCap = forAttendancePercent ? wclAttendanceRecentRaidCount() : Number.POSITIVE_INFINITY;
+  const effectiveCap = Math.min(detailCap, attendanceRecentCap);
+  const cappedForAttendance = trackedReports.slice(0, effectiveCap);
+
+  const raidSnapshots = [];
   const wclDisplayByLower = new Map();
 
   const attendanceQuery = `
@@ -999,6 +1008,11 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
       attendeesLower: attendeeNamesLower,
     });
   }
+
+  const recentWclReports = raidSnapshots.map((raid) => ({
+    reportCode: String(raid.reportCode || ""),
+    startTime: Number(raid.startTime || 0),
+  }));
 
   return { raidSnapshots, wclDisplayByLower, recentWclReports };
 }
@@ -2563,6 +2577,13 @@ function wclPerReportDetailCap() {
   return 18;
 }
 
+/** How many recent raid logs count toward `/attendance` % (25-player raids only in metrics mode). Default 6. */
+function wclAttendanceRecentRaidCount() {
+  const raw = process.env.WCL_ATTENDANCE_RECENT_RAIDS;
+  const n = raw !== undefined && String(raw).trim() !== "" ? Number(raw) : 6;
+  return Number.isFinite(n) ? Math.min(40, Math.max(1, Math.floor(n))) : 6;
+}
+
 /** Guild report list size for heavy `reports { data { fights { ... }}}` queries — large pulls exceed WCL max complexity (~50k). */
 function wclMaxGuildReportsLimit() {
   const n = Number(process.env.WCL_MAX_GUILD_REPORTS_LIMIT);
@@ -2923,23 +2944,15 @@ function primaryMappedWclCharacterNameForRioLookup(linksState, row) {
  */
 function pickWclIconHitPreferringLinkedNames(iconMap, row, linksState) {
   const altNames = linkedWclCharacterNamesForRaidHelperName(linksState, row?.name);
-  const cls = englishCanonicalClassSlugForEventsIcons(row);
-  const strictClass = cls === "paladin" || cls === "warrior";
 
   for (const alt of altNames) {
     const h = pickWclIconHit(iconMap, alt);
     if (!h?.icon) continue;
-    if (!strictClass || wclProtIconAgreesWithRosterClass(h.icon, row)) return h;
+    if (wclDamageDoneIconAgreesWithRoster(h.icon, row, h.type || "")) return h;
   }
   const primary = pickWclIconHitForRosterDisplay(iconMap, row);
-  if (primary?.icon && (!strictClass || wclProtIconAgreesWithRosterClass(primary.icon, row))) return primary;
-  if (!strictClass) {
-    for (const alt of altNames) {
-      const h = pickWclIconHit(iconMap, alt);
-      if (h?.icon) return h;
-    }
-  }
-  return primary?.icon ? primary : null;
+  if (primary?.icon && wclDamageDoneIconAgreesWithRoster(primary.icon, row, primary.type || "")) return primary;
+  return null;
 }
 
 async function loadWclGuildRosterSpecIconMapUncached(guildId) {
@@ -2979,7 +2992,7 @@ async function loadWclGuildRosterSpecIconMapUncached(guildId) {
 async function getWclGuildRosterSpecIconMap(guildId) {
   const gid = Number(guildId);
   if (!Number.isInteger(gid) || gid <= 0) return {};
-  const key = `wcl-guild-roster-spec-icons-v1-${gid}`;
+  const key = `wcl-guild-roster-spec-icons-v2-${gid}`;
   const ttlMs = wclRosterIconCacheTtlMs();
   return getOrRefreshCachedPayload(key, {
     ttlMs,
@@ -3007,7 +3020,7 @@ async function enrichConfirmedRosterWithWclSpecIcons(rows) {
   return rows.map((row) => {
     const hit = pickWclIconHitPreferringLinkedNames(iconMap, row, linksState);
     if (!hit?.icon) return row;
-    if (!wclProtIconAgreesWithRosterClass(hit.icon, row)) return row;
+    if (!wclDamageDoneIconAgreesWithRoster(hit.icon, row, hit.type || "")) return row;
     return { ...row, wclSpecIconUrl: hit.icon, wclCombatSpecType: hit.type || "" };
   });
 }
@@ -3391,7 +3404,9 @@ function raidHelperSignupSlashCharacterSegment() {
 }
 
 /**
- * WoW character name for Raider.io / Blizzard (not the full Discord display line).
+ * Raid Helper–parsed character name stored on each roster row (`rioLookupCharacterName`).
+ * External APIs may also try {@link primaryMappedWclCharacterNameForRioLookup} first, then this, then stripped signup display — see {@link wowCharacterNameCandidatesForExternalApis}.
+ *
  * Uses explicit Raid Helper character fields when present; otherwise parses `name` using {@link raidHelperSignupSlashCharacterSegment}.
  */
 function raidHelperCharacterNameForRaiderIoLookup(entry) {
@@ -3509,61 +3524,166 @@ function parseBlizzardActiveSpecializationName(data) {
   return null;
 }
 
-/** Blizzard profile namespace for Classic progression / TBC — override with BLIZZARD_PROFILE_NAMESPACE (e.g. classicann-eu for some realms). */
+/**
+ * Battle.net profile namespaces always use the `profile-*` prefix on the API.
+ * Env may be set as `classicann-eu` or `profile-classicann-eu`.
+ */
+function normalizeBlizzardProfileNamespace(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  return s.toLowerCase().startsWith("profile-") ? s : `profile-${s}`;
+}
+
+/**
+ * TBC Anniversary realms (e.g. Thunderstrike EU) live under `profile-classicann-{region}`.
+ * Progression / Cataclysm-era Classic uses `profile-classic-{region}`. Try env override first, then fallbacks.
+ */
+function blizzardCharacterProfileNamespaceCandidates(region) {
+  const r = String(region || "eu").trim().toLowerCase() || "eu";
+  const envNs = normalizeBlizzardProfileNamespace(process.env.BLIZZARD_PROFILE_NAMESPACE || "");
+  const tierAnn = `profile-classicann-${r}`;
+  const tierProg = `profile-classic-${r}`;
+  const tierEra = `profile-classic1x-${r}`;
+  const defaults = [tierAnn, tierProg, tierEra];
+  const out = [];
+  if (envNs) out.push(envNs);
+  for (const d of defaults) {
+    if (!out.some((x) => x.toLowerCase() === d.toLowerCase())) out.push(d);
+  }
+  return out;
+}
+
 async function fetchBlizzardClassicActiveSpecName(realmSlug, characterName) {
   if (!blizzardProfileClientConfigured()) return null;
   const token = await getBlizzardAccessToken();
   const region = wowClassicRegion();
-  const ns =
-    String(process.env.BLIZZARD_PROFILE_NAMESPACE || "").trim() ||
-    `profile-classic-${region}`;
   const locale = wowClassicLocale();
   const base = blizzardApiBaseUrl();
   const r = encodeURIComponent(String(realmSlug || "").toLowerCase());
   const c = encodeURIComponent(String(characterName || "").toLowerCase());
-  const url = `${base}/profile/wow/character/${r}/${c}/specializations?namespace=${encodeURIComponent(ns)}&locale=${encodeURIComponent(locale)}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  return parseBlizzardActiveSpecializationName(data);
+  for (const ns of blizzardCharacterProfileNamespaceCandidates(region)) {
+    const url = `${base}/profile/wow/character/${r}/${c}/specializations?namespace=${encodeURIComponent(ns)}&locale=${encodeURIComponent(locale)}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) continue;
+    const data = await res.json().catch(() => null);
+    const spec = parseBlizzardActiveSpecializationName(data);
+    if (spec) return spec;
+  }
+  return null;
+}
+
+/** `GET .../profile/wow/character/{realm}/{name}` — English class label + optional active spec (same namespace as specializations). */
+function parseBlizzardCharacterProfileSummary(data) {
+  if (!data || typeof data !== "object") return { className: null, specName: null };
+  let className = null;
+  const cc = data.character_class;
+  if (cc && typeof cc === "object" && typeof cc.name === "string" && cc.name.trim()) {
+    className = cc.name.trim();
+  }
+  let specName = null;
+  const sp = data.active_spec ?? data.active_specialization;
+  if (sp && typeof sp === "object") {
+    const n = sp.name;
+    if (typeof n === "string" && n.trim()) specName = n.trim();
+  }
+  return { className, specName };
+}
+
+async function fetchBlizzardClassicCharacterSummaryFields(realmSlug, characterName) {
+  if (!blizzardProfileClientConfigured()) return null;
+  const token = await getBlizzardAccessToken();
+  const region = wowClassicRegion();
+  const locale = wowClassicLocale();
+  const base = blizzardApiBaseUrl();
+  const r = encodeURIComponent(String(realmSlug || "").toLowerCase());
+  const c = encodeURIComponent(String(characterName || "").toLowerCase());
+  for (const ns of blizzardCharacterProfileNamespaceCandidates(region)) {
+    const url = `${base}/profile/wow/character/${r}/${c}?namespace=${encodeURIComponent(ns)}&locale=${encodeURIComponent(locale)}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) continue;
+    const data = await res.json().catch(() => null);
+    const parsed = parseBlizzardCharacterProfileSummary(data);
+    if (parsed?.className || parsed?.specName) return parsed;
+  }
+  return null;
+}
+
+/**
+ * Builds ordered WoW character names to query Raider.io / Blizzard (same realm).
+ * Preference: first linked Warcraft Logs name → Raid Helper parsed character field → signup display (realm stripped).
+ * If the mapped log main 404s on Rio/Armory, the next candidate is tried so tank/spec icons still resolve.
+ */
+function wowCharacterNameCandidatesForExternalApis(row, linksState) {
+  const display = stripRealmSuffixFromWowDisplayName(String(row?.name || ""));
+  const mappedMain = primaryMappedWclCharacterNameForRioLookup(linksState, row);
+  const rhChar = String(row?.rioLookupCharacterName || "").trim();
+  const out = [];
+  for (const cand of [mappedMain, rhChar, display]) {
+    const c = String(cand || "").trim();
+    if (!c) continue;
+    if (!out.some((x) => x.toLowerCase() === c.toLowerCase())) out.push(c);
+  }
+  return out;
+}
+
+/** Battle.net profile `{realm}/{name}` matches the in-game toon — prefer RH signup character before WCL↔Rio aliases. */
+function wowBlizzardCharacterNameCandidates(row, linksState) {
+  const display = stripRealmSuffixFromWowDisplayName(String(row?.name || ""));
+  const mappedMain = primaryMappedWclCharacterNameForRioLookup(linksState, row);
+  const rhChar = String(row?.rioLookupCharacterName || "").trim();
+  const out = [];
+  for (const cand of [rhChar, display, mappedMain]) {
+    const c = String(cand || "").trim();
+    if (!c) continue;
+    if (!out.some((x) => x.toLowerCase() === c.toLowerCase())) out.push(c);
+  }
+  return out;
 }
 
 async function enrichRosterRowExternalSpec(row, linksState) {
-  const realmRaw = String(row.realm || "").trim() || defaultWowRealmForRoster();
   const name = String(row.name || "").trim();
-  if (!realmRaw || !name) return row;
+  if (!name) return row;
+  const realmRaw = String(row.realm || "").trim() || defaultWowRealmForRoster();
+  const nameCandidates = wowCharacterNameCandidatesForExternalApis(row, linksState);
+  const preferredLookupName = nameCandidates[0] || stripRealmSuffixFromWowDisplayName(name);
+  /** Rio / Battle.net need a realm slug; still expose which character name would be queried (localhost debugging). */
+  if (!realmRaw) {
+    return { ...row, rioProfileLookupName: preferredLookupName };
+  }
 
-  const mappedMain = primaryMappedWclCharacterNameForRioLookup(linksState, row);
-  const lookupName =
-    mappedMain ||
-    String(row.rioLookupCharacterName || "").trim() ||
-    stripRealmSuffixFromWowDisplayName(name);
 
   const needsClassRepair = raidHelperClassFieldLooksLikeRoleNotClass(row.className);
   const needsSpecLookup = wowExternalSpecLookupEnabled();
-  /** Always expose intended Raider.io character name (Events UI + tests), even when no HTTP lookup runs. */
+  /** Card label + lookup hint: mapping-first name (e.g. log main), not the first Rio URL candidate that 200s. */
   if (!needsClassRepair && !needsSpecLookup) {
-    return { ...row, rioProfileLookupName: lookupName };
+    return { ...row, rioProfileLookupName: preferredLookupName };
   }
 
   const region = wowRosterRegion();
   const realmSlug = wowRealmSlugForLookup(realmRaw);
-  const cacheSlug = slugifyLocaleText(lookupName);
-  const rioKey = `raiderio-classic-profile-v1-${region}-${realmSlug}-${cacheSlug}`;
 
   let profile = null;
-  try {
-    profile = await getOrRefreshCachedPayload(rioKey, {
-      ttlMs: Math.min(3600_000, Math.max(60_000, Number(process.env.WOW_RIO_CACHE_TTL_MS || 900_000))),
-      maxStaleMs: Math.min(7 * 86400_000, Math.max(3600_000, Number(process.env.WOW_RIO_CACHE_STALE_MS || 86400_000))),
-      loader: () => loadRaiderIoClassicProfileRaw(region, realmSlug, lookupName),
-    });
-  } catch {
-    profile = null;
+  let rioResolvedLookupName = "";
+  const rioTryNames = nameCandidates.length ? nameCandidates : [preferredLookupName].filter(Boolean);
+  for (const cand of rioTryNames) {
+    const cacheSlug = slugifyLocaleText(cand);
+    const rioKey = `raiderio-classic-profile-v1-${region}-${realmSlug}-${cacheSlug}`;
+    try {
+      profile = await getOrRefreshCachedPayload(rioKey, {
+        ttlMs: Math.min(3600_000, Math.max(60_000, Number(process.env.WOW_RIO_CACHE_TTL_MS || 900_000))),
+        maxStaleMs: Math.min(7 * 86400_000, Math.max(3600_000, Number(process.env.WOW_RIO_CACHE_STALE_MS || 86400_000))),
+        loader: () => loadRaiderIoClassicProfileRaw(region, realmSlug, cand),
+      });
+    } catch {
+      profile = null;
+    }
+    if (profile) {
+      rioResolvedLookupName = cand;
+      break;
+    }
   }
 
-  /** Character name sent to Raider.io / Blizzard profile APIs (mapped main → RH signup parse → display strip). */
-  let out = { ...row, rioProfileLookupName: lookupName };
+  let out = { ...row, rioProfileLookupName: preferredLookupName };
 
   const rioClassRaw = profile ? classNameFromRaiderIoClassicProfile(profile) : "";
   const rioClassDisplay = rioClassRaw ? englishWowClassDisplayFromRaidHelper(rioClassRaw) : "";
@@ -3576,21 +3696,59 @@ async function enrichRosterRowExternalSpec(row, linksState) {
     out.raiderIoSpecName = rioSpecDirect;
   }
 
-  // Class: keep Raid Helper when it is a real class; otherwise fill from Raider.io (per-character).
-  if (!raidHelperClassIsTrustworthy(row.className) && rioClassDisplay) {
-    out.className = rioClassDisplay;
+  let blizzardSummary = { className: null, specName: null };
+  if (blizzardProfileClientConfigured() && (needsClassRepair || needsSpecLookup)) {
+    const blizzardCandidates = wowBlizzardCharacterNameCandidates(row, linksState);
+    const bnetTry = blizzardCandidates.length ? blizzardCandidates : [preferredLookupName].filter(Boolean);
+    for (const cand of bnetTry) {
+      const cacheSlug = slugifyLocaleText(cand);
+      const bSumKey = `bnet-classic-character-summary-v3-${region}-${realmSlug}-${cacheSlug}`;
+      try {
+        blizzardSummary = await getOrRefreshCachedPayload(bSumKey, {
+          ttlMs: 3600_000,
+          maxStaleMs: 86400_000,
+          loader: async () => {
+            const fields = await fetchBlizzardClassicCharacterSummaryFields(realmSlug, cand);
+            return fields || { className: null, specName: null };
+          },
+        });
+      } catch {
+        blizzardSummary = { className: null, specName: null };
+      }
+      if (blizzardSummary?.className || blizzardSummary?.specName) break;
+    }
+  }
+
+  const blizzardClassDisplay = blizzardSummary?.className
+    ? englishWowClassDisplayFromRaidHelper(blizzardSummary.className)
+    : "";
+  if (blizzardClassDisplay) {
+    out.blizzardClassName = blizzardClassDisplay;
+  }
+
+  // Class: keep Raid Helper when trustworthy; Rio fills bogus RH column unless filtered as junk tank prot.
+  if (!raidHelperClassIsTrustworthy(row.className)) {
+    if (rioClassDisplay && !rioMergedClassLooksWrongForTankProtProtection(row, rioClassRaw)) {
+      out.className = rioClassDisplay;
+    }
+  }
+  /** Blizzard armory when class column still empty (skipped Rio armory mismatch — plate tanks, missing RH class). */
+  if (!String(out.className || "").trim() && blizzardClassDisplay) {
+    out.className = blizzardClassDisplay;
   }
 
   if (!needsSpecLookup) return out;
 
-  let specName = rioSpecDirect;
-  if (!specName && blizzardProfileClientConfigured()) {
-    const bKey = `bnet-classic-active-spec-v1-${region}-${realmSlug}-${cacheSlug}`;
+  let specName = rioSpecDirect || blizzardSummary?.specName || null;
+
+  const specFallbackCand = rioResolvedLookupName || preferredLookupName;
+  if (!specName && blizzardProfileClientConfigured() && specFallbackCand) {
+    const bKey = `bnet-classic-active-spec-v3-${region}-${realmSlug}-${slugifyLocaleText(specFallbackCand)}`;
     try {
       specName = await getOrRefreshCachedPayload(bKey, {
         ttlMs: 3600_000,
         maxStaleMs: 86400_000,
-        loader: () => fetchBlizzardClassicActiveSpecName(realmSlug, lookupName),
+        loader: () => fetchBlizzardClassicActiveSpecName(realmSlug, specFallbackCand),
       });
     } catch {
       specName = null;
@@ -3623,7 +3781,16 @@ async function enrichConfirmedRosterExternalSpecs(rows) {
 
 function stripInternalRosterFields(row) {
   const { realm: _r, rioLookupCharacterName: _lu, ...rest } = row;
-  return rest;
+  /** Express `res.json` drops keys whose value is `undefined` — always expose the lookup label for debugging. */
+  const display = stripRealmSuffixFromWowDisplayName(String(rest.name || ""));
+  const rhParsedChar = String(_lu || "").trim();
+  const rawLu = rest.rioProfileLookupName;
+  /** One WoW character identity for Rio/Blizzard + UI (e.g. Mightyboom); signup label stays on `name`. */
+  const lookup =
+    rawLu != null && String(rawLu).trim()
+      ? String(rawLu).trim()
+      : rhParsedChar || display;
+  return { ...rest, characterName: lookup, rioProfileLookupName: lookup };
 }
 
 /** Absolute icon URL when Raid-Helper embeds one on the signup row. */
@@ -3693,6 +3860,26 @@ function raidHelperClassIsTrustworthy(classRaw) {
   return !RAID_HELPER_FALSE_CLASS_SLUGS.has(s);
 }
 
+/** Tank + Protection-like spec with no RH class snapshot: Rio often mismatches the armory (wrong player/realm). */
+function rioMergedClassLooksWrongForTankProtProtection(row, rioClassRaw) {
+  const rhClassSnap = englishCanonicalClassSlugFromLocalizedDisplay(row?.raidHelperClassName);
+  if (rhClassSnap) return false;
+  const role = slugifyLocaleText(row?.roleName);
+  const isTankRole = role === "tank" || role === "tanks" || role === "schutz";
+  const spec = slugifyLocaleText(row?.specName);
+  const protLike =
+    /^protection\d+$/.test(spec) ||
+    spec.includes("protection") ||
+    spec === "prot" ||
+    spec === "schutz" ||
+    spec === "tank" ||
+    spec === "tanks";
+  if (!isTankRole || !protLike) return false;
+  const slug = englishCanonicalClassSlugFromLocalizedDisplay(rioClassRaw);
+  if (!slug) return false;
+  return !["warrior", "paladin", "druid", "deathknight"].includes(slug);
+}
+
 /**
  * Class slug for Events roster + WCL icons: merges Raid Helper + Raider.io.
  * If RH says Warrior but Rio says Paladin (or vice versa), prefer Rio — matches armory for mis-clicked RH class.
@@ -3700,10 +3887,12 @@ function raidHelperClassIsTrustworthy(classRaw) {
 function englishCanonicalClassSlugForEventsIcons(row) {
   const rh = englishCanonicalClassSlugFromLocalizedDisplay(row?.className);
   const rio = englishCanonicalClassSlugFromLocalizedDisplay(row?.raiderIoClassName);
+  const bnet = englishCanonicalClassSlugFromLocalizedDisplay(row?.blizzardClassName);
   const plate = new Set(["paladin", "warrior"]);
   if (plate.has(rh) && plate.has(rio) && rh !== rio) return rio;
   if (rh) return rh;
-  return rio || "";
+  if (rio) return rio;
+  return bnet || "";
 }
 
 function pickWclIconHitForRosterDisplay(iconMap, row) {
@@ -3739,6 +3928,10 @@ const ZAMIMG_PROT_SPEC_ICON_URL = {
   paladin: "https://wow.zamimg.com/images/wow/icons/large/spell_holy_sealofprotection.jpg",
   warrior: "https://wow.zamimg.com/images/wow/icons/large/ability_warrior_defensivestance.jpg",
 };
+
+/** Feral spec spell on Wowhead is cat-form; tanking druids use bear (matches events UI `specIconZamimgUrlForKey`). */
+const ZAMIMG_DRUID_BEAR_TANK_ICON_URL =
+  "https://wow.zamimg.com/images/wow/icons/large/ability_racial_bearform.jpg";
 
 function protIconTextureLooksWarrior(iconUrl) {
   const u = String(iconUrl || "").toLowerCase();
@@ -3778,6 +3971,68 @@ function wclProtIconAgreesWithRosterClass(iconUrl, row) {
   return true;
 }
 
+/** Damage-done icon filenames often spell out another class (e.g. Shaman lightning on a Warrior row after name collision). */
+function wclIconTextureLooksShaman(iconUrl) {
+  const u = String(iconUrl || "").toLowerCase();
+  return (
+    u.includes("spell_nature_lightning") ||
+    u.includes("spell_nature_magicimmunity") ||
+    u.includes("spell_shaman") ||
+    u.includes("ability_shaman") ||
+    u.includes("spell_fire_totem") ||
+    u.includes("spell_nature_earthbind") ||
+    u.includes("spell_nature_nullwolf") ||
+    u.includes("spell_nature_healingwave") ||
+    u.includes("spell_fire_elementaldevastation")
+  );
+}
+
+function wclIconTextureLooksWarriorFuryOrArms(iconUrl) {
+  const u = String(iconUrl || "").toLowerCase();
+  return (
+    u.includes("ability_warrior_savageblow") ||
+    u.includes("ability_warrior_innerrage") ||
+    u.includes("spell_nature_bloodlust") ||
+    u.includes("ability_dualwield") ||
+    u.includes("ability_whirlwind")
+  );
+}
+
+/** Best-effort class slug from WCL Damage Done `type` (English labels). Empty = skip type check. */
+function classSlugFromWclDamageDoneType(typeRaw) {
+  const t = slugifyLocaleText(typeRaw);
+  if (!t) return "";
+  if (t === "arms" || t === "fury") return "warrior";
+  if (t === "elemental" || t === "enhancement") return "shaman";
+  if (t === "balance" || t === "feral" || t === "guardian") return "druid";
+  if (t === "arcane" || t === "fire" || t === "frost") return "mage";
+  if (t === "affliction" || t === "demonology" || t === "destruction") return "warlock";
+  if (t === "assassination" || t === "combat" || t === "subtlety") return "rogue";
+  if (t === "beastmastery" || t === "marksmanship" || t === "survival") return "hunter";
+  if (t === "shadow" || t === "discipline") return "priest";
+  /** Restoration / Protection appear on two classes — rely on texture checks instead. */
+  return "";
+}
+
+function wclCombatSpecTypeAgreesWithRoster(row, wclTypeRaw) {
+  const rosterCls = englishCanonicalClassSlugForEventsIcons(row);
+  const implied = classSlugFromWclDamageDoneType(wclTypeRaw);
+  if (!implied || !rosterCls) return true;
+  return implied === rosterCls;
+}
+
+function wclDamageDoneIconAgreesWithRoster(iconUrl, row, wclTypeRaw = "") {
+  const cls = englishCanonicalClassSlugForEventsIcons(row);
+  if (!cls) {
+    return wclProtIconAgreesWithRosterClass(iconUrl, row);
+  }
+  if (!wclProtIconAgreesWithRosterClass(iconUrl, row)) return false;
+  if (!wclCombatSpecTypeAgreesWithRoster(row, wclTypeRaw)) return false;
+  if (cls === "warrior" && wclIconTextureLooksShaman(iconUrl)) return false;
+  if (cls === "shaman" && wclIconTextureLooksWarriorFuryOrArms(iconUrl)) return false;
+  return true;
+}
+
 /** Always set Raid-Helper rows to the canonical texture so API matches events UI (overwrites wrong RH icons). */
 function attachClassicSpecSpellIconIfNeeded(row) {
   const cls = englishCanonicalClassSlugForEventsIcons(row);
@@ -3790,6 +4045,9 @@ function attachClassicSpecSpellIconIfNeeded(row) {
     spec === "schutz" ||
     spec === "tank" ||
     spec === "tanks";
+  if (cls === "druid" && isTankRole) {
+    return { ...row, specIconUrl: ZAMIMG_DRUID_BEAR_TANK_ICON_URL };
+  }
   if (cls === "paladin" && (isTankRole || protLike)) {
     return { ...row, specIconUrl: ZAMIMG_PROT_SPEC_ICON_URL.paladin };
   }
@@ -4990,7 +5248,9 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
 
   try {
     await ensureRhWclLinksStore();
-    const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit);
+    const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
+      attendancePercentMetrics: true,
+    });
 
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
@@ -5006,6 +5266,11 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
       leaderboard: linkedPayload.leaderboard,
       attendanceLinking: true,
       rhWclLinkCount: rhWclLinksState.links?.length || 0,
+      attendanceScope: {
+        only25PlayerRaids: true,
+        excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
+        recentRaidCap: wclAttendanceRecentRaidCount(),
+      },
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });

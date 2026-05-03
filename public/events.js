@@ -15,10 +15,10 @@ function initBackgroundStars() {
 
 const eventsList = document.querySelector("#eventsList");
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260503q";
+const IMAGE_ASSET_VERSION = "20260504b";
 /** Same guild as dashboard WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
-/** Generic dashed slots (beyond attendance). CSS size ≈ 56×56 px — icons should be square 1:1. */
+/** Generic dashed slots (beyond attendance). CSS footprint ≈ 44×44 px — icons square 1:1. */
 const GENERIC_ACHIEVEMENT_SLOT_COUNT = 3;
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 /** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
@@ -216,10 +216,18 @@ async function loadTbcSpecIconMap() {
 }
 
 /** Preferred icon URL for a `warrior_arms`-style key (Wowhead JSON first, then texture table). */
-function specIconZamimgUrlForKey(key) {
+function specIconZamimgUrlForKey(key, player) {
   if (!key) return "";
   const prot = CANONICAL_PROT_SPEC_BADGE_URL[key];
   if (prot) return prot;
+  if (
+    key === "druid_feralcombat" &&
+    player &&
+    effectiveRosterClassSlug(player) === "druid" &&
+    isTankRoleSlug(normalizedRoleSlugForSpec(player))
+  ) {
+    return `${ZAM_ICON_LARGE}/ability_racial_bearform.jpg`;
+  }
   const row = tbcSpecIconByKey?.[key];
   const u = row?.iconUrl ? String(row.iconUrl).trim() : "";
   if (/^https?:\/\//i.test(u)) return u;
@@ -305,6 +313,7 @@ function canonicalSpecSlug(classSlug, specSlug) {
     feral: "feralcombat",
     feralcombat: "feralcombat",
     guardian: "feralcombat",
+    bear: "feralcombat",
   };
   let spec = aliases[base] || base;
   if (classSlug === "druid" && spec === "guardian") spec = "feralcombat";
@@ -331,20 +340,27 @@ function normalizedRoleSlugForSpec(player) {
 
 function inferSpecSlugFromRole(classSlug, roleSlug, specSlug) {
   let raw = specSlug;
+  if (raw === "tank" || raw === "tanks") {
+    if (classSlug === "warrior" || classSlug === "paladin") return "protection";
+    if (classSlug === "druid") return "feralcombat";
+  }
   if (raw) return raw;
   if (classSlug === "warrior" && isTankRoleSlug(roleSlug)) return "protection";
   if (classSlug === "paladin" && isTankRoleSlug(roleSlug)) return "protection";
+  if (classSlug === "druid" && isTankRoleSlug(roleSlug)) return "feralcombat";
   return "";
 }
 
-/** Same merge as server `englishCanonicalClassSlugForEventsIcons`: RH + Rio; Paladin vs Warrior uses Rio when they disagree. */
+/** Same merge as server `englishCanonicalClassSlugForEventsIcons`: RH + Rio + optional Battle.net snapshot; plate dispute uses Rio. */
 function effectiveRosterClassSlug(player) {
   const rh = canonicalWowClassSlug(player?.className);
   const rio = canonicalWowClassSlug(player?.raiderIoClassName);
+  const bnet = canonicalWowClassSlug(player?.blizzardClassName);
   const plate = new Set(["paladin", "warrior"]);
   if (plate.has(rh) && plate.has(rio) && rh !== rio) return rio;
   if (rh) return rh;
-  return rio || "";
+  if (rio) return rio;
+  return bnet || "";
 }
 
 /** Resolves `warrior_protection` / `paladin_protection` etc.; tanks override wrong RH spec labels. */
@@ -420,9 +436,78 @@ function wclProtIconConflictsWithRosterClass(wclUrl, player) {
   if (key === "warrior_protection" && pal && !war) return true;
   if (cls === "paladin" && war && !pal) return true;
   if (cls === "warrior" && pal && !war) return true;
-  // No class on roster (RH role-as-class etc.): reject single-flavour prot textures like server-side enrichment.
-  if (!cls && war && !pal) return true;
-  if (!cls && pal && !war) return true;
+  // No class on roster: still show WCL prot texture — blocking it left only the question-mark fallback.
+  // WCL "Feral" is often cat art; tanking druids should use bear — same key as melee cat.
+  if (
+    key === "druid_feralcombat" &&
+    cls === "druid" &&
+    isTankRoleSlug(normalizedRoleSlugForSpec(player)) &&
+    u.includes("ability_druid_catform") &&
+    !u.includes("bear")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Mirror server `classSlugFromWclDamageDoneType` — WCL `player.wclCombatSpecType` vs merged roster class. */
+function classSlugFromWclCombatType(typeRaw) {
+  const t = normalizeSlug(typeRaw);
+  if (!t) return "";
+  if (t === "arms" || t === "fury") return "warrior";
+  if (t === "elemental" || t === "enhancement") return "shaman";
+  if (t === "balance" || t === "feral" || t === "guardian") return "druid";
+  if (t === "arcane" || t === "fire" || t === "frost") return "mage";
+  if (t === "affliction" || t === "demonology" || t === "destruction") return "warlock";
+  if (t === "assassination" || t === "combat" || t === "subtlety") return "rogue";
+  if (t === "beastmastery" || t === "marksmanship" || t === "survival") return "hunter";
+  if (t === "shadow" || t === "discipline") return "priest";
+  return "";
+}
+
+function wclCombatSpecTypeAgreesWithPlayer(wclTypeRaw, player) {
+  const rosterCls = effectiveRosterClassSlug(player);
+  const implied = classSlugFromWclCombatType(wclTypeRaw);
+  if (!implied || !rosterCls) return true;
+  return implied === rosterCls;
+}
+
+function wclIconTextureLooksShaman(uRaw) {
+  const u = String(uRaw || "").toLowerCase();
+  return (
+    u.includes("spell_nature_lightning") ||
+    u.includes("spell_nature_magicimmunity") ||
+    u.includes("spell_shaman") ||
+    u.includes("ability_shaman") ||
+    u.includes("spell_fire_totem") ||
+    u.includes("spell_nature_earthbind") ||
+    u.includes("spell_nature_nullwolf") ||
+    u.includes("spell_nature_healingwave") ||
+    u.includes("spell_fire_elementaldevastation")
+  );
+}
+
+function wclIconTextureLooksWarriorFuryOrArms(uRaw) {
+  const u = String(uRaw || "").toLowerCase();
+  return (
+    u.includes("ability_warrior_savageblow") ||
+    u.includes("ability_warrior_innerrage") ||
+    u.includes("spell_nature_bloodlust") ||
+    u.includes("ability_dualwield") ||
+    u.includes("ability_whirlwind")
+  );
+}
+
+/** Drop WCL Damage Done portrait when spec texture / type disagrees with Raid Helper + Rio class (e.g. Shaman icon on Fury Warrior). */
+function wclDamageDonePortraitConflictsWithRoster(wclUrl, player) {
+  if (wclProtIconConflictsWithRosterClass(wclUrl, player)) return true;
+  const cls = effectiveRosterClassSlug(player);
+  if (!cls) return false;
+  const specType = String(player?.wclCombatSpecType || "").trim();
+  if (!wclCombatSpecTypeAgreesWithPlayer(specType, player)) return true;
+  const u = String(wclUrl || "").toLowerCase();
+  if (cls === "warrior" && wclIconTextureLooksShaman(u)) return true;
+  if (cls === "shaman" && wclIconTextureLooksWarriorFuryOrArms(u)) return true;
   return false;
 }
 
@@ -445,6 +530,15 @@ function rhEmbedSpecIconConflictsWithProtKey(iconUrl, key) {
   return false;
 }
 
+/** RH / Blizzard sometimes attach cat-form art for all Feral profiles; bear tanks need bear texture. */
+function rhEmbedSpecConflictsWithDruidTank(iconUrl, key, player) {
+  if (key !== "druid_feralcombat") return false;
+  if (effectiveRosterClassSlug(player) !== "druid") return false;
+  if (!isTankRoleSlug(normalizedRoleSlugForSpec(player))) return false;
+  const u = String(iconUrl || "").toLowerCase();
+  return u.includes("ability_druid_catform") && !u.includes("bear");
+}
+
 function displaySpecNameForRoster(raw) {
   const s = String(raw || "").trim();
   if (!s) return "";
@@ -453,16 +547,67 @@ function displaySpecNameForRoster(raw) {
   return s;
 }
 
+function rosterProtectionLikeSpec(player) {
+  const sp = normalizeSlug(player?.specName || "");
+  return (
+    /^protection\d+$/.test(sp) ||
+    sp.includes("protection") ||
+    sp === "prot" ||
+    sp === "schutz" ||
+    sp === "tank" ||
+    sp === "tanks"
+  );
+}
+
+/** Tank bucket + Protection-like spec (RH often omits class; Rio can guess wrong e.g. Shaman). */
+function isRosterTankProtSlot(player) {
+  return isTankRoleSlug(normalizedRoleSlugForSpec(player)) && rosterProtectionLikeSpec(player);
+}
+
+/** Dual prot zamimg when plate tank visuals are ambiguous (empty RH class + junk Rio, wrong spec key, etc.). */
+function plateTankAmbiguousDualProtZamimgCandidates(player, resolvedKey) {
+  if (!isRosterTankProtSlot(player)) return [];
+  const rhSnap = canonicalWowClassSlug(player?.raidHelperClassName);
+  if (rhSnap === "druid") return [];
+
+  if (resolvedKey === "warrior_protection" || resolvedKey === "paladin_protection") return [];
+
+  const merged = effectiveRosterClassSlug(player);
+  if (resolvedKey === "druid_feralcombat" && merged === "druid") return [];
+
+  const out = [
+    CANONICAL_PROT_SPEC_BADGE_URL.warrior_protection,
+    CANONICAL_PROT_SPEC_BADGE_URL.paladin_protection,
+  ];
+  for (const f of SPEC_ZAMIMG_FALLBACK.warrior_protection || []) {
+    out.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  }
+  for (const f of SPEC_ZAMIMG_FALLBACK.paladin_protection || []) {
+    out.push(`${ZAM_ICON_LARGE}/${f}.jpg`);
+  }
+  return out;
+}
+
 function specBadgePortraitChain(player) {
   const fromWcl = String(player?.wclSpecIconUrl || "").trim();
-  const wclOk = /^https?:\/\//i.test(fromWcl) && !wclProtIconConflictsWithRosterClass(fromWcl, player);
+  const wclOk =
+    /^https?:\/\//i.test(fromWcl) && !wclDamageDonePortraitConflictsWithRoster(fromWcl, player);
   const fromApi = String(player?.specIconUrl || "").trim();
   const key = resolvedSpecIconKey(player);
-  const primaryZam = key ? specIconZamimgUrlForKey(key) : "";
-  const extras = key && SPEC_ZAMIMG_FALLBACK[key] ? SPEC_ZAMIMG_FALLBACK[key] : [];
+  const primaryZam = key ? specIconZamimgUrlForKey(key, player) : "";
+  let extras =
+    key && SPEC_ZAMIMG_FALLBACK[key] ? [...SPEC_ZAMIMG_FALLBACK[key]] : [];
+  if (
+    key === "druid_feralcombat" &&
+    effectiveRosterClassSlug(player) === "druid" &&
+    isTankRoleSlug(normalizedRoleSlugForSpec(player))
+  ) {
+    extras = ["ability_druid_demoralizingroar", "ability_druid_catform"];
+  }
   const extraUrls = extras.map((f) => `${ZAM_ICON_LARGE}/${f}.jpg`);
   let protKey = key === "paladin_protection" || key === "warrior_protection";
   const urls = [];
+  for (const u of plateTankAmbiguousDualProtZamimgCandidates(player, key)) urls.push(u);
   // Canonical prot zamimg first — WCL Damage Done uses one icon type for both plate tanks.
   if (protKey && primaryZam) {
     urls.push(primaryZam);
@@ -470,7 +615,9 @@ function specBadgePortraitChain(player) {
   }
   if (wclOk) urls.push(fromWcl);
   const apiOk =
-    /^https?:\/\//i.test(fromApi) && !rhEmbedSpecIconConflictsWithProtKey(fromApi, key);
+    /^https?:\/\//i.test(fromApi) &&
+    !rhEmbedSpecIconConflictsWithProtKey(fromApi, key) &&
+    !rhEmbedSpecConflictsWithDruidTank(fromApi, key, player);
   if (apiOk) urls.push(fromApi);
   if (!protKey && primaryZam) urls.push(primaryZam);
   if (!protKey) for (const u of extraUrls) urls.push(u);
@@ -517,6 +664,40 @@ function rosterNameKey(name) {
     .toLowerCase();
 }
 
+/** Primary label on roster cards — WoW character from API (`characterName`), else Raid Helper signup `name`. */
+function eventsRosterCharacterLabel(player) {
+  const cn = String(player?.characterName ?? "").trim();
+  if (cn) return cn;
+  return String(player?.name ?? "").trim();
+}
+
+/** Names to try against WCL attendance map (character vs Discord-style signup). */
+function attendanceLookupNameCandidates(player) {
+  const cn = String(player?.characterName ?? "").trim();
+  const nm = String(player?.name ?? "").trim();
+  const rio = String(player?.rioProfileLookupName ?? "").trim();
+  const out = [];
+  if (cn) out.push(cn);
+  if (nm) out.push(nm);
+  if (rio && rio !== cn && rio !== nm) out.push(rio);
+  return [...new Set(out)];
+}
+
+function attendanceRowForRosterPlayerResolved(player) {
+  for (const n of attendanceLookupNameCandidates(player)) {
+    const row = attendanceRowForRosterPlayer(n);
+    if (row) return row;
+  }
+  return null;
+}
+
+/** Stable key for roster-relative attendance tiers when comparing players on the same event. */
+function rosterAttendanceCompareKey(player) {
+  const cn = String(player?.characterName ?? "").trim();
+  if (cn) return rosterNameKey(cn);
+  return rosterNameKey(player?.name || "");
+}
+
 /** Lookup WCL attendance row — tries canonical key first, then rare alternate keys. */
 function attendanceRowForRosterPlayer(playerName) {
   const primary = rosterNameKey(playerName);
@@ -528,30 +709,10 @@ function attendanceRowForRosterPlayer(playerName) {
 }
 
 /**
- * Roster-relative standing for glow colour: sort confirmed players who have WCL % (worst→best).
- * Returns 0..5 (0 = lowest on this roster, 5 = highest). Null if this player has no WCL row.
+ * Glow colour bands from overall WCL attendance % (0..100 → tiers 0..5).
+ * Everyone at the same % gets the same glow — avoids roster ties sorting alphabetically into blue/purple while others stay “legendary”.
  */
-function rosterRelativeGlowTier(player, confirmedRoster) {
-  const roster = Array.isArray(confirmedRoster) ? confirmedRoster : [];
-  const keyed = [];
-  for (const p of roster) {
-    const row = attendanceRowForRosterPlayer(p.name);
-    if (row && Number.isFinite(Number(row.attendanceRate))) {
-      keyed.push({ key: rosterNameKey(p.name), rate: Number(row.attendanceRate) });
-    }
-  }
-  const myKey = rosterNameKey(player.name);
-  if (!keyed.some((k) => k.key === myKey)) return null;
-  if (keyed.length === 1) return 3;
-  keyed.sort((a, b) => a.rate - b.rate || a.key.localeCompare(b.key));
-  const idx = keyed.findIndex((k) => k.key === myKey);
-  if (idx < 0) return null;
-  const p = idx / (keyed.length - 1);
-  return Math.min(5, Math.floor(p * 6 - 1e-9));
-}
-
-/** If roster-relative fails, map overall WCL % to a glow band (0..5). */
-function globalAttendanceGlowTier(rate) {
+function attendancePercentGlowTier(rate) {
   const x = Math.max(0, Math.min(100, Number(rate || 0)));
   return Math.min(5, Math.floor((x / 100) * 6 - 1e-9));
 }
@@ -560,13 +721,13 @@ function rosterRelativeAttendanceHint(player, confirmedRoster) {
   const roster = Array.isArray(confirmedRoster) ? confirmedRoster : [];
   const keyed = [];
   for (const p of roster) {
-    const row = attendanceRowForRosterPlayer(p.name);
+    const row = attendanceRowForRosterPlayerResolved(p);
     if (row && Number.isFinite(Number(row.attendanceRate))) {
-      keyed.push({ key: rosterNameKey(p.name), rate: Number(row.attendanceRate) });
+      keyed.push({ key: rosterAttendanceCompareKey(p), rate: Number(row.attendanceRate) });
     }
   }
   keyed.sort((a, b) => a.rate - b.rate || a.key.localeCompare(b.key));
-  const idx = keyed.findIndex((k) => k.key === rosterNameKey(player.name));
+  const idx = keyed.findIndex((k) => k.key === rosterAttendanceCompareKey(player));
   if (idx < 0 || keyed.length === 0) return "";
   return ` ${idx + 1}/${keyed.length} on this roster (low→high WCL %)`;
 }
@@ -600,7 +761,7 @@ async function loadWclAttendanceForEvents() {
 }
 
 function rosterAttendanceBadgeHtml(player, confirmedRoster) {
-  const row = attendanceRowForRosterPlayer(player.name);
+  const row = attendanceRowForRosterPlayerResolved(player);
   const pctRounded = row ? Math.round(Number(row.attendanceRate || 0)) : null;
   const mergedLogs =
     Array.isArray(row?.wclCharacters) && row.wclCharacters.length > 1
@@ -609,21 +770,15 @@ function rosterAttendanceBadgeHtml(player, confirmedRoster) {
   const titleCore = row
     ? `WCL: ${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids || "?"} raids · ${pctRounded}% overall${mergedLogs}`
     : "No WCL attendance match in leaderboard";
+  const attendanceTitle = `Attendance — ${titleCore}`;
   if (!row || attendanceConsideredRaids <= 0) {
-    return `<div class="raider-badge-slot raider-badge-slot--pending" title="${escapeHtml(titleCore)}"></div>`;
+    return `<div class="raider-badge-slot raider-badge-slot--pending" title="${escapeHtml(attendanceTitle)}"></div>`;
   }
-  let glowTier = rosterRelativeGlowTier(player, confirmedRoster);
-  if (glowTier === null) glowTier = globalAttendanceGlowTier(row.attendanceRate);
-  const title = `${titleCore}${rosterRelativeAttendanceHint(player, confirmedRoster)}`;
-  const badgeSrc = `/images/badge-tiers/attendance-portal-badge.png?v=${IMAGE_ASSET_VERSION}`;
+  const glowTier = attendancePercentGlowTier(row.attendanceRate);
+  const title = `${attendanceTitle}${rosterRelativeAttendanceHint(player, confirmedRoster)}`;
   return `
     <div class="raider-badge-tier raider-badge-tier--glow-${glowTier}" title="${escapeHtml(title)}">
-      <div class="raider-badge-tier-mask">
-        <img class="raider-badge-tier-portal" src="${escapeHtml(badgeSrc)}" alt="" width="56" height="56" loading="lazy" decoding="async" referrerpolicy="no-referrer" />
-      </div>
-      <div class="raider-badge-tier-readout">
-        <span class="raider-badge-tier-pct">${pctRounded}%</span>
-      </div>
+      <span class="raider-badge-tier-pct">${pctRounded}%</span>
     </div>
   `;
 }
@@ -638,14 +793,27 @@ function rosterGenericAchievementSlotsHtml() {
 
 /** English class label for roster text — matches {@link effectiveRosterClassSlug} (Rio wins Warrior vs Paladin disagreements). */
 function mergedClassDisplayLabel(player) {
-  const rh = String(player?.className ?? "").trim();
-  const rio = String(player?.raiderIoClassName ?? "").trim();
+  let rh = String(player?.className ?? "").trim();
+  let rio = String(player?.raiderIoClassName ?? "").trim();
+  const bnet = String(player?.blizzardClassName ?? "").trim();
+  const rhSnapSlug = canonicalWowClassSlug(player?.raidHelperClassName);
+  const plateTankNoRhClass = isRosterTankProtSlot(player) && !rhSnapSlug;
+
+  const slugLooksOffMetaPlateTank = (slug) =>
+    Boolean(slug) && !["warrior", "paladin", "druid", "deathknight"].includes(slug);
+
+  if (plateTankNoRhClass) {
+    if (slugLooksOffMetaPlateTank(canonicalWowClassSlug(rh))) rh = "";
+    if (slugLooksOffMetaPlateTank(canonicalWowClassSlug(rio))) rio = "";
+  }
+
   const rhSlug = canonicalWowClassSlug(rh);
   const rioSlug = canonicalWowClassSlug(rio);
   const plate = new Set(["paladin", "warrior"]);
   if (plate.has(rhSlug) && plate.has(rioSlug) && rhSlug !== rioSlug) return rio;
   if (rh) return rh;
-  return rio || "";
+  if (rio) return rio;
+  return bnet || "";
 }
 
 /** Hover text when Raid Helper and Raider.io disagree or supplement each other. */
@@ -659,10 +827,13 @@ function rosterClassSpecSourcesTooltip(player) {
   if (rhS) parts.push(`Raid Helper spec: ${rhS}`);
   if (rioC) parts.push(`Raider.io class: ${rioC}`);
   if (rioS) parts.push(`Raider.io spec: ${rioS}`);
+  const bnetC = String(player?.blizzardClassName ?? "").trim();
+  if (bnetC) parts.push(`Battle.net class: ${bnetC}`);
   return parts.join(" · ");
 }
 
 function rosterRaiderCard(player, confirmedRoster) {
+  const displayName = eventsRosterCharacterLabel(player);
   const className = mergedClassDisplayLabel(player);
   const color = wowClassColor(className);
   const specLabel = displaySpecNameForRoster(String(player.specName || "").trim());
@@ -672,12 +843,16 @@ function rosterRaiderCard(player, confirmedRoster) {
     .slice(1)
     .map((u) => escapeHtml(u))
     .join("|");
-  const portraitAlt = specLabel ? `${className} · ${specLabel}` : className;
+  const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
   const priestGlow =
     effectiveRosterClassSlug(player) === "priest"
       ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);"
       : "";
-  const sourcesTip = rosterClassSpecSourcesTooltip(player);
+  const rhSignupTip =
+    String(player?.name || "").trim() !== displayName
+      ? ` · Raid Helper signup: ${String(player?.name || "").trim()}`
+      : "";
+  const sourcesTip = `${rosterClassSpecSourcesTooltip(player)}${rhSignupTip}`;
   const cardTitleAttr = sourcesTip ? ` title="${escapeHtml(sourcesTip)}"` : "";
 
   return `
@@ -688,8 +863,8 @@ function rosterRaiderCard(player, confirmedRoster) {
             class="raider-champion-img"
             src="${portraitSrc}"
             alt="${escapeHtml(portraitAlt)}"
-            width="56"
-            height="56"
+            width="48"
+            height="48"
             loading="lazy"
             decoding="async"
             data-champ-fallbacks="${portraitFb}"
@@ -698,7 +873,7 @@ function rosterRaiderCard(player, confirmedRoster) {
         </div>
         <div class="raider-text">
           <div class="raider-name-line">
-            <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(player.name)}</span>
+            <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(displayName)}</span>
           </div>
           ${
             specLabel && className
@@ -803,7 +978,9 @@ function groupedRosterByRole(confirmedRoster) {
     grouped.get(role).push(player);
   }
   for (const role of ROLE_ORDER) {
-    grouped.get(role).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    grouped.get(role).sort((a, b) =>
+      eventsRosterCharacterLabel(a).localeCompare(eventsRosterCharacterLabel(b))
+    );
   }
   return grouped;
 }
