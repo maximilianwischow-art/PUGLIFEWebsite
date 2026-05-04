@@ -1315,6 +1315,8 @@ window.plbEventsRoster = {
   rosterParseForDisplay,
   rosterParseSourceTooltipFragment,
   rosterNameKey,
+  resolvedSpecIconKey,
+  specIconZamimgUrlForKey,
   specBadgePortraitChain,
   rosterBadgeRowHtml,
   rosterPortraitChain,

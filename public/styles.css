@@ -3604,7 +3604,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  min-width: 860px;
+  min-width: 920px;
 }
 
 .leaderboard-table thead th {
@@ -3620,34 +3620,38 @@ button.raid-cal-run.raid-cal-run--column:hover {
   white-space: nowrap;
 }
 
-.leaderboard-sort {
+.leaderboard-sort-bar {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  gap: 2px;
-  padding: 10px 12px;
-  margin: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: color 0.15s ease, background 0.15s ease;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 12px;
 }
 
-.leaderboard-sort:hover,
-.leaderboard-sort:focus-visible {
+.leaderboard-sort-chip {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.leaderboard-sort-chip:hover,
+.leaderboard-sort-chip:focus-visible {
   color: var(--text);
+  border-color: rgba(200, 160, 255, 0.5);
   background: rgba(200, 160, 255, 0.08);
   outline: none;
 }
 
-.leaderboard-sort--active {
+.leaderboard-sort-chip--active {
   color: var(--pink-l);
+  border-color: rgba(212, 175, 55, 0.7);
+  background: rgba(212, 175, 55, 0.12);
 }
 
 .leaderboard-table tbody td {
@@ -3662,11 +3666,12 @@ button.raid-cal-run.raid-cal-run--column:hover {
 }
 
 .leaderboard-td-player {
-  min-width: 260px;
+  width: 34%;
+  min-width: 300px;
 }
 
-.leaderboard-td-rank {
-  white-space: nowrap;
+.leaderboard-td-badges {
+  width: 66%;
 }
 
 /* Raid rank: gold pill — matches Leaderboard reference (border + caps label). */
@@ -3818,6 +3823,13 @@ button.raid-cal-run.raid-cal-run--column:hover {
   gap: 2px;
 }
 
+.leaderboard-player-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .leaderboard-player-name {
   font-weight: 700;
   color: var(--text);
@@ -3829,14 +3841,44 @@ button.raid-cal-run.raid-cal-run--column:hover {
   font-style: italic;
 }
 
-.leaderboard-player-badges .raider-badges {
+.leaderboard-kpi-inline {
+  display: flex;
   flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12px;
 }
 
-.leaderboard-table td[data-numeric] {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.leaderboard-kpi-inline-item {
+  color: var(--text-muted);
+}
+
+.leaderboard-kpi-inline-item b {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.leaderboard-player-badges .raider-badges {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.leaderboard-player-badges .raider-badge-slot {
+  width: 60px;
+  height: 60px;
+}
+
+.leaderboard-player-badges .raider-badge-role-img,
+.leaderboard-player-badges .raider-badge-achievement-img {
+  width: 60px;
+  height: 60px;
+}
+
+.leaderboard-player-badges .raider-badge-slot--guild-role .raider-badge-role-img {
+  --role-badge-zoom: 1.75;
+}
+
+.leaderboard-player-badges .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
+  --achievement-badge-zoom: 1.85;
 }
 
 .leaderboard-peak-parse--empty {
@@ -3847,28 +3889,28 @@ button.raid-cal-run.raid-cal-run--column:hover {
  * WCL-style parse tiers — !important wins over `tbody td { color: var(--text) }` inheritance.
  * Rough bands: grey → green → blue → purple → orange → pink → gold.
  */
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl0 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl0 {
   color: #9d9d9d !important;
 }
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl25 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl25 {
   color: #1eff00 !important;
 }
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl50 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl50 {
   color: #0070dd !important;
 }
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl75 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl75 {
   color: #a335ee !important;
 }
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl95 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl95 {
   color: #ff8000 !important;
 }
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl99 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl99 {
   color: #ff14ff !important;
 }
-.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl100 {
+.leaderboard-peak-parse.leaderboard-peak-parse--wcl100 {
   color: #e6cc80 !important;
 }
 
-.leaderboard-td-peak .leaderboard-peak-parse {
+.leaderboard-peak-parse {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
 }

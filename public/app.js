@@ -203,7 +203,10 @@ async function loadRaidPerfKpi() {
       maxPastEvents: "80",
       wclLimit: "40",
     });
-    const data = await apiGetJson(`/api/raid-helper/events-kpi?${q}`, { credentials: "include" });
+    const data = await apiGetJson(`/api/raid-helper/events-kpi?${q}`, {
+      credentials: "include",
+      skipCache: true,
+    });
 
     const uniqueN = data.uniqueRaiderCount;
     const coreAvg = data.coreAttendanceAverage;
@@ -218,7 +221,9 @@ async function loadRaidPerfKpi() {
       </div>
       <div class="raid-kpi-tile">
         <span class="raid-kpi-value">${escapeHtml(fmtKpiAttendancePct(coreAvg))}</span>
-        <span class="raid-kpi-label">Core attendance (avg WCL %)</span>
+        <span class="raid-kpi-label">${
+          data.coreAttendanceSource === "core" ? "Core attendance (avg WCL %)" : "Attendance (avg WCL %)"
+        }</span>
       </div>
       <div class="raid-kpi-tile">
         <span class="raid-kpi-value">${escapeHtml(itemsLabel)}</span>

@@ -917,6 +917,47 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
 
   const rosterBase = pairs.map((p) => p.base);
   let enriched = await enrichConfirmedRosterExternalSpecs(rosterBase);
+  if (blizzardProfileClientConfigured()) {
+    const conc = Math.min(16, Math.max(1, Number(process.env.WOW_EXTERNAL_SPEC_CONCURRENCY || 6) || 6));
+    const region = wowClassicRegion();
+    enriched = await mapWithConcurrency(enriched, conc, async (row, idx) => {
+      if (String(row?.specName || "").trim() || String(row?.raiderIoSpecName || "").trim()) return row;
+      const attRow = pairs[idx]?.attRow || {};
+      const realmSlug = slugifyWowSlug(row?.realm || defaultWowRealmForRoster());
+      if (!realmSlug) return row;
+      const candidates = [
+        ...(Array.isArray(attRow?.wclCharacters) ? attRow.wclCharacters : []),
+        attRow?.name,
+        row?.characterName,
+        row?.rioProfileLookupName,
+        row?.name,
+      ]
+        .map((x) => String(x || "").trim())
+        .filter(Boolean);
+      const uniq = [...new Set(candidates)];
+      for (const cand of uniq) {
+        const key = `bnet-classic-active-spec-v3-${region}-${realmSlug}-${slugifyLocaleText(cand)}`;
+        try {
+          const specName = await getOrRefreshCachedPayload(key, {
+            ttlMs: 24 * 60 * 60 * 1000,
+            maxStaleMs: 14 * 24 * 60 * 60 * 1000,
+            loader: () => fetchBlizzardClassicActiveSpecName(realmSlug, cand),
+          });
+          if (String(specName || "").trim()) {
+            return {
+              ...row,
+              specName: String(specName).trim(),
+              blizzardSpecName: String(specName).trim(),
+              raiderIoSpecName: String(row?.raiderIoSpecName || "").trim() || String(specName).trim(),
+            };
+          }
+        } catch {
+          /* try next candidate */
+        }
+      }
+      return row;
+    });
+  }
   enriched = enriched.map((row) => {
     const inferred = inferActiveRosterRoleNameFromSpec(row);
     return inferred ? { ...row, roleName: inferred } : row;
@@ -5770,14 +5811,22 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
 
     let coreAttendanceSum = 0;
     let coreAttendanceCount = 0;
+    let linkedAttendanceSum = 0;
+    let linkedAttendanceCount = 0;
     for (const row of linkedPayload.leaderboard) {
-      if (normalizeRhWclGuildRole(row?.guildRole) !== "Core") continue;
       const r = Number(row.attendanceRate ?? 0);
+      if (Number.isFinite(r)) {
+        linkedAttendanceSum += r;
+        linkedAttendanceCount += 1;
+      }
+      if (normalizeRhWclGuildRole(row?.guildRole) !== "Core") continue;
       if (!Number.isFinite(r)) continue;
       coreAttendanceSum += r;
       coreAttendanceCount += 1;
     }
-    const coreAttendanceAverage = coreAttendanceCount > 0 ? coreAttendanceSum / coreAttendanceCount : null;
+    const linkedAttendanceAverage = linkedAttendanceCount > 0 ? linkedAttendanceSum / linkedAttendanceCount : null;
+    const coreAttendanceAverage = coreAttendanceCount > 0 ? coreAttendanceSum / coreAttendanceCount : linkedAttendanceAverage;
+    const coreAttendanceSource = coreAttendanceCount > 0 ? "core" : linkedAttendanceCount > 0 ? "linked" : "none";
 
     const gargulRows = Array.isArray(gargulLootState.entries) ? gargulLootState.entries : [];
     const totalItemsDistributed = gargulRows.filter(
@@ -5798,7 +5847,9 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
       maxPastEvents,
       consideredRaids: linkedPayload.consideredRaids,
       coreAttendanceAverage,
+      coreAttendanceSource,
       coreRaiderCount: coreAttendanceCount,
+      linkedRaiderCount: linkedAttendanceCount,
       totalItemsDistributed,
     });
   } catch (error) {

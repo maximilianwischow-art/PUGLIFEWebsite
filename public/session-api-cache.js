@@ -14,6 +14,7 @@
       if (p.startsWith("/api/auth/")) return true;
       if (p === "/api/voting/current") return true;
       if (p === "/api/raid-helper/future-events") return true;
+      if (p === "/api/raid-helper/events-kpi") return true;
       if (p === "/api/nether-vortex/needs") return true;
       return false;
     } catch {

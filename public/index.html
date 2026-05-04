@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=20260524e" />
+    <link rel="stylesheet" href="/styles.css?v=20260524i" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -69,55 +69,25 @@
 
         <section class="card leaderboard-page-card" aria-labelledby="leaderboard-page-title">
           <h2 id="leaderboard-page-title" class="section-title">Raid Leaderboard</h2>
+          <div id="leaderboardSortBar" class="leaderboard-sort-bar" role="group" aria-label="Leaderboard sorting">
+            <button type="button" class="leaderboard-sort-chip" data-leaderboard-sort="raidRank">Role</button>
+            <button type="button" class="leaderboard-sort-chip" data-leaderboard-sort="attendanceRate">Attendance</button>
+            <button type="button" class="leaderboard-sort-chip" data-leaderboard-sort="pastRhEvents">Events</button>
+            <button type="button" class="leaderboard-sort-chip" data-leaderboard-sort="deaths">Deaths</button>
+            <button type="button" class="leaderboard-sort-chip" data-leaderboard-sort="peakParse">Peak Parse</button>
+            <button type="button" class="leaderboard-sort-chip" data-leaderboard-sort="name">Name</button>
+          </div>
           <div class="leaderboard-table-scroll">
             <table class="leaderboard-table" id="leaderboardTable">
               <thead>
                 <tr>
-                  <th scope="col">
-                    <button type="button" class="leaderboard-sort" data-leaderboard-sort="name">
-                      <span class="leaderboard-sort-label">Raider</span><span class="leaderboard-sort-dir" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button type="button" class="leaderboard-sort" data-leaderboard-sort="raidRank">
-                      <span class="leaderboard-sort-label">Raid rank</span><span class="leaderboard-sort-dir" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button
-                      type="button"
-                      class="leaderboard-sort"
-                      data-leaderboard-sort="attendanceRate"
-                      title="Sort by attendance % (last tracked 25-player raids — see row tooltip)"
-                    >
-                      <span class="leaderboard-sort-label">Attendance %</span><span class="leaderboard-sort-dir" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button
-                      type="button"
-                      class="leaderboard-sort"
-                      data-leaderboard-sort="pastRhEvents"
-                      title="Sort by total Raid Helper events (primary signups) in scanned history"
-                    >
-                      <span class="leaderboard-sort-label">Events</span><span class="leaderboard-sort-dir" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button type="button" class="leaderboard-sort" data-leaderboard-sort="deaths">
-                      <span class="leaderboard-sort-label">Deaths</span><span class="leaderboard-sort-dir" aria-hidden="true"></span>
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button type="button" class="leaderboard-sort" data-leaderboard-sort="peakParse">
-                      <span class="leaderboard-sort-label">Peak parse</span><span class="leaderboard-sort-dir" aria-hidden="true"></span>
-                    </button>
-                  </th>
+                  <th scope="col">Raider · KPIs</th>
+                  <th scope="col">Badges</th>
                 </tr>
               </thead>
               <tbody id="leaderboardTableBody">
                 <tr>
-                  <td colspan="6" class="subtle">Loading…</td>
+                  <td colspan="2" class="subtle">Loading…</td>
                 </tr>
               </tbody>
             </table>
@@ -136,9 +106,9 @@
     </div>
 
     <script src="/session-api-cache.js?v=20260504a"></script>
-    <script src="/events-roster-ui.js?v=20260504b"></script>
+    <script src="/events-roster-ui.js?v=20260504c"></script>
     <script src="/wow-item-tooltip.js?v=20260428p"></script>
-    <script src="/leaderboard.js?v=20260504c"></script>
+    <script src="/leaderboard.js?v=20260504h"></script>
     <script src="/home.js?v=20260523a"></script>
     <script src="/auth-ui.js?v=20260504b"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>

@@ -4,6 +4,7 @@
 const plb = window.plbEventsRoster;
 const leaderboardTbody = document.querySelector("#leaderboardTableBody");
 const leaderboardTable = document.querySelector("#leaderboardTable");
+const leaderboardSortBar = document.querySelector("#leaderboardSortBar");
 
 /** Display / default sort: highest rank first (Guildlead → Peon). */
 const RAID_RANK_SORT_ORDER = ["Guildlead", "Raidlead", "Core", "Veteran", "Grunt", "Peon"];
@@ -320,9 +321,76 @@ function attendancePercentTooltip(player, recentRaidCap, consideredRaids) {
   return `Attendance % uses only the last ${cap} tracked 25-player Warcraft Logs raids (Karazhan and Zul'Aman excluded from that window). You attended ${att} of ${win} raid(s) in that window.`;
 }
 
-function raiderCellHtml(p) {
+function fallbackSpecKeyFromClassAndRole(player) {
+  const cls = String(plb?.effectiveRosterClassSlug?.(player) || "").toLowerCase();
+  const role = String(player?.roleName || "").toLowerCase();
+  const hasExplicitSpecSignal = Boolean(
+    String(player?.specName || "").trim() ||
+      String(player?.raiderIoSpecName || "").trim() ||
+      String(player?.wclSpecName || "").trim() ||
+      String(player?.wclSpecIconUrl || "").trim() ||
+      String(player?.specIconUrl || "").trim()
+  );
+  if (!cls) return "";
+  if (role.includes("tank")) {
+    if (cls === "warrior") return "warrior_protection";
+    if (cls === "paladin") return "paladin_protection";
+    if (cls === "druid") return "druid_feralcombat";
+  }
+  if (role.includes("heal")) {
+    if (cls === "priest") return "priest_holy";
+    if (cls === "paladin") return "paladin_holy";
+    if (cls === "shaman") return "shaman_restoration";
+    if (cls === "druid") return "druid_restoration";
+  }
+  if (role.includes("melee")) {
+    if (cls === "rogue") return "rogue_combat";
+    if (cls === "warrior") return "warrior_fury";
+    if (cls === "paladin") return "paladin_retribution";
+    if (cls === "shaman") return "shaman_enhancement";
+    if (cls === "druid") return "druid_feralcombat";
+  }
+  if (role.includes("ranged")) {
+    if (cls === "mage") return "mage_fire";
+    if (cls === "warlock") return "warlock_destruction";
+    if (cls === "hunter") return "hunter_beastmastery";
+    if (cls === "priest") return hasExplicitSpecSignal ? "priest_shadow" : "";
+    if (cls === "shaman") return hasExplicitSpecSignal ? "shaman_elemental" : "";
+    if (cls === "druid") return hasExplicitSpecSignal ? "druid_balance" : "";
+  }
+  return "";
+}
+
+function specPortraitPriorityChain(player) {
+  const key =
+    (typeof plb?.resolvedSpecIconKey === "function" ? plb.resolvedSpecIconKey(player) : "") ||
+    fallbackSpecKeyFromClassAndRole(player);
+  const pref =
+    key && typeof plb?.specIconZamimgUrlForKey === "function" ? String(plb.specIconZamimgUrlForKey(key, player) || "") : "";
+  const chain = typeof plb?.specBadgePortraitChain === "function" ? plb.specBadgePortraitChain(player) : plb.rosterPortraitChain(player);
+  if (!pref) return chain;
+  return [pref, ...chain.filter((u) => String(u || "").trim() !== pref)];
+}
+
+function raiderKpisInlineHtml(p, recentCap, considered) {
   const escapeHtml = plb.escapeHtml;
-  const chain = typeof plb.specBadgePortraitChain === "function" ? plb.specBadgePortraitChain(p) : plb.rosterPortraitChain(p);
+  const att = fmtPct(p.attendanceRate);
+  const attTip = escapeHtml(attendancePercentTooltip(p, recentCap, considered));
+  const events = Number(p._pastRhEvents || 0).toLocaleString();
+  const deaths = Number(p._deaths || 0).toLocaleString();
+  const peakCell = peakParseCellHtml(p);
+  return `
+    <div class="leaderboard-kpi-inline">
+      <span class="leaderboard-kpi-inline-item" title="${attTip}"><b>Attendance:</b> ${escapeHtml(att)}</span>
+      <span class="leaderboard-kpi-inline-item"><b>Events:</b> ${escapeHtml(events)}</span>
+      <span class="leaderboard-kpi-inline-item"><b>Deaths:</b> ${escapeHtml(deaths)}</span>
+      <span class="leaderboard-kpi-inline-item"><b>Peak parse:</b> ${peakCell}</span>
+    </div>`;
+}
+
+function raiderCellHtml(p, recentCap, considered) {
+  const escapeHtml = plb.escapeHtml;
+  const chain = specPortraitPriorityChain(p);
   const portraitSrc = escapeHtml(chain[0] || "");
   const portraitFb = chain.slice(1).map((u) => escapeHtml(u)).join("|");
   const displayName = plb.eventsRosterCharacterLabel(p);
@@ -336,6 +404,7 @@ function raiderCellHtml(p) {
   const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
   const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
   const badges = plb.rosterBadgeRowHtml(p);
+  const rankPill = raidRankPillHtml(p._raidRank);
   return `
     <div class="leaderboard-player-row">
       <div class="leaderboard-portrait-stack">
@@ -353,14 +422,17 @@ function raiderCellHtml(p) {
       </div>
       <div class="leaderboard-player-cell">
         <div class="leaderboard-player-main">
-          <span class="leaderboard-player-name" style="color:${escapeHtml(color)};${priestGlow}">${escapeHtml(displayName)}</span>
+          <div class="leaderboard-player-name-line">
+            <span class="leaderboard-player-name" style="color:${escapeHtml(color)};${priestGlow}">${escapeHtml(displayName)}</span>
+            <span class="leaderboard-player-rank">${rankPill}</span>
+          </div>
           ${
             metaBits.length
               ? `<span class="leaderboard-player-meta">${escapeHtml(metaBits.join(" · "))}</span>`
               : ""
           }
         </div>
-        <div class="leaderboard-player-badges"><div class="raider-badges">${badges}</div></div>
+        ${raiderKpisInlineHtml(p, recentCap, considered)}
       </div>
     </div>`;
 }
@@ -380,13 +452,8 @@ function renderLeaderboardTable() {
       const rowKey = baseKey || `__row_${idx}`;
       const keyAttr = escapeHtml(rowKey);
       const isOpen = expandedPlayerKey && expandedPlayerKey === rowKey;
-      const rankPill = raidRankPillHtml(p._raidRank);
-      const att = fmtPct(p.attendanceRate);
-      const attTip = escapeHtml(attendancePercentTooltip(p, recentCap, considered));
-      const events = Number(p._pastRhEvents || 0).toLocaleString();
-      const deaths = Number(p._deaths || 0).toLocaleString();
-      const peakCell = peakParseCellHtml(p);
-      const playerCell = raiderCellHtml(p);
+      const playerCell = raiderCellHtml(p, recentCap, considered);
+      const badges = plb.rosterBadgeRowHtml(p);
       const lootCount = Number(p._lootItems?.length || 0);
       const hint =
         lootCount > 0
@@ -405,16 +472,10 @@ function renderLeaderboardTable() {
           title="${escapeHtml(hint)}"
         >
           <td class="leaderboard-td-player">${playerCell}</td>
-          <td class="leaderboard-td-rank">${rankPill}</td>
-          <td data-numeric class="leaderboard-td-att" title="${attTip}">
-            <strong>${escapeHtml(att)}</strong>
-          </td>
-          <td data-numeric title="Primary Raid Helper signups in scanned past events">${escapeHtml(events)}</td>
-          <td data-numeric>${escapeHtml(deaths)}</td>
-          <td data-numeric class="leaderboard-td-peak">${peakCell}</td>
+          <td class="leaderboard-td-badges"><div class="leaderboard-player-badges"><div class="raider-badges">${badges}</div></div></td>
         </tr>
         <tr class="leaderboard-row-loot" data-lb-key="${keyAttr}" data-lb-loot-wrap="1" ${isOpen ? "" : "hidden"}>
-          <td colspan="6" class="leaderboard-td-loot">
+          <td colspan="2" class="leaderboard-td-loot">
             <div id="${panelId}" class="leaderboard-loot-panel" role="region" aria-label="Loot received">${lootPanelHtml(p, leaderboardLootItemMetaMap)}</div>
           </td>
         </tr>`;
@@ -425,6 +486,7 @@ function renderLeaderboardTable() {
     const k = String(btn.getAttribute("data-leaderboard-sort") || "");
     const active = k === sortState.key;
     btn.classList.toggle("leaderboard-sort--active", active);
+    btn.classList.toggle("leaderboard-sort-chip--active", active);
     btn.setAttribute("aria-pressed", active ? "true" : "false");
     if (active) {
       btn.setAttribute("aria-sort", sortState.dir === "asc" ? "ascending" : "descending");
@@ -486,8 +548,7 @@ function wireLeaderboardRowExpand() {
 }
 
 function wireSortHeaders() {
-  if (!leaderboardTable) return;
-  leaderboardTable.addEventListener("click", (ev) => {
+  const clickHandler = (ev) => {
     const btn = ev.target.closest("[data-leaderboard-sort]");
     if (!btn) return;
     const key = String(btn.getAttribute("data-leaderboard-sort") || "");
@@ -498,7 +559,9 @@ function wireSortHeaders() {
       sortState = { key, dir: defaultDirForKey(key) };
     }
     renderLeaderboardTable();
-  });
+  };
+  leaderboardTable?.addEventListener("click", clickHandler);
+  leaderboardSortBar?.addEventListener("click", clickHandler);
 }
 
 /**
@@ -570,7 +633,7 @@ async function refreshLeaderboardFromNetwork(gid, reportLimit) {
     leaderboardLootItemMetaMap = lootMap;
     writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
     if (!leaderboardRows.length) {
-      leaderboardTbody.innerHTML = `<tr><td colspan="6" class="subtle">No players in the active roster yet.</td></tr>`;
+      leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       return;
     }
     renderLeaderboardTable();
@@ -594,7 +657,7 @@ async function loadGuildLeaderboard() {
       leaderboardRows = cached.rows;
       leaderboardLootItemMetaMap = new Map(cached.lootEntries);
       if (!leaderboardRows.length) {
-        leaderboardTbody.innerHTML = `<tr><td colspan="6" class="subtle">No players in the active roster yet.</td></tr>`;
+        leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       } else {
         renderLeaderboardTable();
       }
@@ -608,21 +671,21 @@ async function loadGuildLeaderboard() {
       return;
     }
 
-    leaderboardTbody.innerHTML = `<tr><td colspan="6" class="subtle">Loading roster…</td></tr>`;
+    leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">Loading roster…</td></tr>`;
 
     const [{ rows, lootMap }] = await Promise.all([fetchAndBuildLeaderboardRows(gid, reportLimit), prep]);
     leaderboardRows = rows;
     leaderboardLootItemMetaMap = lootMap;
 
     if (!leaderboardRows.length) {
-      leaderboardTbody.innerHTML = `<tr><td colspan="6" class="subtle">No players in the active roster yet.</td></tr>`;
+      leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       return;
     }
 
     writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
     renderLeaderboardTable();
   } catch (e) {
-    leaderboardTbody.innerHTML = `<tr><td colspan="6" class="subtle">${plb.escapeHtml(
+    leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">${plb.escapeHtml(
       e?.message || "Failed to load leaderboard."
     )}</td></tr>`;
   }
