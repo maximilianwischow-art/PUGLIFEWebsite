@@ -390,7 +390,7 @@ function raiderKpisInlineHtml(p, recentCap, considered) {
 
 function raiderCellHtml(p, recentCap, considered) {
   const escapeHtml = plb.escapeHtml;
-  const chain = specPortraitPriorityChain(p);
+  const chain = plb.rosterPortraitChain(p);
   const portraitSrc = escapeHtml(chain[0] || "");
   const portraitFb = chain.slice(1).map((u) => escapeHtml(u)).join("|");
   const displayName = plb.eventsRosterCharacterLabel(p);

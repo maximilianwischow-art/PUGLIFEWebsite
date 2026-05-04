@@ -365,8 +365,31 @@ function inferSpecSlugFromRole(classSlug, roleSlug, specSlug) {
   return "";
 }
 
+/** Temporary class corrections for known roster-name mismatches in upstream payloads. */
+const CLASS_OVERRIDE_BY_NAME_KEY = {
+  mightyboom: "mage",
+  therodox: "shaman",
+};
+
+function classOverrideSlugForPlayer(player) {
+  const candidates = [
+    String(player?.characterName || "").trim(),
+    String(player?.name || "").trim(),
+    String(player?.rioProfileLookupName || "").trim(),
+  ];
+  for (const c of candidates) {
+    const k = rosterNameKey(c);
+    if (!k) continue;
+    const ov = CLASS_OVERRIDE_BY_NAME_KEY[k];
+    if (ov) return ov;
+  }
+  return "";
+}
+
 /** Same merge as server `englishCanonicalClassSlugForEventsIcons`: RH + Rio + optional Battle.net snapshot; plate dispute uses Rio. */
 function effectiveRosterClassSlug(player) {
+  const override = classOverrideSlugForPlayer(player);
+  if (override) return override;
   const rh = canonicalWowClassSlug(player?.className);
   const rio = canonicalWowClassSlug(player?.raiderIoClassName);
   const bnet = canonicalWowClassSlug(player?.blizzardClassName);
