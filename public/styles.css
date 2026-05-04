@@ -640,13 +640,20 @@ body::before {
   margin-bottom: 4px;
 }
 
-.section-head .dots,
-.footer .dots {
+.section-head .dots {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   margin: 8px 0;
+}
+
+.footer .dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
 }
 
 .dots .dot {
@@ -681,45 +688,94 @@ body::before {
   padding: 14px 20px 16px;
 }
 
-.phase-release-panel {
-  margin-top: 10px;
-  padding: 20px 22px;
-  text-align: center;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(168, 85, 247, 0.16), transparent 55%),
-    radial-gradient(circle at 80% 100%, rgba(96, 165, 250, 0.12), transparent 60%),
-    var(--card);
-}
-
-.phase-release-head {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-}
-
-.phase-release-sub {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.phase-release-value {
-  margin-top: 10px;
-  font-family: "Bebas Neue", sans-serif;
-  font-size: clamp(34px, 8vw, 66px);
-  letter-spacing: 0.08em;
-  line-height: 1;
-  color: #f2ecff;
-  text-shadow:
-    0 3px 16px rgba(168, 85, 247, 0.45),
-    0 2px 10px rgba(0, 0, 0, 0.8);
-}
-
 .section-head--events-only {
   margin-bottom: 0;
+}
+
+.raid-kpi-section {
+  margin-top: 16px;
+  padding: 18px 20px 16px;
+}
+
+.raid-kpi-section .section-title {
+  margin-bottom: 14px;
+}
+
+.raid-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .raid-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .raid-kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.raid-kpi-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  min-height: 88px;
+  padding: 12px 14px;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.raid-kpi-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.raid-kpi-tile--primary {
+  background: linear-gradient(145deg, rgba(40, 28, 58, 0.95) 0%, rgba(18, 22, 40, 0.98) 100%);
+  border-color: rgba(200, 170, 255, 0.22);
+}
+
+.raid-kpi-tile--loading,
+.raid-kpi-tile--error {
+  grid-column: 1 / -1;
+  min-height: 72px;
+}
+
+.raid-kpi-tile--error {
+  border-color: rgba(255, 120, 120, 0.35);
+}
+
+.raid-kpi-value {
+  font-family: "Bebas Neue", "Nunito", sans-serif;
+  font-size: clamp(26px, 4vw, 34px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.raid-kpi-tile--primary .raid-kpi-value {
+  background: linear-gradient(92deg, #ffc8eb 0%, #e8d4ff 45%, #a8d8ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.raid-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  line-height: 1.25;
 }
 
 .subtle {
@@ -731,7 +787,7 @@ body::before {
   font-weight: 300;
 }
 
-/* Dashboard overview: PB row + roster (linked to boss-times API) */
+/* Raid Performance: Best Time Raids PB row (boss-times API) */
 .dashboard-overview {
   margin-top: 16px;
 }
@@ -1312,6 +1368,61 @@ body::before {
   gap: 10px;
 }
 
+.event-missing {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(15, 10, 20, 0.45);
+  border: 1px solid var(--border);
+}
+
+.event-missing-title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.event-missing-lead {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.event-missing-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.event-missing-list li {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fel);
+}
+
+.event-missing-n {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+  color: #fda4af;
+}
+
+.event-missing-meta {
+  margin: 0 !important;
+}
+
+.event-missing--ok .event-missing-lead {
+  color: #a7f3d0;
+}
+
 .event-raid-header {
   width: 100%;
   overflow: hidden;
@@ -1632,6 +1743,56 @@ body::before {
     0 5px 16px rgba(0, 0, 0, 0.48);
 }
 
+.raider-card-kpis {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 10px;
+  width: 100%;
+}
+
+.raider-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 85, 247, 0.14);
+  background: rgba(13, 10, 20, 0.42);
+  min-width: 0;
+}
+
+.raider-kpi-heading {
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  line-height: 1.25;
+}
+
+.raider-kpi-period {
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.raider-kpi-metric {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.raider-kpi--attendance .raider-kpi-metric {
+  color: var(--purple-l);
+}
+
+.raider-kpi--parse .raider-kpi-metric {
+  color: var(--mint);
+}
+
 .raider-card-main {
   display: flex;
   align-items: center;
@@ -1751,6 +1912,64 @@ body::before {
   border: 2px dashed rgba(200, 180, 255, 0.28);
   background: rgba(0, 0, 0, 0.28);
   box-sizing: border-box;
+}
+
+/*
+ * Guild rank art: PNGs often ship with large transparent margins around the badge.
+ * Solid black behind alpha, then scale+clip so the visible emblem fills the 44×44 cell.
+ * Tune --guild-role-badge-zoom if a set of assets needs more/less crop (default ~1.72).
+ */
+.raider-badge-slot--guild-role {
+  --guild-role-badge-zoom: 1.72;
+  position: relative;
+  padding: 0;
+  border-width: 0;
+  border-style: solid;
+  background: #000;
+  overflow: hidden;
+  vertical-align: top;
+  box-shadow: inset 0 0 0 2px rgba(168, 85, 247, 0.42);
+}
+
+.raider-badge-role-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 0;
+  transform: scale(var(--guild-role-badge-zoom));
+  transform-origin: center center;
+}
+
+/* Second slot for Core / Guildlead / Raidlead: attendance Peon–Veteran (teal ring vs purple primary). */
+.raider-badge-slot--guild-role.raider-badge-slot--attendance-companion {
+  box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.45);
+}
+
+/*
+ * Earned achievements — match guild-rank badge fill: many PNGs have extra padding in-file;
+ * scale+clip like `.raider-badge-role-img` (tune --achievement-badge-zoom if a set needs less crop).
+ */
+.raider-badge-slot--achievement-earned {
+  --achievement-badge-zoom: 1.72;
+  padding: 0;
+  border: 0;
+  background: #000;
+  overflow: hidden;
+  line-height: 0;
+  vertical-align: top;
+}
+
+.raider-badge-slot--achievement-earned .raider-badge-achievement-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 0;
+  transform: scale(var(--achievement-badge-zoom));
+  transform-origin: center center;
 }
 
 .raider-badge-slot--pending {
@@ -1927,6 +2146,16 @@ body::before {
   border-top: 1px solid var(--border);
 }
 
+.roster-active-stack .roster-role-group--guild-tier:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.roster-active-stack .roster-role-group--guild-tier .raider-grid {
+  margin-top: 4px;
+}
+
 .roster-role-title {
   font-size: 10px;
   letter-spacing: 0.14em;
@@ -1934,6 +2163,37 @@ body::before {
   color: var(--fel);
   font-weight: 700;
   margin-bottom: 6px;
+}
+
+/* Guild roster page: same rank art as raider cards, compact, next to section label */
+.roster-role-title--guild-tier {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.roster-section-guild-badge {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  padding: 0;
+  border-width: 0;
+  box-sizing: border-box;
+}
+
+.roster-section-guild-badge .raider-badge-role-img {
+  width: 28px;
+  height: 28px;
+}
+
+.roster-role-title-text {
+  letter-spacing: 0.14em;
+}
+
+.roster-role-title-count {
+  font-weight: 800;
+  opacity: 0.85;
 }
 
 .roster-pill {
@@ -1949,8 +2209,12 @@ body::before {
 }
 
 .footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(16px, 2.8vw, 24px);
   text-align: center;
-  padding: 22px 18px;
+  padding: 28px 18px 32px;
   margin-top: auto;
   border-top: 1px solid var(--border);
   color: var(--muted);
@@ -1966,13 +2230,13 @@ body::before {
 }
 
 .footer-sub {
-  margin-top: 8px;
+  margin-top: 0;
   font-size: 10px;
   opacity: 0.45;
 }
 
 .footer-legal-links {
-  margin-top: 8px;
+  margin-top: 0;
   font-size: 11px;
   opacity: 0.8;
 }
@@ -2574,6 +2838,42 @@ button.raid-cal-run.raid-cal-run--column:hover {
   background: var(--panel-2);
 }
 
+.hof-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hof-body .leaderboard-player-row {
+  align-items: flex-start;
+}
+
+.hof-log-line {
+  font-size: 12px;
+}
+
+.hof-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px 18px;
+}
+
+.hof-peak {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.hof-peak-parse {
+  font-size: 15px;
+}
+
+.hof-fallback-name strong {
+  font-size: 16px;
+}
+
 .hof-rank {
   font-family: "Morpheus", serif;
   color: var(--purple-l);
@@ -2589,6 +2889,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .hof-votes {
   font-weight: 700;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .loot-history-list {
@@ -2800,6 +3101,15 @@ button.raid-cal-run.raid-cal-run--column:hover {
   border: 1px solid rgba(255, 255, 255, 0.2);
   object-fit: cover;
   background: rgba(0, 0, 0, 0.4);
+}
+
+.vortex-submit-notice {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  max-width: 52rem;
 }
 
 .loot-recipient-pill {
@@ -3249,8 +3559,13 @@ button.raid-cal-run.raid-cal-run--column:hover {
     grid-template-columns: 34px 1fr;
   }
 
-  .hof-votes {
+  .hof-metrics {
     grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .hof-votes {
+    grid-column: unset;
   }
 
   .loot-item-row {
@@ -3269,4 +3584,291 @@ button.raid-cal-run.raid-cal-run--column:hover {
   .voting-metric-value {
     font-size: 18px;
   }
+}
+
+/* —— Raid Leaderboard (/) —— */
+.leaderboard-page-card {
+  margin-top: 12px;
+}
+
+.leaderboard-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card2);
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 860px;
+}
+
+.leaderboard-table thead th {
+  background: rgba(24, 20, 38, 0.92);
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.leaderboard-sort {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  gap: 2px;
+  padding: 10px 12px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.leaderboard-sort:hover,
+.leaderboard-sort:focus-visible {
+  color: var(--text);
+  background: rgba(200, 160, 255, 0.08);
+  outline: none;
+}
+
+.leaderboard-sort--active {
+  color: var(--pink-l);
+}
+
+.leaderboard-table tbody td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 12px;
+  vertical-align: middle;
+  color: var(--text);
+}
+
+.leaderboard-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.leaderboard-td-player {
+  min-width: 260px;
+}
+
+.leaderboard-td-rank {
+  white-space: nowrap;
+}
+
+/* Raid rank: gold pill — matches Leaderboard reference (border + caps label). */
+.leaderboard-raid-rank-pill {
+  display: inline-block;
+  padding: 3px 14px;
+  border-radius: 999px;
+  border: 1px solid #d4af37;
+  color: #f4d03f;
+  background: rgba(0, 0, 0, 0.22);
+  font-weight: 800;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-family: "Inter", "Nunito", system-ui, sans-serif;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.leaderboard-raid-rank-pill--empty {
+  border-color: rgba(212, 175, 55, 0.35);
+  color: rgba(244, 208, 63, 0.45);
+}
+
+.leaderboard-row-leader {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.leaderboard-row-leader:hover td {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.leaderboard-row-leader--open td,
+.leaderboard-row-leader.leaderboard-row-leader--open:hover td {
+  background: rgba(200, 160, 255, 0.07);
+}
+
+.leaderboard-td-loot {
+  padding: 0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.leaderboard-loot-panel {
+  padding: 12px 14px 14px 16px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.leaderboard-loot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.leaderboard-loot-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  font-size: 12px;
+  line-height: 1.35;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 6px;
+}
+
+.leaderboard-loot-line-left {
+  min-width: 0;
+  flex: 1;
+}
+
+.leaderboard-loot-item-trigger {
+  max-width: 100%;
+}
+
+.leaderboard-loot-item-label {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.leaderboard-loot-panel .loot-item-name[data-loot-item-id] {
+  cursor: help;
+}
+
+.leaderboard-loot-line:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.leaderboard-loot-meta {
+  font-size: 11px;
+  text-align: right;
+  margin-left: auto;
+}
+
+.leaderboard-loot-log {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fel);
+  margin-left: 4px;
+}
+
+.leaderboard-loot-empty {
+  font-size: 12px;
+  margin: 0;
+}
+
+.leaderboard-loot-more {
+  margin: 10px 0 0;
+  font-size: 11px;
+}
+
+.leaderboard-player-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.leaderboard-portrait-stack {
+  flex-shrink: 0;
+}
+
+.leaderboard-spec-img {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.leaderboard-player-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.leaderboard-player-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.leaderboard-player-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.leaderboard-player-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.leaderboard-player-badges .raider-badges {
+  flex-wrap: wrap;
+}
+
+.leaderboard-table td[data-numeric] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.leaderboard-peak-parse--empty {
+  color: var(--text-muted);
+}
+
+/*
+ * WCL-style parse tiers — !important wins over `tbody td { color: var(--text) }` inheritance.
+ * Rough bands: grey → green → blue → purple → orange → pink → gold.
+ */
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl0 {
+  color: #9d9d9d !important;
+}
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl25 {
+  color: #1eff00 !important;
+}
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl50 {
+  color: #0070dd !important;
+}
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl75 {
+  color: #a335ee !important;
+}
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl95 {
+  color: #ff8000 !important;
+}
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl99 {
+  color: #ff14ff !important;
+}
+.leaderboard-table td.leaderboard-td-peak .leaderboard-peak-parse.leaderboard-peak-parse--wcl100 {
+  color: #e6cc80 !important;
+}
+
+.leaderboard-td-peak .leaderboard-peak-parse {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
 }

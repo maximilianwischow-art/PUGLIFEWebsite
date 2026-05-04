@@ -14,15 +14,25 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260504j";
-/** Same guild as dashboard WCL widgets — attendance tiers on roster cards. */
+const IMAGE_ASSET_VERSION = "20260521d";
+/** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
-/** Generic dashed slots (beyond attendance). CSS footprint ≈ 44×44 px — icons square 1:1. */
-const GENERIC_ACHIEVEMENT_SLOT_COUNT = 3;
+/** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
+const GUILD_ROLE_BADGE_SLUGS = new Set(["peon", "grunt", "veteran", "core", "guildlead", "raidlead"]);
+/** Core / leads are set in Account Assignment; Peon–Veteran on site follow WCL attendance (last N raids). */
+const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Guildlead", "Raidlead"]);
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 /** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
 let attendanceLeaderboardByKey = new Map();
 let attendanceConsideredRaids = 0;
+/** Unique leaderboard rows from last attendance fetch — used for parse-ceiling maxima. */
+let attendanceLeaderboardRows = [];
+/** Normalized WCL names from `/boss-times` PB clears — same roster pool as Best Time Raids (Raid Performance). */
+let pbBestTimeRankedNameKeys = new Set();
+/** MVP winners from `/api/voting/hall-of-fame`. */
+let hallOfFameWinnerNameKeys = new Set();
+/** Max peak parse % per role bracket across linked raiders this attendance window. */
+let parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
 /** Official WoW class colours (default UI palette). */
 const WOW_CLASS_COLORS = {
   Warrior: "#C79C6E",
@@ -203,9 +213,15 @@ const SPEC_SPELL_ICON_TEXTURE_FALLBACK = {
 async function loadTbcSpecIconMap() {
   if (tbcSpecIconByKey) return tbcSpecIconByKey;
   try {
-    const res = await fetch(`/tbc-spec-icons.json?v=${TBC_SPEC_ICONS_JSON_VER}`, { credentials: "same-origin" });
-    if (!res.ok) throw new Error(String(res.status));
-    const data = await res.json().catch(() => ({}));
+    const api = window.plbSessionApiCache;
+    const url = `/tbc-spec-icons.json?v=${TBC_SPEC_ICONS_JSON_VER}`;
+    const data = api
+      ? await api.getJson(url, { credentials: "same-origin" })
+      : await (async () => {
+          const res = await fetch(url, { credentials: "same-origin" });
+          if (!res.ok) throw new Error(String(res.status));
+          return res.json().catch(() => ({}));
+        })();
     tbcSpecIconByKey = data?.byKey && typeof data.byKey === "object" ? data.byKey : {};
   } catch {
     tbcSpecIconByKey = {};
@@ -678,13 +694,22 @@ function attendanceLookupNameCandidates(player) {
   if (cn) out.push(cn);
   if (nm) out.push(nm);
   if (rio && rio !== cn && rio !== nm) out.push(rio);
-  return [...new Set(out)];
+  for (const alt of Array.isArray(player?.wclCharacters) ? player.wclCharacters : []) {
+    const s = String(alt || "").trim();
+    if (!s) continue;
+    if (!out.some((x) => x.toLowerCase() === s.toLowerCase())) out.push(s);
+  }
+  return out;
 }
 
 function attendanceRowForRosterPlayerResolved(player) {
   for (const n of attendanceLookupNameCandidates(player)) {
     const row = attendanceRowForRosterPlayer(n);
     if (row) return row;
+  }
+  /** Active-roster embeds `parseSummaries` + attendance fields on each player; `/attendance` list can omit a row (top-N slice) while roster still returns them. */
+  if (player?.parseSummaries && typeof player.parseSummaries === "object") {
+    return player;
   }
   return null;
 }
@@ -706,24 +731,15 @@ function attendanceRowForRosterPlayer(playerName) {
   return row || null;
 }
 
-/**
- * Glow colour bands from overall WCL attendance % (0..100 → tiers 0..5).
- * Everyone at the same % gets the same glow — avoids roster ties sorting alphabetically into blue/purple while others stay “legendary”.
- */
-function attendancePercentGlowTier(rate) {
-  const x = Math.max(0, Math.min(100, Number(rate || 0)));
-  return Math.min(5, Math.floor((x / 100) * 6 - 1e-9));
-}
-
-/** WCL-style percentile colour bands (approximate item-quality breakpoints). */
-function wclParseGlowTier(parse) {
-  const x = Math.max(0, Math.min(100, Number(parse || 0)));
-  if (x >= 99) return 5;
-  if (x >= 95) return 4;
-  if (x >= 75) return 3;
-  if (x >= 50) return 2;
-  if (x >= 25) return 1;
-  return 0;
+/** RH sends singular/plural/alternate labels; normalize for parse bracket + Events grouping. */
+function rosterBucketRoleName(roleName) {
+  const low = String(roleName || "").trim().toLowerCase();
+  if (low === "tank" || low === "tanks" || low === "schutz") return "Tanks";
+  if (low === "healer" || low === "healers") return "Healers";
+  if (low === "melee" || low === "mdps") return "Melee";
+  if (low === "ranged" || low === "rdps" || low === "caster" || low === "casters") return "Ranged";
+  const r = String(roleName || "").trim();
+  return ROLE_ORDER.includes(r) ? r : "Ranged";
 }
 
 function rosterParseBracketForRole(roleNameRaw) {
@@ -779,19 +795,22 @@ function rosterParseForDisplay(player, row) {
   let usedFallback = false;
   let raidsWithBracket = 0;
 
-  const bt = ps.bestTank ?? ps.avgTank;
-  const bd = ps.bestDps ?? ps.avgDps;
-  const bh = ps.bestHeal ?? ps.avgHeal;
+  const bt = finiteParseNumClient(ps.bestTank ?? ps.avgTank);
+  const bd = finiteParseNumClient(ps.bestDps ?? ps.avgDps);
+  const bh = finiteParseNumClient(ps.bestHeal ?? ps.avgHeal);
+  /** 0 is often a sentinel or bad row; do not prefer it over a real DPS parse for heal/tank roles. */
+  const hasTankParse = bt != null && bt > 0;
+  const hasHealParse = bh != null && bh > 0;
 
   if (bracket === "heal") {
     raidsWithBracket = Number(ps.raidsHeal || 0);
-    value = bh != null ? bh : bd;
-    usedFallback = bh == null && bd != null;
+    value = hasHealParse ? bh : bd;
+    usedFallback = !hasHealParse && bd != null;
     if (usedFallback) raidsWithBracket = Number(ps.raidsDps || 0);
   } else if (bracket === "tank") {
     raidsWithBracket = Number(ps.raidsTank || 0);
-    value = bt != null ? bt : bd;
-    usedFallback = bt == null && bd != null;
+    value = hasTankParse ? bt : bd;
+    usedFallback = !hasTankParse && bd != null;
     if (usedFallback) raidsWithBracket = Number(ps.raidsDps || 0);
   } else {
     value = bd;
@@ -801,7 +820,7 @@ function rosterParseForDisplay(player, row) {
   const parseSource = rosterParseSourceForBracket(ps, bracket, usedFallback);
 
   return {
-    value: typeof value === "number" && Number.isFinite(value) ? value : null,
+    value: finiteParseNumClient(value),
     bracket,
     usedFallback,
     raidsWithBracket,
@@ -824,91 +843,359 @@ function rosterRelativeAttendanceHint(player, confirmedRoster) {
   return ` ${idx + 1}/${keyed.length} on this roster (low→high WCL %)`;
 }
 
+function finiteParseNumClient(x) {
+  if (x == null || x === "") return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function applyParseCeilingMaxFromPayload(raw) {
+  if (!raw || typeof raw !== "object") return false;
+  const tank = finiteParseNumClient(raw.tank);
+  const heal = finiteParseNumClient(raw.heal);
+  const dps = finiteParseNumClient(raw.dps);
+  if (tank == null && heal == null && dps == null) return false;
+  parseCeilingMaxByBracket = { tank, heal, dps };
+  return true;
+}
+
+function recomputeParseCeilingMaxes() {
+  parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
+  const seen = new Set();
+  for (const row of attendanceLeaderboardRows) {
+    const id = String(row?.raidHelperName || row?.name || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const ps = row?.parseSummaries;
+    if (!ps || typeof ps !== "object") continue;
+    const bt = finiteParseNumClient(ps.bestTank ?? ps.avgTank);
+    const bh = finiteParseNumClient(ps.bestHeal ?? ps.avgHeal);
+    const bd = finiteParseNumClient(ps.bestDps ?? ps.avgDps);
+    if (bt != null && bt > 0) {
+      const cur = parseCeilingMaxByBracket.tank;
+      parseCeilingMaxByBracket.tank = cur == null ? bt : Math.max(cur, bt);
+    }
+    if (bh != null && bh > 0) {
+      const cur = parseCeilingMaxByBracket.heal;
+      parseCeilingMaxByBracket.heal = cur == null ? bh : Math.max(cur, bh);
+    }
+    if (bd != null && bd > 0) {
+      const cur = parseCeilingMaxByBracket.dps;
+      parseCeilingMaxByBracket.dps = cur == null ? bd : Math.max(cur, bd);
+    }
+  }
+}
+
+function playerMatchesAchievementNameSet(player, keySet) {
+  if (!keySet?.size) return false;
+  for (const n of attendanceLookupNameCandidates(player)) {
+    const s = String(n || "").trim();
+    if (!s) continue;
+    if (keySet.has(rosterNameKey(s)) || keySet.has(s.toLowerCase())) return true;
+  }
+  for (const alt of Array.isArray(player?.wclCharacters) ? player.wclCharacters : []) {
+    const s = String(alt || "").trim();
+    if (!s) continue;
+    if (keySet.has(rosterNameKey(s)) || keySet.has(s.toLowerCase())) return true;
+  }
+  return false;
+}
+
+function playerEarnedBestTimeParticipantBadge(player) {
+  return playerMatchesAchievementNameSet(player, pbBestTimeRankedNameKeys);
+}
+
+function playerEarnedHallOfFameMvpBadge(player) {
+  return playerMatchesAchievementNameSet(player, hallOfFameWinnerNameKeys);
+}
+
+function playerEarnedIronAttendanceBadge(player) {
+  const row = attendanceRowForRosterPlayerResolved(player);
+  const cap = attendanceConsideredRaids;
+  if (!row || !cap) return false;
+  return Number(row.raidsAttended || 0) === cap;
+}
+
+function parsePeakEqualsCeiling(value, max) {
+  const v = Number(value);
+  const m = Number(max);
+  if (!Number.isFinite(v) || !Number.isFinite(m)) return false;
+  // Same ceiling only — no Math.round tie-break (would award 98.x when max is 99.x).
+  return Math.abs(v - m) <= 0.02 + 1e-9;
+}
+
+function playerEarnedParsingCeilingBadge(player) {
+  const row = attendanceRowForRosterPlayerResolved(player);
+  if (!row || attendanceConsideredRaids <= 0) return false;
+  const { value, bracket, usedFallback } = rosterParseForDisplay(player, row);
+  if (value == null || !Number.isFinite(Number(value))) return false;
+  let k = bracket === "heal" ? "heal" : bracket === "tank" ? "tank" : "dps";
+  if (usedFallback && (bracket === "heal" || bracket === "tank")) {
+    k = "dps";
+  }
+  const max = parseCeilingMaxByBracket[k];
+  if (max == null || !Number.isFinite(Number(max))) return false;
+  return parsePeakEqualsCeiling(value, max);
+}
+
+/** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
+function rosterAchievementBadgesHtml(player) {
+  const badges = [
+    {
+      file: "best-time-participant.png",
+      title:
+        "Best time participant — Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log (same names as Best Time Raids on Raid Performance).",
+      alt: "Best time participant",
+      ok: playerEarnedBestTimeParticipantBadge(player),
+    },
+    {
+      file: "hall-of-fame.png",
+      title:
+        "MVP hall of fame — You won a raid MVP vote in a past round (listed on the Hall of Fame page).",
+      alt: "MVP hall of fame",
+      ok: playerEarnedHallOfFameMvpBadge(player),
+    },
+    {
+      file: "iron-attendance.png",
+      title:
+        "Iron attendance — 100% attendance in the current tracked raid window (every raid counted on this card; typically all of the last six 25-player raids).",
+      alt: "Iron attendance",
+      ok: playerEarnedIronAttendanceBadge(player),
+    },
+    {
+      file: "parsing-ceiling.png",
+      title:
+        "Parsing ceiling — Highest peak parse in your role this window among all linked raiders (tank, healer, or DPS vs your Raid Helper role bracket).",
+      alt: "Parsing ceiling",
+      ok: playerEarnedParsingCeilingBadge(player),
+    },
+  ];
+  return badges
+    .filter((b) => b.ok)
+    .map(
+      (b) =>
+        `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${escapeHtml(b.title)}"><img class="raider-badge-achievement-img" src="${escapeHtml(`/images/achievements/${b.file}?v=${IMAGE_ASSET_VERSION}`)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async" /></span>`
+    )
+    .join("");
+}
+
 async function loadWclAttendanceForEvents() {
   attendanceLeaderboardByKey = new Map();
   attendanceConsideredRaids = 0;
+  attendanceLeaderboardRows = [];
+  pbBestTimeRankedNameKeys = new Set();
+  hallOfFameWinnerNameKeys = new Set();
+  parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
   try {
-    const res = await fetch(
-      `/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=150`,
-      { credentials: "include" }
-    );
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) return;
-    attendanceConsideredRaids = Math.max(0, Number(payload.consideredRaids || 0));
-    for (const row of payload.leaderboard || []) {
-      const display = String(row?.raidHelperName || row?.name || "").trim();
-      if (!display) continue;
-      const key = rosterNameKey(display);
-      attendanceLeaderboardByKey.set(key, row);
-      const rawLower = display.toLowerCase();
-      if (rawLower !== key) attendanceLeaderboardByKey.set(rawLower, row);
-      for (const alt of Array.isArray(row?.wclCharacters) ? row.wclCharacters : []) {
-        const ak = rosterNameKey(String(alt || ""));
-        if (ak && !attendanceLeaderboardByKey.has(ak)) attendanceLeaderboardByKey.set(ak, row);
+    const api = window.plbSessionApiCache;
+    const getJson = (url, init) =>
+      api
+        ? api.getJson(url, init)
+        : fetch(url, { method: "GET", ...init }).then(async (res) => {
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(body.error || "Request failed");
+            return body;
+          });
+    const [attPayload, btPayload, hofPayload] = await Promise.all([
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=250`, { credentials: "include" }).catch(
+        () => ({})
+      ),
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/boss-times?limit=50`).catch(() => ({})),
+      getJson(`/api/voting/hall-of-fame`, { credentials: "include" }).catch(() => ({})),
+    ]);
+
+    if (attPayload && typeof attPayload === "object") {
+      attendanceConsideredRaids = Math.max(0, Number(attPayload.consideredRaids || 0));
+      attendanceLeaderboardRows = Array.isArray(attPayload.leaderboard) ? attPayload.leaderboard : [];
+      for (const row of attendanceLeaderboardRows) {
+        const display = String(row?.raidHelperName || row?.name || "").trim();
+        if (!display) continue;
+        const key = rosterNameKey(display);
+        attendanceLeaderboardByKey.set(key, row);
+        const rawLower = display.toLowerCase();
+        if (rawLower !== key) attendanceLeaderboardByKey.set(rawLower, row);
+        for (const alt of Array.isArray(row?.wclCharacters) ? row.wclCharacters : []) {
+          const ak = rosterNameKey(String(alt || ""));
+          if (ak && !attendanceLeaderboardByKey.has(ak)) attendanceLeaderboardByKey.set(ak, row);
+        }
+      }
+      if (!applyParseCeilingMaxFromPayload(attPayload.parseCeilingMax)) {
+        recomputeParseCeilingMaxes();
       }
     }
-  } catch {
-    // optional widget — roster still renders
+
+    const rosterList = btPayload?.rosterInfo?.recentRankedRoster;
+    if (Array.isArray(rosterList)) {
+      for (const name of rosterList) {
+        const s = String(name || "").trim();
+        if (!s) continue;
+        pbBestTimeRankedNameKeys.add(rosterNameKey(s));
+        pbBestTimeRankedNameKeys.add(s.toLowerCase());
+      }
+    }
+
+    if (hofPayload?.ok && Array.isArray(hofPayload.hallOfFame)) {
+      for (const h of hofPayload.hallOfFame) {
+        const w = String(h?.winnerName || "").trim();
+        if (!w) continue;
+        hallOfFameWinnerNameKeys.add(rosterNameKey(w));
+        hallOfFameWinnerNameKeys.add(w.toLowerCase());
+      }
+    }
+  } catch (err) {
+    console.warn("[plb] loadWclAttendanceForEvents failed — achievement/KPI badges may be incomplete:", err);
   }
 }
 
-function rosterAttendanceBadgeHtml(player, confirmedRoster) {
+/** Matches Events / roster copy: same capped recent 25-player window as attendance %. */
+function rosterLastRaidsKpiPhrase() {
+  const n = attendanceConsideredRaids;
+  if (!Number.isFinite(n) || n <= 0) return "recent raids";
+  if (n === 6) return "last 6 raids";
+  return `last ${n} raids`;
+}
+
+function rosterCardKpisHtml(player, confirmedRoster) {
   const row = attendanceRowForRosterPlayerResolved(player);
-  const pctRounded = row ? Math.round(Number(row.attendanceRate || 0)) : null;
+  const period = rosterLastRaidsKpiPhrase();
+  const periodParen = `(${period})`;
+
   const mergedLogs =
     Array.isArray(row?.wclCharacters) && row.wclCharacters.length > 1
       ? ` · merged logs: ${row.wclCharacters.join(", ")}`
       : "";
-  const titleCore = row
-    ? `WCL: ${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids || "?"} raids · ${pctRounded}% overall${mergedLogs}`
-    : "No WCL attendance match in leaderboard";
-  const attendanceTitle = `Attendance — ${titleCore}`;
-  if (!row || attendanceConsideredRaids <= 0) {
-    return `<div class="raider-badge-slot raider-badge-slot--pending" title="${escapeHtml(attendanceTitle)}"></div>`;
-  }
-  const glowTier = attendancePercentGlowTier(row.attendanceRate);
-  const title = `${attendanceTitle}${rosterRelativeAttendanceHint(player, confirmedRoster)}`;
-  return `
-    <div class="raider-badge-tier raider-badge-tier--glow-${glowTier}" title="${escapeHtml(title)}">
-      <span class="raider-badge-tier-pct">${pctRounded}%</span>
-    </div>
-  `;
-}
 
-function rosterParseBadgeHtml(player) {
-  const row = attendanceRowForRosterPlayerResolved(player);
+  let attValue = "—";
+  let attTitle =
+    row && attendanceConsideredRaids > 0
+      ? `WCL attendance (${period}): ${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids} raids · ${Math.round(
+          Number(row.attendanceRate || 0)
+        )}% overall${mergedLogs}${rosterRelativeAttendanceHint(player, confirmedRoster)}`
+      : row
+        ? "Attendance rate unavailable for this window."
+        : "No WCL attendance match in leaderboard.";
+  if (row && attendanceConsideredRaids > 0) {
+    attValue = `${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids} · ${Math.round(
+      Number(row.attendanceRate || 0)
+    )}%`;
+  }
+
   const { value, bracket, usedFallback, raidsWithBracket, parseSource } = rosterParseForDisplay(player, row);
-  const pctRounded = value != null ? Math.round(Number(value)) : null;
-  const mergedLogs =
-    Array.isArray(row?.wclCharacters) && row.wclCharacters.length > 1
-      ? ` · merged logs: ${row.wclCharacters.join(", ")}`
-      : "";
   const bracketLabel = rosterParseBracketTooltipLabel(bracket);
   const sourceFrag = rosterParseSourceTooltipFragment(parseSource);
-  const titleCore = row
-    ? value != null
-      ? `Best ${pctRounded}% (${bracketLabel}) — single boss parse, max across last ${attendanceConsideredRaids || "?"} tracked 25-player raids · logs with rank data ${raidsWithBracket}/${attendanceConsideredRaids || "?"}${mergedLogs}${sourceFrag}`
-      : `No WCL parse for ${bracketLabel} bracket in recent raids${mergedLogs}`
-    : "No WCL attendance row — parse unavailable";
+  const pctRounded = value != null && Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+
+  let parseValue = "—";
   const fb = usedFallback ? " · used DPS bracket (heal/tank role had no HPS/tank row)" : "";
-  const parseTitle = `Parse — ${titleCore}${fb}`;
-  if (!row || attendanceConsideredRaids <= 0 || pctRounded == null) {
-    return `<div class="raider-badge-slot raider-badge-slot--pending" title="${escapeHtml(parseTitle)}"></div>`;
+  let parseTitle =
+    row && attendanceConsideredRaids > 0
+      ? pctRounded != null
+        ? `Peak parse (${period}): best single-boss ${pctRounded}% (${bracketLabel}) — max across tracked 25-player logs · rank data in ${raidsWithBracket}/${attendanceConsideredRaids} logs${mergedLogs}${sourceFrag}${fb}`
+        : `No WCL parse for ${bracketLabel} in ${period}${mergedLogs}`
+      : "No WCL attendance row — parse unavailable.";
+  if (row && attendanceConsideredRaids > 0 && pctRounded != null) {
+    parseValue = `${pctRounded}% · ${bracketLabel}${usedFallback ? " · DPS" : ""}`;
   }
-  const glowTier = wclParseGlowTier(value);
+
   return `
-    <div class="raider-badge-tier raider-badge-parse raider-badge-parse--glow-${glowTier}" title="${escapeHtml(parseTitle)}">
-      <span class="raider-badge-tier-pct raider-badge-parse-pct raider-badge-parse-pct--glow-${glowTier}">${pctRounded}%</span>
+    <div class="raider-card-kpis" role="group" aria-label="Warcraft Logs KPIs for ${escapeHtml(period)}">
+      <div class="raider-kpi raider-kpi--attendance" title="${escapeHtml(attTitle)}">
+        <span class="raider-kpi-heading">Attendance <span class="raider-kpi-period">${escapeHtml(periodParen)}</span></span>
+        <span class="raider-kpi-metric">${escapeHtml(attValue)}</span>
+      </div>
+      <div class="raider-kpi raider-kpi--parse" title="${escapeHtml(parseTitle)}">
+        <span class="raider-kpi-heading">Peak parse <span class="raider-kpi-period">${escapeHtml(periodParen)}</span></span>
+        <span class="raider-kpi-metric">${escapeHtml(parseValue)}</span>
+      </div>
     </div>
   `;
 }
 
-function rosterGenericAchievementSlotsHtml() {
-  const hint =
-    "Achievement badge slot — square 1:1 icons (e.g. design at 128×128 px for ~56×56 display)";
-  return Array.from({ length: GENERIC_ACHIEVEMENT_SLOT_COUNT })
-    .map(() => `<span class="raider-badge-slot" title="${escapeHtml(hint)}"></span>`)
-    .join("");
+function rosterGuildRoleSlug(player) {
+  const raw = String(player?.guildRole ?? "Peon").trim();
+  const slug = raw.toLowerCase();
+  return GUILD_ROLE_BADGE_SLUGS.has(slug) ? slug : "peon";
+}
+
+function assignedGuildRoleFromPlayer(player) {
+  return String(player?.guildRole ?? "Peon").trim() || "Peon";
+}
+
+/** Raids attended in the same capped window as KPI / % (typically last 6 tracked 25-player raids). */
+function attendanceRaidsCountForPlayer(player) {
+  const direct = Number(player?.raidsAttended);
+  if (Number.isFinite(direct) && direct >= 0) return Math.min(6, Math.floor(direct));
+  const row = attendanceRowForRosterPlayerResolved(player);
+  if (row) return Math.min(6, Math.floor(Number(row.raidsAttended || 0)));
+  return 0;
+}
+
+/** 1 raid → Peon, 2–4 → Grunt, 5–6 → Veteran (within the attendance window). */
+function attendanceTierGuildRoleFromRaids(raidsRaw) {
+  const r = Math.max(0, Math.min(6, Math.floor(Number(raidsRaw) || 0)));
+  if (r <= 1) return "Peon";
+  if (r <= 4) return "Grunt";
+  return "Veteran";
+}
+
+function attendanceTierGuildRole(player) {
+  return attendanceTierGuildRoleFromRaids(attendanceRaidsCountForPlayer(player));
+}
+
+/** Primary rank label: manual Core / Guildlead / Raidlead; else attendance-based Peon–Veteran. */
+function primaryGuildRankLabel(player) {
+  const assigned = assignedGuildRoleFromPlayer(player);
+  if (MANUAL_ONLY_GUILD_ROLES.has(assigned)) return assigned;
+  return attendanceTierGuildRole(player);
+}
+
+function showAttendanceCompanionBadge(player) {
+  return MANUAL_ONLY_GUILD_ROLES.has(assignedGuildRoleFromPlayer(player));
+}
+
+function rosterGuildRoleBadgeSrcForLabel(roleLabel) {
+  const slug = rosterGuildRoleSlug({ guildRole: roleLabel });
+  return `/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`;
+}
+
+/** Primary guild rank badge (manual officer art OR attendance tier for everyone else). */
+function rosterGuildRoleBadgeHtml(player) {
+  const roleLabel = primaryGuildRankLabel(player);
+  const title = `Guild rank: ${roleLabel}`;
+  const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(roleLabel));
+  const alt = escapeHtml(`Guild rank: ${roleLabel}`);
+  return `<span class="raider-badge-slot raider-badge-slot--guild-role" title="${escapeHtml(title)}"><img class="raider-badge-role-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" /></span>`;
+}
+
+/** Second badge for officers only: attendance-based Peon / Grunt / Veteran. */
+function rosterAttendanceCompanionBadgeHtml(player) {
+  if (!showAttendanceCompanionBadge(player)) return "";
+  const tier = attendanceTierGuildRole(player);
+  const raids = attendanceRaidsCountForPlayer(player);
+  const cap = Math.max(1, attendanceConsideredRaids || 6);
+  const title = `Attendance rank (last ${cap} tracked 25-player raids): ${tier} · ${raids}/${cap} raids`;
+  const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(tier));
+  const alt = escapeHtml(`Attendance rank: ${tier}`);
+  return `<span class="raider-badge-slot raider-badge-slot--guild-role raider-badge-slot--attendance-companion" title="${escapeHtml(title)}"><img class="raider-badge-role-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" /></span>`;
+}
+
+/** Section heading for guild roster page — rank badge + label (decorative img alt empty; label is visible). */
+function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
+  const label = String(roleLabel ?? "Peon").trim() || "Peon";
+  const slug = rosterGuildRoleSlug({ guildRole: label });
+  const src = escapeHtml(`/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`);
+  const tip = escapeHtml(`Guild rank: ${label}`);
+  return `
+    <div class="roster-role-title roster-role-title--guild-tier">
+      <span class="roster-section-guild-badge raider-badge-slot raider-badge-slot--guild-role" title="${tip}">
+        <img class="raider-badge-role-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async" />
+      </span>
+      <span class="roster-role-title-text">${escapeHtml(label)} <span class="roster-role-title-count">(${Number(count) || 0})</span></span>
+    </div>`;
+}
+
+function rosterBadgeRowHtml(player) {
+  return `${rosterGuildRoleBadgeHtml(player)}${rosterAttendanceCompanionBadgeHtml(player)}${rosterAchievementBadgesHtml(player)}`;
 }
 
 /** English class label for roster text — matches {@link effectiveRosterClassSlug} (Rio wins Warrior vs Paladin disagreements). */
@@ -977,6 +1264,7 @@ function rosterRaiderCard(player, confirmedRoster) {
 
   return `
     <div class="raider-card"${cardTitleAttr}>
+      ${rosterCardKpisHtml(player, confirmedRoster)}
       <div class="raider-card-main">
         <div class="raider-portrait-stack">
           <img
@@ -994,11 +1282,7 @@ function rosterRaiderCard(player, confirmedRoster) {
         <div class="raider-text">
           <div class="raider-name-line">
             <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(displayName)}</span>
-            ${
-              player?.guildRole && String(player.guildRole).trim()
-                ? `<span class="raider-guild-role-chip">${escapeHtml(String(player.guildRole).trim())}</span>`
-                : ""
-            }
+            <span class="raider-guild-role-chip">${escapeHtml(primaryGuildRankLabel(player))}</span>
           </div>
           ${
             specLabel && className
@@ -1007,10 +1291,8 @@ function rosterRaiderCard(player, confirmedRoster) {
           }
         </div>
       </div>
-      <div class="raider-badges" role="group" aria-label="Attendance, parse, and achievements">
-        ${rosterAttendanceBadgeHtml(player, confirmedRoster)}
-        ${rosterParseBadgeHtml(player)}
-        ${rosterGenericAchievementSlotsHtml()}
+      <div class="raider-badges" role="group" aria-label="Guild rank, attendance rank for officers, and earned achievement badges">
+        ${rosterBadgeRowHtml(player)}
       </div>
     </div>
   `;
@@ -1026,5 +1308,17 @@ window.plbEventsRoster = {
   loadTbcSpecIconMap,
   loadWclAttendanceForEvents,
   rosterRaiderCard,
+  rosterGuildRoleSectionTitleHtml,
+  primaryGuildRankLabel,
+  rosterBucketRoleName,
   eventsRosterCharacterLabel,
+  rosterParseForDisplay,
+  rosterParseSourceTooltipFragment,
+  rosterNameKey,
+  rosterBadgeRowHtml,
+  rosterPortraitChain,
+  mergedClassDisplayLabel,
+  displaySpecNameForRoster,
+  wowClassColor,
+  effectiveRosterClassSlug,
 };

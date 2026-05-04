@@ -10,7 +10,7 @@ let gargulEntriesState = [];
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
 
-/** Same guild as Dashboard / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
+/** Same guild as Leaderboard (/) / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
 const ADMIN_WCL_GUILD_ID = 817080;
 
 /** Must match `RH_WCL_GUILD_ROLES` in `lib/rh-wcl-guess.mjs` / server sanitize. */
@@ -18,7 +18,7 @@ const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Guildlead", "Ra
 
 function rhWclGuildRoleSelectHtml(current) {
   const sel = RH_WCL_GUILD_ROLES.includes(current) ? current : "Peon";
-  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role">${RH_WCL_GUILD_ROLES.map(
+  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (Core, Guildlead, Raidlead are fixed ranks; Peon–Veteran on Events and Roster follow WCL attendance)">${RH_WCL_GUILD_ROLES.map(
     (r) => `<option value="${esc(r)}"${r === sel ? " selected" : ""}>${esc(r)}</option>`
   ).join("")}</select>`;
 }

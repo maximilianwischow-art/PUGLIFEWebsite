@@ -39,18 +39,19 @@ async function mountAuthHeaderWidget() {
     const logoutBtn = document.getElementById("authLogoutBtn");
     logoutBtn?.addEventListener("click", async () => {
       await fetch("/auth/logout", { method: "POST", credentials: "include" });
+      try {
+        window.plbSessionApiCache?.clearAll();
+      } catch {
+        /* ignore */
+      }
       window.location.reload();
     });
 
     const nav = document.querySelector(".top-nav");
-    if (nav && !nav.querySelector('a[href="/nether-vortex.html"]')) {
+    if (nav && !nav.querySelector('a[href="/p2-preparation.html#nether-vortex-tracker"]')) {
       const vortex = document.createElement("a");
-      vortex.href = "/nether-vortex.html";
+      vortex.href = "/p2-preparation.html#nether-vortex-tracker";
       vortex.textContent = "Nether Vortex";
-      if ((window.location.pathname || "") === "/nether-vortex.html") {
-        vortex.className = "nav-current";
-        vortex.setAttribute("aria-current", "page");
-      }
       nav.appendChild(vortex);
     }
     if (nav && !nav.querySelector('a[href="/admin.html"]')) {

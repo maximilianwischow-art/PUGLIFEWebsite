@@ -13,29 +13,6 @@ function initBackgroundStars() {
   el.appendChild(frag);
 }
 
-function formatPhaseCountdown(totalSec) {
-  if (totalSec <= 0) return "Live now";
-  const d = Math.floor(totalSec / 86400);
-  const h = Math.floor((totalSec % 86400) / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  return `${d}d ${h}h ${m}m ${s}s`;
-}
-
-function startPhase2Countdown() {
-  const output = document.getElementById("phase2CountdownValue");
-  if (!output) return;
-
-  const update = () => {
-    const now = Math.floor(Date.now() / 1000);
-    const releaseTs = Math.floor(new Date(2026, 4, 14, 0, 0, 0).getTime() / 1000);
-    output.textContent = formatPhaseCountdown(releaseTs - now);
-  };
-
-  update();
-  setInterval(update, 1000);
-}
-
 function initWelcomePopup() {
   const card = document.getElementById("welcomePopupCard");
   const backdrop = document.getElementById("welcomePopupBackdrop");
@@ -74,8 +51,10 @@ function initWelcomePopup() {
     } catch {}
   }
 
-  function pathLooksLikeHome() {
+  /** Root Leaderboard (/) and Raid Performance home both skip the "Enter" redirect. */
+  function pathShouldSkipEnterRedirect() {
     const p = String(window.location.pathname || "").replace(/\/+$/, "") || "/";
+    if (p === "/") return true;
     return p === "/home.html" || p.endsWith("/home.html");
   }
 
@@ -104,10 +83,10 @@ function initWelcomePopup() {
     persistDismissed();
   };
 
-  /** Enter: dismiss permanently; reload Home only if we are not already there (avoids reload loops). */
+  /** Enter: dismiss permanently; open Raid Performance only when not already on / or home (avoids reload loops). */
   const enterGoHome = () => {
     dismiss();
-    if (!pathLooksLikeHome()) window.location.assign("/home.html");
+    if (!pathShouldSkipEnterRedirect()) window.location.assign("/home.html");
   };
 
   /** Capture phase: runs before other document handlers that might interfere with closing. */
@@ -126,5 +105,4 @@ function initWelcomePopup() {
 }
 
 initBackgroundStars();
-startPhase2Countdown();
 initWelcomePopup();

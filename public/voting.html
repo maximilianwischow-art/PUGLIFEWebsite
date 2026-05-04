@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PUG LIFE BALANCE · Voting</title>
+    <title>PUG LIFE BALANCE · Hall of Fame</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=20260511a" />
+    <link rel="stylesheet" href="/styles.css?v=20260524f" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -17,19 +17,41 @@
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
-          <a href="/home.html">Home</a>
-          <a href="/">Dashboard</a>
-          <a href="/events.html">Events</a>
-          <a href="/roster.html">Roster</a>
-          <a href="/voting.html" class="nav-current" aria-current="page">Voting</a>
-          <a href="/loot-history.html">Loot History</a>
-          <a href="/p2-preparation.html">P2 Preparation</a>
+          <a href="/home.html">Raid Performance</a>
+          <a href="/">Leaderboard</a>
+          <a href="/voting.html" class="nav-current" aria-current="page">Hall of Fame</a>
+          <a href="/events.html">Future Events</a>
+          <a href="/p2-preparation.html">Phase 2</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
         <div class="hero-divider" aria-hidden="true"></div>
       </header>
 
       <main class="container">
+        <section class="card potr-section" aria-labelledby="potr-title">
+          <h2 id="potr-title" class="section-title">MVP Last Raid</h2>
+          <div id="potrRaidStrip" class="potr-raid-strip">
+            <img id="potrRaidBanner" class="potr-raid-banner" alt="" loading="lazy" hidden />
+            <p id="potrRaidName" class="subtle">Loading raid...</p>
+            <time id="potrRaidDate" class="potr-raid-date"></time>
+          </div>
+          <p id="potrRaidStatus" class="subtle potr-raid-status">Loading latest raid...</p>
+          <div class="potr-grid">
+            <article class="mini-card mvp-card dps">
+              <h3>DPS</h3>
+              <div id="potrDps">No data yet.</div>
+            </article>
+            <article class="mini-card mvp-card heal">
+              <h3>Healer</h3>
+              <div id="potrHeal">No data yet.</div>
+            </article>
+            <article class="mini-card mvp-card tank">
+              <h3>Tank</h3>
+              <div id="potrTank">No data yet.</div>
+            </article>
+          </div>
+        </section>
+
         <section class="card">
           <h2 class="section-title">MVP Voting</h2>
           <p class="subtle">Vote for one player from the latest raid roster.</p>
@@ -53,14 +75,17 @@
         <div class="dots" aria-hidden="true">
           <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
         </div>
-        <p><em>"We may fall — but we rise as Tacticians."</em></p>
+        <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
         <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
         <p class="footer-legal-links"><a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a></p>
       </footer>
     </div>
 
-    <script src="/voting.js?v=20260509a"></script>
-    <script src="/auth-ui.js?v=20260430f"></script>
+    <script src="/session-api-cache.js?v=20260504a"></script>
+    <script src="/app.js?v=20260504a"></script>
+    <script src="/events-roster-ui.js?v=20260504a"></script>
+    <script src="/voting.js?v=20260504a"></script>
+    <script src="/auth-ui.js?v=20260504a"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>

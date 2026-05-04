@@ -150,6 +150,46 @@ const TRACKED_RAIDS = {
 
 /** 10-player raids — omitted from guild attendance % (`attendancePercentMetrics` mode only). */
 const WCL_ATTENDANCE_EXCLUDED_RAIDS = new Set(["Karazhan", "Zul'Aman"]);
+
+/**
+ * TBC items that only exist in 10-player raids (Karazhan / ZA). Gargul lines often have no
+ * “Karazhan” in the title; zone-based filters miss them — drop by `itemId` (Wowhead TBC).
+ */
+const TBC_TEN_PLAYER_EXCLUSIVE_LOOT_ITEM_IDS = new Set([
+  28504, // Steelhawk Crossbow — Karazhan
+  28545, // Edgewalker Longboots — Karazhan
+  28740, // Rip-Flayer Leggings — Karazhan
+]);
+
+/**
+ * Exclude from “25-player loot” aggregations: Kara / ZA by zone label, apostrophe variants,
+ * cues in report title when `reportRaidName` is missing or mis-attributed, or by itemId for
+ * known 10-player-only drops.
+ */
+function isTenPlayerTbcLootRow(row) {
+  if (!row || typeof row !== "object") return false;
+
+  const iid = Number(row.itemId ?? row.itemID ?? 0);
+  if (Number.isInteger(iid) && iid > 0 && TBC_TEN_PLAYER_EXCLUSIVE_LOOT_ITEM_IDS.has(iid)) return true;
+
+  const raidRaw = String(row.reportRaidName || "").trim();
+  if (raidRaw) {
+    if (WCL_ATTENDANCE_EXCLUDED_RAIDS.has(raidRaw)) return true;
+    const apos = raidRaw.replace(/\u2019/g, "'").replace(/\u2018/g, "'");
+    if (WCL_ATTENDANCE_EXCLUDED_RAIDS.has(apos)) return true;
+    const rNorm = normalizeWclLabel(raidRaw).toLowerCase();
+    for (const ex of WCL_ATTENDANCE_EXCLUDED_RAIDS) {
+      if (rNorm === normalizeWclLabel(ex).toLowerCase()) return true;
+    }
+  }
+
+  const hay = normalizeWclLabel(`${row.reportRaidName || ""} ${row.reportTitle || ""}`)
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (hay.includes("karazhan")) return true;
+  if (hay.includes("zul'aman") || hay.includes("zul aman") || hay.includes("zulaman")) return true;
+  return false;
+}
 const allowedTbcZones = new Set(
   (process.env.WCL_ALLOWED_GAME_ZONES || DEFAULT_TBC_ZONES.join(","))
     .split(",")
@@ -639,11 +679,373 @@ function votingHallOfFame(currentRoundKey, limit = 8) {
     .slice(0, limit);
 }
 
+const HOF_REPORT_FIGHTS_QUERY = `
+  query HofReportFights($code: String!) {
+    reportData {
+      report(code: $code) {
+        zone { name }
+        fights {
+          id
+          encounterID
+          gameZone { name }
+        }
+      }
+    }
+  }
+`;
+
+const HOF_PARSE_RANKINGS_QUERY = `
+  query HofParseRankings($code: String!, $fightIds: [Int!]) {
+    reportData {
+      report(code: $code) {
+        dpsRankings: rankings(fightIDs: $fightIds, playerMetric: dps)
+        hpsRankings: rankings(fightIDs: $fightIds, playerMetric: hps)
+      }
+    }
+  }
+`;
+
+function trackedBossFightIdsFromHallOfFameReport(report) {
+  if (!report?.fights?.length) return [];
+  return report.fights
+    .filter((f) => Number(f?.encounterID || 0) > 0 && resolvedTrackedRaidForFight(f, report))
+    .map((f) => Number(f.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+}
+
+async function trackedBossFightIdsForHallOfFameReport(raidCode) {
+  const code = String(raidCode || "").trim();
+  if (!code) return [];
+  const data = await queryWcl(HOF_REPORT_FIGHTS_QUERY, { code });
+  const report = data?.reportData?.report;
+  return trackedBossFightIdsFromHallOfFameReport(report);
+}
+
+/** Mirrors Events roster bucket labels for parse bracket selection. */
+function rosterBucketRoleNameForHallOfFame(roleName) {
+  const low = String(roleName || "").trim().toLowerCase();
+  if (low === "tank" || low === "tanks" || low === "schutz") return "Tanks";
+  if (low === "healer" || low === "healers") return "Healers";
+  if (low === "melee" || low === "mdps") return "Melee";
+  if (low === "ranged" || low === "rdps" || low === "caster" || low === "casters") return "Ranged";
+  const r = String(roleName || "").trim();
+  return ["Tanks", "Healers", "Melee", "Ranged"].includes(r) ? r : "Ranged";
+}
+
+function hallOfFameBracketFromRosterPlayer(player) {
+  if (!player) return "unk";
+  const b = rosterBucketRoleNameForHallOfFame(player.roleName);
+  if (b === "Healers") return "heal";
+  if (b === "Tanks") return "tank";
+  return "dps";
+}
+
+function matchHallOfFameRosterPlayer(players, winnerName) {
+  const target = normalizeRaidHelperDisplayKey(winnerName);
+  if (!target) return null;
+  for (const p of players || []) {
+    const candidates = [
+      p?.characterName,
+      p?.name,
+      p?.rioProfileLookupName,
+      ...(Array.isArray(p?.wclCharacters) ? p.wclCharacters : []),
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    for (const c of candidates) {
+      if (normalizeRaidHelperDisplayKey(c) === target) return p;
+    }
+  }
+  return null;
+}
+
+function hallOfFamePeakParseSource(raidCode, metric, pick, winnerName) {
+  if (!pick || pick.rankPercent == null || !Number.isFinite(Number(pick.rankPercent))) return null;
+  return {
+    reportCode: String(raidCode || "").trim(),
+    fightId: pick.fightId ?? null,
+    encounterName: String(pick.bossName || "").trim(),
+    metric: String(metric || "").trim(),
+    wclCharacterName: String(winnerName || "").trim(),
+  };
+}
+
+function pickHallOfFamePeakParse(mergedDps, mergedHps, raidCode, winnerName, bracket) {
+  const n = String(winnerName || "").trim();
+  if (!n) return { value: null, source: null };
+
+  const healBest = bestRoleParse(mergedHps, "healers", n);
+  const tankBest = bestRoleParse(mergedDps, "tanks", n);
+  const dpsBest = bestRoleParse(mergedDps, "dps", n);
+
+  const hVal = healBest?.rankPercent;
+  const tVal = tankBest?.rankPercent;
+  const dVal = dpsBest?.rankPercent;
+
+  if (bracket === "heal") {
+    const hasHeal = hVal != null && Number(hVal) > 0;
+    if (hasHeal) {
+      return {
+        value: Number(hVal),
+        source: hallOfFamePeakParseSource(raidCode, "HPS", healBest, n),
+      };
+    }
+    if (dVal != null && Number(dVal) > 0) {
+      return {
+        value: Number(dVal),
+        source: hallOfFamePeakParseSource(raidCode, "DPS", dpsBest, n),
+      };
+    }
+    return { value: null, source: null };
+  }
+  if (bracket === "tank") {
+    const hasTank = tVal != null && Number(tVal) > 0;
+    if (hasTank) {
+      return {
+        value: Number(tVal),
+        source: hallOfFamePeakParseSource(raidCode, "DPS", tankBest, n),
+      };
+    }
+    if (dVal != null && Number(dVal) > 0) {
+      return {
+        value: Number(dVal),
+        source: hallOfFamePeakParseSource(raidCode, "DPS", dpsBest, n),
+      };
+    }
+    return { value: null, source: null };
+  }
+  if (bracket === "dps") {
+    if (dVal != null && Number(dVal) > 0) {
+      return {
+        value: Number(dVal),
+        source: hallOfFamePeakParseSource(raidCode, "DPS", dpsBest, n),
+      };
+    }
+    return { value: null, source: null };
+  }
+
+  const candidates = [
+    { v: hVal, src: healBest, m: "HPS" },
+    { v: tVal, src: tankBest, m: "DPS" },
+    { v: dVal, src: dpsBest, m: "DPS" },
+  ].filter((x) => x.v != null && Number.isFinite(Number(x.v)) && Number(x.v) > 0);
+  if (!candidates.length) return { value: null, source: null };
+  const best = candidates.reduce((a, b) => (Number(b.v) > Number(a.v) ? b : a));
+  return {
+    value: Number(best.v),
+    source: hallOfFamePeakParseSource(raidCode, best.m, best.src, n),
+  };
+}
+
+async function loadMergedRankingsBundleForHallOfFameUncached(raidCode) {
+  const code = String(raidCode || "").trim();
+  if (!code) return null;
+  const fightIds = await trackedBossFightIdsForHallOfFameReport(code);
+  if (!fightIds.length) return { mergedDps: null, mergedHps: null, classByNameLower: {} };
+
+  const chunks = chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery());
+  const damageParts = [];
+  const dpsRankParts = [];
+  const hpsRankParts = [];
+
+  for (const ids of chunks) {
+    const [dmgData, rankData] = await Promise.all([
+      queryWcl(VOTING_ROUND_QUERY, { code, fightIds: ids }),
+      queryWcl(HOF_PARSE_RANKINGS_QUERY, { code, fightIds: ids }),
+    ]);
+    damageParts.push(dmgData?.reportData?.report?.damageDone);
+    const r = rankData?.reportData?.report || {};
+    dpsRankParts.push(r.dpsRankings);
+    hpsRankParts.push(r.hpsRankings);
+  }
+
+  const mergedDps = mergeWclRankingsPayloads(dpsRankParts);
+  const mergedHps = mergeWclRankingsPayloads(hpsRankParts);
+  const damageTable = mergeWclTableValuesFromApi(damageParts);
+  const classByNameLower = {};
+  for (const e of damageTable.entries || []) {
+    const nk = String(e?.name || "").trim().toLowerCase();
+    if (nk && e?.type) classByNameLower[nk] = String(e.type);
+  }
+  return { mergedDps, mergedHps, classByNameLower };
+}
+
+/**
+ * Shared builder for `GET /api/wcl/guild/:guildId/active-roster` and hall-of-fame roster matching.
+ */
+async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top = 250, maxRhPastEvents = 80 } = {}) {
+  const rhSignupCounts = await countRaidHelperPrimarySignupsPerRhKey(maxRhPastEvents);
+  await ensureRhWclLinksStore();
+  const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+    guildId,
+    reportLimit,
+    {
+      attendancePercentMetrics: true,
+    }
+  );
+
+  const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
+    raidSnapshots,
+    rhWclLinksState,
+    top,
+    wclDisplayByLower,
+    raidRankingPayloads
+  );
+
+  const activeRows = linkedPayload.leaderboard.filter((r) => Number(r?.raidsAttended || 0) > 0);
+  const pairs = [];
+  for (const attRow of activeRows) {
+    const name = String(attRow.raidHelperName || attRow.name || "").trim();
+    if (!name) continue;
+    pairs.push({
+      attRow,
+      base: {
+        name,
+        rioLookupCharacterName: "",
+        className: "",
+        specName: "",
+        raidHelperClassName: "",
+        raidHelperSpecName: "",
+        roleName: "Ranged",
+        race: "",
+        gender: "",
+        specIconUrl: "",
+        realm: defaultWowRealmForRoster(),
+      },
+    });
+  }
+
+  const rosterBase = pairs.map((p) => p.base);
+  let enriched = await enrichConfirmedRosterExternalSpecs(rosterBase);
+  enriched = enriched.map((row) => {
+    const inferred = inferActiveRosterRoleNameFromSpec(row);
+    return inferred ? { ...row, roleName: inferred } : row;
+  });
+  enriched = await Promise.all(enriched.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
+  enriched = await enrichConfirmedRosterWithWclSpecIcons(enriched);
+
+  const players = enriched.map((row, i) => {
+    const att = pairs[i].attRow;
+    const stripped = stripInternalRosterFields(row);
+    const rhKey = normalizeRaidHelperDisplayKey(String(stripped?.name || ""));
+    const rhPastEventCount = rhKey ? rhSignupCounts.counts.get(rhKey) || 0 : 0;
+    return {
+      ...stripped,
+      guildRole: normalizeRhWclGuildRole(att.guildRole),
+      raidsAttended: att.raidsAttended,
+      attendanceRate: att.attendanceRate,
+      wclCharacters: att.wclCharacters,
+      parseSummaries: att.parseSummaries,
+      attendanceHistory: att.attendanceHistory,
+      rhPastEventCount,
+    };
+  });
+
+  players.sort((a, b) =>
+    String(a?.characterName || a?.name || "").localeCompare(String(b?.characterName || b?.name || ""))
+  );
+
+  return {
+    guildId,
+    consideredRaids: linkedPayload.consideredRaids,
+    activeCount: players.length,
+    raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
+    attendanceScope: {
+      only25PlayerRaids: true,
+      excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
+      recentRaidCap: wclAttendanceRecentRaidCount(),
+    },
+    parseScope: {
+      sameRaidsAsAttendance: true,
+      metricNote:
+        "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
+    },
+    raidHelperEventScope: {
+      maxPastEvents: maxRhPastEvents,
+      pastEventsScanned: rhSignupCounts.pastEventsScanned,
+      note:
+        "rhPastEventCount: primary signups in past Raid Helper events (scanned up to maxPastEvents, newest first).",
+    },
+    players,
+  };
+}
+
+async function enrichHallOfFameRows(guildId, rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+
+  let players = [];
+  try {
+    const payload = await buildActiveRosterPlayersForGuild(guildId, {
+      reportLimit: 40,
+      top: 250,
+      maxRhPastEvents: 80,
+    });
+    players = payload.players || [];
+  } catch {
+    players = [];
+  }
+
+  const codes = [...new Set(rows.map((r) => String(r?.raidCode || "").trim()).filter(Boolean))];
+  const bundleByCode = new Map();
+  for (const code of codes) {
+    try {
+      const cacheKey = `hof-merged-rankings-v1-${code}`;
+      const bundle = await getOrRefreshCachedPayload(cacheKey, {
+        ttlMs: 7 * 24 * 60 * 60 * 1000,
+        maxStaleMs: 14 * 24 * 60 * 60 * 1000,
+        loader: () => loadMergedRankingsBundleForHallOfFameUncached(code),
+      });
+      bundleByCode.set(code, bundle);
+    } catch {
+      bundleByCode.set(code, null);
+    }
+  }
+
+  return rows.map((row) => {
+    const matched = matchHallOfFameRosterPlayer(players, row.winnerName);
+    const bracket = hallOfFameBracketFromRosterPlayer(matched);
+    const code = String(row?.raidCode || "").trim();
+    const bundle = bundleByCode.get(code);
+    let peakParse = null;
+    let peakParseSource = null;
+    let wclClassName = "";
+    if (bundle?.mergedDps && bundle?.mergedHps) {
+      const pick = pickHallOfFamePeakParse(bundle.mergedDps, bundle.mergedHps, code, row.winnerName, bracket);
+      peakParse = pick.value;
+      peakParseSource = pick.source;
+    }
+    if (bundle?.classByNameLower && row?.winnerName) {
+      const k = String(row.winnerName).trim().toLowerCase();
+      wclClassName = bundle.classByNameLower[k] || "";
+    }
+    return {
+      ...row,
+      player: matched || null,
+      peakParse,
+      peakParseSource,
+      peakParseBracket: bracket,
+      wclClassName,
+    };
+  });
+}
+
 async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureVotingStore();
   const voting = await getCurrentVotingRoundCached(guildId);
   const currentRoundKey = voting?.roundKey || "";
-  return votingHallOfFame(currentRoundKey, limit);
+  const rows = votingHallOfFame(currentRoundKey, limit);
+  try {
+    return await enrichHallOfFameRows(guildId, rows);
+  } catch {
+    return rows.map((r) => ({
+      ...r,
+      player: null,
+      peakParse: null,
+      peakParseSource: null,
+      peakParseBracket: null,
+      wclClassName: "",
+    }));
+  }
 }
 
 async function upsertVote(voteInput) {
@@ -1352,14 +1754,47 @@ function normalizeGargulPlayerName(name) {
     .replace(/-.+$/, "");
 }
 
-function gargulEntryToLootItem(entry, reportByDayKey, reportByCode) {
+/**
+ * Map Gargul award time → WCL report row when the entry has no pinned report code.
+ * Uses every report on that calendar day (not just one): pick the raid whose log **start**
+ * is the latest still ≤ award time (same-day Kara then SSC → evening Kara loot stays Kara).
+ */
+function pickRaidRowForGargulTimestamp(timestampMs, reportRowsByDay, reportByCode, pinnedReportCode) {
+  const code = String(pinnedReportCode || "").trim();
+  const pinned = code ? reportByCode.get(code) || null : null;
+  if (pinned) return pinned;
+
+  const dayKey = raidCalendarDayKey(timestampMs);
+  const list = dayKey ? reportRowsByDay.get(dayKey) : null;
+  if (!list || !list.length) return null;
+  if (list.length === 1) return list[0];
+
+  const sorted = [...list].sort(
+    (a, b) => reportStartTimeMs(a.reportStartTime) - reportStartTimeMs(b.reportStartTime)
+  );
+  const t = Number(timestampMs) || 0;
+
+  let chosen = null;
+  for (const row of sorted) {
+    const start = reportStartTimeMs(row.reportStartTime);
+    if (start > 0 && start <= t) chosen = row;
+  }
+  if (chosen) return chosen;
+
+  return sorted.reduce((best, row) => {
+    const da = Math.abs(reportStartTimeMs(row.reportStartTime) - t);
+    const db = Math.abs(reportStartTimeMs(best.reportStartTime) - t);
+    return da < db ? row : best;
+  });
+}
+
+function gargulEntryToLootItem(entry, reportRowsByDay, reportByCode) {
   const timestampSec = Number(entry?.timestamp || 0);
   if (!Number.isFinite(timestampSec) || timestampSec <= 0) return null;
   const timestampMs = Math.floor(timestampSec * 1000);
-  const pinnedReportCode = String(entry?.reportCode || "").trim();
-  const pinnedReport = pinnedReportCode ? reportByCode.get(pinnedReportCode) || null : null;
   const dayKey = raidCalendarDayKey(timestampMs);
-  const matchedRaid = pinnedReport || reportByDayKey.get(dayKey) || null;
+  const pinnedReportCode = String(entry?.reportCode || "").trim();
+  const matchedRaid = pickRaidRowForGargulTimestamp(timestampMs, reportRowsByDay, reportByCode, pinnedReportCode);
   return {
     reportCode: matchedRaid?.reportCode || pinnedReportCode || `gargul-${dayKey || timestampSec}`,
     reportTitle: matchedRaid?.reportTitle || `Gargul Export ${dayKey || "unknown"}`,
@@ -2105,7 +2540,7 @@ app.get("/api/voting/current", async (req, res) => {
       },
       myVote: myVoteRow?.candidateName || null,
       candidates,
-      hallOfFame: votingHallOfFame(voting.roundKey, 10),
+      hallOfFame: await getHallOfFameForGuild(votingGuildId, 10),
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load voting round" });
@@ -2600,6 +3035,36 @@ function summarizeParsesForLinkedGroup(group, raidRankingPayloads, wclDisplayByL
     raidsDps: dpsRuns.length,
     raidsHeal: healRuns.length,
   };
+}
+
+/** WCL sometimes yields numeric strings; normalize before Math.max / comparisons. */
+function finiteParseNum(x) {
+  if (x == null || x === "") return null;
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Global peak parse % per bracket — must match client `recomputeParseCeilingMaxes` (same inputs).
+ * Exposed on `/attendance` so ops can verify badges without guessing.
+ */
+function computeParseCeilingMaxFromLeaderboard(leaderboard) {
+  const max = { tank: null, heal: null, dps: null };
+  const seen = new Set();
+  for (const row of Array.isArray(leaderboard) ? leaderboard : []) {
+    const id = String(row?.raidHelperName || row?.name || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const ps = row?.parseSummaries;
+    if (!ps || typeof ps !== "object") continue;
+    const bt = finiteParseNum(ps.bestTank ?? ps.avgTank);
+    const bh = finiteParseNum(ps.bestHeal ?? ps.avgHeal);
+    const bd = finiteParseNum(ps.bestDps ?? ps.avgDps);
+    if (bt != null && bt > 0) max.tank = max.tank == null ? bt : Math.max(max.tank, bt);
+    if (bh != null && bh > 0) max.heal = max.heal == null ? bh : Math.max(max.heal, bh);
+    if (bd != null && bd > 0) max.dps = max.dps == null ? bd : Math.max(max.dps, bd);
+  }
+  return max;
 }
 
 /**
@@ -4398,6 +4863,51 @@ function attachClassicSpecSpellIconIfNeeded(row) {
   return row;
 }
 
+/**
+ * Active roster has no Raid Helper signup context; we default `roleName` to Ranged. After Rio/Blizzard spec
+ * enrichment, infer Healers / Tanks so parse bracket + “parsing ceiling” badge match the toon’s real role.
+ */
+function inferActiveRosterRoleNameFromSpec(row) {
+  const specRaw = normalizeProtectionSpecLabel(String(row?.specName || row?.raiderIoSpecName || row?.blizzardSpecName || ""));
+  const spec = slugifyLocaleText(specRaw);
+  const cls = englishCanonicalClassSlugForEventsIcons(row);
+  if (!spec) return null;
+
+  if (
+    spec.includes("protection") ||
+    /^protection\d*$/.test(spec) ||
+    spec.includes("guardian") ||
+    spec.includes("brewmaster") ||
+    (cls === "deathknight" && spec.includes("blood"))
+  ) {
+    return "Tanks";
+  }
+
+  if (
+    (cls === "priest" && (spec.includes("holy") || spec.includes("discipline") || spec === "disc")) ||
+    (cls === "paladin" && spec.includes("holy")) ||
+    (cls === "shaman" && spec.includes("restoration")) ||
+    (cls === "druid" && (spec.includes("restoration") || spec === "resto")) ||
+    (cls === "monk" && spec.includes("mistweaver")) ||
+    (cls === "evoker" && spec.includes("preservation"))
+  ) {
+    return "Healers";
+  }
+
+  if (cls === "hunter" || cls === "mage" || cls === "warlock") return "Ranged";
+  if (cls === "priest" && spec.includes("shadow")) return "Ranged";
+  if (cls === "druid" && spec.includes("balance")) return "Ranged";
+  if (cls === "shaman" && spec.includes("elemental")) return "Ranged";
+  if (cls === "rogue") return "Melee";
+  if (cls === "warrior" && (spec.includes("arms") || spec.includes("fury"))) return "Melee";
+  if (cls === "paladin" && spec.includes("retribution")) return "Melee";
+  if (cls === "deathknight" && (spec.includes("frost") || spec.includes("unholy"))) return "Melee";
+  if (cls === "shaman" && spec.includes("enhancement")) return "Melee";
+  if (cls === "druid" && spec.includes("feral")) return "Melee";
+
+  return null;
+}
+
 /** Reuse filtered guild reports across endpoints so the dashboard does not queue 6 identical WCL pulls (GraphQL calls are serialized). */
 function wclGuildReportsCacheTtlMs() {
   const n = Number(process.env.WCL_GUILD_REPORTS_CACHE_MS);
@@ -4661,6 +5171,45 @@ async function fetchRaidHelperEventDetail(eventId) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Count primary Raid Helper signups per normalized RH key across **past** posted events (same filters as events KPI).
+ * @returns {Promise<{ counts: Map<string, number>, pastEventsScanned: number }>}
+ */
+async function countRaidHelperPrimarySignupsPerRhKey(maxPastEvents) {
+  const serverId = raidHelperDiscordGuildId() || "711838953430319115";
+  const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cap = Math.min(150, Math.max(1, Math.floor(Number(maxPastEvents || 80))));
+
+  const allEvents = await fetchRaidHelperServerEvents(serverId);
+  const pastEvents = allEvents
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((e) => e.id && e.startTime > 0 && e.startTime <= nowSec)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, cap);
+
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const ev of pastEvents) {
+    const detail = await fetchRaidHelperEventDetail(ev.id);
+    if (!detail) continue;
+    const signUps = Array.isArray(detail.signUps) ? detail.signUps : [];
+    for (const entry of signUps) {
+      if (String(entry?.status || "").toLowerCase() !== "primary") continue;
+      if (excludedClasses.has(raidHelperClassNameFromSignUpEntry(entry))) continue;
+      const name = String(entry?.name || "").trim();
+      const key = normalizeRaidHelperDisplayKey(name);
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+
+  return { counts, pastEventsScanned: pastEvents.length };
 }
 
 /**
@@ -4992,6 +5541,26 @@ app.get("/api/sync/wcl-raid-helper/:guildId/relevant-ids", async (req, res) => {
   }
 });
 
+/**
+ * Run async work on `items` with at most `limit` concurrent iterators. Results stay index-aligned with `items`.
+ */
+async function mapWithConcurrency(items, limit, fn) {
+  const n = items.length;
+  if (!n) return [];
+  const cap = Math.max(1, Math.min(limit, n));
+  const out = new Array(n);
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= n) break;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: cap }, () => worker()));
+  return out;
+}
+
 app.get("/api/raid-helper/future-events", async (_req, res) => {
   const serverId = raidHelperDiscordGuildId() || "711838953430319115";
   const nowSec = Math.floor(Date.now() / 1000);
@@ -5018,8 +5587,20 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
       .sort((a, b) => a.startTime - b.startTime)
       .slice(0, 20);
 
-    const detailed = [];
-    for (const event of future) {
+    await ensureRhWclLinksStore();
+    /** Raid Helper display key → guild rank from Account Assignment (`rh-wcl-character-links.json`). */
+    const guildRoleByRhKey = new Map();
+    for (const link of rhWclLinksState.links || []) {
+      const k = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+      if (k) guildRoleByRhKey.set(k, normalizeRhWclGuildRole(link?.guildRole));
+    }
+
+    const rhFutureConc = Math.min(
+      16,
+      Math.max(1, Number(process.env.RAID_HELPER_FUTURE_EVENTS_CONCURRENCY || 6) || 6)
+    );
+
+    const detailed = await mapWithConcurrency(future, rhFutureConc, async (event) => {
       const detail = await fetchRaidHelperEventDetail(event.id);
       const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
 
@@ -5032,6 +5613,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         .map((entry) => {
           const rhClass = englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry));
           const rhSpec = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+          const rhKey = normalizeRaidHelperDisplayKey(String(entry?.name || ""));
           return {
             name: String(entry?.name || ""),
             /** In-game character for Raider.io / Blizzard — explicit RH fields or slash segment (see RAID_HELPER_SIGNUP_SLASH_CHARACTER). */
@@ -5048,6 +5630,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
             gender: raidHelperGenderFromSignUpEntry(entry),
             specIconUrl: raidHelperSpecIconUrlFromSignUpEntry(entry),
             realm: raidHelperRealmFromSignUpEntry(entry) || defaultWowRealmForRoster(),
+            guildRole: guildRoleByRhKey.get(rhKey) ?? "Peon",
           };
         })
         .filter((entry) => entry.name)
@@ -5065,7 +5648,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         Ranged: confirmedRoster.filter((x) => x.roleName === "Ranged").length,
       };
 
-      detailed.push({
+      return {
         ...event,
         raidImage: raidImageFromTitle(`${event.title} ${event.description}`),
         headerImage: raidHelperHeaderImage(detail),
@@ -5106,13 +5689,117 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
             : null,
         rosterByRole,
         confirmedRoster,
-      });
-    }
+      };
+    });
 
     return res.json({
       serverId,
       count: detailed.length,
       events: detailed,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/**
+ * KPIs: unique primary raiders across scanned Raid Helper history; mean WCL attendance % for
+ * Account Assignment **Core** guild role; total Gargul loot rows (guild loot history).
+ */
+app.get("/api/raid-helper/events-kpi", async (req, res) => {
+  const guildId = Number(req.query.guildId || process.env.VOTING_GUILD_ID || 817080);
+  const maxPastEvents = Math.min(150, Math.max(1, Math.floor(Number(req.query.maxPastEvents || 80))));
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+
+  const serverId = raidHelperDiscordGuildId() || "711838953430319115";
+  const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  try {
+    const allEvents = await fetchRaidHelperServerEvents(serverId);
+    const pastEvents = allEvents
+      .map((event) => ({
+        id: String(event.id || event.eventId || event.eventID || ""),
+        startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+      }))
+      .filter((e) => e.id && e.startTime > 0 && e.startTime <= nowSec)
+      .sort((a, b) => b.startTime - a.startTime)
+      .slice(0, maxPastEvents);
+
+    const rhKpiConc = Math.min(
+      16,
+      Math.max(1, Number(process.env.RAID_HELPER_FUTURE_EVENTS_CONCURRENCY || 6) || 6)
+    );
+
+    const [keyLists] = await Promise.all([
+      mapWithConcurrency(pastEvents, rhKpiConc, async (ev) => {
+        const detail = await fetchRaidHelperEventDetail(ev.id);
+        if (!detail) return [];
+        const signUps = Array.isArray(detail.signUps) ? detail.signUps : [];
+        const keys = [];
+        for (const entry of signUps) {
+          if (String(entry?.status || "").toLowerCase() !== "primary") continue;
+          if (excludedClasses.has(raidHelperClassNameFromSignUpEntry(entry))) continue;
+          const name = String(entry?.name || "").trim();
+          const key = normalizeRaidHelperDisplayKey(name);
+          if (!key) continue;
+          keys.push(key);
+        }
+        return keys;
+      }),
+      Promise.all([ensureRhWclLinksStore(), ensureGargulLootHistoryStore()]),
+    ]);
+
+    const uniqueKeys = new Set(keyLists.flat());
+
+    const reportLimit = Math.min(wclMaxGuildReportsLimit(), Math.max(10, Number(req.query.wclLimit || 40)));
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+      guildId,
+      reportLimit,
+      { attendancePercentMetrics: true }
+    );
+    const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
+      raidSnapshots,
+      rhWclLinksState,
+      300,
+      wclDisplayByLower,
+      raidRankingPayloads
+    );
+
+    let coreAttendanceSum = 0;
+    let coreAttendanceCount = 0;
+    for (const row of linkedPayload.leaderboard) {
+      if (normalizeRhWclGuildRole(row?.guildRole) !== "Core") continue;
+      const r = Number(row.attendanceRate ?? 0);
+      if (!Number.isFinite(r)) continue;
+      coreAttendanceSum += r;
+      coreAttendanceCount += 1;
+    }
+    const coreAttendanceAverage = coreAttendanceCount > 0 ? coreAttendanceSum / coreAttendanceCount : null;
+
+    const gargulRows = Array.isArray(gargulLootState.entries) ? gargulLootState.entries : [];
+    const totalItemsDistributed = gargulRows.filter(
+      (row) => row && (row.itemID || row.itemLink) && row.received !== false
+    ).length;
+
+    const rateByRhKey = new Map();
+    for (const row of linkedPayload.leaderboard) {
+      const k = normalizeRaidHelperDisplayKey(String(row?.raidHelperName || row?.name || ""));
+      if (k) rateByRhKey.set(k, Number(row.attendanceRate ?? 0));
+    }
+    const withWclAttendanceMatch = [...uniqueKeys].filter((k) => rateByRhKey.has(k)).length;
+
+    return res.json({
+      guildId,
+      uniqueRaiderCount: uniqueKeys.size,
+      pastEventsScanned: pastEvents.length,
+      maxPastEvents,
+      consideredRaids: linkedPayload.consideredRaids,
+      coreAttendanceAverage,
+      coreRaiderCount: coreAttendanceCount,
+      totalItemsDistributed,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
@@ -5540,10 +6227,16 @@ app.get("/api/wcl/guild/:guildId/death-leaderboard", async (req, res) => {
       }
     }
 
+    const topParam = req.query.top;
+    const top =
+      topParam === undefined || topParam === ""
+        ? 5
+        : Math.min(500, Math.max(1, Math.floor(Number(topParam) || 5)));
+
     const leaderboard = [...totals.entries()]
       .map(([name, deaths]) => ({ name, deaths }))
       .sort((a, b) => b.deaths - a.deaths)
-      .slice(0, 5);
+      .slice(0, top);
 
     return res.json({
       guildId,
@@ -5605,11 +6298,15 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
       raidRankingPayloads
     );
 
+    const parseCeilingMax = computeParseCeilingMaxFromLeaderboard(linkedPayload.leaderboard);
+
     return res.json({
       guildId,
       consideredRaids: linkedPayload.consideredRaids,
       raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
       leaderboard: linkedPayload.leaderboard,
+      parseCeilingMax,
+      parseRankingReports: raidRankingPayloads.length,
       attendanceLinking: true,
       rhWclLinkCount: rhWclLinksState.links?.length || 0,
       attendanceScope: {
@@ -5639,91 +6336,14 @@ app.get("/api/wcl/guild/:guildId/active-roster", async (req, res) => {
     Math.max(10, Number(req.query.limit || 40))
   );
   const top = Math.min(300, Math.max(80, Number(req.query.top || 220)));
+  const maxRhPastEvents = Math.min(150, Math.max(1, Math.floor(Number(req.query.maxRhPastEvents || 80))));
   if (!Number.isInteger(guildId) || guildId <= 0) {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
 
   try {
-    await ensureRhWclLinksStore();
-    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
-      guildId,
-      reportLimit,
-      {
-        attendancePercentMetrics: true,
-      }
-    );
-
-    const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
-      raidSnapshots,
-      rhWclLinksState,
-      top,
-      wclDisplayByLower,
-      raidRankingPayloads
-    );
-
-    const activeRows = linkedPayload.leaderboard.filter((r) => Number(r?.raidsAttended || 0) > 0);
-    const pairs = [];
-    for (const attRow of activeRows) {
-      const name = String(attRow.raidHelperName || attRow.name || "").trim();
-      if (!name) continue;
-      pairs.push({
-        attRow,
-        base: {
-          name,
-          rioLookupCharacterName: "",
-          className: "",
-          specName: "",
-          raidHelperClassName: "",
-          raidHelperSpecName: "",
-          roleName: "Ranged",
-          race: "",
-          gender: "",
-          specIconUrl: "",
-          realm: defaultWowRealmForRoster(),
-        },
-      });
-    }
-
-    const rosterBase = pairs.map((p) => p.base);
-    let enriched = await enrichConfirmedRosterExternalSpecs(rosterBase);
-    enriched = await Promise.all(enriched.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
-    enriched = await enrichConfirmedRosterWithWclSpecIcons(enriched);
-
-    const players = enriched.map((row, i) => {
-      const att = pairs[i].attRow;
-      const stripped = stripInternalRosterFields(row);
-      return {
-        ...stripped,
-        guildRole: normalizeRhWclGuildRole(att.guildRole),
-        raidsAttended: att.raidsAttended,
-        attendanceRate: att.attendanceRate,
-        wclCharacters: att.wclCharacters,
-        parseSummaries: att.parseSummaries,
-        attendanceHistory: att.attendanceHistory,
-      };
-    });
-
-    players.sort((a, b) =>
-      String(a?.characterName || a?.name || "").localeCompare(String(b?.characterName || b?.name || ""))
-    );
-
-    return res.json({
-      guildId,
-      consideredRaids: linkedPayload.consideredRaids,
-      activeCount: players.length,
-      raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
-      attendanceScope: {
-        only25PlayerRaids: true,
-        excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
-        recentRaidCap: wclAttendanceRecentRaidCount(),
-      },
-      parseScope: {
-        sameRaidsAsAttendance: true,
-        metricNote:
-          "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
-      },
-      players,
-    });
+    const payload = await buildActiveRosterPlayersForGuild(guildId, { reportLimit, top, maxRhPastEvents });
+    return res.json(payload);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
   }
@@ -6264,7 +6884,8 @@ async function fetchGuildLootReceived(guildId, reportLimit) {
     }
   }
 
-  const reportByDayKey = new Map();
+  /** Calendar day → all WCL reports that day (fixes Kara + 25s same day mis-attribution). */
+  const reportRowsByDay = new Map();
   const reportByCode = new Map();
   for (const { report, raidName } of trackedReports) {
     const dayKey = raidCalendarDayKey(Number(report?.startTime || 0));
@@ -6276,14 +6897,16 @@ async function fetchGuildLootReceived(guildId, reportLimit) {
       reportUploader: report?.owner?.name ? String(report.owner.name) : null,
     };
     reportByCode.set(String(report.code), row);
-    if (!dayKey || reportByDayKey.has(dayKey)) continue;
-    reportByDayKey.set(dayKey, row);
+    if (!dayKey) continue;
+    const arr = reportRowsByDay.get(dayKey) || [];
+    arr.push(row);
+    reportRowsByDay.set(dayKey, arr);
   }
   const gargulItems = gargulLootState.entries
     .filter((entry) => entry && typeof entry === "object" && entry.received !== false)
-    .map((entry) => gargulEntryToLootItem(entry, reportByDayKey, reportByCode))
+    .map((entry) => gargulEntryToLootItem(entry, reportRowsByDay, reportByCode))
     .filter(Boolean);
-  const mergedItems = mergeLootItems(receivedItems, gargulItems);
+  const mergedItems = mergeLootItems(receivedItems, gargulItems).filter((row) => !isTenPlayerTbcLootRow(row));
 
   const syntheticRaids = new Map();
   for (const row of gargulItems) {
@@ -6307,7 +6930,7 @@ async function fetchGuildLootReceived(guildId, reportLimit) {
     ...[...syntheticRaids.values()].filter(
       (row) => !trackedReports.some(({ report }) => String(report.code) === String(row.reportCode))
     ),
-  ];
+  ].filter((raid) => !isTenPlayerTbcLootRow(raid));
   const selectedSet = new Set((gargulLootState.selectedReportCodes || []).map((x) => String(x)));
   const visibleRaids = selectedSet.size
     ? allRaids.filter((raid) => selectedSet.has(String(raid.reportCode)))

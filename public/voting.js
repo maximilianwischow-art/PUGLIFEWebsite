@@ -24,6 +24,14 @@ function escapeHtmlAttr(s) {
     .replace(/</g, "&lt;");
 }
 
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 /** Normalize labels so WCL/Unicode apostrophes still match (strict === used to fall through to Kara). */
 function normalizedRaidBannerKey(s) {
   return String(s || "")
@@ -106,6 +114,110 @@ function renderCandidates(payload) {
   list.hidden = false;
 }
 
+function fmtParsePct(n) {
+  const x = Number(n);
+  return Number.isFinite(x) && x >= 0 ? `${x.toFixed(1)}` : "—";
+}
+
+/** Warcraft Logs–style tier suffix (matches leaderboard peak-parse styling). */
+function hofPeakParseWclTierClass(pct) {
+  const n = Number(pct);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n >= 100) return "leaderboard-peak-parse--wcl100";
+  if (n >= 99) return "leaderboard-peak-parse--wcl99";
+  if (n >= 95) return "leaderboard-peak-parse--wcl95";
+  if (n >= 75) return "leaderboard-peak-parse--wcl75";
+  if (n >= 50) return "leaderboard-peak-parse--wcl50";
+  if (n >= 25) return "leaderboard-peak-parse--wcl25";
+  return "leaderboard-peak-parse--wcl0";
+}
+
+function hofPeakParseCellHtml(row) {
+  const plb = window.plbEventsRoster;
+  const escapeHtml = plb?.escapeHtml || ((s) => String(s ?? ""));
+  const v = row?.peakParse != null && Number.isFinite(Number(row.peakParse)) ? Number(row.peakParse) : null;
+  const txt = fmtParsePct(v);
+  let title =
+    "Peak parse for this MVP raid — best boss percentile in that Warcraft Logs report for your role bracket (DPS / tank / heal).";
+  if (plb?.rosterParseSourceTooltipFragment && row?.peakParseSource) {
+    title += plb.rosterParseSourceTooltipFragment(row.peakParseSource);
+  }
+  if (v == null) {
+    return `<span class="leaderboard-peak-parse leaderboard-peak-parse--empty hof-peak-parse" title="${escapeHtml(title)}">${escapeHtml(txt)}</span>`;
+  }
+  const tier = hofPeakParseWclTierClass(v);
+  if (!tier) {
+    return `<strong class="leaderboard-peak-parse hof-peak-parse" title="${escapeHtml(title)}">${escapeHtml(txt)}</strong>`;
+  }
+  return `<strong class="leaderboard-peak-parse hof-peak-parse ${tier}" title="${escapeHtml(title)}">${escapeHtml(txt)}</strong>`;
+}
+
+/** Same layout as leaderboard player column (portrait, coloured name, spec · class, badges). */
+function hofRaiderCell(row) {
+  const plb = window.plbEventsRoster;
+  const nameRaw = String(row?.winnerName || "Unknown");
+  if (!plb) {
+    return `<div class="hof-fallback-name"><strong>${escapeHtml(nameRaw)}</strong></div>`;
+  }
+  const escapeHtml = plb.escapeHtml;
+  let p = row?.player;
+  if (!p && row?.wclClassName) {
+    p = {
+      name: nameRaw,
+      characterName: nameRaw,
+      className: row.wclClassName,
+      specName: "",
+      roleName: "Ranged",
+      wclCharacters: [],
+    };
+  }
+  if (!p) {
+    return `<div class="hof-fallback-name"><strong>${escapeHtml(nameRaw)}</strong></div>`;
+  }
+
+  const chain = plb.rosterPortraitChain(p);
+  const portraitSrc = escapeHtml(chain[0] || "");
+  const portraitFb = chain.slice(1).map((u) => escapeHtml(u)).join("|");
+  const displayName = plb.eventsRosterCharacterLabel(p);
+  const className = plb.mergedClassDisplayLabel(p);
+  const specLabel = plb.displaySpecNameForRoster(String(p.specName || "").trim());
+  const color = plb.wowClassColor(className);
+  const priestGlow =
+    plb.effectiveRosterClassSlug(p) === "priest"
+      ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);"
+      : "";
+  const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
+  const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
+  const badges = plb.rosterBadgeRowHtml(p);
+  return `
+    <div class="leaderboard-player-row">
+      <div class="leaderboard-portrait-stack">
+        <img
+          class="raider-champion-img leaderboard-spec-img"
+          src="${portraitSrc}"
+          alt="${escapeHtml(portraitAlt)}"
+          width="44"
+          height="44"
+          loading="lazy"
+          decoding="async"
+          data-champ-fallbacks="${portraitFb}"
+          onerror="(function(el){var raw=el.getAttribute('data-champ-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.champI||0);if(i<parts.length){el.dataset.champI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
+        />
+      </div>
+      <div class="leaderboard-player-cell">
+        <div class="leaderboard-player-main">
+          <span class="leaderboard-player-name" style="color:${escapeHtml(color)};${priestGlow}">${escapeHtml(displayName)}</span>
+          ${
+            metaBits.length
+              ? `<span class="leaderboard-player-meta">${escapeHtml(metaBits.join(" · "))}</span>`
+              : ""
+          }
+        </div>
+        <div class="leaderboard-player-badges"><div class="raider-badges">${badges}</div></div>
+      </div>
+    </div>`;
+}
+
 function renderHallOfFame(payload) {
   const host = document.getElementById("votingHallOfFame");
   const rows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
@@ -117,14 +229,21 @@ function renderHallOfFame(payload) {
     .map((row, idx) => {
       const when = row?.raidStartTime ? new Date(row.raidStartTime).toLocaleString() : "Unknown date";
       const raidLabel = row?.raidCode ? `Log ${row.raidCode}` : "Previous raid";
+      const votes = Number(row?.winnerVotes || 0);
+      const voteLabel = votes === 1 ? "1 vote" : `${numberFmt(votes)} votes`;
+      const peakCell = hofPeakParseCellHtml(row);
+      const playerCell = hofRaiderCell(row);
       return `
         <article class="hof-row">
           <div class="hof-rank">#${idx + 1}</div>
-          <div class="hof-main">
-            <strong>${row?.winnerName || "Unknown"}</strong>
-            <span class="subtle">${raidLabel} · ${when}</span>
+          <div class="hof-body">
+            ${playerCell}
+            <span class="subtle hof-log-line">${raidLabel} · ${when}</span>
           </div>
-          <div class="hof-votes">${numberFmt(row?.winnerVotes || 0)} votes</div>
+          <div class="hof-metrics">
+            <div class="hof-peak">${peakCell}</div>
+            <div class="hof-votes">${voteLabel}</div>
+          </div>
         </article>
       `;
     })
@@ -134,13 +253,25 @@ function renderHallOfFame(payload) {
 async function loadHallOfFame() {
   const host = document.getElementById("votingHallOfFame");
   host.innerHTML = `<div class="subtle">Loading…</div>`;
-  try {
-    const res = await fetch("/api/voting/hall-of-fame", { credentials: "include" });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok || payload?.ok === false) {
-      host.innerHTML = `<div class="subtle">${payload?.error || "Failed to load hall of fame."}</div>`;
-      return;
+  const plb = window.plbEventsRoster;
+  if (plb?.loadTbcSpecIconMap) {
+    try {
+      await plb.loadTbcSpecIconMap();
+    } catch {
+      /* icons best-effort */
     }
+  }
+  if (plb?.loadWclAttendanceForEvents) {
+    try {
+      await plb.loadWclAttendanceForEvents();
+    } catch {
+      /* badges best-effort */
+    }
+  }
+  try {
+    const payload = await window.plbSessionApiCache.getJson("/api/voting/hall-of-fame", {
+      credentials: "include",
+    });
     renderHallOfFame(payload);
   } catch {
     host.innerHTML = `<div class="subtle">Failed to load hall of fame.</div>`;
@@ -201,6 +332,23 @@ async function loadVotingRound() {
   metaEl.textContent = `${payload?.raid?.name || "Raid"} · ${new Date(payload?.raid?.startTime || Date.now()).toLocaleString()}`;
   renderRaidHeader(payload);
   renderCandidates(payload);
+  {
+    const plb = window.plbEventsRoster;
+    if (plb?.loadTbcSpecIconMap) {
+      try {
+        await plb.loadTbcSpecIconMap();
+      } catch {
+        /* icons best-effort */
+      }
+    }
+    if (plb?.loadWclAttendanceForEvents) {
+      try {
+        await plb.loadWclAttendanceForEvents();
+      } catch {
+        /* badges best-effort */
+      }
+    }
+  }
   renderHallOfFame(payload);
 }
 

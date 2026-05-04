@@ -16,7 +16,6 @@ function initBackgroundStars() {
 
 const statusEl = document.querySelector("#status");
 const dashboardPbRow = document.querySelector("#dashboardPbRow");
-const dashboardRosterBlock = document.querySelector("#dashboardRosterBlock");
 const GUILD_ID = 817080;
 const IMAGE_ASSET_VERSION = "20260428f";
 const DASHBOARD_REPORT_LIMIT = 25;
@@ -35,6 +34,7 @@ const attendanceList = document.querySelector("#attendanceList");
 const deathEncounterMeta = document.querySelector("#deathEncounterMeta");
 const deathEncounterHeatmap = document.querySelector("#deathEncounterHeatmap");
 const raidCalendarGrid = document.querySelector("#raidCalendarGrid");
+const raidPerfKpiGrid = document.querySelector("#raidPerfKpiGrid");
 const raidDayBackdrop = document.querySelector("#raidDayBackdrop");
 const raidDayModal = document.querySelector("#raidDayModal");
 const raidDayModalTitle = document.querySelector("#raidDayModalTitle");
@@ -47,6 +47,19 @@ const RAID_CALENDAR_PER_RAID = 20;
 
 /** @type {Record<string, Array>} */
 let raidCalendarColumnsData = {};
+
+function apiGetJson(url, init) {
+  const c = window.plbSessionApiCache;
+  if (c) return c.getJson(url, init);
+  return fetch(url, { method: "GET", ...init }).then(async (res) => {
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+    if (body && typeof body === "object" && body.ok === false) {
+      throw new Error(typeof body.error === "string" ? body.error : "Request failed");
+    }
+    return body;
+  });
+}
 
 /** Fastest full clear first; logs without a full-clear time at the bottom (newest last among those). */
 function compareRaidCalendarByRunTime(a, b) {
@@ -172,6 +185,53 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+function fmtKpiAttendancePct(value) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(1)}%`;
+}
+
+async function loadRaidPerfKpi() {
+  if (!raidPerfKpiGrid) return;
+  raidPerfKpiGrid.innerHTML = `
+    <div class="raid-kpi-tile raid-kpi-tile--loading">
+      <span class="raid-kpi-value">…</span>
+      <span class="raid-kpi-label">Loading KPIs</span>
+    </div>`;
+  try {
+    const q = new URLSearchParams({
+      guildId: String(GUILD_ID),
+      maxPastEvents: "80",
+      wclLimit: "40",
+    });
+    const data = await apiGetJson(`/api/raid-helper/events-kpi?${q}`, { credentials: "include" });
+
+    const uniqueN = data.uniqueRaiderCount;
+    const coreAvg = data.coreAttendanceAverage;
+    const itemsN = data.totalItemsDistributed;
+    const itemsLabel =
+      itemsN != null && Number.isFinite(Number(itemsN)) ? Number(itemsN).toLocaleString() : "—";
+
+    raidPerfKpiGrid.innerHTML = `
+      <div class="raid-kpi-tile raid-kpi-tile--primary">
+        <span class="raid-kpi-value">${escapeHtml(String(uniqueN ?? "—"))}</span>
+        <span class="raid-kpi-label">Unique raiders in past events</span>
+      </div>
+      <div class="raid-kpi-tile">
+        <span class="raid-kpi-value">${escapeHtml(fmtKpiAttendancePct(coreAvg))}</span>
+        <span class="raid-kpi-label">Core attendance (avg WCL %)</span>
+      </div>
+      <div class="raid-kpi-tile">
+        <span class="raid-kpi-value">${escapeHtml(itemsLabel)}</span>
+        <span class="raid-kpi-label">Items distributed (Gargul history)</span>
+      </div>
+    `;
+  } catch (err) {
+    raidPerfKpiGrid.innerHTML = `<div class="raid-kpi-tile raid-kpi-tile--error">
+      <span class="raid-kpi-label">${escapeHtml(err?.message || "Could not load KPIs")}</span>
+    </div>`;
+  }
+}
+
 function localYmd(ms) {
   const d = new Date(Number(ms));
   if (Number.isNaN(d.getTime())) return "";
@@ -260,10 +320,7 @@ function buildEncounterTableHtml(raid) {
     </table>`;
 }
 
-function renderDashboardOverview(raidSummary, rosterInfo) {
-  const ri = rosterInfo || {};
-  const roster = ri.recentRankedRoster || [];
-
+function renderDashboardOverview(raidSummary) {
   if (dashboardPbRow) {
     const tiles = (raidSummary || []).map((raid) => {
       const bc = raid.bestClear;
@@ -318,32 +375,6 @@ function renderDashboardOverview(raidSummary, rosterInfo) {
         </article>`;
     });
     dashboardPbRow.innerHTML = tiles.join("") || '<p class="subtle">No raid data.</p>';
-  }
-
-  if (dashboardRosterBlock) {
-    const pbCodes = ri.pbClearReportCodes || [];
-    const rosterEmptyMsg =
-      pbCodes.length === 0
-        ? `<p class="subtle">No roster yet — personal-best full clears only appear after each tracked raid has a fastest clear in the loaded logs.</p>`
-        : `<p class="subtle">Those personal-best logs list no ranked characters.</p>`;
-
-    const rosterNames = roster
-      .map((x) => (typeof x === "string" ? x : String(x?.name || "")).trim())
-      .filter(Boolean);
-
-    const rosterHtml =
-      rosterNames.length === 0
-        ? rosterEmptyMsg
-        : `<div class="roster-pills">${rosterNames
-            .map((n) => `<span class="roster-chip">${escapeHtml(n)}</span>`)
-            .join("")}</div>`;
-
-    dashboardRosterBlock.innerHTML = `
-      <div class="roster-overview-roster-only">
-        <h3 class="roster-block-title">Raid roster (personal-best clears)</h3>
-        ${rosterHtml}
-      </div>
-    `;
   }
 }
 
@@ -476,11 +507,9 @@ async function loadRecentRaidsCalendar() {
   if (!raidCalendarGrid) return;
   raidCalendarGrid.innerHTML = '<div class="subtle">Loading…</div>';
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=${DASHBOARD_CALENDAR_LIMIT}`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to fetch raid calendar");
-    }
+    const payload = await apiGetJson(
+      `/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=${DASHBOARD_CALENDAR_LIMIT}`
+    );
     const entries = payload.entries || [];
     raidCalendarColumnsData = {};
     for (const name of RAID_CALENDAR_RAID_ORDER) {
@@ -534,20 +563,13 @@ function buildBestTimeRow(boss) {
 async function loadBossTimes() {
   setStatus("Loading best kill times...");
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/boss-times?limit=${DASHBOARD_REPORT_LIMIT}`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to fetch boss times");
-    }
+    const payload = await apiGetJson(`/api/wcl/guild/${GUILD_ID}/boss-times?limit=${DASHBOARD_REPORT_LIMIT}`);
 
-    renderDashboardOverview(payload.raidSummary || [], payload.rosterInfo);
+    renderDashboardOverview(payload.raidSummary || []);
     setStatus("Best times updated.");
   } catch (error) {
     if (dashboardPbRow) {
       dashboardPbRow.innerHTML = `<p class="subtle">${escapeHtml(error.message)}</p>`;
-    }
-    if (dashboardRosterBlock) {
-      dashboardRosterBlock.innerHTML = `<p class="subtle">${escapeHtml(error.message)}</p>`;
     }
     setStatus(error.message || "Failed to fetch boss times.", true);
   }
@@ -618,11 +640,7 @@ function renderPotrRaidStrip(raid) {
 
 async function loadLatestRaidMvp() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/latest-raid-mvp?limit=15`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to fetch latest raid MVP");
-    }
+    const payload = await apiGetJson(`/api/wcl/guild/${GUILD_ID}/latest-raid-mvp?limit=15`);
 
     renderPotrRaidStrip(payload.raid);
     if (potrRaidStatus) {
@@ -646,11 +664,7 @@ async function loadLatestRaidMvp() {
 
 async function loadDeathLeaderboard() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/death-leaderboard?limit=${DASHBOARD_REPORT_LIMIT}`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to fetch death leaderboard");
-    }
+    const payload = await apiGetJson(`/api/wcl/guild/${GUILD_ID}/death-leaderboard?limit=${DASHBOARD_REPORT_LIMIT}`);
 
     const rows = payload?.leaderboard || [];
     deathMeta.textContent = `Across ${payload?.scannedReports || 0} tracked raid report(s).`;
@@ -675,11 +689,9 @@ async function loadDeathLeaderboard() {
 
 async function loadAttendanceTracker() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/attendance?limit=${DASHBOARD_REPORT_LIMIT}&top=12`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to fetch attendance");
-    }
+    const payload = await apiGetJson(
+      `/api/wcl/guild/${GUILD_ID}/attendance?limit=${DASHBOARD_REPORT_LIMIT}&top=12`
+    );
 
     const rows = payload?.leaderboard || [];
     attendanceMeta.textContent = `Across ${payload?.consideredRaids || 0} recent tracked raids.`;
@@ -713,11 +725,9 @@ async function loadAttendanceTracker() {
 
 async function loadDeathEncounterHeatmap() {
   try {
-    const response = await fetch(`/api/wcl/guild/${GUILD_ID}/death-encounter-heatmap?limit=${DASHBOARD_REPORT_LIMIT}`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to fetch death encounter heatmap");
-    }
+    const payload = await apiGetJson(
+      `/api/wcl/guild/${GUILD_ID}/death-encounter-heatmap?limit=${DASHBOARD_REPORT_LIMIT}`
+    );
 
     const rows = payload?.heatmap || [];
     deathEncounterMeta.textContent = `${rows.length} tracked boss(es) across recent raids.`;
@@ -755,9 +765,24 @@ async function loadDeathEncounterHeatmap() {
 }
 
 initBackgroundStars();
-loadBossTimes();
-loadLatestRaidMvp();
-loadDeathLeaderboard();
-loadAttendanceTracker();
-loadDeathEncounterHeatmap();
-loadRecentRaidsCalendar();
+if (raidPerfKpiGrid) {
+  loadRaidPerfKpi();
+}
+if (dashboardPbRow) {
+  loadBossTimes();
+}
+if (potrRaidBanner && potrRaidDate) {
+  loadLatestRaidMvp();
+}
+if (deathMeta && deathLeaderboard) {
+  loadDeathLeaderboard();
+}
+if (attendanceMeta && attendanceList) {
+  loadAttendanceTracker();
+}
+if (deathEncounterMeta && deathEncounterHeatmap) {
+  loadDeathEncounterHeatmap();
+}
+if (raidCalendarGrid) {
+  loadRecentRaidsCalendar();
+}

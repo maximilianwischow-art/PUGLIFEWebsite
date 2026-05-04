@@ -182,20 +182,23 @@ async function loadLootHistory() {
   const list = document.getElementById("lootHistoryList");
   if (!list) return;
   try {
-    const res = await fetch("/api/loot-history?limit=20");
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload?.error || "Failed to load loot history");
+    const payload = await window.plbSessionApiCache.getJson("/api/loot-history?limit=20");
     const itemIds = [...new Set((payload?.items || []).map((x) => Number(x?.itemId || 0)).filter((x) => x > 0))];
     const itemMetaById = new Map();
     if (itemIds.length) {
       const chunkSize = 80;
       for (let i = 0; i < itemIds.length; i += chunkSize) {
         const chunk = itemIds.slice(i, i + chunkSize);
-        const metaRes = await fetch(`/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`);
-        const metaPayload = await metaRes.json().catch(() => ({}));
-        if (!metaRes.ok || !Array.isArray(metaPayload?.items)) continue;
-        for (const row of metaPayload.items) {
-          if (Number(row?.itemId) > 0) itemMetaById.set(Number(row.itemId), row);
+        try {
+          const metaPayload = await window.plbSessionApiCache.getJson(
+            `/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`
+          );
+          if (!Array.isArray(metaPayload?.items)) continue;
+          for (const row of metaPayload.items) {
+            if (Number(row?.itemId) > 0) itemMetaById.set(Number(row.itemId), row);
+          }
+        } catch {
+          /* icons best-effort */
         }
       }
     }

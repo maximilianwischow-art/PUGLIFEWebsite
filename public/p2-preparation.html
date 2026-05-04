@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PUG LIFE BALANCE · P2 Preparation</title>
+    <title>PUG LIFE BALANCE · Phase 2</title>
     <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=20260428r" />
+    <link rel="stylesheet" href="/styles.css?v=20260524h" />
   </head>
   <body>
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -17,49 +17,68 @@
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
-          <a href="/home.html">Home</a>
-          <a href="/">Dashboard</a>
-          <a href="/events.html">Events</a>
-          <a href="/roster.html">Roster</a>
-          <a href="/voting.html">Voting</a>
-          <a href="/loot-history.html">Loot History</a>
-          <a href="/p2-preparation.html" class="nav-current" aria-current="page">P2 Preparation</a>
+          <a href="/home.html">Raid Performance</a>
+          <a href="/">Leaderboard</a>
+          <a href="/voting.html">Hall of Fame</a>
+          <a href="/events.html">Future Events</a>
+          <a href="/p2-preparation.html" class="nav-current" aria-current="page">Phase 2</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
         <div class="hero-divider" aria-hidden="true"></div>
       </header>
 
       <main class="container">
+        <h1 class="visually-hidden">Phase 2</h1>
+        <section class="card" id="nether-vortex-tracker">
+          <h3 class="section-title">Nether Vortex Tracker</h3>
+          <p id="vortexMeta" class="subtle">Loading tracker...</p>
+        </section>
+
         <section class="card">
-          <h2 class="section-title">P2 Preparation</h2>
+          <h3 class="section-title">Your Need</h3>
           <p class="subtle">
-            Nature resistance craft progress for Main Tank (Wildguard set + The Natural Ward + Pendant of Withering).
+            Share how many Nether Vortex you still need and which items you want crafted. Vortex cost per item is taken
+            from TBC recipe data (same counts as in-game crafts).
           </p>
-          <div class="p2-overall">
-            <div class="p2-overall-label">Overall Progress</div>
-            <div class="p2-progress-bar"><span id="p2OverallBar"></span></div>
-            <div id="p2OverallText" class="p2-overall-text">0%</div>
+          <p id="vortexAuthNotice" class="subtle vortex-submit-notice" role="status"></p>
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <tbody>
+                <tr>
+                  <td><strong>Needed Count</strong></td>
+                  <td>
+                    <input id="vortexNeededCount" class="admin-input" type="number" min="0" step="1" value="0" />
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Craftable Items</strong></td>
+                  <td>
+                    <div class="admin-actions admin-actions--tight">
+                      <input
+                        id="vortexCraftableSearch"
+                        class="admin-input"
+                        type="text"
+                        placeholder="Search craftable item..."
+                      />
+                      <select id="vortexCraftableSelect" class="admin-input" style="min-width: 260px"></select>
+                      <button type="button" class="event-signup-btn event-signup-btn--softres" id="vortexAddItemBtn">
+                        Add Item
+                      </button>
+                    </div>
+                    <div id="vortexSelectedItems" class="loot-item-recipients" style="margin-top: 10px"></div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="admin-actions">
+            <button type="button" class="event-signup-btn" id="vortexSaveBtn">Save Need</button>
           </div>
         </section>
 
         <section class="card">
-          <h3 class="section-title">Included Gear</h3>
-          <ul class="p2-gear-list">
-            <li>Wildguard Helm</li>
-            <li>Wildguard Breastplate</li>
-            <li>Wildguard Leggings</li>
-            <li>The Natural Ward (Ring)</li>
-            <li>Pendant of Withering (Neck)</li>
-          </ul>
-        </section>
-
-        <section class="card">
-          <h3 class="section-title">Material Tracker</h3>
-          <p class="subtle">
-            Starting values are prefilled from your screenshots; Felsteel is tracked as raw smelting materials
-            (Fel Iron Bar + Eternium Bar). Adjust current values anytime.
-          </p>
-          <div id="p2Table" class="p2-table-wrap"></div>
+          <h3 class="section-title">Guild Needs</h3>
+          <div id="vortexList" class="admin-grid-note">Loading entries...</div>
         </section>
       </main>
 
@@ -67,15 +86,17 @@
         <div class="dots" aria-hidden="true">
           <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
         </div>
-        <p><em>"We may fall — but we rise as Tacticians."</em></p>
+        <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
         <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
         <p class="footer-legal-links"><a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a></p>
       </footer>
     </div>
 
+    <script src="/session-api-cache.js?v=20260504a"></script>
     <script src="/home.js?v=20260428d"></script>
-    <script src="/auth-ui.js?v=20260430f"></script>
+    <script src="/wow-item-tooltip.js?v=20260502a"></script>
+    <script src="/auth-ui.js?v=20260504a"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
-    <script src="/p2-preparation.js?v=20260428t"></script>
+    <script src="/nether-vortex.js?v=20260504a"></script>
   </body>
 </html>

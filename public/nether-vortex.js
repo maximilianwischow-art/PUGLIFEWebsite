@@ -37,7 +37,11 @@ function vortexNeeded(v) {
 }
 
 async function getJson(url, opts) {
-  const res = await fetch(url, { credentials: "include", ...(opts || {}) });
+  const merged = { credentials: "include", ...(opts || {}) };
+  if (window.plbSessionApiCache) {
+    return window.plbSessionApiCache.getJson(url, merged);
+  }
+  const res = await fetch(url, merged);
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || payload?.ok === false) throw new Error(payload?.error || `Request failed (${res.status})`);
   return payload;
@@ -163,7 +167,11 @@ function renderSelectedItems() {
             ${renderVortexCost(vortexNeeded(row.vortexNeeded))}
             </span>
           </span>
-          <button type="button" class="auth-chip-btn" data-remove-item="${idx}" style="padding:2px 6px;">x</button>
+          ${
+            vortexCanEdit
+              ? `<button type="button" class="auth-chip-btn" data-remove-item="${idx}" style="padding:2px 6px;">x</button>`
+              : ""
+          }
         </span>`
     )
     .join("");
@@ -237,7 +245,6 @@ async function loadTracker() {
   const search = document.getElementById("vortexCraftableSearch");
   const select = document.getElementById("vortexCraftableSelect");
   const addBtn = document.getElementById("vortexAddItemBtn");
-  if (saveBtn) saveBtn.disabled = false;
   let craftablesError = "";
   try {
     await loadCraftables();
@@ -247,6 +254,8 @@ async function loadTracker() {
     craftablesError = String(error?.message || "Failed to load craftable items");
   }
   const payload = await getJson("/api/nether-vortex/needs");
+  const canEdit = Boolean(payload?.authenticated);
+  vortexCanEdit = canEdit;
   try {
     await fetchItemMetaChunk(collectMissingMetaIds(payload?.entries, payload?.myEntry?.items));
   } catch {}
@@ -268,22 +277,21 @@ async function loadTracker() {
     : [];
   renderSelectedItems();
 
-  const canEdit = Boolean(payload?.authenticated);
-  vortexCanEdit = canEdit;
   if (notice) {
     notice.textContent = canEdit
-      ? "Logged in: update your own need anytime."
-      : "Login with Discord to submit your Nether Vortex need.";
+      ? "You are logged in with Discord — you can submit or update your need below."
+      : "Discord login is required to submit or update your need (use Log in in the header). You can still view guild totals and the list below.";
     if (craftablesError) {
       notice.textContent += ` Craftables unavailable right now: ${craftablesError}`;
     }
   }
-  if (neededInput) neededInput.disabled = false;
-  if (saveBtn) saveBtn.disabled = false;
+
   const canUseCraftables = craftables.length > 0;
-  if (search) search.disabled = !canUseCraftables;
-  if (select) select.disabled = !canUseCraftables;
-  if (addBtn) addBtn.disabled = !canUseCraftables;
+  if (neededInput) neededInput.disabled = !canEdit;
+  if (saveBtn) saveBtn.disabled = !canEdit;
+  if (search) search.disabled = !canUseCraftables || !canEdit;
+  if (select) select.disabled = !canUseCraftables || !canEdit;
+  if (addBtn) addBtn.disabled = !canUseCraftables || !canEdit;
 }
 
 document.getElementById("vortexSaveBtn")?.addEventListener("click", async () => {
