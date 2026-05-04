@@ -1315,6 +1315,7 @@ window.plbEventsRoster = {
   rosterParseForDisplay,
   rosterParseSourceTooltipFragment,
   rosterNameKey,
+  specBadgePortraitChain,
   rosterBadgeRowHtml,
   rosterPortraitChain,
   mergedClassDisplayLabel,

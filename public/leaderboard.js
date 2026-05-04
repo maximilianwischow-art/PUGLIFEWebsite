@@ -322,7 +322,7 @@ function attendancePercentTooltip(player, recentRaidCap, consideredRaids) {
 
 function raiderCellHtml(p) {
   const escapeHtml = plb.escapeHtml;
-  const chain = plb.rosterPortraitChain(p);
+  const chain = typeof plb.specBadgePortraitChain === "function" ? plb.specBadgePortraitChain(p) : plb.rosterPortraitChain(p);
   const portraitSrc = escapeHtml(chain[0] || "");
   const portraitFb = chain.slice(1).map((u) => escapeHtml(u)).join("|");
   const displayName = plb.eventsRosterCharacterLabel(p);

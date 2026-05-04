@@ -48,12 +48,6 @@ async function mountAuthHeaderWidget() {
     });
 
     const nav = document.querySelector(".top-nav");
-    if (nav && !nav.querySelector('a[href="/p2-preparation.html#nether-vortex-tracker"]')) {
-      const vortex = document.createElement("a");
-      vortex.href = "/p2-preparation.html#nether-vortex-tracker";
-      vortex.textContent = "Nether Vortex";
-      nav.appendChild(vortex);
-    }
     if (nav && !nav.querySelector('a[href="/admin.html"]')) {
       const a = document.createElement("a");
       a.href = "/admin.html";
