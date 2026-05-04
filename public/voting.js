@@ -250,6 +250,18 @@ function renderHallOfFame(payload) {
     .join("");
 }
 
+async function votingGetJson(url, init) {
+  if (window.plbSessionApiCache?.getJson) {
+    return window.plbSessionApiCache.getJson(url, init);
+  }
+  const res = await fetch(url, { method: "GET", ...(init || {}) });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `Request failed (${res.status})`);
+  }
+  return payload;
+}
+
 async function loadHallOfFame() {
   const host = document.getElementById("votingHallOfFame");
   host.innerHTML = `<div class="subtle">Loading…</div>`;
@@ -269,12 +281,13 @@ async function loadHallOfFame() {
     }
   }
   try {
-    const payload = await window.plbSessionApiCache.getJson("/api/voting/hall-of-fame", {
+    const payload = await votingGetJson("/api/voting/hall-of-fame", {
       credentials: "include",
+      skipCache: true,
     });
     renderHallOfFame(payload);
-  } catch {
-    host.innerHTML = `<div class="subtle">Failed to load hall of fame.</div>`;
+  } catch (error) {
+    host.innerHTML = `<div class="subtle">${escapeHtml(error?.message || "Failed to load hall of fame.")}</div>`;
   }
 }
 
