@@ -70,12 +70,24 @@ function parsePeakEqualsCeiling(value, max) {
 
 function earningsBadge(player, row, parseCeilingMax, consideredRaids) {
   if (!row || consideredRaids <= 0) return false;
+  const ps = row?.parseSummaries;
   const { value, bracket, usedFallback } = rosterParseForDisplay(player, row);
-  if (value == null || !Number.isFinite(Number(value))) return false;
   let k = bracket === "heal" ? "heal" : bracket === "tank" ? "tank" : "dps";
   if (usedFallback && (bracket === "heal" || bracket === "tank")) {
     k = "dps";
   }
+  if (ps && typeof ps === "object") {
+    const hasEncounterFlags =
+      ps.encounterTopTank !== undefined ||
+      ps.encounterTopHeal !== undefined ||
+      ps.encounterTopDps !== undefined;
+    if (hasEncounterFlags) {
+      if (k === "tank") return Boolean(ps.encounterTopTank);
+      if (k === "heal") return Boolean(ps.encounterTopHeal);
+      return Boolean(ps.encounterTopDps);
+    }
+  }
+  if (value == null || !Number.isFinite(Number(value))) return false;
   const max = parseCeilingMax[k];
   if (max == null || !Number.isFinite(Number(max))) return false;
   return parsePeakEqualsCeiling(value, max);
@@ -121,6 +133,7 @@ async function main() {
       const { value, bracket, usedFallback } = rosterParseForDisplay(p, row);
       let k = bracket === "heal" ? "heal" : bracket === "tank" ? "tank" : "dps";
       if (usedFallback && (bracket === "heal" || bracket === "tank")) k = "dps";
+      const ps = row?.parseSummaries;
       winners.push({
         name: p.name,
         role: p.roleName,
@@ -128,11 +141,14 @@ async function main() {
         value,
         max: parseCeilingMax[k],
         usedFallback,
+        encounterTopTank: ps?.encounterTopTank,
+        encounterTopHeal: ps?.encounterTopHeal,
+        encounterTopDps: ps?.encounterTopDps,
       });
     }
   }
 
-  console.log("\nParsing ceiling badge (simulated):", winners.length, "player(s)");
+  console.log("\nParsing badge (per-encounter top among linked raiders, simulated):", winners.length, "player(s)");
   for (const w of winners) console.log(JSON.stringify(w));
   if (winners.length === 0) {
     console.log("\nNo qualifiers — checking top DPS vs ceiling...");
@@ -143,15 +159,17 @@ async function main() {
     }
   }
 
-  // Regression: bestHeal 0 must not block healer-role players from DPS ceiling (Teowlee sample)
+  // Healer with heal=0 uses DPS fallback for bracket → badge uses encounterTopDps when flags exist.
   const teowRow = leaderboardByName.get("teowlee");
   if (teowRow) {
     const fakeHealer = { name: "Teowlee", characterName: "Teowlee", roleName: "Healers" };
     const ok = earningsBadge(fakeHealer, teowRow, parseCeilingMax, att.consideredRaids);
+    const ps = teowRow?.parseSummaries;
     console.log(
-      "\nTeowlee as Raid-Helper Healer (heal=0, dps=99) earns badge:",
+      "\nTeowlee as Raid-Helper Healer (heal=0, uses DPS fallback) earns badge:",
       ok,
-      "(expected true with >0 heuristics)"
+      "encounterTopDps=",
+      ps?.encounterTopDps
     );
   }
 }

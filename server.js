@@ -1041,7 +1041,7 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
     parseScope: {
       sameRaidsAsAttendance: true,
       metricNote:
-        "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
+        "Peak parse columns: best single-boss percentile per raid log, then max across recent capped raids (tooltip = encounter + report + fight). Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) in any raid in the window.",
     },
     raidHelperEventScope: {
       maxPastEvents: maxRhPastEvents,
@@ -3151,6 +3151,78 @@ function computeParseCeilingMaxFromLeaderboard(leaderboard) {
 }
 
 /**
+ * Map a WCL rankings name onto one roster key (same family as `normalizeRaidHelperDisplayKey` + attendance).
+ * WCL often returns short names; links may store `name-realm` only — strict Set membership missed most raiders.
+ */
+function resolveWclRankingsNameToRosterKey(groups, wclDisplayNameRaw, wclDisplayByLower) {
+  const raw = String(wclDisplayNameRaw || "").trim();
+  if (!raw) return null;
+  const low = raw.toLowerCase();
+  for (const g of groups.values()) {
+    if (g.wclLower.has(low)) return normalizeRaidHelperDisplayKey(g.displayName);
+  }
+  const nTarget = normalizeRaidHelperDisplayKey(raw);
+  for (const g of groups.values()) {
+    const rk = normalizeRaidHelperDisplayKey(g.displayName);
+    if (nTarget && (rk === nTarget || debugRankingsCharacterMatches(g.displayName, raw))) return rk;
+    for (const altLow of g.wclLower) {
+      const pretty = String(wclDisplayByLower?.get?.(altLow) ?? altLow ?? "").trim() || String(altLow);
+      if (debugRankingsCharacterMatches(pretty, raw) || debugRankingsCharacterMatches(altLow, raw)) {
+        return rk;
+      }
+      if (nTarget) {
+        const nPretty = normalizeRaidHelperDisplayKey(pretty);
+        const nAlt = normalizeRaidHelperDisplayKey(altLow);
+        if (nPretty === nTarget || nAlt === nTarget) return rk;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * For one merged rankings payload and role bucket: on each boss fight, among linked guild characters
+ * present in that bucket, everyone tied for max percentile is marked (same 0.02 tolerance as peak-parse UI).
+ */
+function addEncounterTopKeysFromMergedMetric(mergedPayload, rolePlural, groups, wclDisplayByLower, outRosterKeySet) {
+  const parsed = parseMaybeJson(mergedPayload);
+  const fights = Array.isArray(parsed?.data) ? parsed.data : [];
+  for (const fight of fights) {
+    const chars = fightCharactersForRole(fight, rolePlural);
+    const scored = [];
+    for (const entry of chars) {
+      const nm = wclRankingCharacterDisplayName(entry);
+      const rk = resolveWclRankingsNameToRosterKey(groups, nm, wclDisplayByLower);
+      if (!rk) continue;
+      const pct = wclRankingEntryPercentile(entry);
+      if (pct == null || !Number.isFinite(Number(pct))) continue;
+      scored.push({ rk, pct: Number(pct) });
+    }
+    if (scored.length === 0) continue;
+    const maxPct = Math.max(...scored.map((x) => x.pct));
+    for (const row of scored) {
+      if (Math.abs(row.pct - maxPct) <= 0.02 + 1e-9) outRosterKeySet.add(row.rk);
+    }
+  }
+}
+
+/** Raid-helper roster keys that topped at least one encounter (tied allowed) in the attendance window, per bracket. */
+function computeEncounterTopParserSets(groups, raidRankingPayloads, wclDisplayByLower) {
+  const encounterTopTank = new Set();
+  const encounterTopHeal = new Set();
+  const encounterTopDps = new Set();
+  if (!Array.isArray(raidRankingPayloads)) {
+    return { encounterTopTank, encounterTopHeal, encounterTopDps };
+  }
+  for (const entry of raidRankingPayloads) {
+    addEncounterTopKeysFromMergedMetric(entry?.mergedDps, "tanks", groups, wclDisplayByLower, encounterTopTank);
+    addEncounterTopKeysFromMergedMetric(entry?.mergedDps, "dps", groups, wclDisplayByLower, encounterTopDps);
+    addEncounterTopKeysFromMergedMetric(entry?.mergedHps, "healers", groups, wclDisplayByLower, encounterTopHeal);
+  }
+  return { encounterTopTank, encounterTopHeal, encounterTopDps };
+}
+
+/**
  * Aggregate per-raid attendance across all WCL characters linked to one Raid Helper identity.
  * Reads saved roster rows from {@link rhWclLinksState} / `rh-wcl-character-links.json`.
  * Leaderboard rows use `raidHelperName` for UI; `wclCharacters` lists merged log names.
@@ -3202,6 +3274,12 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
     groups.set(low, { displayName: pretty, wclLower: new Set([low]) });
   }
 
+  const { encounterTopTank, encounterTopHeal, encounterTopDps } = computeEncounterTopParserSets(
+    groups,
+    raidRankingPayloads,
+    wclDisplayByLower
+  );
+
   const rows = [];
   for (const g of groups.values()) {
     let raidsAttended = 0;
@@ -3216,6 +3294,9 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
     );
     const parseSummaries = summarizeParsesForLinkedGroup(g, raidRankingPayloads, wclDisplayByLower);
     const rk = normalizeRaidHelperDisplayKey(g.displayName);
+    parseSummaries.encounterTopTank = encounterTopTank.has(rk);
+    parseSummaries.encounterTopHeal = encounterTopHeal.has(rk);
+    parseSummaries.encounterTopDps = encounterTopDps.has(rk);
     rows.push({
       name: g.displayName,
       raidHelperName: g.displayName,
@@ -6415,7 +6496,7 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
       parseScope: {
         sameRaidsAsAttendance: true,
         metricNote:
-          "Best single-boss percentile per raid log (not an average), then max across recent capped raids. Tooltip includes encounter + report code + fight id.",
+          "Peak parse columns: best single-boss percentile per raid log, then max across recent capped raids (tooltip = encounter + report + fight). Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) in any raid in the window.",
       },
     });
   } catch (error) {

@@ -31,7 +31,7 @@ let attendanceLeaderboardRows = [];
 let pbBestTimeRankedNameKeys = new Set();
 /** MVP winners from `/api/voting/hall-of-fame`. */
 let hallOfFameWinnerNameKeys = new Set();
-/** Max peak parse % per role bracket across linked raiders this attendance window. */
+/** Legacy fallback: global max peak parse % per bracket (used when API has no encounter-top flags). */
 let parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
 /** Official WoW class colours (default UI palette). */
 const WOW_CLASS_COLORS = {
@@ -927,12 +927,24 @@ function parsePeakEqualsCeiling(value, max) {
 function playerEarnedParsingCeilingBadge(player) {
   const row = attendanceRowForRosterPlayerResolved(player);
   if (!row || attendanceConsideredRaids <= 0) return false;
+  const ps = row?.parseSummaries;
   const { value, bracket, usedFallback } = rosterParseForDisplay(player, row);
-  if (value == null || !Number.isFinite(Number(value))) return false;
   let k = bracket === "heal" ? "heal" : bracket === "tank" ? "tank" : "dps";
   if (usedFallback && (bracket === "heal" || bracket === "tank")) {
     k = "dps";
   }
+  if (ps && typeof ps === "object") {
+    const hasEncounterFlags =
+      ps.encounterTopTank !== undefined ||
+      ps.encounterTopHeal !== undefined ||
+      ps.encounterTopDps !== undefined;
+    if (hasEncounterFlags) {
+      if (k === "tank") return Boolean(ps.encounterTopTank);
+      if (k === "heal") return Boolean(ps.encounterTopHeal);
+      return Boolean(ps.encounterTopDps);
+    }
+  }
+  if (value == null || !Number.isFinite(Number(value))) return false;
   const max = parseCeilingMaxByBracket[k];
   if (max == null || !Number.isFinite(Number(max))) return false;
   return parsePeakEqualsCeiling(value, max);
@@ -965,7 +977,7 @@ function rosterAchievementBadgesHtml(player) {
     {
       file: "parsing-ceiling.png",
       title:
-        "Parsing ceiling — Highest peak parse in your role this window among all linked raiders (tank, healer, or DPS vs your Raid Helper role bracket).",
+        "Parsing ceiling — On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket for that fight (tank / healer / DPS).",
       alt: "Parsing ceiling",
       ok: playerEarnedParsingCeilingBadge(player),
     },
