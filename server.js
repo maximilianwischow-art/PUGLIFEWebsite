@@ -431,6 +431,18 @@ function wowClassicNamespace() {
   return `static-classic-${wowClassicRegion()}`;
 }
 
+/** Realm/name slug for Blizzard profile URLs (e.g. "Nethergarde Keep" -> "nethergarde-keep"). */
+function slugifyWowSlug(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function blizzardApiBaseUrl() {
   return `https://${wowClassicRegion()}.api.blizzard.com`;
 }
