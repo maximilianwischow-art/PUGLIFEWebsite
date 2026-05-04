@@ -156,10 +156,10 @@ function hofPeakParseCellHtml(row) {
 function hofRaiderCell(row) {
   const plb = window.plbEventsRoster;
   const nameRaw = String(row?.winnerName || "Unknown");
+  const esc = plb?.escapeHtml || escapeHtml;
   if (!plb) {
-    return `<div class="hof-fallback-name"><strong>${escapeHtml(nameRaw)}</strong></div>`;
+    return `<div class="hof-fallback-name"><strong>${esc(nameRaw)}</strong></div>`;
   }
-  const escapeHtml = plb.escapeHtml;
   let p = row?.player;
   if (!p && row?.wclClassName) {
     p = {
@@ -172,12 +172,12 @@ function hofRaiderCell(row) {
     };
   }
   if (!p) {
-    return `<div class="hof-fallback-name"><strong>${escapeHtml(nameRaw)}</strong></div>`;
+    return `<div class="hof-fallback-name"><strong>${esc(nameRaw)}</strong></div>`;
   }
 
   const chain = plb.rosterPortraitChain(p);
-  const portraitSrc = escapeHtml(chain[0] || "");
-  const portraitFb = chain.slice(1).map((u) => escapeHtml(u)).join("|");
+  const portraitSrc = esc(chain[0] || "");
+  const portraitFb = chain.slice(1).map((u) => esc(u)).join("|");
   const displayName = plb.eventsRosterCharacterLabel(p);
   const className = plb.mergedClassDisplayLabel(p);
   const specLabel = plb.displaySpecNameForRoster(String(p.specName || "").trim());
@@ -195,7 +195,7 @@ function hofRaiderCell(row) {
         <img
           class="raider-champion-img leaderboard-spec-img"
           src="${portraitSrc}"
-          alt="${escapeHtml(portraitAlt)}"
+          alt="${esc(portraitAlt)}"
           width="44"
           height="44"
           loading="lazy"
@@ -206,10 +206,10 @@ function hofRaiderCell(row) {
       </div>
       <div class="leaderboard-player-cell">
         <div class="leaderboard-player-main">
-          <span class="leaderboard-player-name" style="color:${escapeHtml(color)};${priestGlow}">${escapeHtml(displayName)}</span>
+          <span class="leaderboard-player-name" style="color:${esc(color)};${priestGlow}">${esc(displayName)}</span>
           ${
             metaBits.length
-              ? `<span class="leaderboard-player-meta">${escapeHtml(metaBits.join(" · "))}</span>`
+              ? `<span class="leaderboard-player-meta">${esc(metaBits.join(" · "))}</span>`
               : ""
           }
         </div>
