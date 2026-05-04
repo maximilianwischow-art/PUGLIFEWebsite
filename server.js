@@ -288,6 +288,8 @@ const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json"
 const apiCacheDir = path.join(dataDir, "cache");
 const apiResponseCache = new Map();
 const apiResponseInflight = new Map();
+const eventsKpiMicroCache = new Map();
+const eventsKpiInflight = new Map();
 let p2MaterialsReady = null;
 let p2MaterialsWriteChain = Promise.resolve();
 let gargulLootReady = null;
@@ -382,6 +384,34 @@ function votingRoundCacheTtlMs() {
   const n = Number(process.env.VOTING_ROUND_CACHE_MS);
   if (Number.isFinite(n) && n >= 0) return Math.min(15 * 60_000, n);
   return 90_000;
+}
+
+function eventsKpiCacheTtlMs() {
+  const n = Number(process.env.EVENTS_KPI_CACHE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(5 * 60_000, n);
+  return 60_000;
+}
+
+function eventsKpiCacheKey({ guildId, maxPastEvents, wclLimit }) {
+  return `events-kpi-v1:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
+}
+
+async function getEventsKpiCached(cacheKey, loader) {
+  const ttlMs = eventsKpiCacheTtlMs();
+  const now = Date.now();
+  const cached = eventsKpiMicroCache.get(cacheKey);
+  if (cached && now - Number(cached.at || 0) < ttlMs) return cached.data;
+  const running = eventsKpiInflight.get(cacheKey);
+  if (running) return running;
+  const task = (async () => {
+    const data = await loader();
+    eventsKpiMicroCache.set(cacheKey, { at: Date.now(), data });
+    return data;
+  })().finally(() => {
+    eventsKpiInflight.delete(cacheKey);
+  });
+  eventsKpiInflight.set(cacheKey, task);
+  return task;
 }
 
 function wowClassicRegion() {
@@ -5750,6 +5780,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
 app.get("/api/raid-helper/events-kpi", async (req, res) => {
   const guildId = Number(req.query.guildId || process.env.VOTING_GUILD_ID || 817080);
   const maxPastEvents = Math.min(150, Math.max(1, Math.floor(Number(req.query.maxPastEvents || 80))));
+  const wclLimit = Math.min(wclMaxGuildReportsLimit(), Math.max(10, Number(req.query.wclLimit || 40)));
   if (!Number.isInteger(guildId) || guildId <= 0) {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
@@ -5758,7 +5789,9 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
   const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
   const nowSec = Math.floor(Date.now() / 1000);
 
+  const cacheKey = eventsKpiCacheKey({ guildId, maxPastEvents, wclLimit });
   try {
+    const payload = await getEventsKpiCached(cacheKey, async () => {
     const allEvents = await fetchRaidHelperServerEvents(serverId);
     const pastEvents = allEvents
       .map((event) => ({
@@ -5795,7 +5828,7 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
 
     const uniqueKeys = new Set(keyLists.flat());
 
-    const reportLimit = Math.min(wclMaxGuildReportsLimit(), Math.max(10, Number(req.query.wclLimit || 40)));
+    const reportLimit = wclLimit;
     const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
       guildId,
       reportLimit,
@@ -5840,7 +5873,7 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
     }
     const withWclAttendanceMatch = [...uniqueKeys].filter((k) => rateByRhKey.has(k)).length;
 
-    return res.json({
+    return {
       guildId,
       uniqueRaiderCount: uniqueKeys.size,
       pastEventsScanned: pastEvents.length,
@@ -5851,7 +5884,9 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
       coreRaiderCount: coreAttendanceCount,
       linkedRaiderCount: linkedAttendanceCount,
       totalItemsDistributed,
+    };
     });
+    return res.json(payload);
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
   }

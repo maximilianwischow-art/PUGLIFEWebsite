@@ -47,8 +47,7 @@ async function loadGuildRosterPage() {
   }
   try {
     if (rosterActiveGrid) rosterActiveGrid.innerHTML = `<p class="subtle">Loading roster…</p>`;
-    await plb.loadTbcSpecIconMap();
-    await plb.loadWclAttendanceForEvents();
+    await Promise.all([plb.loadTbcSpecIconMap(), plb.loadWclAttendanceForEvents()]);
     const gid = plb.EVENTS_WCL_GUILD_ID;
     const res = await fetch(`/api/wcl/guild/${gid}/active-roster?limit=40&top=250`, {
       credentials: "include",

@@ -262,29 +262,30 @@ async function votingGetJson(url, init) {
   return payload;
 }
 
+let votingPlbPreloadPromise = null;
+
+function preloadVotingPlbData() {
+  const plb = window.plbEventsRoster;
+  if (!plb) return Promise.resolve();
+  if (votingPlbPreloadPromise) return votingPlbPreloadPromise;
+  const tasks = [];
+  if (typeof plb.loadTbcSpecIconMap === "function") tasks.push(plb.loadTbcSpecIconMap());
+  if (typeof plb.loadWclAttendanceForEvents === "function") tasks.push(plb.loadWclAttendanceForEvents());
+  votingPlbPreloadPromise = Promise.allSettled(tasks).then(() => undefined);
+  return votingPlbPreloadPromise;
+}
+
 async function loadHallOfFame() {
   const host = document.getElementById("votingHallOfFame");
   host.innerHTML = `<div class="subtle">Loading…</div>`;
-  const plb = window.plbEventsRoster;
-  if (plb?.loadTbcSpecIconMap) {
-    try {
-      await plb.loadTbcSpecIconMap();
-    } catch {
-      /* icons best-effort */
-    }
-  }
-  if (plb?.loadWclAttendanceForEvents) {
-    try {
-      await plb.loadWclAttendanceForEvents();
-    } catch {
-      /* badges best-effort */
-    }
-  }
+  const preload = preloadVotingPlbData();
   try {
     const payload = await votingGetJson("/api/voting/hall-of-fame", {
       credentials: "include",
       skipCache: true,
     });
+    renderHallOfFame(payload);
+    await preload;
     renderHallOfFame(payload);
   } catch (error) {
     host.innerHTML = `<div class="subtle">${escapeHtml(error?.message || "Failed to load hall of fame.")}</div>`;
@@ -345,24 +346,7 @@ async function loadVotingRound() {
   metaEl.textContent = `${payload?.raid?.name || "Raid"} · ${new Date(payload?.raid?.startTime || Date.now()).toLocaleString()}`;
   renderRaidHeader(payload);
   renderCandidates(payload);
-  {
-    const plb = window.plbEventsRoster;
-    if (plb?.loadTbcSpecIconMap) {
-      try {
-        await plb.loadTbcSpecIconMap();
-      } catch {
-        /* icons best-effort */
-      }
-    }
-    if (plb?.loadWclAttendanceForEvents) {
-      try {
-        await plb.loadWclAttendanceForEvents();
-      } catch {
-        /* badges best-effort */
-      }
-    }
-  }
-  renderHallOfFame(payload);
+  void preloadVotingPlbData();
 }
 
 document.addEventListener("click", async (event) => {
