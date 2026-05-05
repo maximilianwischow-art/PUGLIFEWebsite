@@ -1492,7 +1492,7 @@ async function runRaidHelperDmPollOnce() {
     if (!serverId) return;
     const events = await fetchRaidHelperServerEvents(serverId);
     const nowSec = Math.floor(Date.now() / 1000);
-    const latestPosted = (Array.isArray(events) ? events : [])
+    const latestPostedRaw = (Array.isArray(events) ? events : [])
       .map((event) => ({
         id: String(event.id || event.eventId || event.eventID || "").trim(),
         startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
@@ -1500,7 +1500,15 @@ async function runRaidHelperDmPollOnce() {
       }))
       .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime >= nowSec - 6 * 3600)
       .sort((a, b) => b.startTime - a.startTime)
-      .slice(0, 4);
+      .slice(0, 8);
+    const seenEventIds = new Set();
+    const latestPosted = [];
+    for (const event of latestPostedRaw) {
+      if (seenEventIds.has(event.id)) continue;
+      seenEventIds.add(event.id);
+      latestPosted.push(event);
+      if (latestPosted.length >= 4) break;
+    }
     const alreadyNotified = new Set(discordDmSubscribersState.notifiedEventIds || []);
     const newEvents = latestPosted.filter((event) => !alreadyNotified.has(event.id));
     if (!newEvents.length) return;
