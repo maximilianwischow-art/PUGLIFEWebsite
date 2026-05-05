@@ -3065,7 +3065,12 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       analysisWarnings.push("Past participant scan failed; showing comp/need analysis without DM candidates.");
       participantSignals = new Map();
     }
-    const defaultTargetRoles = ["Tanks", "Healers", "Melee", "Ranged"].filter((role) => Number(missingByRole[role] || 0) > 0);
+    const defaultTargetRoles = ["Tanks", "Healers", "Melee", "Ranged"].filter((role) => {
+      const missingCount = Number(missingByRole[role] || 0);
+      const blockerSpecCount = Object.keys(summary.blockerSpecNeedsByRole?.[role] || {}).length;
+      const manualSpecCount = Object.keys(manualRoleSpecNeedMap?.[role] || {}).length;
+      return missingCount > 0 || blockerSpecCount > 0 || manualSpecCount > 0;
+    });
     const neededSpecSetByRole = {};
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
       const merged = {
@@ -3213,7 +3218,9 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
       const cur = Number(summary.currentByRole[role] || 0);
       const need = Number(desiredByRole[role] || 0);
-      if (need > cur) neededRoles.push(role);
+      const blockerSpecCount = Object.keys(summary.blockerSpecNeedsByRole?.[role] || {}).length;
+      const manualSpecCount = Object.keys(manualRoleSpecNeedMap?.[role] || {}).length;
+      if (need > cur || blockerSpecCount > 0 || manualSpecCount > 0) neededRoles.push(role);
     }
     const selectedRolesRaw = Array.isArray(req.body?.targetRoles) ? req.body.targetRoles : [];
     const selectedRoles = [...new Set(selectedRolesRaw.map((x) => normalizeNeedRoleKey(x)).filter(Boolean))];
@@ -5383,8 +5390,7 @@ async function sendJoinUsHeaderImageMessage(channelId, fallbackImageUrl = "") {
     const imagePath = path.join(publicDir, "raid-images", "dm-join-us.png");
     const imageBuf = await readFile(imagePath);
     const payload = {
-      content: `[Join us](${joinUsPageUrl()})`,
-      embeds: [{ url: joinUsPageUrl(), image: { url: "attachment://dm-join-us.png" } }],
+      embeds: [{ image: { url: "attachment://dm-join-us.png" } }],
     };
     const form = new FormData();
     form.append("payload_json", JSON.stringify(payload));

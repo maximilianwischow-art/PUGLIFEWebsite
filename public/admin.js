@@ -815,13 +815,6 @@ function roleAlertsReadDesiredByRole() {
   };
 }
 
-function roleAlertsReadTargetRoles() {
-  return ROLE_ALERT_ROLES.filter((role) => {
-    const el = document.querySelector(`[data-role-alert-target-role="${role}"]`);
-    return Boolean(el?.checked);
-  });
-}
-
 function roleAlertsReadTargetUserIds() {
   const validIds = new Set(
     (Array.isArray(roleAlertsAnalysisState?.candidateTargets) ? roleAlertsAnalysisState.candidateTargets : [])
@@ -850,7 +843,6 @@ function roleAlertsCompositionRowsHtml(analysis) {
   const missing = analysis?.missingByRole || {};
   const reachable = analysis?.reachableByRole || {};
   const blockerSpecNeedsByRole = analysis?.blockerSpecNeedsByRole || {};
-  const defaults = new Set(Array.isArray(analysis?.defaultTargetRoles) ? analysis.defaultTargetRoles : []);
   const rows = ROLE_ALERT_ROLES
     .map((role) => {
       const need = Number(desired[role] || 0);
@@ -862,10 +854,8 @@ function roleAlertsCompositionRowsHtml(analysis) {
         .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
         .map(([spec, n]) => `${spec} x${Number(n || 0)}`)
         .join(" · ");
-      const checked = defaults.has(role) ? " checked" : "";
       return `<tr>
         <td>${esc(role)}</td>
-        <td><input type="checkbox" data-role-alert-target-role="${esc(role)}"${checked} /></td>
         <td><input id="roleAlertsNeed${esc(role)}" class="admin-input" type="number" min="0" value="${need}" /></td>
         <td>${cur}</td>
         <td><strong>${miss}</strong></td>
@@ -878,7 +868,7 @@ function roleAlertsCompositionRowsHtml(analysis) {
     <p class="subtle">Subscribed users (marked in candidate list): ${Number(analysis?.subscribedTotal || 0)}</p>
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead><tr><th>Role</th><th>DM?</th><th>Desired</th><th>Current (real)</th><th>Missing</th><th>Reachable past raiders</th><th>Spec blockers</th></tr></thead>
+        <thead><tr><th>Role</th><th>Desired</th><th>Current (real)</th><th>Missing</th><th>Reachable past raiders</th><th>Spec blockers</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -1614,11 +1604,6 @@ async function sendRoleAlertsDms(btn) {
     status("Select a raid event first.");
     return false;
   }
-  const targetRoles = roleAlertsReadTargetRoles();
-  if (!targetRoles.length) {
-    status("Select at least one role in the DM? column.");
-    return false;
-  }
   const targetUserIds = roleAlertsReadTargetUserIds();
   if (!targetUserIds.length) {
     status("Select at least one raider in the matching list.");
@@ -1636,16 +1621,15 @@ async function sendRoleAlertsDms(btn) {
             eventId,
             overrides: roleAlertsReadOverrides(),
             desiredByRole: roleAlertsReadDesiredByRole(),
-            targetRoles,
             manualRoleSpecNeeds: roleAlertsReadManualRoleSpecNeeds(),
             targetUserIds,
           }),
         })
     );
     status(
-      `Role alert sent for ${String((payload?.targetRoles || []).join(", ") || "-")}. Delivered: ${Number(
-        payload?.deliveredCount || 0
-      )}, skipped: ${Number(payload?.skippedCount || 0)}.`
+      `Role alert sent. Delivered: ${Number(payload?.deliveredCount || 0)}, skipped: ${Number(
+        payload?.skippedCount || 0
+      )}.`
     );
     return true;
   } catch (error) {
