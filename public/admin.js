@@ -10,6 +10,20 @@ let gargulEntriesState = [];
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
 let joinNeedsState = [];
+let roleAlertsEventsState = [];
+let roleAlertsAnalysisState = null;
+let roleAlertsSelectedUserIds = new Set();
+let roleAlertsCandidateSortState = { key: "displayName", dir: "asc" };
+let roleAlertsCandidateFilterState = {
+  displayName: "",
+  recentClass: "",
+  recentSpec: "",
+  raidRole: "",
+  matchedSpecs: "",
+  subscribed: "",
+};
+
+const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
 
 /** Same guild as Leaderboard (/) / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
 const ADMIN_WCL_GUILD_ID = 817080;
@@ -30,7 +44,7 @@ function rhWclGuildRoleSelectHtml(current) {
   ).join("")}</select>`;
 }
 
-const ADMIN_PANEL_IDS = ["rh-wcl", "wcl-events", "gargul-import", "loot-corrections", "p2-materials", "join-needs"];
+const ADMIN_PANEL_IDS = ["rh-wcl", "wcl-events", "gargul-import", "loot-corrections", "p2-materials", "join-needs", "role-alerts"];
 
 function parseAdminHash() {
   const raw = (location.hash || "").replace(/^#/, "").trim();
@@ -252,8 +266,8 @@ function renderEventSelection() {
       <button type="button" class="event-signup-btn event-signup-btn--softres" id="selectAllEventsBtn">Select all</button>
       <button type="button" class="event-signup-btn event-signup-btn--softres" id="clearAllEventsBtn">Clear all</button>
     </div>
-    <div class="admin-table-wrap">
-      <table class="admin-table">
+    <div class="admin-table-wrap role-alert-candidates-wrap">
+      <table class="admin-table role-alert-candidates-table">
         <thead><tr><th>Show</th><th>Raid Event</th><th>Weekday</th><th>Uploaded By</th><th>Report Code</th></tr></thead>
         <tbody>
           ${allRaidsState
@@ -751,6 +765,401 @@ function readJoinNeedsFromTable() {
     .filter((row) => row.className && row.specFocus);
 }
 
+function roleAlertsSelectedEventId() {
+  return String(document.getElementById("roleAlertsEventSelect")?.value || "").trim();
+}
+
+function renderRoleAlertsEventSelect(events) {
+  roleAlertsEventsState = Array.isArray(events) ? events : [];
+  const select = document.getElementById("roleAlertsEventSelect");
+  if (!select) return;
+  const prev = String(select.value || "").trim();
+  select.innerHTML = `
+    <option value="">Select event...</option>
+    ${roleAlertsEventsState
+      .map((event) => {
+        const id = String(event?.id || "").trim();
+        if (!id) return "";
+        const label = `${String(event?.title || "Raid event")} · ${fmtTs(event?.startTime)}`;
+        return `<option value="${esc(id)}">${esc(label)}</option>`;
+      })
+      .join("")}
+  `;
+  if (prev && roleAlertsEventsState.some((e) => String(e?.id || "") === prev)) {
+    select.value = prev;
+  }
+}
+
+function roleAlertsReadOverrides() {
+  const out = {};
+  document.querySelectorAll("[data-role-alert-signup-id]").forEach((el) => {
+    const id = String(el.getAttribute("data-role-alert-signup-id") || "").trim();
+    const val = String(el.value || "").trim();
+    if (!id || (val !== "real" && val !== "blocker")) return;
+    out[id] = val;
+  });
+  return out;
+}
+
+function roleAlertsReadDesiredByRole() {
+  const pick = (id, fallback) => {
+    const n = Number(document.getElementById(id)?.value);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
+  };
+  return {
+    Tanks: pick("roleAlertsNeedTanks", 3),
+    Healers: pick("roleAlertsNeedHealers", 5),
+    Melee: pick("roleAlertsNeedMelee", 8),
+    Ranged: pick("roleAlertsNeedRanged", 9),
+  };
+}
+
+function roleAlertsReadTargetRoles() {
+  return ROLE_ALERT_ROLES.filter((role) => {
+    const el = document.querySelector(`[data-role-alert-target-role="${role}"]`);
+    return Boolean(el?.checked);
+  });
+}
+
+function roleAlertsReadTargetUserIds() {
+  const validIds = new Set(
+    (Array.isArray(roleAlertsAnalysisState?.candidateTargets) ? roleAlertsAnalysisState.candidateTargets : [])
+      .map((row) => String(row?.userId || "").trim())
+      .filter(Boolean)
+  );
+  return [...roleAlertsSelectedUserIds].filter((id) => validIds.has(id));
+}
+
+function roleAlertsReadManualRoleSpecNeeds() {
+  const out = { Tanks: [], Healers: [], Melee: [], Ranged: [] };
+  document.querySelectorAll("[data-role-alert-manual-role]").forEach((row) => {
+    const role = String(row.getAttribute("data-role-alert-manual-role") || "");
+    if (!ROLE_ALERT_ROLES.includes(role)) return;
+    const spec = String(row.querySelector("[data-role-alert-manual-spec]")?.value || "").trim();
+    const count = Math.max(0, Math.floor(Number(row.querySelector("[data-role-alert-manual-count]")?.value || 0)));
+    if (!spec || count <= 0) return;
+    out[role].push({ spec, count });
+  });
+  return out;
+}
+
+function roleAlertsCompositionRowsHtml(analysis) {
+  const desired = analysis?.desiredByRole || {};
+  const current = analysis?.currentByRole || {};
+  const missing = analysis?.missingByRole || {};
+  const reachable = analysis?.reachableByRole || {};
+  const blockerSpecNeedsByRole = analysis?.blockerSpecNeedsByRole || {};
+  const defaults = new Set(Array.isArray(analysis?.defaultTargetRoles) ? analysis.defaultTargetRoles : []);
+  const rows = ROLE_ALERT_ROLES
+    .map((role) => {
+      const need = Number(desired[role] || 0);
+      const cur = Number(current[role] || 0);
+      const miss = Number(missing[role] || 0);
+      const reach = Number(reachable[role] || 0);
+      const specNeedMap = blockerSpecNeedsByRole[role] && typeof blockerSpecNeedsByRole[role] === "object" ? blockerSpecNeedsByRole[role] : {};
+      const specNeedText = Object.entries(specNeedMap)
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+        .map(([spec, n]) => `${spec} x${Number(n || 0)}`)
+        .join(" · ");
+      const checked = defaults.has(role) ? " checked" : "";
+      return `<tr>
+        <td>${esc(role)}</td>
+        <td><input type="checkbox" data-role-alert-target-role="${esc(role)}"${checked} /></td>
+        <td><input id="roleAlertsNeed${esc(role)}" class="admin-input" type="number" min="0" value="${need}" /></td>
+        <td>${cur}</td>
+        <td><strong>${miss}</strong></td>
+        <td>${reach}</td>
+        <td>${esc(specNeedText || "-")}</td>
+      </tr>`;
+    })
+    .join("");
+  return `
+    <p class="subtle">Subscribed users (marked in candidate list): ${Number(analysis?.subscribedTotal || 0)}</p>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Role</th><th>DM?</th><th>Desired</th><th>Current (real)</th><th>Missing</th><th>Reachable past raiders</th><th>Spec blockers</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function roleAlertsBlockerRowsHtml(analysis) {
+  const blockerRows = Array.isArray(analysis?.blockerRows) ? analysis.blockerRows : [];
+  const realRows = Array.isArray(analysis?.realRows) ? analysis.realRows : [];
+  const allRows = [
+    ...blockerRows.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""))),
+    ...realRows.sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""))),
+  ];
+  if (!allRows.length) return `<p class="subtle">No primary signups found for this event.</p>`;
+  return `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Name</th><th>Role</th><th>Class</th><th>Spec</th><th>Classification</th></tr></thead>
+        <tbody>
+          ${allRows
+            .map((row) => {
+              const signupId = Number(row?.signupId || 0);
+              const cls = row?.isBlocker ? "blocker" : "real";
+              return `<tr>
+                <td>${esc(row?.name || "-")}</td>
+                <td>${esc(row?.roleName || "-")}</td>
+                <td>${esc(row?.className || "-")}</td>
+                <td>${esc(row?.specName || "-")}</td>
+                <td>
+                  <select class="admin-input" data-role-alert-signup-id="${signupId}">
+                    <option value="real"${cls === "real" ? " selected" : ""}>Real</option>
+                    <option value="blocker"${cls === "blocker" ? " selected" : ""}>Blocker</option>
+                  </select>
+                </td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function roleAlertsManualSpecNeedsHtml(analysis) {
+  const src = analysis?.manualRoleSpecNeeds && typeof analysis.manualRoleSpecNeeds === "object" ? analysis.manualRoleSpecNeeds : {};
+  const sections = ROLE_ALERT_ROLES.map((role) => {
+    const rows = Array.isArray(src[role]) ? src[role] : [];
+    const body = rows.length
+      ? rows
+          .map(
+            (row, idx) => `<div class="admin-actions admin-actions--tight" data-role-alert-manual-role="${esc(role)}">
+              <input class="admin-input" data-role-alert-manual-spec value="${esc(row?.spec || "")}" placeholder="Spec name" />
+              <input class="admin-input" data-role-alert-manual-count type="number" min="0" value="${Number(row?.count || 0)}" />
+              <button type="button" class="event-signup-btn event-signup-btn--softres" data-role-alert-manual-remove="${esc(role)}:${idx}">Remove</button>
+            </div>`
+          )
+          .join("")
+      : `<p class="subtle">No manual specs yet.</p>`;
+    return `<div class="admin-grid-note">
+      <p class="subtle"><strong>${esc(role)}</strong></p>
+      ${body}
+      <button type="button" class="event-signup-btn event-signup-btn--softres" data-role-alert-manual-add="${esc(role)}">Add spec</button>
+    </div>`;
+  }).join("");
+  return `<h4 class="subtle" style="margin: 12px 0 6px">Manual spec blocker needs</h4>${sections}`;
+}
+
+function roleAlertsCompBoardHtml(analysis) {
+  const board = analysis?.compBoard;
+  if (!board || typeof board !== "object") {
+    return `<p class="subtle">Comp board not available from Raid-Helper for this event.</p>`;
+  }
+  const emoteUrl = (id) =>
+    id && /^\d+$/.test(String(id))
+      ? `https://cdn.discordapp.com/emojis/${encodeURIComponent(String(id))}.webp?size=32&quality=lossless`
+      : "";
+  const roleCounts = board.roleCounts || {};
+  const chips = ROLE_ALERT_ROLES.map(
+    (role) => `<span class="role-alert-chip"><strong>${esc(role)}</strong> ${Number(roleCounts[role] || 0)}</span>`
+  ).join("");
+  const groups = Array.isArray(board.groups) ? board.groups : [];
+  const groupHtml = groups
+    .map((group) => {
+      const slots = Array.isArray(group?.slots) ? group.slots : [];
+      const rows = slots.length
+        ? slots
+            .map((slot) => {
+              const cls = slot?.isBlocker
+                ? "role-alert-slot role-alert-slot--blocker"
+                : slot?.isKnownSignup
+                  ? "role-alert-slot role-alert-slot--known"
+                  : "role-alert-slot";
+              const classColor = String(slot?.color || "").trim();
+              const leftBorder = /^#[0-9a-f]{6}$/i.test(classColor)
+                ? ` style="border-left: 3px solid ${esc(classColor)}"`
+                : "";
+              const specIcon = emoteUrl(slot?.specEmoteId);
+              const classIcon = emoteUrl(slot?.classEmoteId);
+              const title = `${String(slot?.className || "-")} · ${String(slot?.specName || "-")} · ${
+                slot?.isBlocker ? "Blocker" : "Raider"
+              }`;
+              return `<div class="${cls}" title="${esc(title)}"${leftBorder}>
+                <span class="role-alert-slot-main">
+                  ${
+                    specIcon || classIcon
+                      ? `<span class="role-alert-slot-icons">
+                        ${specIcon ? `<img class="role-alert-slot-icon" src="${esc(specIcon)}" alt="" loading="lazy" decoding="async" />` : ""}
+                        ${classIcon ? `<img class="role-alert-slot-icon" src="${esc(classIcon)}" alt="" loading="lazy" decoding="async" />` : ""}
+                      </span>`
+                      : ""
+                  }
+                  <span class="role-alert-slot-name">${esc(slot?.name || "-")}</span>
+                </span>
+                <span class="role-alert-slot-meta">${esc(slot?.specName || slot?.className || "")}</span>
+              </div>`;
+            })
+            .join("")
+        : `<div class="subtle">No slots</div>`;
+      return `<div class="role-alert-group">
+        <div class="role-alert-group-title">Group ${Number(group?.groupNumber || 0)}</div>
+        <div class="role-alert-group-slots">${rows}</div>
+      </div>`;
+    })
+    .join("");
+  return `
+    <h4 class="subtle" style="margin: 12px 0 6px">Comp board preview (${esc(board.title || "Raid-Helper")})</h4>
+    <div class="role-alert-chips">${chips}</div>
+    <div class="role-alert-groups">${groupHtml}</div>
+  `;
+}
+
+function roleAlertsCandidatesHtml(analysis) {
+  const rowsRaw = Array.isArray(analysis?.candidateTargets) ? analysis.candidateTargets : [];
+  if (!rowsRaw.length) {
+    return `<h4 class="subtle" style="margin: 12px 0 6px">Matching past raiders</h4><p class="subtle">No matching past raiders found for current required roles/specs.</p>`;
+  }
+  const normalized = rowsRaw.map((row) => {
+    const raidRole = String(row?.guildRole || "Peon");
+    return {
+      ...row,
+      raidRole,
+      subscribedLabel: row?.subscribed ? "Yes" : "No",
+    };
+  });
+  const filterText = (value, needle) => String(value || "").toLowerCase().includes(String(needle || "").toLowerCase());
+  const f = roleAlertsCandidateFilterState || {};
+  const filtered = normalized.filter((row) => {
+    if (f.displayName && !filterText(row.displayName || row.userId, f.displayName)) return false;
+    if (f.recentClass && !filterText(row.recentClass || "-", f.recentClass)) return false;
+    if (f.recentSpec && !filterText(row.recentSpec || "-", f.recentSpec)) return false;
+    if (f.raidRole && !filterText(row.raidRole || "-", f.raidRole)) return false;
+    if (f.matchedSpecs && !filterText((row?.matchedSpecs || []).join(", "), f.matchedSpecs)) return false;
+    if (f.subscribed && String(row.subscribedLabel || "").toLowerCase() !== String(f.subscribed || "").toLowerCase()) return false;
+    return true;
+  });
+  const sortKey = String(roleAlertsCandidateSortState?.key || "displayName");
+  const sortDir = roleAlertsCandidateSortState?.dir === "desc" ? -1 : 1;
+  const sorted = [...filtered].sort((a, b) => {
+    const aSelected = roleAlertsSelectedUserIds.has(String(a?.userId || "").trim()) ? 1 : 0;
+    const bSelected = roleAlertsSelectedUserIds.has(String(b?.userId || "").trim()) ? 1 : 0;
+    if (aSelected !== bSelected) return bSelected - aSelected;
+    const av =
+      sortKey === "pastRaids"
+        ? Number(a?.raidsSeen || 0)
+        : String(
+            sortKey === "subscribed"
+              ? a?.subscribedLabel || ""
+              : sortKey === "matchedSpecs"
+                ? (a?.matchedSpecs || []).join(", ")
+                : a?.[sortKey] || ""
+          ).toLowerCase();
+    const bv =
+      sortKey === "pastRaids"
+        ? Number(b?.raidsSeen || 0)
+        : String(
+            sortKey === "subscribed"
+              ? b?.subscribedLabel || ""
+              : sortKey === "matchedSpecs"
+                ? (b?.matchedSpecs || []).join(", ")
+                : b?.[sortKey] || ""
+          ).toLowerCase();
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return 1 * sortDir;
+    return String(a?.displayName || "").localeCompare(String(b?.displayName || "")) * sortDir;
+  });
+  const sortIndicator = (key) =>
+    roleAlertsCandidateSortState?.key === key ? (roleAlertsCandidateSortState?.dir === "desc" ? " ▼" : " ▲") : "";
+  const table = sorted
+    .map((row) => {
+      const uid = String(row?.userId || "");
+      const checked = roleAlertsSelectedUserIds.has(uid) ? " checked" : "";
+      return `<tr>
+        <td><input type="checkbox" data-role-alert-target-user-id="${esc(uid)}"${checked} /></td>
+        <td>${esc(row?.displayName || uid)}</td>
+        <td>${esc(String(row?.recentClass || "-"))}</td>
+        <td>${esc(String(row?.recentSpec || "-"))}</td>
+        <td>${esc(String(row?.raidRole || "-"))}</td>
+        <td>${esc((row?.matchedSpecs || []).join(", ") || "-")}</td>
+        <td>${esc(row?.subscribedLabel || "No")}</td>
+        <td>${Number(row?.raidsSeen || 0)}</td>
+      </tr>`;
+    })
+    .join("");
+  return `
+    <h4 class="subtle" style="margin: 12px 0 6px">Matching past raiders</h4>
+    <p class="subtle">Candidates are filtered to users still in Discord server. "Subscribed" is shown as a marker only.</p>
+    <p class="subtle">Shown: ${filtered.length} / ${rowsRaw.length}</p>
+    <div class="admin-actions admin-actions--tight">
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsMarkAllBtn">Mark all</button>
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsDeselectAllBtn">Deselect all</button>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>DM</th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="displayName">Raider${sortIndicator("displayName")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="recentClass">Class${sortIndicator("recentClass")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="recentSpec">Spec${sortIndicator("recentSpec")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="raidRole">Raid Role${sortIndicator("raidRole")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="matchedSpecs">Matched specs${sortIndicator("matchedSpecs")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="subscribed">Subscribed${sortIndicator("subscribed")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="pastRaids">Past raids${sortIndicator("pastRaids")}</button></th>
+          </tr>
+          <tr>
+            <th></th>
+            <th><input class="admin-input" data-role-alert-filter="displayName" value="${esc(f.displayName || "")}" placeholder="Filter raider" /></th>
+            <th><input class="admin-input" data-role-alert-filter="recentClass" value="${esc(f.recentClass || "")}" placeholder="Filter class" /></th>
+            <th><input class="admin-input" data-role-alert-filter="recentSpec" value="${esc(f.recentSpec || "")}" placeholder="Filter spec" /></th>
+            <th><input class="admin-input" data-role-alert-filter="raidRole" value="${esc(f.raidRole || "")}" placeholder="Filter role" /></th>
+            <th><input class="admin-input" data-role-alert-filter="matchedSpecs" value="${esc(f.matchedSpecs || "")}" placeholder="Filter matched spec" /></th>
+            <th>
+              <select class="admin-input" data-role-alert-filter="subscribed">
+                <option value=""${!f.subscribed ? " selected" : ""}>All</option>
+                <option value="yes"${String(f.subscribed || "").toLowerCase() === "yes" ? " selected" : ""}>Yes</option>
+                <option value="no"${String(f.subscribed || "").toLowerCase() === "no" ? " selected" : ""}>No</option>
+              </select>
+            </th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${table}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderRoleAlertsAnalysis(analysis) {
+  roleAlertsAnalysisState = analysis && typeof analysis === "object" ? analysis : null;
+  if (roleAlertsAnalysisState) {
+    const candidateIds = new Set(
+      (Array.isArray(roleAlertsAnalysisState.candidateTargets) ? roleAlertsAnalysisState.candidateTargets : [])
+        .map((row) => String(row?.userId || "").trim())
+        .filter(Boolean)
+    );
+    if (!roleAlertsSelectedUserIds.size) {
+      roleAlertsSelectedUserIds = candidateIds;
+    } else {
+      roleAlertsSelectedUserIds = new Set([...roleAlertsSelectedUserIds].filter((id) => candidateIds.has(id)));
+      if (!roleAlertsSelectedUserIds.size) roleAlertsSelectedUserIds = candidateIds;
+    }
+  }
+  const host = document.getElementById("roleAlertsHost");
+  if (!host) return;
+  if (!roleAlertsAnalysisState) {
+    host.innerHTML = "Choose an event, then click Analyze event.";
+    return;
+  }
+  host.innerHTML = `
+    <p class="subtle">
+      <strong>${esc(roleAlertsAnalysisState?.event?.title || "Event")}</strong> · ${esc(
+        fmtTs(roleAlertsAnalysisState?.event?.startTime)
+      )} · Signups: ${Number(roleAlertsAnalysisState?.signups?.total || 0)} total / ${Number(
+        roleAlertsAnalysisState?.signups?.primary || 0
+      )} primary / ${Number(roleAlertsAnalysisState?.signups?.blockers || 0)} blockers
+    </p>
+    ${roleAlertsCompBoardHtml(roleAlertsAnalysisState)}
+    ${roleAlertsCompositionRowsHtml(roleAlertsAnalysisState)}
+    ${roleAlertsCandidatesHtml(roleAlertsAnalysisState)}
+  `;
+}
+
 async function loadAdminData() {
   const me = await getJson("/api/auth/me");
   const rhHost = document.getElementById("rhWclLinksTableHost");
@@ -766,6 +1175,7 @@ async function loadAdminData() {
   const loot = await getJson("/api/loot-history?limit=25");
   const p2 = await getJson("/api/p2-preparation/materials");
   const joinNeeds = await getJson("/api/admin/join/current-needs");
+  const roleAlertEvents = await getJson("/api/admin/role-alerts/events");
   let rhLinks = [];
   try {
     const rh = await getJson("/api/admin/rh-wcl-links");
@@ -784,6 +1194,8 @@ async function loadAdminData() {
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
+  renderRoleAlertsEventSelect(Array.isArray(roleAlertEvents?.events) ? roleAlertEvents.events : []);
+  renderRoleAlertsAnalysis(null);
   renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
 }
@@ -1128,6 +1540,175 @@ document.addEventListener("click", (event) => {
   const rows = readJoinNeedsFromTable();
   rows.splice(idx, 1);
   renderJoinNeedsTable(rows);
+});
+
+document.getElementById("roleAlertsReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("roleAlertsReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload events", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => {
+        const payload = await getJson("/api/admin/role-alerts/events");
+        renderRoleAlertsEventSelect(Array.isArray(payload?.events) ? payload.events : []);
+      }
+    );
+    status("Role-alert event list reloaded.");
+  } catch (error) {
+    status(error?.message || "Failed to reload role-alert events");
+  }
+});
+
+document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("roleAlertsAnalyzeBtn");
+  const eventId = roleAlertsSelectedEventId();
+  if (!eventId) {
+    status("Select a raid event first.");
+    return;
+  }
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Analyze event", loading: "Analyzing...", success: "Analyzed", failure: "Failed" },
+      async () => {
+        roleAlertsSelectedUserIds = new Set();
+        const payload = await getJson("/api/admin/role-alerts/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            eventId,
+            overrides: roleAlertsReadOverrides(),
+            desiredByRole: roleAlertsReadDesiredByRole(),
+            manualRoleSpecNeeds: roleAlertsReadManualRoleSpecNeeds(),
+          }),
+        });
+        renderRoleAlertsAnalysis(payload);
+      }
+    );
+    status("Role-alert analysis updated.");
+  } catch (error) {
+    status(error?.message || "Failed to analyze selected event");
+  }
+});
+
+document.getElementById("roleAlertsSendBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("roleAlertsSendBtn");
+  const eventId = roleAlertsSelectedEventId();
+  if (!eventId) {
+    status("Select a raid event first.");
+    return;
+  }
+  const targetRoles = roleAlertsReadTargetRoles();
+  if (!targetRoles.length) {
+    status("Select at least one role in the DM? column.");
+    return;
+  }
+  const targetUserIds = roleAlertsReadTargetUserIds();
+  if (!targetUserIds.length) {
+    status("Select at least one raider in the matching list.");
+    return;
+  }
+  try {
+    const payload = await runWithButtonFeedback(
+      btn,
+      { idle: "Send DM to selected raiders", loading: "Sending...", success: "Sent", failure: "Failed" },
+      async () =>
+        getJson("/api/admin/role-alerts/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            eventId,
+            overrides: roleAlertsReadOverrides(),
+            desiredByRole: roleAlertsReadDesiredByRole(),
+            targetRoles,
+            manualRoleSpecNeeds: roleAlertsReadManualRoleSpecNeeds(),
+            targetUserIds,
+          }),
+        })
+    );
+    status(
+      `Role alert sent for ${String((payload?.targetRoles || []).join(", ") || "-")}. Delivered: ${Number(
+        payload?.deliveredCount || 0
+      )}, skipped: ${Number(payload?.skippedCount || 0)}.`
+    );
+  } catch (error) {
+    status(error?.message || "Failed to send role-alert DMs");
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const addBtn = event.target.closest("[data-role-alert-manual-add]");
+  if (addBtn) {
+    const role = String(addBtn.getAttribute("data-role-alert-manual-add") || "");
+    if (!ROLE_ALERT_ROLES.includes(role)) return;
+    if (!roleAlertsAnalysisState || typeof roleAlertsAnalysisState !== "object") return;
+    if (!roleAlertsAnalysisState.manualRoleSpecNeeds || typeof roleAlertsAnalysisState.manualRoleSpecNeeds !== "object") {
+      roleAlertsAnalysisState.manualRoleSpecNeeds = { Tanks: [], Healers: [], Melee: [], Ranged: [] };
+    }
+    if (!Array.isArray(roleAlertsAnalysisState.manualRoleSpecNeeds[role])) roleAlertsAnalysisState.manualRoleSpecNeeds[role] = [];
+    roleAlertsAnalysisState.manualRoleSpecNeeds[role].push({ spec: "", count: 1 });
+    renderRoleAlertsAnalysis(roleAlertsAnalysisState);
+    return;
+  }
+  const rmBtn = event.target.closest("[data-role-alert-manual-remove]");
+  if (!rmBtn) return;
+  const raw = String(rmBtn.getAttribute("data-role-alert-manual-remove") || "");
+  const sep = raw.indexOf(":");
+  if (sep <= 0) return;
+  const role = raw.slice(0, sep);
+  const idx = Number(raw.slice(sep + 1));
+  if (!ROLE_ALERT_ROLES.includes(role) || !Number.isFinite(idx)) return;
+  if (!roleAlertsAnalysisState?.manualRoleSpecNeeds?.[role]) return;
+  roleAlertsAnalysisState.manualRoleSpecNeeds[role].splice(idx, 1);
+  renderRoleAlertsAnalysis(roleAlertsAnalysisState);
+});
+
+document.addEventListener("click", (event) => {
+  const markAll = event.target.closest("#roleAlertsMarkAllBtn");
+  if (markAll) {
+    document.querySelectorAll("[data-role-alert-target-user-id]").forEach((el) => {
+      el.checked = true;
+      const id = String(el.getAttribute("data-role-alert-target-user-id") || "").trim();
+      if (id) roleAlertsSelectedUserIds.add(id);
+    });
+    return;
+  }
+  const deselectAll = event.target.closest("#roleAlertsDeselectAllBtn");
+  if (deselectAll) {
+    document.querySelectorAll("[data-role-alert-target-user-id]").forEach((el) => {
+      el.checked = false;
+    });
+    roleAlertsSelectedUserIds = new Set();
+    return;
+  }
+  const cb = event.target.closest("[data-role-alert-target-user-id]");
+  if (!cb) return;
+  const id = String(cb.getAttribute("data-role-alert-target-user-id") || "").trim();
+  if (!id) return;
+  if (cb.checked) roleAlertsSelectedUserIds.add(id);
+  else roleAlertsSelectedUserIds.delete(id);
+});
+
+document.addEventListener("click", (event) => {
+  const sortBtn = event.target.closest("[data-role-alert-sort]");
+  if (!sortBtn) return;
+  const key = String(sortBtn.getAttribute("data-role-alert-sort") || "").trim();
+  if (!key) return;
+  if (roleAlertsCandidateSortState.key === key) {
+    roleAlertsCandidateSortState = { key, dir: roleAlertsCandidateSortState.dir === "asc" ? "desc" : "asc" };
+  } else {
+    roleAlertsCandidateSortState = { key, dir: "asc" };
+  }
+  renderRoleAlertsAnalysis(roleAlertsAnalysisState);
+});
+
+document.addEventListener("input", (event) => {
+  const filterEl = event.target.closest("[data-role-alert-filter]");
+  if (!filterEl) return;
+  const key = String(filterEl.getAttribute("data-role-alert-filter") || "").trim();
+  if (!key) return;
+  roleAlertsCandidateFilterState = { ...roleAlertsCandidateFilterState, [key]: String(filterEl.value || "").trim() };
+  renderRoleAlertsAnalysis(roleAlertsAnalysisState);
 });
 
 document.addEventListener("click", async (event) => {

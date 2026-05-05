@@ -1461,11 +1461,33 @@ function formatRaidHelperEventStartForDm(startTimeSec) {
   return dt.toLocaleString();
 }
 
+function raidHelperDiscordEventPostUrl(eventDetail, fallbackEventId = "") {
+  const guildId = raidHelperDiscordGuildId();
+  const channelId = String(eventDetail?.channelId || "").trim();
+  const messageId = String(
+    eventDetail?.messageId ||
+      eventDetail?.postId ||
+      eventDetail?.signupMessageId ||
+      eventDetail?.discordMessageId ||
+      ""
+  ).trim();
+  if (guildId && channelId && messageId) {
+    return `https://discord.com/channels/${encodeURIComponent(String(guildId))}/${encodeURIComponent(channelId)}/${encodeURIComponent(messageId)}`;
+  }
+  if (guildId && channelId) {
+    return `https://discord.com/channels/${encodeURIComponent(String(guildId))}/${encodeURIComponent(channelId)}`;
+  }
+  const evId = String(eventDetail?.id || fallbackEventId || "").trim();
+  return evId ? `https://raid-helper.xyz/events/${encodeURIComponent(evId)}` : "";
+}
+
 async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   const evId = String(eventRow?.id || "");
   const title = String(eventRow?.title || "New raid event").trim() || "New raid event";
   const when = formatRaidHelperEventStartForDm(eventRow?.startTime);
   const url = evId ? `https://raid-helper.dev/event/${encodeURIComponent(evId)}` : "";
+  const eventDetail = evId ? await fetchRaidHelperEventDetail(evId) : null;
+  const discordPostUrl = raidHelperDiscordEventPostUrl(eventDetail, evId);
   const dm = await discordBotApi("/users/@me/channels", {
     method: "POST",
     body: { recipient_id: String(userId || "") },
@@ -1474,6 +1496,7 @@ async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   if (!channelId) throw new Error("Could not open DM channel");
   const lines = [`A new Raid-Helper event was posted: **${title}**`, `Start: ${when}`];
   if (url) lines.push(`Open event: ${url}`);
+  if (discordPostUrl) lines.push(`Discord post: ${discordPostUrl}`);
   lines.push("");
   lines.push("You receive this because you subscribed on wow-pug.com.");
   await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
@@ -1552,6 +1575,451 @@ function startRaidHelperDmNotifier() {
   raidHelperDmPollTimer = setInterval(() => {
     runRaidHelperDmPollOnce().catch(() => {});
   }, intervalMs);
+}
+
+const RAID_HELPER_BLOCKER_NAME_KEYWORDS = new Set([
+  // Generic role placeholders
+  "tank",
+  "tanks",
+  "healer",
+  "healers",
+  "melee",
+  "ranged",
+  "caster",
+  "casters",
+  "mdps",
+  "rdps",
+  "support",
+  // Warrior
+  "arms",
+  "fury",
+  "protection",
+  "prot",
+  // Druid
+  "balance",
+  "boomkin",
+  "dreamstate",
+  "feral",
+  "guardian",
+  "restoration",
+  "resto",
+  // Paladin
+  "holy",
+  "retribution",
+  "ret",
+  "retri",
+  // Rogue
+  "assassination",
+  "combat",
+  "subtlety",
+  // Hunter
+  "beastmastery",
+  "bm",
+  "marksmanship",
+  "mm",
+  "survival",
+  // Priest
+  "discipline",
+  "disc",
+  "shadow",
+  "smite",
+  // Mage
+  "arcane",
+  "fire",
+  "frost",
+  // Warlock
+  "affliction",
+  "demonology",
+  "demo",
+  "destruction",
+  "destro",
+  // Shaman
+  "elemental",
+  "ele",
+  "enhancement",
+  "enh",
+  // Neutral placeholders sometimes used in plans
+  "open",
+  "free",
+]);
+
+function blockerNameContainsKnownKeyword(nameRaw) {
+  const normalized = String(nameRaw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  if (!normalized) return false;
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  for (const token of tokens) {
+    if (RAID_HELPER_BLOCKER_NAME_KEYWORDS.has(token)) return true;
+  }
+  // Also allow direct compact forms like "beastmastery" / "marksmanship" already as one token.
+  if (RAID_HELPER_BLOCKER_NAME_KEYWORDS.has(normalized.replace(/\s+/g, ""))) return true;
+  return false;
+}
+
+function signupLooksLikeBlocker(entry) {
+  const name = String(entry?.name || "").trim();
+  const roleName = normalizeRaidHelperRoleLabel(
+    String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+  );
+  const className = englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry));
+  const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+  if (!name) return false;
+  const low = name.toLowerCase();
+  if (/^group\s*\d+/i.test(name)) return true;
+  if (blockerNameContainsKnownKeyword(name)) return true;
+  if (specName && low === String(specName).trim().toLowerCase()) return true;
+  if (roleName && low === String(roleName).trim().toLowerCase()) return true;
+  if (className && low === String(className).trim().toLowerCase()) return true;
+  return false;
+}
+
+function normalizeNeedRoleKey(roleRaw) {
+  const role = normalizeRaidHelperRoleLabel(String(roleRaw || "").trim());
+  if (role === "Tanks" || role === "Healers" || role === "Melee" || role === "Ranged") return role;
+  return "";
+}
+
+function normalizeNeedClassKey(classRaw) {
+  return englishWowClassDisplayFromRaidHelper(String(classRaw || "").trim());
+}
+
+function inferRoleFromClassSpecName(classNameRaw, specNameRaw, nameRaw) {
+  const className = String(classNameRaw || "").trim().toLowerCase();
+  const specName = String(specNameRaw || "").trim().toLowerCase();
+  const name = String(nameRaw || "").trim().toLowerCase();
+  const raw = `${className} ${specName} ${name}`;
+  if (/\b(tank|protection|guardian)\b/.test(raw)) return "Tanks";
+  if (/\b(healer|holy|resto|restoration|discipline|disc|smite)\b/.test(raw)) return "Healers";
+  if (/\b(arms|fury|combat|assassination|subtlety|retribution|ret|enhancement|enh|feral)\b/.test(raw)) return "Melee";
+  if (
+    /\b(arcane|fire|frost|shadow|elemental|ele|destruction|destro|demonology|demo|affliction|balance|boomkin|dreamstate|beastmastery|marksmanship|survival|hunter|mage|warlock)\b/.test(
+      raw
+    )
+  )
+    return "Ranged";
+  return "";
+}
+
+function compBlockerRowsFromPayload(compPayload, existingNamesLower = new Set()) {
+  const slots = Array.isArray(compPayload?.slots) ? compPayload.slots : [];
+  const out = [];
+  for (const slot of slots) {
+    const name = String(slot?.name || "").trim();
+    if (!name) continue;
+    const low = name.toLowerCase();
+    if (existingNamesLower.has(low)) continue;
+    const probe = {
+      name,
+      roleName: inferRoleFromClassSpecName(slot?.className, slot?.specName, name),
+      className: String(slot?.className || "").trim(),
+      specName: String(slot?.specName || "").trim(),
+    };
+    if (!signupLooksLikeBlocker(probe)) continue;
+    out.push({
+      signupId: Number(slot?.id || 0) || 0,
+      userId: "",
+      name,
+      roleName: probe.roleName,
+      className: englishWowClassDisplayFromRaidHelper(probe.className),
+      specName: normalizeProtectionSpecLabel(probe.specName),
+      isBlocker: true,
+    });
+  }
+  return out;
+}
+
+function buildCompBoardFromPayload(compPayload, existingNamesLower = new Set()) {
+  const slots = Array.isArray(compPayload?.slots) ? compPayload.slots : [];
+  const groupCount = Math.max(1, Math.floor(Number(compPayload?.groupCount || 5)));
+  const slotCount = Math.max(1, Math.floor(Number(compPayload?.slotCount || 5)));
+  const roleCounts = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
+  const groups = Array.from({ length: groupCount }, (_, i) => ({ groupNumber: i + 1, slots: [] }));
+  for (const slot of slots) {
+    const name = String(slot?.name || "").trim();
+    const className = String(slot?.className || "").trim();
+    const specName = String(slot?.specName || "").trim();
+    const roleName = inferRoleFromClassSpecName(className, specName, name);
+    if (roleName) roleCounts[roleName] = Number(roleCounts[roleName] || 0) + 1;
+    const groupNumber = Math.max(1, Math.floor(Number(slot?.groupNumber || 1)));
+    const idx = Math.min(groups.length - 1, Math.max(0, groupNumber - 1));
+    const entryProbe = {
+      name,
+      roleName,
+      className: englishWowClassDisplayFromRaidHelper(className),
+      specName: normalizeProtectionSpecLabel(specName),
+    };
+    const isBlocker = signupLooksLikeBlocker(entryProbe);
+    const isKnownSignup = existingNamesLower.has(String(name || "").toLowerCase());
+    groups[idx].slots.push({
+      id: String(slot?.id || ""),
+      slotNumber: Number(slot?.slotNumber || 0),
+      name,
+      roleName,
+      className: englishWowClassDisplayFromRaidHelper(className),
+      specName: normalizeProtectionSpecLabel(specName),
+      isBlocker,
+      isKnownSignup,
+      color: String(slot?.color || ""),
+      isConfirmed: String(slot?.isConfirmed || ""),
+      classEmoteId: String(slot?.classEmoteId || ""),
+      specEmoteId: String(slot?.specEmoteId || ""),
+    });
+  }
+  for (const group of groups) {
+    group.slots.sort((a, b) => Number(a.slotNumber || 0) - Number(b.slotNumber || 0));
+  }
+  return {
+    id: String(compPayload?.id || ""),
+    title: String(compPayload?.title || ""),
+    groupCount,
+    slotCount,
+    showRoles: Boolean(compPayload?.showRoles),
+    showClasses: Boolean(compPayload?.showClasses),
+    roleCounts,
+    groups,
+  };
+}
+
+function summarizeEventNeedsFromDetail(detail, overridesMap = {}, extraRows = []) {
+  const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+  const primary = signUps.filter((entry) => String(entry?.status || "").toLowerCase() === "primary");
+  const rosterRows = primary.map((entry) => {
+    const signupId = Number(entry?.id || 0);
+    const ov = overridesMap && typeof overridesMap === "object" ? String(overridesMap[String(signupId)] || "") : "";
+    const forced = ov === "real" ? false : ov === "blocker" ? true : null;
+    const isBlocker = forced == null ? signupLooksLikeBlocker(entry) : forced;
+    const roleName = normalizeRaidHelperRoleLabel(
+      String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+    );
+    const className = englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry));
+    const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+    return {
+      signupId,
+      userId: String(entry?.userId || "").trim(),
+      name: String(entry?.name || "").trim(),
+      roleName,
+      className,
+      specName,
+      isBlocker,
+    };
+  });
+  for (const row of Array.isArray(extraRows) ? extraRows : []) {
+    if (!row || typeof row !== "object") continue;
+    rosterRows.push({
+      signupId: Number(row.signupId || 0) || 0,
+      userId: String(row.userId || "").trim(),
+      name: String(row.name || "").trim(),
+      roleName: normalizeRaidHelperRoleLabel(String(row.roleName || "").trim()),
+      className: englishWowClassDisplayFromRaidHelper(String(row.className || "").trim()),
+      specName: normalizeProtectionSpecLabel(String(row.specName || "").trim()),
+      isBlocker: row.isBlocker !== false,
+    });
+  }
+  const realRows = rosterRows.filter((row) => !row.isBlocker);
+  const blockerRows = rosterRows.filter((row) => row.isBlocker);
+  const currentByRole = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
+  const currentByClass = {};
+  const blockerSpecNeedsByRole = { Tanks: {}, Healers: {}, Melee: {}, Ranged: {} };
+  for (const row of realRows) {
+    const role = normalizeNeedRoleKey(row.roleName);
+    if (role) currentByRole[role] = Number(currentByRole[role] || 0) + 1;
+    const cls = normalizeNeedClassKey(row.className);
+    if (cls) currentByClass[cls] = Number(currentByClass[cls] || 0) + 1;
+  }
+  for (const row of blockerRows) {
+    const role = normalizeNeedRoleKey(row.roleName);
+    if (!role) continue;
+    let specLabel = String(row.specName || "").trim();
+    const cls = normalizeNeedClassKey(row.className);
+    if (!specLabel) {
+      const rawName = String(row.name || "").trim().toLowerCase();
+      if (rawName.includes("enh")) specLabel = "Enhancement";
+      else if (rawName.includes("combat")) specLabel = "Combat";
+      else if (rawName.includes("balance") || rawName.includes("boomkin") || rawName.includes("dreamstate")) specLabel = "Balance";
+      else if (rawName.includes("retri") || rawName.includes("ret")) specLabel = "Retribution";
+    }
+    if (!specLabel) continue;
+    if (specLabel.toLowerCase() === "balance" && cls === "Druid") specLabel = "Balance Druid";
+    blockerSpecNeedsByRole[role][specLabel] = Number(blockerSpecNeedsByRole[role][specLabel] || 0) + 1;
+  }
+  return {
+    signupsTotal: signUps.length,
+    primaryTotal: primary.length,
+    realRows,
+    blockerRows,
+    currentByRole,
+    currentByClass,
+    blockerSpecNeedsByRole,
+  };
+}
+
+function sanitizeRoleSpecNeedsInput(raw) {
+  const out = { Tanks: [], Healers: [], Melee: [], Ranged: [] };
+  const src = raw && typeof raw === "object" ? raw : {};
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    const rows = Array.isArray(src[role]) ? src[role] : [];
+    out[role] = rows
+      .map((row) => {
+        if (!row || typeof row !== "object") return null;
+        const spec = String(row.spec || row.name || "").trim().slice(0, 80);
+        const count = Math.max(0, Math.floor(Number(row.count || 0)));
+        if (!spec || count <= 0) return null;
+        return { spec, count };
+      })
+      .filter(Boolean)
+      .slice(0, 24);
+  }
+  return out;
+}
+
+function roleSpecNeedsMap(roleSpecNeeds) {
+  const maps = { Tanks: {}, Healers: {}, Melee: {}, Ranged: {} };
+  const src = roleSpecNeeds && typeof roleSpecNeeds === "object" ? roleSpecNeeds : {};
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    for (const row of Array.isArray(src[role]) ? src[role] : []) {
+      const spec = String(row?.spec || "").trim();
+      const count = Math.max(0, Math.floor(Number(row?.count || 0)));
+      if (!spec || count <= 0) continue;
+      maps[role][spec] = (maps[role][spec] || 0) + count;
+    }
+  }
+  return maps;
+}
+
+function normalizeSpecKey(specRaw) {
+  return String(specRaw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+async function collectSubscriberRoleSignals(subscribedUserIds, maxPastEvents = 40) {
+  const userSet = new Set((Array.isArray(subscribedUserIds) ? subscribedUserIds : []).map((x) => String(x || "").trim()).filter(Boolean));
+  const out = new Map();
+  if (!userSet.size) return out;
+  const serverId = raidHelperDiscordGuildId();
+  if (!serverId) return out;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const allEvents = await fetchRaidHelperServerEvents(serverId);
+  const pastEvents = allEvents
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime > 0 && event.startTime <= nowSec)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, Math.max(1, Math.min(80, Math.floor(Number(maxPastEvents || 40)))));
+  for (const ev of pastEvents) {
+    const detail = await fetchRaidHelperEventDetail(ev.id);
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+    for (const entry of signUps) {
+      if (String(entry?.status || "").toLowerCase() !== "primary") continue;
+      if (signupLooksLikeBlocker(entry)) continue;
+      const userId = String(entry?.userId || "").trim();
+      if (!userSet.has(userId)) continue;
+      const roleName = normalizeNeedRoleKey(
+        normalizeRaidHelperRoleLabel(String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim())
+      );
+      const className = normalizeNeedClassKey(englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry)));
+      if (!roleName && !className) continue;
+      if (!out.has(userId)) out.set(userId, { roles: new Set(), classes: new Set(), specs: new Set(), samples: [] });
+      const row = out.get(userId);
+      if (roleName) row.roles.add(roleName);
+      if (className) row.classes.add(className);
+      const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+      if (specName) row.specs.add(specName);
+      if (row.samples.length < 6) {
+        row.samples.push({
+          eventId: ev.id,
+          roleName: roleName || "",
+          className: className || "",
+          specName: specName || "",
+          name: String(entry?.name || "").trim(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+async function collectPastParticipantSignals(maxPastEvents = 60) {
+  const out = new Map();
+  const serverId = raidHelperDiscordGuildId();
+  if (!serverId) return out;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const allEvents = await fetchRaidHelperServerEvents(serverId);
+  const pastEvents = allEvents
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime > 0 && event.startTime <= nowSec)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, Math.max(1, Math.min(120, Math.floor(Number(maxPastEvents || 60)))));
+  for (const ev of pastEvents) {
+    const detail = await fetchRaidHelperEventDetail(ev.id);
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+    for (const entry of signUps) {
+      if (String(entry?.status || "").toLowerCase() !== "primary") continue;
+      if (signupLooksLikeBlocker(entry)) continue;
+      const userId = String(entry?.userId || "").trim();
+      if (!userId) continue;
+      const roleName = normalizeNeedRoleKey(
+        normalizeRaidHelperRoleLabel(String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim())
+      );
+      const className = normalizeNeedClassKey(englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry)));
+      const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+      if (!out.has(userId)) {
+        out.set(userId, {
+          userId,
+          displayName: String(entry?.name || "").trim(),
+          roles: new Set(),
+          classes: new Set(),
+          specs: new Set(),
+          samples: [],
+          raidsSeen: 0,
+          lastSeenStartTime: 0,
+        });
+      }
+      const row = out.get(userId);
+      if (!row.displayName) row.displayName = String(entry?.name || "").trim();
+      if (roleName) row.roles.add(roleName);
+      if (className) row.classes.add(className);
+      if (specName) row.specs.add(specName);
+      if (row.samples.length < 8) {
+        row.samples.push({
+          eventId: ev.id,
+          roleName: roleName || "",
+          className: className || "",
+          specName: specName || "",
+          name: String(entry?.name || "").trim(),
+        });
+      }
+      row.raidsSeen += 1;
+      row.lastSeenStartTime = Math.max(Number(row.lastSeenStartTime || 0), Number(ev.startTime || 0));
+    }
+  }
+  return out;
+}
+
+async function isDiscordGuildMemberViaBot(userId, guildId) {
+  const botToken = String(process.env.DISCORD_BOT_TOKEN || "").trim();
+  if (!botToken || !guildId || !userId) return null;
+  try {
+    const res = await fetch(
+      `${DISCORD_API_BASE}/guilds/${encodeURIComponent(String(guildId))}/members/${encodeURIComponent(String(userId))}`,
+      {
+        headers: { Authorization: `Bot ${botToken}` },
+      }
+    );
+    if (res.status === 404) return false;
+    if (res.ok) return true;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function persistGargulLootHistory() {
@@ -2419,6 +2887,324 @@ app.put("/api/join/dm-subscription", async (req, res) => {
     return res.json({ ok: true, subscribed: Boolean(row?.subscribed) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save DM subscription" });
+  }
+});
+
+app.get("/api/admin/role-alerts/events", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const serverId = raidHelperDiscordGuildId();
+    if (!serverId) {
+      return res.status(400).json({ ok: false, error: "Missing DISCORD_GUILD_ID or RAID_HELPER_SERVER_ID" });
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    const events = await fetchRaidHelperServerEvents(serverId);
+    const future = (Array.isArray(events) ? events : [])
+      .map((event) => ({
+        id: String(event.id || event.eventId || event.eventID || "").trim(),
+        title: String(event.title || event.name || "Unnamed Event").trim(),
+        startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+      }))
+      .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime >= nowSec)
+      .sort((a, b) => a.startTime - b.startTime)
+      .slice(0, 30);
+    return res.json({ ok: true, events: future });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load role-alert events" });
+  }
+});
+
+app.post("/api/admin/role-alerts/analyze", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const eventId = String(req.body?.eventId || "").trim();
+    if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
+    const overrides = req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : {};
+    const detail = await fetchRaidHelperEventDetail(eventId);
+    if (!detail) return res.status(404).json({ ok: false, error: "Raid event not found" });
+    const existingPrimaryNames = new Set(
+      (Array.isArray(detail?.signUps) ? detail.signUps : [])
+        .filter((entry) => String(entry?.status || "").toLowerCase() === "primary")
+        .map((entry) => String(entry?.name || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    let compBlockers = [];
+    let compBoard = null;
+    let compUsed = false;
+    try {
+      const comp = await raidHelperRequest(`/comps/${encodeURIComponent(eventId)}`);
+      compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+      compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
+      compUsed = true;
+    } catch {
+      compBlockers = [];
+      compBoard = null;
+      compUsed = false;
+    }
+    const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
+    const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
+    const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
+    const desiredByRoleIn = req.body?.desiredByRole && typeof req.body.desiredByRole === "object" ? req.body.desiredByRole : {};
+    const desiredByRole = {
+      Tanks: Math.max(0, Math.floor(Number(desiredByRoleIn.Tanks ?? 3) || 0)),
+      Healers: Math.max(0, Math.floor(Number(desiredByRoleIn.Healers ?? 5) || 0)),
+      Melee: Math.max(0, Math.floor(Number(desiredByRoleIn.Melee ?? 8) || 0)),
+      Ranged: Math.max(0, Math.floor(Number(desiredByRoleIn.Ranged ?? 9) || 0)),
+    };
+    const missingByRole = {};
+    for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+      const cur = Number(summary.currentByRole[role] || 0);
+      const need = Number(desiredByRole[role] || 0);
+      missingByRole[role] = Math.max(0, need - cur);
+    }
+    await ensureDiscordDmSubscribersStore();
+    await ensureRhWclLinksStore();
+    const subscribedById = new Set(
+      Object.values(discordDmSubscribersState.subscribersByUserId || {})
+        .filter((row) => row && row.subscribed && String(row.userId || "").trim())
+        .map((row) => String(row.userId || "").trim())
+    );
+    const guildRoleByRhKey = new Map();
+    for (const link of rhWclLinksState.links || []) {
+      const k = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+      if (k) guildRoleByRhKey.set(k, normalizeRhWclGuildRole(link?.guildRole));
+    }
+    const participantSignals = await collectPastParticipantSignals(80);
+    const defaultTargetRoles = ["Tanks", "Healers", "Melee", "Ranged"].filter((role) => Number(missingByRole[role] || 0) > 0);
+    const neededSpecSetByRole = {};
+    for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+      const merged = {
+        ...(summary.blockerSpecNeedsByRole?.[role] || {}),
+        ...(manualRoleSpecNeedMap?.[role] || {}),
+      };
+      neededSpecSetByRole[role] = new Set(
+        Object.keys(merged)
+          .map((spec) => normalizeSpecKey(spec))
+          .filter(Boolean)
+      );
+    }
+    const candidateTargets = [];
+    const participantRows = [...participantSignals.values()];
+    const guildId = raidHelperDiscordGuildId();
+    const membershipChecks = await mapWithConcurrency(participantRows, 8, async (sig) => {
+      const inGuild = await isDiscordGuildMemberViaBot(sig.userId, guildId);
+      return { sig, inGuild };
+    });
+    for (const row of membershipChecks) {
+      const sig = row?.sig;
+      if (!sig?.userId) continue;
+      if (row.inGuild === false) continue;
+      const userId = String(sig.userId || "").trim();
+      if (!userId) continue;
+      const matchedRoles = defaultTargetRoles.filter((role) => sig.roles.has(role));
+      if (!matchedRoles.length) continue;
+      const signalSpecKeys = new Set([...(sig.specs || [])].map((spec) => normalizeSpecKey(spec)).filter(Boolean));
+      const matchedSpecs = [];
+      let specQualified = false;
+      for (const role of matchedRoles) {
+        const neededSpecs = neededSpecSetByRole[role];
+        if (!neededSpecs || neededSpecs.size === 0) {
+          specQualified = true;
+          continue;
+        }
+        for (const sk of signalSpecKeys) {
+          if (neededSpecs.has(sk)) {
+            specQualified = true;
+            const sampleSpec = [...(sig.specs || [])].find((s) => normalizeSpecKey(s) === sk) || sk;
+            if (!matchedSpecs.includes(sampleSpec)) matchedSpecs.push(sampleSpec);
+          }
+        }
+      }
+      if (!specQualified) continue;
+      const recent = Array.isArray(sig.samples) && sig.samples.length ? sig.samples[0] : null;
+      const rhKey = normalizeRaidHelperDisplayKey(String(sig.displayName || ""));
+      candidateTargets.push({
+        userId,
+        displayName: String(sig.displayName || userId),
+        matchedRoles,
+        matchedSpecs,
+        guildRole: String(guildRoleByRhKey.get(rhKey) || "Peon"),
+        recentClass: String(recent?.className || ""),
+        recentSpec: String(recent?.specName || ""),
+        subscribed: subscribedById.has(userId),
+        raidsSeen: Number(sig.raidsSeen || 0),
+        inGuild: row.inGuild !== false,
+      });
+    }
+    const reachableByRole = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
+    for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+      reachableByRole[role] = candidateTargets.filter((row) => Array.isArray(row.matchedRoles) && row.matchedRoles.includes(role)).length;
+    }
+    return res.json({
+      ok: true,
+      event: {
+        id: String(detail?.id || eventId),
+        title: String(detail?.title || detail?.name || "Unnamed Event"),
+        startTime: Number(detail?.startTime || detail?.time || 0),
+      },
+      compUsed,
+      compBlockerRowsAdded: compBlockers.length,
+      compBoard,
+      signups: {
+        total: summary.signupsTotal,
+        primary: summary.primaryTotal,
+        real: summary.realRows.length,
+        blockers: summary.blockerRows.length,
+      },
+      desiredByRole,
+      currentByRole: summary.currentByRole,
+      missingByRole,
+      reachableByRole,
+      subscribedTotal: subscribedById.size,
+      defaultTargetRoles,
+      blockerSpecNeedsByRole: summary.blockerSpecNeedsByRole,
+      manualRoleSpecNeeds,
+      manualRoleSpecNeedMap,
+      candidateTargets,
+      currentByClass: summary.currentByClass,
+      realRows: summary.realRows,
+      blockerRows: summary.blockerRows,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to analyze role alerts" });
+  }
+});
+
+app.post("/api/admin/role-alerts/send", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+      return res.status(400).json({ ok: false, error: "DISCORD_BOT_TOKEN is required for DM send" });
+    }
+    const eventId = String(req.body?.eventId || "").trim();
+    if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
+    const overrides = req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : {};
+    const desiredByRoleIn = req.body?.desiredByRole && typeof req.body.desiredByRole === "object" ? req.body.desiredByRole : {};
+    const detail = await fetchRaidHelperEventDetail(eventId);
+    if (!detail) return res.status(404).json({ ok: false, error: "Raid event not found" });
+    const existingPrimaryNames = new Set(
+      (Array.isArray(detail?.signUps) ? detail.signUps : [])
+        .filter((entry) => String(entry?.status || "").toLowerCase() === "primary")
+        .map((entry) => String(entry?.name || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    let compBlockers = [];
+    try {
+      const comp = await raidHelperRequest(`/comps/${encodeURIComponent(eventId)}`);
+      compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+    } catch {
+      compBlockers = [];
+    }
+    const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
+    const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
+    const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
+    const desiredByRole = {
+      Tanks: Math.max(0, Math.floor(Number(desiredByRoleIn.Tanks ?? 3) || 0)),
+      Healers: Math.max(0, Math.floor(Number(desiredByRoleIn.Healers ?? 5) || 0)),
+      Melee: Math.max(0, Math.floor(Number(desiredByRoleIn.Melee ?? 8) || 0)),
+      Ranged: Math.max(0, Math.floor(Number(desiredByRoleIn.Ranged ?? 9) || 0)),
+    };
+    const neededRoles = [];
+    for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+      const cur = Number(summary.currentByRole[role] || 0);
+      const need = Number(desiredByRole[role] || 0);
+      if (need > cur) neededRoles.push(role);
+    }
+    const selectedRolesRaw = Array.isArray(req.body?.targetRoles) ? req.body.targetRoles : [];
+    const selectedRoles = [...new Set(selectedRolesRaw.map((x) => normalizeNeedRoleKey(x)).filter(Boolean))];
+    const targetRoles = selectedRoles.length ? selectedRoles : neededRoles;
+    if (!targetRoles.length) {
+      return res.status(400).json({ ok: false, error: "No missing roles based on desired composition." });
+    }
+    await ensureDiscordDmSubscribersStore();
+    const subscribedById = new Set(
+      Object.values(discordDmSubscribersState.subscribersByUserId || {})
+        .filter((row) => row && row.subscribed && String(row.userId || "").trim())
+        .map((row) => String(row.userId || "").trim())
+    );
+    const signals = await collectPastParticipantSignals(80);
+    const guildId = raidHelperDiscordGuildId();
+    const eventName = String(detail?.title || detail?.name || "Raid Event").trim();
+    const eventUrl = `https://raid-helper.dev/event/${encodeURIComponent(eventId)}`;
+    const discordPostUrl = raidHelperDiscordEventPostUrl(detail, eventId);
+    const when = formatRaidHelperEventStartForDm(Number(detail?.startTime || detail?.time || 0));
+    const delivered = [];
+    const skipped = [];
+    const selectedUserIds = new Set(
+      (Array.isArray(req.body?.targetUserIds) ? req.body.targetUserIds : [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    );
+    const userIdsToProcess = selectedUserIds.size ? [...selectedUserIds] : [];
+    if (!userIdsToProcess.length) {
+      return res.status(400).json({ ok: false, error: "No target users selected." });
+    }
+    for (const uidRaw of userIdsToProcess) {
+      const uid = String(uidRaw || "").trim();
+      if (!uid) continue;
+      const guildMember = await isDiscordGuildMemberViaBot(uid, guildId);
+      if (guildMember === false) {
+        skipped.push({ userId: uid, reason: "User is no longer in Discord server" });
+        continue;
+      }
+      const signal = signals.get(uid);
+      if (!signal) {
+        skipped.push({ userId: uid, reason: "No historical role/class signal" });
+        continue;
+      }
+      const roleHit = targetRoles.some((role) => signal.roles.has(role));
+      if (!roleHit) {
+        skipped.push({ userId: uid, reason: "No selected role match" });
+        continue;
+      }
+      const dm = await discordBotApi("/users/@me/channels", { method: "POST", body: { recipient_id: uid } });
+      const channelId = String(dm?.id || "").trim();
+      if (!channelId) {
+        skipped.push({ userId: uid, reason: "Failed to open DM channel" });
+        continue;
+      }
+      const msg = [
+        `Role alert for **${eventName}**`,
+        `Start: ${when}`,
+        `Requested roles: ${targetRoles.join(", ")}`,
+        `Requested spec blockers: ${
+          ["Tanks", "Healers", "Melee", "Ranged"]
+            .flatMap((role) =>
+              Object.entries(manualRoleSpecNeedMap[role] || {}).map(([spec, count]) => `${role}: ${spec} x${count}`)
+            )
+            .join(" · ") || "none"
+        }`,
+        `Open event: ${eventUrl}`,
+        ...(discordPostUrl ? [`Discord post: ${discordPostUrl}`] : []),
+        "",
+        "You received this because your recent signups match one of the requested roles/specs.",
+      ].join("\n");
+      try {
+        await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
+          method: "POST",
+          body: { content: msg },
+        });
+        delivered.push({ userId: uid, matchedRoles: [...signal.roles].filter((role) => neededRoles.includes(role)) });
+      } catch (error) {
+        skipped.push({ userId: uid, reason: String(error?.message || "DM send failed") });
+      }
+    }
+    return res.json({
+      ok: true,
+      eventId,
+      targetRoles,
+      neededRoles,
+      selectedUsersCount: userIdsToProcess.length,
+      deliveredCount: delivered.length,
+      skippedCount: skipped.length,
+      delivered,
+      skipped,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to send role alerts" });
   }
 });
 
@@ -6211,6 +6997,22 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/** Admin test helper: fetch raw Raid-Helper comp board data by comp/event id. */
+app.get("/api/admin/raid-helper/comps/:compId", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const compId = String(req.params.compId || "").trim();
+    if (!compId) {
+      return res.status(400).json({ ok: false, error: "compId is required" });
+    }
+    const payload = await raidHelperRequest(`/comps/${encodeURIComponent(compId)}`);
+    return res.json({ ok: true, compId, payload });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Raid-Helper comp" });
   }
 });
 

@@ -41,6 +41,7 @@
               <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Role alerts</button>
             </div>
           </nav>
         </section>
@@ -147,6 +148,23 @@
             <button type="button" class="event-signup-btn" id="joinNeedsSaveBtn">Save Current Needs</button>
           </div>
         </section>
+
+        <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
+          <h3 class="section-title">Role Alerts</h3>
+          <p class="subtle">
+            Select an event, auto-detect blocker placeholders, review missing roles, then DM matching subscribed members.
+          </p>
+          <label class="subtle" for="roleAlertsEventSelect">Raid event</label>
+          <select id="roleAlertsEventSelect" class="admin-input"></select>
+          <div class="admin-actions admin-actions--tight">
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsReloadBtn">Reload events</button>
+            <button type="button" class="event-signup-btn" id="roleAlertsAnalyzeBtn">Analyze event</button>
+          </div>
+          <div id="roleAlertsHost" class="admin-grid-note">Choose an event, then click Analyze event.</div>
+          <div class="admin-actions">
+            <button type="button" class="event-signup-btn" id="roleAlertsSendBtn">Send DM to selected raiders</button>
+          </div>
+        </section>
       </main>
 
       <footer class="footer">
@@ -164,7 +182,7 @@
 
     <script src="/session-api-cache.js?v=20260504a"></script>
     <script src="/home.js?v=20260428d"></script>
-    <script src="/admin.js?v=20260505a"></script>
+    <script src="/admin.js?v=20260505j"></script>
     <script src="/auth-ui.js?v=20260504b"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>
