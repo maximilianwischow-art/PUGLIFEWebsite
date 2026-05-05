@@ -1194,7 +1194,8 @@ function showAttendanceCompanionBadge(player) {
 }
 
 function rosterGuildRoleBadgeSrcForLabel(roleLabel) {
-  const slug = rosterGuildRoleSlug({ guildRole: roleLabel });
+  const role = String(roleLabel || "").trim();
+  const slug = role === "Raidlead" ? "guildlead" : rosterGuildRoleSlug({ guildRole: roleLabel });
   return `/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`;
 }
 

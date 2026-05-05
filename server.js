@@ -1507,7 +1507,14 @@ function formatRaidHelperEventStartForDm(startTimeSec) {
   if (!Number.isFinite(sec) || sec <= 0) return "unknown time";
   const dt = new Date(sec * 1000);
   if (Number.isNaN(dt.getTime())) return "unknown time";
-  return dt.toLocaleString();
+  return new Intl.DateTimeFormat("de-DE", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(dt);
 }
 
 function raidHelperDiscordEventPostUrl(eventDetail, fallbackEventId = "") {
@@ -1534,9 +1541,10 @@ async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   const evId = String(eventRow?.id || "");
   const title = String(eventRow?.title || "New raid event").trim() || "New raid event";
   const when = formatRaidHelperEventStartForDm(eventRow?.startTime);
-  const url = evId ? `https://raid-helper.dev/event/${encodeURIComponent(evId)}` : "";
+  const raidStats = await raidStatsForEventTitle(title);
   const eventDetail = evId ? await fetchRaidHelperEventDetail(evId) : null;
   const discordPostUrl = raidHelperDiscordEventPostUrl(eventDetail, evId);
+  const headerImageUrl = joinUsDmHeaderImageUrl() || eventDmHeaderImageUrl(eventDetail, title);
   const dm = await discordBotApi("/users/@me/channels", {
     method: "POST",
     body: { recipient_id: String(userId || "") },
@@ -1544,13 +1552,22 @@ async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   const channelId = String(dm?.id || "").trim();
   if (!channelId) throw new Error("Could not open DM channel");
   const lines = [`A new Raid-Helper event was posted: **${title}**`, `Start: ${when}`];
-  if (url) lines.push(`Open event: ${url}`);
-  if (discordPostUrl) lines.push(`Discord post: ${discordPostUrl}`);
+  lines.length = 0;
+  lines.push(`Hello Friend, we need you for our Adventures in **${title}**`);
   lines.push("");
-  lines.push("You receive this because you subscribed on wow-pug.com.");
+  lines.push(`**${title}**`);
+  lines.push(when);
+  if (raidStats?.bestClearText) lines.push(`Best clear so far: ${raidStats.bestClearText}`);
+  if (raidStats?.progressText) lines.push(`Progress: ${raidStats.progressText}`);
+  lines.push("");
+  lines.push(` Join the Raid -> ${discordPostUrl ? `[Discord Signup Channel](${discordPostUrl})` : "Discord Signup Channel"}`);
+  lines.push(` Join the Community -> [Join Us Website](${joinUsPageUrl()})`);
+  if (headerImageUrl) {
+    await sendJoinUsHeaderImageMessage(channelId, headerImageUrl);
+  }
   await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
     method: "POST",
-    body: { content: lines.join("\n") },
+    body: { content: lines.join("\n"), flags: 4 },
   });
 }
 
@@ -3213,8 +3230,9 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     const signals = await collectPastParticipantSignals(80);
     const guildId = raidHelperDiscordGuildId();
     const eventName = String(detail?.title || detail?.name || "Raid Event").trim();
-    const eventUrl = `https://raid-helper.dev/event/${encodeURIComponent(eventId)}`;
+    const raidStats = await raidStatsForEventTitle(eventName);
     const discordPostUrl = raidHelperDiscordEventPostUrl(detail, eventId);
+    const headerImageUrl = joinUsDmHeaderImageUrl() || eventDmHeaderImageUrl(detail, eventName);
     const when = formatRaidHelperEventStartForDm(Number(detail?.startTime || detail?.time || 0));
     const delivered = [];
     const skipped = [];
@@ -3252,25 +3270,23 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
         continue;
       }
       const msg = [
-        `Role alert for **${eventName}**`,
-        `Start: ${when}`,
-        `Requested roles: ${targetRoles.join(", ")}`,
-        `Requested spec blockers: ${
-          ["Tanks", "Healers", "Melee", "Ranged"]
-            .flatMap((role) =>
-              Object.entries(manualRoleSpecNeedMap[role] || {}).map(([spec, count]) => `${role}: ${spec} x${count}`)
-            )
-            .join(" · ") || "none"
-        }`,
-        `Open event: ${eventUrl}`,
-        ...(discordPostUrl ? [`Discord post: ${discordPostUrl}`] : []),
+        `Hello Friend, we need you for our Adventures in **${eventName}**`,
         "",
-        "You received this because your recent signups match one of the requested roles/specs.",
+        `**${eventName}**`,
+        when,
+        ...(raidStats?.bestClearText ? [`Best clear so far: ${raidStats.bestClearText}`] : []),
+        ...(raidStats?.progressText ? [`Progress: ${raidStats.progressText}`] : []),
+        "",
+        ` Join the Raid -> ${discordPostUrl ? `[Discord Signup Channel](${discordPostUrl})` : "Discord Signup Channel"}`,
+        ` Join the Community -> [Join Us Website](${joinUsPageUrl()})`,
       ].join("\n");
       try {
+        if (headerImageUrl) {
+          await sendJoinUsHeaderImageMessage(channelId, headerImageUrl);
+        }
         await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
           method: "POST",
-          body: { content: msg },
+          body: { content: msg, flags: 4 },
         });
         delivered.push({ userId: uid, matchedRoles: [...signal.roles].filter((role) => neededRoles.includes(role)) });
       } catch (error) {
@@ -5324,6 +5340,139 @@ function raidHelperHeaderImage(detail) {
     if (url) return url;
   }
   return null;
+}
+
+function absoluteUrlFromPublicBase(maybeUrl) {
+  const raw = String(maybeUrl || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (!raw.startsWith("/")) return "";
+  let base = String(publicBaseUrl || "").trim().replace(/\/+$/, "");
+  if (!base || /localhost|127\.0\.0\.1/i.test(base)) {
+    base = String(process.env.PUBLIC_SITE_URL || "https://wow-pug.com").trim().replace(/\/+$/, "");
+  }
+  return base ? `${base}${raw}` : "";
+}
+
+function eventDmHeaderImageUrl(eventDetail, eventTitle = "") {
+  const direct = absoluteUrlFromPublicBase(raidHelperHeaderImage(eventDetail));
+  if (direct) return direct;
+  const raidName = trackedRaidNameFromEventTitle(eventTitle);
+  let headerPath = "";
+  if (raidName === "Karazhan") headerPath = "/raid-images/event-header-kara.png";
+  else if (raidName === "Gruul's Lair") headerPath = "/raid-images/event-header-gruul.png";
+  else if (raidName === "Magtheridon's Lair") headerPath = "/raid-images/event-header-magtheridon.png";
+  else if (raidName === "Serpentshrine Cavern") headerPath = "/raid-images/event-header-ssc.png";
+  else if (raidName === "The Eye") headerPath = "/raid-images/event-header-tk.png";
+  const fallback = absoluteUrlFromPublicBase(headerPath || raidImageFromTitle(String(eventTitle || "")));
+  return fallback || "";
+}
+
+function joinUsDmHeaderImageUrl() {
+  return absoluteUrlFromPublicBase("/raid-images/dm-join-us.png");
+}
+
+function joinUsPageUrl() {
+  return "https://wow-pug.com/join.html";
+}
+
+async function sendJoinUsHeaderImageMessage(channelId, fallbackImageUrl = "") {
+  const botToken = String(process.env.DISCORD_BOT_TOKEN || "").trim();
+  if (!botToken || !channelId) return;
+  try {
+    const imagePath = path.join(publicDir, "raid-images", "dm-join-us.png");
+    const imageBuf = await readFile(imagePath);
+    const payload = {
+      content: `[Join us](${joinUsPageUrl()})`,
+      embeds: [{ url: joinUsPageUrl(), image: { url: "attachment://dm-join-us.png" } }],
+    };
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify(payload));
+    form.append("files[0]", new Blob([imageBuf], { type: "image/png" }), "dm-join-us.png");
+    const res = await fetch(`${DISCORD_API_BASE}/channels/${encodeURIComponent(channelId)}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bot ${botToken}` },
+      body: form,
+    });
+    if (res.ok) return;
+  } catch {
+    // fall through to URL embed fallback
+  }
+  if (fallbackImageUrl) {
+    await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
+      method: "POST",
+      body: { embeds: [{ image: { url: fallbackImageUrl } }] },
+    });
+  }
+}
+
+function trackedRaidNameFromEventTitle(eventTitle) {
+  const text = normalizeText(String(eventTitle || ""));
+  if (!text) return null;
+  if (text.includes("serpentshrine") || /\bssc\b/.test(text)) return "Serpentshrine Cavern";
+  if (text.includes("tempest keep") || text.includes("the eye") || /\btk\b/.test(text)) return "The Eye";
+  if (text.includes("karazhan") || /\bkara\b/.test(text)) return "Karazhan";
+  if (text.includes("gruul")) return "Gruul's Lair";
+  if (text.includes("magtheridon")) return "Magtheridon's Lair";
+  return null;
+}
+
+function formatDurationForDm(msRaw) {
+  const ms = Number(msRaw || 0);
+  if (!Number.isFinite(ms) || ms <= 0) return "n/a";
+  const totalSec = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+async function raidStatsForEventTitle(eventTitle) {
+  const titleText = normalizeText(String(eventTitle || ""));
+  const hasGruul = titleText.includes("gruul");
+  const hasMag = titleText.includes("mag");
+  const raidNames = hasGruul && hasMag ? ["Gruul's Lair", "Magtheridon's Lair"] : [trackedRaidNameFromEventTitle(eventTitle)];
+  const validRaidNames = raidNames.filter(Boolean);
+  if (!validRaidNames.length) return null;
+  const guildId = votingGuildId;
+  if (!Number.isInteger(guildId) || guildId <= 0) return null;
+  try {
+    const reports = await getFilteredGuildReportsForGuild(guildId, 80);
+    const allEntries = buildRecentRaidCalendarEntries(reports);
+    const bestByRaid = new Map();
+    const bestClearByRaid = new Map();
+    for (const raidName of validRaidNames) {
+      const entries = allEntries.filter((entry) => String(entry?.raidName || "") === raidName);
+      if (!entries.length) continue;
+      let bestProgress = entries[0];
+      for (const entry of entries) {
+        const k = Number(entry?.bossesKilled || 0);
+        const b = Number(bestProgress?.bossesKilled || 0);
+        if (k > b) bestProgress = entry;
+      }
+      bestByRaid.set(raidName, bestProgress);
+      const fullClearMs = entries
+        .filter((e) => e?.isFullClear && Number(e?.clearDurationMs || 0) > 0)
+        .map((e) => Number(e.clearDurationMs));
+      if (fullClearMs.length) bestClearByRaid.set(raidName, Math.min(...fullClearMs));
+    }
+    if (!bestByRaid.size) return { raidName: validRaidNames[0], progressText: null, bestClearText: null };
+    const totalKilled = [...bestByRaid.values()].reduce((sum, row) => sum + Number(row?.bossesKilled || 0), 0);
+    const totalBosses = [...bestByRaid.values()].reduce((sum, row) => sum + Number(row?.bossesTotal || 0), 0);
+    let bestClearMs = 0;
+    if (validRaidNames.length === 2 && bestClearByRaid.has(validRaidNames[0]) && bestClearByRaid.has(validRaidNames[1])) {
+      bestClearMs = Number(bestClearByRaid.get(validRaidNames[0]) || 0) + Number(bestClearByRaid.get(validRaidNames[1]) || 0);
+    } else if (bestClearByRaid.has(validRaidNames[0])) {
+      bestClearMs = Number(bestClearByRaid.get(validRaidNames[0]) || 0);
+    }
+    return {
+      raidName: validRaidNames.join(" + "),
+      progressText: totalBosses > 0 ? `${totalKilled}/${totalBosses}` : null,
+      bestClearText: bestClearMs > 0 ? formatDurationForDm(bestClearMs) : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Calendar day for dedupe (same raid twice same evening). Align with guild locale via env. */
