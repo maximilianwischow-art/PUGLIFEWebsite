@@ -42,8 +42,8 @@
   --yellow: #fbbf24;
   --red: #f87171;
   --orange: #fb923c;
-  --bg: #0d0a14;
-  --bg2: #13101e;
+  --bg: #000000;
+  --bg2: #070707;
   --card: #1e1830;
   --card2: #231d38;
   --text: #f8f0ff;
@@ -89,22 +89,9 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-color: var(--bg);
-  background-image:
-    radial-gradient(ellipse 70% 50% at 15% 5%, rgba(168, 85, 247, 0.12) 0%, transparent 58%),
-    radial-gradient(ellipse 50% 60% at 85% 85%, rgba(255, 110, 180, 0.1) 0%, transparent 58%),
-    radial-gradient(ellipse 40% 40% at 55% 40%, rgba(96, 165, 250, 0.06) 0%, transparent 58%),
-    linear-gradient(
-      180deg,
-      rgba(13, 10, 20, 0.52) 0%,
-      rgba(13, 10, 20, 0.72) 42%,
-      rgba(13, 10, 20, 0.88) 100%
-    ),
-    url("/site-bg-attached.png");
-  background-size: auto, auto, auto, auto, cover;
-  background-position: center center;
-  background-repeat: no-repeat;
-  background-attachment: scroll;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.7) 55%, rgba(0, 0, 0, 0.9) 100%),
+    url("/site-bg-fel.png") center center / cover no-repeat;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -119,13 +106,38 @@ body::before {
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
+  display: block;
+}
+
+.stars::before,
+.stars::after {
+  content: "";
+  position: absolute;
+  bottom: -6%;
+  width: 40%;
+  height: 78%;
+  mix-blend-mode: screen;
+  filter: blur(10px);
+  opacity: 0.65;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(159, 255, 98, 0.5) 0%, rgba(76, 255, 120, 0.26) 30%, transparent 68%),
+    radial-gradient(ellipse at 35% 95%, rgba(120, 255, 170, 0.35) 0%, transparent 62%),
+    radial-gradient(ellipse at 65% 92%, rgba(65, 255, 145, 0.28) 0%, transparent 58%);
+  animation: felFlamePulse 4.5s ease-in-out infinite, felFlameDrift 7s ease-in-out infinite;
+}
+
+.stars::before {
+  left: -2%;
+}
+
+.stars::after {
+  right: -2%;
+  transform: scaleX(-1);
+  animation-delay: 1.2s, 0.8s;
 }
 
 .star {
-  position: absolute;
-  border-radius: 50%;
-  background: #fff;
-  animation: twinkle var(--d, 3s) ease-in-out infinite var(--dl, 0s);
+  display: none;
 }
 
 @keyframes twinkle {
@@ -135,6 +147,28 @@ body::before {
   }
   50% {
     opacity: 0.04;
+  }
+}
+
+@keyframes felFlamePulse {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: translateY(0) scale(0.96);
+  }
+  50% {
+    opacity: 0.86;
+    transform: translateY(-2%) scale(1.06);
+  }
+}
+
+@keyframes felFlameDrift {
+  0%,
+  100% {
+    filter: blur(10px) saturate(1.05);
+  }
+  50% {
+    filter: blur(13px) saturate(1.35);
   }
 }
 
@@ -4847,3 +4881,4 @@ button.raid-cal-run.raid-cal-run--column:hover {
     margin-left: 0;
   }
 }
+
