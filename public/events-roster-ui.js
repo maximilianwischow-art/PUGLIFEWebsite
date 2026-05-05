@@ -1152,6 +1152,15 @@ function rosterGuildRoleSlug(player) {
   return GUILD_ROLE_BADGE_SLUGS.has(slug) ? slug : "peon";
 }
 
+function guildRoleBadgeImageSlug(roleLabel) {
+  const raw = String(roleLabel || "").trim();
+  const normalized = raw === "Guildlead" ? "Puglead" : raw;
+  const slug = String(normalized || "Peon").toLowerCase();
+  if (slug === "puglead" || slug === "guildlead") return "guildlead";
+  if (slug === "raidlead") return "raidlead";
+  return GUILD_ROLE_BADGE_SLUGS.has(slug) ? slug : "peon";
+}
+
 function assignedGuildRoleFromPlayer(player) {
   const raw = String(player?.guildRole ?? "Peon").trim() || "Peon";
   return raw === "Guildlead" ? "Puglead" : raw;
@@ -1194,8 +1203,7 @@ function showAttendanceCompanionBadge(player) {
 }
 
 function rosterGuildRoleBadgeSrcForLabel(roleLabel) {
-  const role = String(roleLabel || "").trim();
-  const slug = role === "Raidlead" ? "guildlead" : rosterGuildRoleSlug({ guildRole: roleLabel });
+  const slug = guildRoleBadgeImageSlug(roleLabel);
   return `/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`;
 }
 
@@ -1225,7 +1233,7 @@ function rosterAttendanceCompanionBadgeHtml(player) {
 function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
   const label = String(roleLabel ?? "Peon").trim() || "Peon";
   const displayLabel = displayGuildRoleLabel(label);
-  const slug = rosterGuildRoleSlug({ guildRole: label });
+  const slug = guildRoleBadgeImageSlug(label);
   const src = escapeHtml(`/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`);
   const tip = escapeHtml(`Guild rank: ${displayLabel}`);
   return `

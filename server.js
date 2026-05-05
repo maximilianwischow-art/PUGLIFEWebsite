@@ -3093,13 +3093,13 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         return { sig, inGuild };
       });
     } catch (error) {
-      analysisWarnings.push("Discord guild membership checks failed; using candidate list without guild presence filtering.");
+      analysisWarnings.push("Discord guild membership checks failed; candidates could not be verified and were excluded.");
       membershipChecks = participantRows.map((sig) => ({ sig, inGuild: null }));
     }
     for (const row of membershipChecks) {
       const sig = row?.sig;
       if (!sig?.userId) continue;
-      if (row.inGuild === false) continue;
+      if (row.inGuild !== true) continue;
       const userId = String(sig.userId || "").trim();
       if (!userId) continue;
       const matchedRoles = defaultTargetRoles.filter((role) => sig.roles.has(role));
@@ -3136,7 +3136,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         dmSentForEvent: Boolean(alreadyDmSentByUserId[userId]),
         dmSentAt: Number(alreadyDmSentByUserId[userId] || 0),
         raidsSeen: Number(sig.raidsSeen || 0),
-        inGuild: row.inGuild !== false,
+        inGuild: row.inGuild === true,
       });
     }
     const reachableByRole = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
@@ -3256,8 +3256,8 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
       const uid = String(uidRaw || "").trim();
       if (!uid) continue;
       const guildMember = await isDiscordGuildMemberViaBot(uid, guildId);
-      if (guildMember === false) {
-        skipped.push({ userId: uid, reason: "User is no longer in Discord server" });
+      if (guildMember !== true) {
+        skipped.push({ userId: uid, reason: "User is not confirmed as a Discord server member" });
         continue;
       }
       const signal = signals.get(uid);
