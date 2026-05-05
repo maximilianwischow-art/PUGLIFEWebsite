@@ -4010,6 +4010,77 @@ button.raid-cal-run.raid-cal-run--column:hover {
   font-size: 1.05rem;
 }
 
+.join-subscribe-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  background: rgba(6, 5, 10, 0.72);
+}
+
+.join-subscribe-popup-card {
+  position: fixed;
+  z-index: 270;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(680px, calc(100vw - 28px));
+  border: 1px solid rgba(210, 170, 255, 0.55);
+  border-radius: 16px;
+  background: rgba(8, 6, 14, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(255, 110, 180, 0.2),
+    0 16px 54px rgba(0, 0, 0, 0.6);
+  padding: 22px 20px 18px;
+}
+
+.join-subscribe-popup-backdrop[hidden],
+.join-subscribe-popup-card[hidden] {
+  display: none !important;
+}
+
+.join-subscribe-popup-close {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(192, 132, 252, 0.65);
+  background: rgba(13, 10, 20, 0.82);
+  color: #f2ecff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.join-subscribe-popup-copy {
+  text-align: center;
+}
+
+.join-subscribe-popup-title {
+  margin: 6px 0 0;
+  font-family: "Morpheus", serif;
+  font-size: clamp(18px, 3.6vw, 30px);
+  line-height: 1.25;
+  letter-spacing: 0.04em;
+  color: #fef8ff;
+}
+
+.join-subscribe-popup-ok {
+  margin-top: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-family: "Inter", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #0f0a14;
+  background: linear-gradient(135deg, #f9a8d4 0%, #c084fc 45%, #93c5fd 100%);
+  cursor: pointer;
+}
+
 .join-cta-row {
   display: flex;
   flex-wrap: wrap;
@@ -4023,6 +4094,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-width: 200px;
   padding: 10px 18px;
   border-radius: 999px;
@@ -4038,6 +4110,14 @@ button.raid-cal-run.raid-cal-run--column:hover {
     0 0 0 1px rgba(255, 255, 255, 0.12) inset,
     0 4px 18px rgba(236, 72, 153, 0.35);
   transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.join-subscribe-btn-status {
+  display: inline-block;
+  min-width: 1em;
+  font-size: 0.95em;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .join-discord-btn:hover {

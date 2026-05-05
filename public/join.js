@@ -72,21 +72,44 @@ async function apiJson(url, init) {
 
 function setSubscribeButtonState(btn, state) {
   if (!btn) return;
+  const textEl = btn.querySelector(".join-subscribe-btn-text");
+  const statusEl = btn.querySelector(".join-subscribe-btn-status");
+  const setLabel = (text, symbol) => {
+    if (textEl) textEl.textContent = text;
+    else btn.textContent = text;
+    if (statusEl) statusEl.textContent = symbol;
+  };
   if (state === "loading") {
-    btn.textContent = "Loading...";
+    setLabel("Loading...", "⋯");
     btn.setAttribute("aria-busy", "true");
     return;
   }
   btn.removeAttribute("aria-busy");
   if (state === "subscribed") {
-    btn.textContent = "Subscribed";
+    setLabel("Subscribed", "✓");
     btn.setAttribute("title", "You are subscribed to Discord DM for SignUps");
     btn.setAttribute("aria-label", "You are subscribed to Discord DM for SignUps");
     return;
   }
-  btn.textContent = "Suscribe";
-  btn.setAttribute("title", "Suscribe to Discord DM for SignUps");
-  btn.setAttribute("aria-label", "Suscribe to Discord DM for SignUps");
+  setLabel("Subscribe", "○");
+  btn.setAttribute("title", "Subscribe to Discord DM for SignUps");
+  btn.setAttribute("aria-label", "Subscribe to Discord DM for SignUps");
+}
+
+function showJoinSubscribePopup() {
+  const backdrop = document.getElementById("joinSubscribePopupBackdrop");
+  const card = document.getElementById("joinSubscribePopupCard");
+  if (!backdrop || !card) return;
+  backdrop.hidden = false;
+  card.hidden = false;
+}
+
+function hideJoinSubscribePopup() {
+  const backdrop = document.getElementById("joinSubscribePopupBackdrop");
+  const card = document.getElementById("joinSubscribePopupCard");
+  if (!backdrop || !card) return;
+  backdrop.hidden = true;
+  card.hidden = true;
 }
 
 async function handleJoinDmSubscribeClick(event) {
@@ -106,6 +129,7 @@ async function handleJoinDmSubscribeClick(event) {
       body: JSON.stringify({ subscribed: true }),
     });
     setSubscribeButtonState(btn, out?.subscribed ? "subscribed" : "idle");
+    if (out?.subscribed) showJoinSubscribePopup();
   } catch (_error) {
     setSubscribeButtonState(btn, "idle");
   }
@@ -152,6 +176,7 @@ async function initJoinDmSubscriptionButton() {
         body: JSON.stringify({ subscribed: true }),
       });
       setSubscribeButtonState(btn, "subscribed");
+      showJoinSubscribePopup();
       const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
       window.history.replaceState(null, "", cleanUrl);
       return;
@@ -163,3 +188,14 @@ async function initJoinDmSubscriptionButton() {
 }
 
 initJoinDmSubscriptionButton();
+
+function initJoinSubscribePopup() {
+  const closeBtn = document.getElementById("joinSubscribePopupClose");
+  const okBtn = document.getElementById("joinSubscribePopupOk");
+  const backdrop = document.getElementById("joinSubscribePopupBackdrop");
+  closeBtn?.addEventListener("click", hideJoinSubscribePopup);
+  okBtn?.addEventListener("click", hideJoinSubscribePopup);
+  backdrop?.addEventListener("click", hideJoinSubscribePopup);
+}
+
+initJoinSubscribePopup();

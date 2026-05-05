@@ -322,6 +322,18 @@ const DEFAULT_JOIN_NEEDS = [
   { className: "Paladin", specFocus: "Retri Pala", priority: "high", color: "#f58cba" },
   { className: "Hunter", specFocus: "Hunter", priority: "medium", color: "#abd473" },
 ];
+const JOIN_NEED_COLOR_BY_CLASS_SLUG = {
+  warrior: "#c79c6e",
+  paladin: "#f58cba",
+  hunter: "#abd473",
+  rogue: "#fff569",
+  priest: "#ffffff",
+  shaman: "#0070dd",
+  mage: "#69ccf0",
+  warlock: "#9482c9",
+  druid: "#ff7d0a",
+  deathknight: "#c41f3b",
+};
 let p2MaterialsState = {
   currentById: Object.fromEntries(P2_MATERIALS.map((m) => [m.id, Number(m.defaultCurrent || 0)])),
 };
@@ -1309,10 +1321,8 @@ function sanitizeJoinNeedsRows(rawRows) {
     if (!className || !specFocus) continue;
     const prRaw = String(row.priority || "open").trim().toLowerCase();
     const priority = prRaw === "high" || prRaw === "medium" || prRaw === "open" ? prRaw : "open";
-    const colorRaw = String(row.color || "")
-      .trim()
-      .slice(0, 20);
-    const color = /^#[0-9a-f]{6}$/i.test(colorRaw) ? colorRaw : "#ffffff";
+    const classSlug = englishCanonicalClassSlugFromLocalizedDisplay(className);
+    const color = JOIN_NEED_COLOR_BY_CLASS_SLUG[classSlug] || "#ffffff";
     out.push({ className, specFocus, priority, color });
   }
   return out;

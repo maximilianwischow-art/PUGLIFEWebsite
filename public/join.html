@@ -57,9 +57,9 @@
               class="join-discord-btn"
               id="joinDmSubscribeBtn"
               href="/auth/discord/login?next=%2Fjoin.html"
-              title="Suscribe to Discord DM for SignUps"
-              aria-label="Suscribe to Discord DM for SignUps"
-              >Suscribe</a
+              title="Subscribe to Discord DM for SignUps"
+              aria-label="Subscribe to Discord DM for SignUps"
+              ><span class="join-subscribe-btn-text">Subscribe</span><span class="join-subscribe-btn-status" aria-hidden="true">○</span></a
             >
           </div>
         </section>
@@ -158,6 +158,26 @@
         </section>
 
       </main>
+
+      <div id="joinSubscribePopupBackdrop" class="join-subscribe-popup-backdrop" hidden></div>
+      <section
+        id="joinSubscribePopupCard"
+        class="join-subscribe-popup-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="joinSubscribePopupTitle"
+        hidden
+      >
+        <button type="button" id="joinSubscribePopupClose" class="join-subscribe-popup-close" aria-label="Close popup">
+          ×
+        </button>
+        <div class="join-subscribe-popup-copy">
+          <h2 id="joinSubscribePopupTitle" class="join-subscribe-popup-title">
+            Thanks for Subscribing - you will receive a Discord DM once new Events go live
+          </h2>
+          <button type="button" id="joinSubscribePopupOk" class="join-subscribe-popup-ok">OK</button>
+        </div>
+      </section>
 
       <footer class="footer">
         <div class="dots" aria-hidden="true">

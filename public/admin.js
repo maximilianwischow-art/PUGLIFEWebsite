@@ -712,7 +712,7 @@ function renderJoinNeedsTable(rows) {
   host.innerHTML = `
     <div class="admin-table-wrap">
       <table class="admin-table">
-        <thead><tr><th>Class</th><th>Spec focus</th><th>Priority</th><th>Color</th><th>Remove</th></tr></thead>
+        <thead><tr><th>Class</th><th>Spec focus</th><th>Priority</th><th>Remove</th></tr></thead>
         <tbody>
           ${joinNeedsState
             .map(
@@ -727,7 +727,6 @@ function renderJoinNeedsTable(rows) {
                       <option value="open"${String(row.priority || "").toLowerCase() === "open" ? " selected" : ""}>Open</option>
                     </select>
                   </td>
-                  <td><input class="admin-input" data-join-need-k="color" value="${esc(row.color || "")}" placeholder="#0070dd" /></td>
                   <td><button type="button" class="event-signup-btn event-signup-btn--softres" data-join-need-remove="${idx}">Remove</button></td>
                 </tr>
               `
@@ -747,7 +746,6 @@ function readJoinNeedsFromTable() {
         className: String(pick("className")?.value || "").trim(),
         specFocus: String(pick("specFocus")?.value || "").trim(),
         priority: String(pick("priority")?.value || "open").trim().toLowerCase(),
-        color: String(pick("color")?.value || "").trim(),
       };
     })
     .filter((row) => row.className && row.specFocus);
@@ -1096,7 +1094,7 @@ document.addEventListener("click", async (event) => {
 
 document.getElementById("joinNeedsAddRowBtn")?.addEventListener("click", () => {
   const rows = readJoinNeedsFromTable();
-  rows.push({ className: "", specFocus: "", priority: "open", color: "#ffffff" });
+  rows.push({ className: "", specFocus: "", priority: "open" });
   renderJoinNeedsTable(rows);
 });
 
