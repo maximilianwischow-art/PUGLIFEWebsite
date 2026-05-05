@@ -6691,6 +6691,49 @@ function buildRecentRaidCalendarEntries(reports) {
   return dedupedEntries;
 }
 
+/** First guild full-clear per raid (based on available filtered WCL reports), with ranked-character participants. */
+function firstClearParticipantsByRaidFromReports(reports, raidNames) {
+  const targets = Array.isArray(raidNames) && raidNames.length ? raidNames : Object.keys(TRACKED_RAIDS);
+  const targetSet = new Set(targets.filter((r) => Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, r)));
+  const out = {};
+  for (const raidName of targetSet) out[raidName] = null;
+  const remaining = () => Object.values(out).some((v) => !v);
+
+  const rows = [...(reports || [])].sort(
+    (a, b) => reportStartTimeMs(a?.startTime) - reportStartTimeMs(b?.startTime)
+  );
+  for (const report of rows) {
+    if (!remaining()) break;
+    const fights = Array.isArray(report?.fights) ? report.fights : [];
+    if (!fights.length) continue;
+    for (const raidName of targetSet) {
+      if (out[raidName]) continue;
+      const raidFights = fights.filter((fight) => resolvedTrackedRaidForFight(fight, report) === raidName);
+      if (!raidFights.length) continue;
+      const bosses = TRACKED_RAIDS[raidName] || [];
+      const kills = new Set(
+        raidFights
+          .filter((fight) => Boolean(fight?.kill))
+          .map((fight) => String(fight?.name || "").trim())
+          .filter(Boolean)
+      );
+      const isFullClear = bosses.length > 0 && bosses.every((boss) => kills.has(String(boss || "").trim()));
+      if (!isFullClear) continue;
+      const participants = Array.isArray(report?.rankedCharacters)
+        ? report.rankedCharacters
+            .map((c) => String(c?.name || "").trim())
+            .filter(Boolean)
+        : [];
+      out[raidName] = {
+        reportCode: String(report?.code || ""),
+        startTime: Number(report?.startTime || 0),
+        participants,
+      };
+    }
+  }
+  return out;
+}
+
 async function fetchRaidHelperServerEvents(serverId) {
   const apiKey = process.env.RAID_HELPER_API_KEY;
   if (!apiKey) throw new Error("Missing RAID_HELPER_API_KEY in .env");
@@ -7919,6 +7962,30 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
         metricNote:
           "Peak parse columns: best single-boss percentile per raid log, then max across recent capped raids (tooltip = encounter + report + fight). Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) in any raid in the window.",
       },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/** Badge feed: participants from this guild's first full clear per raid (Kara/Gruul/Mag). */
+app.get("/api/wcl/guild/:guildId/first-clear-participants", async (req, res) => {
+  const guildId = Number(req.params.guildId);
+  const limit = Math.min(
+    wclMaxGuildReportsLimit(),
+    Math.max(20, Number(req.query.limit || Math.max(80, wclAttendanceRecentRaidCount())))
+  );
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+  const raidNames = ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"];
+  try {
+    const reports = await getFilteredGuildReportsForGuild(guildId, limit);
+    const firstClears = firstClearParticipantsByRaidFromReports(reports, raidNames);
+    return res.json({
+      guildId,
+      reportsScanned: reports.length,
+      firstClears,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });

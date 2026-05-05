@@ -31,6 +31,10 @@ let attendanceLeaderboardRows = [];
 let pbBestTimeRankedNameKeys = new Set();
 /** MVP winners from `/api/voting/hall-of-fame`. */
 let hallOfFameWinnerNameKeys = new Set();
+/** First-clear participants by raid from `/first-clear-participants`. */
+let firstClearKaraNameKeys = new Set();
+let firstClearGruulNameKeys = new Set();
+let firstClearMagNameKeys = new Set();
 /** Legacy fallback: global max peak parse % per bracket (used when API has no encounter-top flags). */
 let parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
 /** Official WoW class colours (default UI palette). */
@@ -973,6 +977,18 @@ function playerEarnedParsingCeilingBadge(player) {
   return parsePeakEqualsCeiling(value, max);
 }
 
+function playerEarnedFirstClearKaraBadge(player) {
+  return playerMatchesAchievementNameSet(player, firstClearKaraNameKeys);
+}
+
+function playerEarnedFirstClearGruulBadge(player) {
+  return playerMatchesAchievementNameSet(player, firstClearGruulNameKeys);
+}
+
+function playerEarnedFirstClearMagBadge(player) {
+  return playerMatchesAchievementNameSet(player, firstClearMagNameKeys);
+}
+
 /** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
 function rosterAchievementBadgesHtml(player) {
   const badges = [
@@ -1004,6 +1020,27 @@ function rosterAchievementBadgesHtml(player) {
       alt: "Parsing ceiling",
       ok: playerEarnedParsingCeilingBadge(player),
     },
+    {
+      file: "kara-first-time-clear.png",
+      title:
+        "Karazhan first clear — You were in the ranked roster on the guild's first Karazhan full clear report.",
+      alt: "Karazhan first clear",
+      ok: playerEarnedFirstClearKaraBadge(player),
+    },
+    {
+      file: "gruul-first-time-clear.png",
+      title:
+        "Gruul first clear — You were in the ranked roster on the guild's first Gruul's Lair full clear report.",
+      alt: "Gruul first clear",
+      ok: playerEarnedFirstClearGruulBadge(player),
+    },
+    {
+      file: "magtheridon-first-time-clear.png",
+      title:
+        "Magtheridon first clear — You were in the ranked roster on the guild's first Magtheridon's Lair full clear report.",
+      alt: "Magtheridon first clear",
+      ok: playerEarnedFirstClearMagBadge(player),
+    },
   ];
   return badges
     .filter((b) => b.ok)
@@ -1020,6 +1057,9 @@ async function loadWclAttendanceForEvents() {
   attendanceLeaderboardRows = [];
   pbBestTimeRankedNameKeys = new Set();
   hallOfFameWinnerNameKeys = new Set();
+  firstClearKaraNameKeys = new Set();
+  firstClearGruulNameKeys = new Set();
+  firstClearMagNameKeys = new Set();
   parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
   try {
     const api = window.plbSessionApiCache;
@@ -1031,12 +1071,13 @@ async function loadWclAttendanceForEvents() {
             if (!res.ok) throw new Error(body.error || "Request failed");
             return body;
           });
-    const [attPayload, btPayload, hofPayload] = await Promise.all([
+    const [attPayload, btPayload, hofPayload, firstClearPayload] = await Promise.all([
       getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=250`, { credentials: "include" }).catch(
         () => ({})
       ),
       getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/boss-times?limit=50`).catch(() => ({})),
       getJson(`/api/voting/hall-of-fame`, { credentials: "include" }).catch(() => ({})),
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/first-clear-participants?limit=150`).catch(() => ({})),
     ]);
 
     if (attPayload && typeof attPayload === "object") {
@@ -1077,6 +1118,20 @@ async function loadWclAttendanceForEvents() {
         hallOfFameWinnerNameKeys.add(w.toLowerCase());
       }
     }
+
+    const firstClears =
+      firstClearPayload?.firstClears && typeof firstClearPayload.firstClears === "object" ? firstClearPayload.firstClears : {};
+    const addRowsToSet = (rows, outSet) => {
+      for (const raw of Array.isArray(rows) ? rows : []) {
+        const s = String(raw || "").trim();
+        if (!s) continue;
+        outSet.add(rosterNameKey(s));
+        outSet.add(s.toLowerCase());
+      }
+    };
+    addRowsToSet(firstClears?.["Karazhan"]?.participants, firstClearKaraNameKeys);
+    addRowsToSet(firstClears?.["Gruul's Lair"]?.participants, firstClearGruulNameKeys);
+    addRowsToSet(firstClears?.["Magtheridon's Lair"]?.participants, firstClearMagNameKeys);
   } catch (err) {
     console.warn("[plb] loadWclAttendanceForEvents failed — achievement/KPI badges may be incomplete:", err);
   }
