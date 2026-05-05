@@ -283,6 +283,7 @@ let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
+const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
@@ -298,6 +299,8 @@ let joinNeedsReady = null;
 let joinNeedsWriteChain = Promise.resolve();
 let discordDmSubscribersReady = null;
 let discordDmSubscribersWriteChain = Promise.resolve();
+let roleAlertDmLogReady = null;
+let roleAlertDmLogWriteChain = Promise.resolve();
 let gargulLootReady = null;
 let gargulLootWriteChain = Promise.resolve();
 let netherVortexReady = null;
@@ -339,6 +342,7 @@ let p2MaterialsState = {
 };
 let joinNeedsState = { rows: DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
 let discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] };
+let roleAlertDmLogState = { byEventId: {} };
 let raidHelperDmPollTimer = null;
 let raidHelperDmPollRunning = false;
 
@@ -1399,6 +1403,51 @@ async function ensureDiscordDmSubscribersStore() {
   return discordDmSubscribersReady;
 }
 
+function sanitizeRoleAlertDmLogState(raw) {
+  const byEventIdIn = raw && typeof raw.byEventId === "object" ? raw.byEventId : {};
+  const byEventId = {};
+  for (const [eventIdRaw, eventRowRaw] of Object.entries(byEventIdIn)) {
+    const eventId = String(eventIdRaw || "").trim().slice(0, 80);
+    if (!eventId) continue;
+    const eventRow = eventRowRaw && typeof eventRowRaw === "object" ? eventRowRaw : {};
+    const byUserIdIn = eventRow && typeof eventRow.byUserId === "object" ? eventRow.byUserId : {};
+    const byUserId = {};
+    for (const [userIdRaw, tsRaw] of Object.entries(byUserIdIn)) {
+      const userId = String(userIdRaw || "").trim().slice(0, 64);
+      if (!userId) continue;
+      const sentAt = Number(tsRaw);
+      if (!Number.isFinite(sentAt) || sentAt <= 0) continue;
+      byUserId[userId] = sentAt;
+    }
+    byEventId[eventId] = { byUserId };
+  }
+  return { byEventId };
+}
+
+async function persistRoleAlertDmLogStore() {
+  const tmpPath = `${roleAlertDmLogPath}.tmp`;
+  const json = JSON.stringify(roleAlertDmLogState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, roleAlertDmLogPath);
+}
+
+async function ensureRoleAlertDmLogStore() {
+  if (roleAlertDmLogReady) return roleAlertDmLogReady;
+  roleAlertDmLogReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(roleAlertDmLogPath, "utf8");
+      const parsed = JSON.parse(raw);
+      roleAlertDmLogState = sanitizeRoleAlertDmLogState(parsed);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      roleAlertDmLogState = { byEventId: {} };
+      await persistRoleAlertDmLogStore();
+    }
+  })();
+  return roleAlertDmLogReady;
+}
+
 async function setDiscordDmSubscriptionForSessionUser(session, subscribed) {
   await ensureDiscordDmSubscribersStore();
   const userId = String(session?.user?.id || "").trim();
@@ -1511,6 +1560,7 @@ async function runRaidHelperDmPollOnce() {
   try {
     if (!canRunRaidHelperDmNotifier()) return;
     await ensureDiscordDmSubscribersStore();
+    await ensureRoleAlertDmLogStore();
     const serverId = raidHelperDiscordGuildId();
     if (!serverId) return;
     const events = await fetchRaidHelperServerEvents(serverId);
@@ -2966,19 +3016,38 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       const need = Number(desiredByRole[role] || 0);
       missingByRole[role] = Math.max(0, need - cur);
     }
+    const analysisWarnings = [];
     await ensureDiscordDmSubscribersStore();
-    await ensureRhWclLinksStore();
+    await ensureRoleAlertDmLogStore();
+    try {
+      await ensureRhWclLinksStore();
+    } catch (error) {
+      analysisWarnings.push("Could not load Account Assignment mappings; defaulting guild role to Peon.");
+      rhWclLinksState = { links: [] };
+    }
     const subscribedById = new Set(
       Object.values(discordDmSubscribersState.subscribersByUserId || {})
         .filter((row) => row && row.subscribed && String(row.userId || "").trim())
         .map((row) => String(row.userId || "").trim())
     );
+    const alreadyDmSentByUserId =
+      roleAlertDmLogState?.byEventId &&
+      roleAlertDmLogState.byEventId[eventId] &&
+      typeof roleAlertDmLogState.byEventId[eventId].byUserId === "object"
+        ? roleAlertDmLogState.byEventId[eventId].byUserId
+        : {};
     const guildRoleByRhKey = new Map();
     for (const link of rhWclLinksState.links || []) {
       const k = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
       if (k) guildRoleByRhKey.set(k, normalizeRhWclGuildRole(link?.guildRole));
     }
-    const participantSignals = await collectPastParticipantSignals(80);
+    let participantSignals = new Map();
+    try {
+      participantSignals = await collectPastParticipantSignals(80);
+    } catch (error) {
+      analysisWarnings.push("Past participant scan failed; showing comp/need analysis without DM candidates.");
+      participantSignals = new Map();
+    }
     const defaultTargetRoles = ["Tanks", "Healers", "Melee", "Ranged"].filter((role) => Number(missingByRole[role] || 0) > 0);
     const neededSpecSetByRole = {};
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
@@ -2995,10 +3064,16 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     const candidateTargets = [];
     const participantRows = [...participantSignals.values()];
     const guildId = raidHelperDiscordGuildId();
-    const membershipChecks = await mapWithConcurrency(participantRows, 8, async (sig) => {
-      const inGuild = await isDiscordGuildMemberViaBot(sig.userId, guildId);
-      return { sig, inGuild };
-    });
+    let membershipChecks = [];
+    try {
+      membershipChecks = await mapWithConcurrency(participantRows, 8, async (sig) => {
+        const inGuild = await isDiscordGuildMemberViaBot(sig.userId, guildId);
+        return { sig, inGuild };
+      });
+    } catch (error) {
+      analysisWarnings.push("Discord guild membership checks failed; using candidate list without guild presence filtering.");
+      membershipChecks = participantRows.map((sig) => ({ sig, inGuild: null }));
+    }
     for (const row of membershipChecks) {
       const sig = row?.sig;
       if (!sig?.userId) continue;
@@ -3036,6 +3111,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         recentClass: String(recent?.className || ""),
         recentSpec: String(recent?.specName || ""),
         subscribed: subscribedById.has(userId),
+        dmSentForEvent: Boolean(alreadyDmSentByUserId[userId]),
+        dmSentAt: Number(alreadyDmSentByUserId[userId] || 0),
         raidsSeen: Number(sig.raidsSeen || 0),
         inGuild: row.inGuild !== false,
       });
@@ -3065,6 +3142,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       missingByRole,
       reachableByRole,
       subscribedTotal: subscribedById.size,
+      warnings: analysisWarnings,
       defaultTargetRoles,
       blockerSpecNeedsByRole: summary.blockerSpecNeedsByRole,
       manualRoleSpecNeeds,
@@ -3198,6 +3276,30 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
       } catch (error) {
         skipped.push({ userId: uid, reason: String(error?.message || "DM send failed") });
       }
+    }
+    if (delivered.length) {
+      const nowMs = Date.now();
+      roleAlertDmLogWriteChain = roleAlertDmLogWriteChain.catch(() => {}).then(async () => {
+        if (!roleAlertDmLogState.byEventId || typeof roleAlertDmLogState.byEventId !== "object") {
+          roleAlertDmLogState.byEventId = {};
+        }
+        if (!roleAlertDmLogState.byEventId[eventId] || typeof roleAlertDmLogState.byEventId[eventId] !== "object") {
+          roleAlertDmLogState.byEventId[eventId] = { byUserId: {} };
+        }
+        if (
+          !roleAlertDmLogState.byEventId[eventId].byUserId ||
+          typeof roleAlertDmLogState.byEventId[eventId].byUserId !== "object"
+        ) {
+          roleAlertDmLogState.byEventId[eventId].byUserId = {};
+        }
+        for (const row of delivered) {
+          const uid = String(row?.userId || "").trim();
+          if (!uid) continue;
+          roleAlertDmLogState.byEventId[eventId].byUserId[uid] = nowMs;
+        }
+        await persistRoleAlertDmLogStore();
+      });
+      await roleAlertDmLogWriteChain;
     }
     return res.json({
       ok: true,
@@ -6467,15 +6569,22 @@ async function fetchRaidHelperServerEvents(serverId) {
 async function fetchRaidHelperEventDetail(eventId) {
   const apiKey = process.env.RAID_HELPER_API_KEY;
   const url = `${RAID_HELPER_API_URL}/events/${eventId}`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json", Authorization: apiKey },
-  });
-  if (!res.ok) return null;
-  try {
-    return await res.json();
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", Authorization: apiKey },
+    });
+    if (res.ok) {
+      try {
+        return await res.json();
+      } catch {
+        return null;
+      }
+    }
+    const retryable = res.status === 429 || (res.status >= 500 && res.status <= 504);
+    if (!retryable || attempt >= 1) return null;
+    await sleepMs(250);
   }
+  return null;
 }
 
 /**
@@ -8430,6 +8539,9 @@ app.listen(port, () => {
   });
   ensureDiscordDmSubscribersStore().catch((error) => {
     console.error("Failed to initialize Discord DM subscribers store:", error?.message || error);
+  });
+  ensureRoleAlertDmLogStore().catch((error) => {
+    console.error("Failed to initialize role-alert DM log store:", error?.message || error);
   });
   startRaidHelperDmNotifier();
   ensureGargulLootHistoryStore().catch((error) => {

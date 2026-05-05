@@ -21,6 +21,7 @@ let roleAlertsCandidateFilterState = {
   raidRole: "",
   matchedSpecs: "",
   subscribed: "",
+  dmSent: "",
 };
 
 const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
@@ -1020,6 +1021,7 @@ function roleAlertsCandidatesHtml(analysis) {
       ...row,
       raidRole,
       subscribedLabel: row?.subscribed ? "Yes" : "No",
+      dmSentLabel: row?.dmSentForEvent ? "Yes" : "No",
     };
   });
   const filterText = (value, needle) => String(value || "").toLowerCase().includes(String(needle || "").toLowerCase());
@@ -1031,6 +1033,7 @@ function roleAlertsCandidatesHtml(analysis) {
     if (f.raidRole && !filterText(row.raidRole || "-", f.raidRole)) return false;
     if (f.matchedSpecs && !filterText((row?.matchedSpecs || []).join(", "), f.matchedSpecs)) return false;
     if (f.subscribed && String(row.subscribedLabel || "").toLowerCase() !== String(f.subscribed || "").toLowerCase()) return false;
+    if (f.dmSent && String(row.dmSentLabel || "").toLowerCase() !== String(f.dmSent || "").toLowerCase()) return false;
     return true;
   });
   const sortKey = String(roleAlertsCandidateSortState?.key || "displayName");
@@ -1045,6 +1048,8 @@ function roleAlertsCandidatesHtml(analysis) {
         : String(
             sortKey === "subscribed"
               ? a?.subscribedLabel || ""
+              : sortKey === "dmSent"
+                ? a?.dmSentLabel || ""
               : sortKey === "matchedSpecs"
                 ? (a?.matchedSpecs || []).join(", ")
                 : a?.[sortKey] || ""
@@ -1055,6 +1060,8 @@ function roleAlertsCandidatesHtml(analysis) {
         : String(
             sortKey === "subscribed"
               ? b?.subscribedLabel || ""
+              : sortKey === "dmSent"
+                ? b?.dmSentLabel || ""
               : sortKey === "matchedSpecs"
                 ? (b?.matchedSpecs || []).join(", ")
                 : b?.[sortKey] || ""
@@ -1077,6 +1084,7 @@ function roleAlertsCandidatesHtml(analysis) {
         <td>${esc(String(row?.raidRole || "-"))}</td>
         <td>${esc((row?.matchedSpecs || []).join(", ") || "-")}</td>
         <td>${esc(row?.subscribedLabel || "No")}</td>
+        <td>${esc(row?.dmSentLabel || "No")}</td>
         <td>${Number(row?.raidsSeen || 0)}</td>
       </tr>`;
     })
@@ -1101,6 +1109,7 @@ function roleAlertsCandidatesHtml(analysis) {
             <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="raidRole">Raid Role${sortIndicator("raidRole")}</button></th>
             <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="matchedSpecs">Matched specs${sortIndicator("matchedSpecs")}</button></th>
             <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="subscribed">Subscribed${sortIndicator("subscribed")}</button></th>
+            <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="dmSent">DM sent${sortIndicator("dmSent")}</button></th>
             <th><button type="button" class="admin-table-sort-btn" data-role-alert-sort="pastRaids">Past raids${sortIndicator("pastRaids")}</button></th>
           </tr>
           <tr>
@@ -1115,6 +1124,13 @@ function roleAlertsCandidatesHtml(analysis) {
                 <option value=""${!f.subscribed ? " selected" : ""}>All</option>
                 <option value="yes"${String(f.subscribed || "").toLowerCase() === "yes" ? " selected" : ""}>Yes</option>
                 <option value="no"${String(f.subscribed || "").toLowerCase() === "no" ? " selected" : ""}>No</option>
+              </select>
+            </th>
+            <th>
+              <select class="admin-input" data-role-alert-filter="dmSent">
+                <option value=""${!f.dmSent ? " selected" : ""}>All</option>
+                <option value="yes"${String(f.dmSent || "").toLowerCase() === "yes" ? " selected" : ""}>Yes</option>
+                <option value="no"${String(f.dmSent || "").toLowerCase() === "no" ? " selected" : ""}>No</option>
               </select>
             </th>
             <th></th>
@@ -1134,11 +1150,10 @@ function renderRoleAlertsAnalysis(analysis) {
         .map((row) => String(row?.userId || "").trim())
         .filter(Boolean)
     );
-    if (!roleAlertsSelectedUserIds.size) {
-      roleAlertsSelectedUserIds = candidateIds;
-    } else {
+    if (roleAlertsSelectedUserIds.size) {
       roleAlertsSelectedUserIds = new Set([...roleAlertsSelectedUserIds].filter((id) => candidateIds.has(id)));
-      if (!roleAlertsSelectedUserIds.size) roleAlertsSelectedUserIds = candidateIds;
+    } else {
+      roleAlertsSelectedUserIds = new Set();
     }
   }
   const host = document.getElementById("roleAlertsHost");
