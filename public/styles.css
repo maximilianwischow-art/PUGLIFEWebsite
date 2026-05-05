@@ -3179,6 +3179,14 @@ button.raid-cal-run.raid-cal-run--column:hover {
   font-size: 12px;
 }
 
+.admin-textarea--lfm {
+  min-height: 64px;
+  max-height: 88px;
+  margin-top: 6px;
+  line-height: 1.35;
+  resize: vertical;
+}
+
 .admin-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4882,3 +4890,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
   }
 }
 
+.custom-dm-candidates-table thead tr:first-child th,
+.custom-dm-candidates-table thead tr:nth-child(2) th {
+  position: static;
+  top: auto;
+  z-index: auto;
+}

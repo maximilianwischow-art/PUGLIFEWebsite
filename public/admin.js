@@ -45,7 +45,21 @@ function rhWclGuildRoleSelectHtml(current) {
   ).join("")}</select>`;
 }
 
-const ADMIN_PANEL_IDS = ["rh-wcl", "wcl-events", "gargul-import", "loot-corrections", "p2-materials", "join-needs", "role-alerts"];
+const ADMIN_PANEL_IDS = [
+  "rh-wcl",
+  "wcl-events",
+  "gargul-import",
+  "loot-corrections",
+  "p2-materials",
+  "join-needs",
+  "role-alerts",
+  "custom-dm",
+];
+
+let customDmCandidatesState = [];
+let customDmSelectedUserIds = new Set();
+let customDmFilterState = { displayName: "", guildRole: "", recentClass: "", recentSpec: "", subscribed: "" };
+let customDmRoleTargets = new Set(["Tanks", "Healers", "Melee", "Ranged"]);
 
 function parseAdminHash() {
   const raw = (location.hash || "").replace(/^#/, "").trim();
@@ -1000,6 +1014,68 @@ function roleAlertsCompBoardHtml(analysis) {
   `;
 }
 
+function roleAlertsLfmNeedsText(analysis) {
+  const blockerRows = Array.isArray(analysis?.blockerRows) ? analysis.blockerRows : [];
+  const bySpecClass = new Map();
+  for (const row of blockerRows) {
+    const spec = String(row?.specName || "").trim();
+    const cls = String(row?.className || "").trim();
+    if (!spec) continue;
+    const label = cls && !spec.toLowerCase().includes(cls.toLowerCase()) ? `${spec} ${cls}` : spec;
+    bySpecClass.set(label, Number(bySpecClass.get(label) || 0) + 1);
+  }
+  if (bySpecClass.size) {
+    const entries = [...bySpecClass.entries()]
+      .map(([label, count]) => ({ label, count: Math.max(1, Math.floor(Number(count || 1))) }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    const maxNeeds = 3;
+    const shown = entries.slice(0, maxNeeds);
+    const hidden = Math.max(0, entries.length - shown.length);
+    const text = shown.map((e) => (e.count > 1 ? `${e.label} x${e.count}` : e.label)).join(" & ");
+    return hidden > 0 ? `${text} +${hidden} more` : text;
+  }
+
+  const byRole =
+    analysis?.blockerSpecNeedsByRole && typeof analysis.blockerSpecNeedsByRole === "object"
+      ? analysis.blockerSpecNeedsByRole
+      : {};
+  const parts = [];
+  for (const role of ROLE_ALERT_ROLES) {
+    const specMap = byRole?.[role] && typeof byRole[role] === "object" ? byRole[role] : {};
+    for (const [spec, n] of Object.entries(specMap)) {
+      const count = Math.max(0, Math.floor(Number(n || 0)));
+      if (!spec || count <= 0) continue;
+      parts.push(count > 1 ? `${spec} x${count}` : spec);
+    }
+  }
+  if (parts.length) return parts.join(" & ");
+  const missing = analysis?.missingByRole && typeof analysis.missingByRole === "object" ? analysis.missingByRole : {};
+  const roleParts = ROLE_ALERT_ROLES.filter((r) => Number(missing[r] || 0) > 0).map((r) => `${Number(missing[r] || 0)} ${r}`);
+  return roleParts.length ? roleParts.join(" & ") : "Raiders";
+}
+
+function roleAlertsLfmMessageText(analysis) {
+  const eventTitle = String(analysis?.event?.title || "Raid Event").trim();
+  const startSec = Number(analysis?.event?.startTime || 0);
+  const dt = startSec > 0 ? new Date(startSec * 1000) : null;
+  const hh = dt && !Number.isNaN(dt.getTime()) ? String(dt.getHours()).padStart(2, "0") : "--";
+  const dd = dt && !Number.isNaN(dt.getTime()) ? String(dt.getDate()).padStart(2, "0") : "--";
+  const mm = dt && !Number.isNaN(dt.getTime()) ? String(dt.getMonth() + 1).padStart(2, "0") : "--";
+  const needsText = roleAlertsLfmNeedsText(analysis);
+  return `<PUG Life Balance> ${eventTitle} - ${hh}PM ${dd}.${mm}. - LFM ${needsText}, 2SR, No HR <https://discord.gg/QgBNZEtHa>`;
+}
+
+function roleAlertsLfmMessageHtml(analysis) {
+  const msg = roleAlertsLfmMessageText(analysis);
+  return `
+    <h4 class="subtle" style="margin: 12px 0 6px">Thunderstrike LFM message</h4>
+    <textarea id="roleAlertsLfmMessage" class="admin-textarea admin-textarea--lfm" rows="2">${esc(msg)}</textarea>
+    <div class="admin-actions admin-actions--tight">
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsCopyLfmBtn">Copy message</button>
+    </div>
+  `;
+}
+
 function roleAlertsCandidatesHtml(analysis) {
   const rowsRaw = Array.isArray(analysis?.candidateTargets) ? analysis.candidateTargets : [];
   if (!rowsRaw.length) {
@@ -1162,8 +1238,117 @@ function renderRoleAlertsAnalysis(analysis) {
     </p>
     ${roleAlertsCompBoardHtml(roleAlertsAnalysisState)}
     ${roleAlertsCompositionRowsHtml(roleAlertsAnalysisState)}
+    ${roleAlertsLfmMessageHtml(roleAlertsAnalysisState)}
     ${roleAlertsCandidatesHtml(roleAlertsAnalysisState)}
   `;
+}
+
+function customDmReadTargetRoles() {
+  return ROLE_ALERT_ROLES.filter((role) => customDmRoleTargets.has(role));
+}
+
+function customDmFilteredRows() {
+  const rows = Array.isArray(customDmCandidatesState) ? customDmCandidatesState : [];
+  const f = customDmFilterState || {};
+  const has = (v, q) => String(v || "").toLowerCase().includes(String(q || "").toLowerCase());
+  return rows.filter((row) => {
+    if (f.displayName && !has(row.displayName || row.userId, f.displayName)) return false;
+    if (f.guildRole && !has(row.guildRole || "-", f.guildRole)) return false;
+    if (f.recentClass && !has(row.recentClass || "-", f.recentClass)) return false;
+    if (f.recentSpec && !has(row.recentSpec || "-", f.recentSpec)) return false;
+    if (f.subscribed) {
+      const sub = row.subscribed ? "yes" : "no";
+      if (sub !== String(f.subscribed || "").toLowerCase()) return false;
+    }
+    return true;
+  });
+}
+
+function renderCustomDmPanel() {
+  const host = document.getElementById("customDmHost");
+  if (!host) return;
+  const rows = customDmFilteredRows();
+  const all = Array.isArray(customDmCandidatesState) ? customDmCandidatesState : [];
+  const rolesHtml = ROLE_ALERT_ROLES.map((role) => {
+    const checked = customDmRoleTargets.has(role) ? " checked" : "";
+    return `<label class="subtle" style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" data-custom-dm-role="${esc(
+      role
+    )}"${checked} /> ${esc(role)}</label>`;
+  }).join(" ");
+  const body = rows
+    .map((row) => {
+      const uid = String(row?.userId || "");
+      const checked = customDmSelectedUserIds.has(uid) ? " checked" : "";
+      const guildMembership = row?.inGuildConfirmed ? "Yes" : "Unknown";
+      return `<tr>
+        <td><input type="checkbox" data-custom-dm-user-id="${esc(uid)}"${checked} /></td>
+        <td>${esc(row?.displayName || uid)}</td>
+        <td>${esc(row?.recentClass || "-")}</td>
+        <td>${esc(row?.recentSpec || "-")}</td>
+        <td>${esc(row?.guildRole || "Peon")}</td>
+        <td>${row?.subscribed ? "Yes" : "No"}</td>
+        <td>${esc(guildMembership)}</td>
+        <td>${Number(row?.raidsSeen || 0)}</td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <p class="subtle">Candidates are pulled from recent participants + subscribers. "In guild" = verified now; unknown users are re-checked at send time.</p>
+    <p class="subtle">Shown: ${rows.length} / ${all.length}</p>
+    <div class="admin-actions admin-actions--tight" style="margin-bottom:8px">${rolesHtml}</div>
+    <div class="admin-actions admin-actions--tight">
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="customDmReloadBtn">Reload players</button>
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="customDmMarkAllBtn">Mark all shown</button>
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="customDmDeselectAllBtn">Deselect all</button>
+      <label class="subtle" style="display:inline-flex;align-items:center;gap:6px;margin-left:8px">
+        <input type="checkbox" id="customDmSubscribedOnly" />
+        Subscribed only
+      </label>
+      <button type="button" class="event-signup-btn" id="customDmSendBtn">Send custom DM</button>
+    </div>
+    <div class="admin-table-wrap role-alert-candidates-wrap">
+      <table class="admin-table role-alert-candidates-table custom-dm-candidates-table">
+        <thead>
+          <tr>
+            <th>DM</th><th>Raider</th><th>Class</th><th>Spec</th><th>Guild role</th><th>Subscribed</th><th>In guild</th><th>Past raids</th>
+          </tr>
+          <tr>
+            <th></th>
+            <th><input class="admin-input" data-custom-dm-filter="displayName" value="${esc(
+              customDmFilterState.displayName || ""
+            )}" placeholder="Filter raider" /></th>
+            <th><input class="admin-input" data-custom-dm-filter="recentClass" value="${esc(
+              customDmFilterState.recentClass || ""
+            )}" placeholder="Filter class" /></th>
+            <th><input class="admin-input" data-custom-dm-filter="recentSpec" value="${esc(
+              customDmFilterState.recentSpec || ""
+            )}" placeholder="Filter spec" /></th>
+            <th><input class="admin-input" data-custom-dm-filter="guildRole" value="${esc(
+              customDmFilterState.guildRole || ""
+            )}" placeholder="Filter guild role" /></th>
+            <th>
+              <select class="admin-input" data-custom-dm-filter="subscribed">
+                <option value=""${!customDmFilterState.subscribed ? " selected" : ""}>All</option>
+                <option value="yes"${String(customDmFilterState.subscribed || "") === "yes" ? " selected" : ""}>Yes</option>
+                <option value="no"${String(customDmFilterState.subscribed || "") === "no" ? " selected" : ""}>No</option>
+              </select>
+            </th>
+            <th></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function loadCustomDmCandidates() {
+  const payload = await getJson("/api/admin/custom-dm/candidates");
+  customDmCandidatesState = Array.isArray(payload?.candidates) ? payload.candidates : [];
+  const valid = new Set(customDmCandidatesState.map((r) => String(r?.userId || "").trim()).filter(Boolean));
+  customDmSelectedUserIds = new Set([...customDmSelectedUserIds].filter((id) => valid.has(id)));
+  renderCustomDmPanel();
 }
 
 async function loadAdminData() {
@@ -1202,6 +1387,12 @@ async function loadAdminData() {
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
   renderRoleAlertsEventSelect(Array.isArray(roleAlertEvents?.events) ? roleAlertEvents.events : []);
   renderRoleAlertsAnalysis(null);
+  try {
+    await loadCustomDmCandidates();
+  } catch (error) {
+    const host = document.getElementById("customDmHost");
+    if (host) host.innerHTML = `<p class="subtle">Failed to load DM candidates: ${esc(error?.message || "Unknown error")}</p>`;
+  }
   renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
 }
@@ -1638,6 +1829,44 @@ async function sendRoleAlertsDms(btn) {
   }
 }
 
+async function sendCustomDm(btn) {
+  const message = String(document.getElementById("customDmMessageInput")?.value || "").trim();
+  if (!message) {
+    status("Enter a custom message first.");
+    return false;
+  }
+  const targetRoles = customDmReadTargetRoles();
+  let targetUserIds = [...customDmSelectedUserIds];
+  if (!targetUserIds.length && targetRoles.length) {
+    targetUserIds = customDmFilteredRows()
+      .filter((row) => Array.isArray(row?.roles) && row.roles.some((r) => targetRoles.includes(String(r))))
+      .map((row) => String(row?.userId || "").trim())
+      .filter(Boolean);
+  }
+  if (!targetUserIds.length) {
+    status("Select players and/or roles to target.");
+    return false;
+  }
+  const subscribedOnly = Boolean(document.getElementById("customDmSubscribedOnly")?.checked);
+  try {
+    const payload = await runWithButtonFeedback(
+      btn || document.getElementById("customDmSendBtn"),
+      { idle: "Send custom DM", loading: "Sending...", success: "Sent", failure: "Failed" },
+      async () =>
+        getJson("/api/admin/custom-dm/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, targetRoles, targetUserIds, subscribedOnly }),
+        })
+    );
+    status(`Custom DM sent. Delivered: ${Number(payload?.deliveredCount || 0)}, skipped: ${Number(payload?.skippedCount || 0)}.`);
+    return true;
+  } catch (error) {
+    status(error?.message || "Failed to send custom DM");
+    return false;
+  }
+}
+
 document.addEventListener("click", (event) => {
   const addBtn = event.target.closest("[data-role-alert-manual-add]");
   if (addBtn) {
@@ -1666,6 +1895,72 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const copyLfmBtn = event.target.closest("#roleAlertsCopyLfmBtn");
+  if (copyLfmBtn) {
+    const box = document.getElementById("roleAlertsLfmMessage");
+    const text = String(box?.value || "").trim();
+    if (!text) {
+      status("No LFM message to copy.");
+      return;
+    }
+    navigator.clipboard
+      .writeText(text)
+      .then(() => status("LFM message copied to clipboard."))
+      .catch(() => status("Copy failed. You can still select and copy manually."));
+    return;
+  }
+
+  const customSendBtn = event.target.closest("#customDmSendBtn");
+  if (customSendBtn) {
+    sendCustomDm(customSendBtn);
+    return;
+  }
+  const customReloadBtn = event.target.closest("#customDmReloadBtn");
+  if (customReloadBtn) {
+    runWithButtonFeedback(
+      customReloadBtn,
+      { idle: "Reload players", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => loadCustomDmCandidates()
+    ).catch((error) => status(error?.message || "Failed to reload DM candidates"));
+    return;
+  }
+  const customMarkAll = event.target.closest("#customDmMarkAllBtn");
+  if (customMarkAll) {
+    document.querySelectorAll("[data-custom-dm-user-id]").forEach((el) => {
+      el.checked = true;
+      const id = String(el.getAttribute("data-custom-dm-user-id") || "").trim();
+      if (id) customDmSelectedUserIds.add(id);
+    });
+    return;
+  }
+  const customDeselectAll = event.target.closest("#customDmDeselectAllBtn");
+  if (customDeselectAll) {
+    document.querySelectorAll("[data-custom-dm-user-id]").forEach((el) => {
+      el.checked = false;
+    });
+    customDmSelectedUserIds = new Set();
+    return;
+  }
+  const customRoleCb = event.target.closest("[data-custom-dm-role]");
+  if (customRoleCb) {
+    const role = String(customRoleCb.getAttribute("data-custom-dm-role") || "").trim();
+    if (ROLE_ALERT_ROLES.includes(role)) {
+      if (customRoleCb.checked) customDmRoleTargets.add(role);
+      else customDmRoleTargets.delete(role);
+      renderCustomDmPanel();
+    }
+    return;
+  }
+  const customUserCb = event.target.closest("[data-custom-dm-user-id]");
+  if (customUserCb) {
+    const id = String(customUserCb.getAttribute("data-custom-dm-user-id") || "").trim();
+    if (id) {
+      if (customUserCb.checked) customDmSelectedUserIds.add(id);
+      else customDmSelectedUserIds.delete(id);
+    }
+    return;
+  }
+
   const sendBtn = event.target.closest("[data-role-alert-send], #roleAlertsSendBtn");
   if (sendBtn) {
     sendRoleAlertsDms(sendBtn);
@@ -1710,6 +2005,27 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  const customFilterEl = event.target.closest("[data-custom-dm-filter]");
+  if (customFilterEl) {
+    const key = String(customFilterEl.getAttribute("data-custom-dm-filter") || "").trim();
+    if (!key) return;
+    const nextValue = String(customFilterEl.value || "");
+    const selStart = Number(customFilterEl.selectionStart);
+    const selEnd = Number(customFilterEl.selectionEnd);
+    customDmFilterState = { ...customDmFilterState, [key]: nextValue };
+    renderCustomDmPanel();
+    const nextEl = document.querySelector(`[data-custom-dm-filter="${key}"]`);
+    if (nextEl instanceof HTMLInputElement || nextEl instanceof HTMLSelectElement) {
+      nextEl.focus();
+      if (nextEl instanceof HTMLInputElement && Number.isFinite(selStart) && Number.isFinite(selEnd)) {
+        const start = Math.max(0, Math.min(selStart, nextEl.value.length));
+        const end = Math.max(start, Math.min(selEnd, nextEl.value.length));
+        nextEl.setSelectionRange(start, end);
+      }
+    }
+    return;
+  }
+
   const filterEl = event.target.closest("[data-role-alert-filter]");
   if (!filterEl) return;
   const key = String(filterEl.getAttribute("data-role-alert-filter") || "").trim();

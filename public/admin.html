@@ -40,7 +40,8 @@
               <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Role alerts</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Raid Roster Management</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="custom-dm">Custom messages</button>
             </div>
           </nav>
         </section>
@@ -149,7 +150,7 @@
         </section>
 
         <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
-          <h3 class="section-title">Role Alerts</h3>
+          <h3 class="section-title">Raid Roster Management</h3>
           <p class="subtle">
             Select an event, auto-detect blocker placeholders, review missing roles, then DM matching subscribed members.
           </p>
@@ -160,6 +161,19 @@
             <button type="button" class="event-signup-btn" id="roleAlertsAnalyzeBtn">Analyze event</button>
           </div>
           <div id="roleAlertsHost" class="admin-grid-note">Choose an event, then click Analyze event.</div>
+        </section>
+
+        <section class="card admin-panel" data-admin-panel="custom-dm" id="admin-panel-custom-dm">
+          <h3 class="section-title">Custom Discord Messages</h3>
+          <p class="subtle">Send a custom Discord bot DM by raid role and/or selected individual players.</p>
+          <label class="subtle" for="customDmMessageInput">Message</label>
+          <textarea
+            id="customDmMessageInput"
+            class="admin-textarea"
+            rows="6"
+            placeholder="Write your DM text here..."
+          ></textarea>
+          <div id="customDmHost" class="admin-grid-note">Loading DM candidates...</div>
         </section>
       </main>
 
@@ -178,7 +192,7 @@
 
     <script src="/session-api-cache.js?v=20260504a"></script>
     <script src="/home.js?v=20260505black1"></script>
-    <script src="/admin.js?v=20260505n"></script>
+    <script src="/admin.js?v=20260505customdm1"></script>
     <script src="/auth-ui.js?v=20260504b"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

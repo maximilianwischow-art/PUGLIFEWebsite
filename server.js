@@ -2040,11 +2040,14 @@ async function collectPastParticipantSignals(maxPastEvents = 60) {
       if (signupLooksLikeBlocker(entry)) continue;
       const userId = String(entry?.userId || "").trim();
       if (!userId) continue;
-      const roleName = normalizeNeedRoleKey(
-        normalizeRaidHelperRoleLabel(String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim())
-      );
-      const className = normalizeNeedClassKey(englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry)));
+      const classDisplay = englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry));
       const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+      const roleRaw = normalizeRaidHelperRoleLabel(
+        String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+      );
+      const inferredRole = inferRoleFromClassSpecName(classDisplay, specName, String(entry?.name || "").trim());
+      const roleName = normalizeNeedRoleKey(roleRaw || inferredRole);
+      const className = normalizeNeedClassKey(classDisplay);
       if (!out.has(userId)) {
         out.set(userId, {
           userId,
@@ -2076,6 +2079,74 @@ async function collectPastParticipantSignals(maxPastEvents = 60) {
     }
   }
   return out;
+}
+
+async function buildCustomDmCandidates(maxPastEvents = 120) {
+  await ensureDiscordDmSubscribersStore();
+  try {
+    await ensureRhWclLinksStore();
+  } catch {
+    rhWclLinksState = { links: [] };
+  }
+  const subscribedById = new Set(
+    Object.values(discordDmSubscribersState.subscribersByUserId || {})
+      .filter((row) => row && row.subscribed && String(row.userId || "").trim())
+      .map((row) => String(row.userId || "").trim())
+  );
+  const guildRoleByRhKey = new Map();
+  for (const link of rhWclLinksState.links || []) {
+    const k = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    if (k) guildRoleByRhKey.set(k, normalizeRhWclGuildRole(link?.guildRole));
+  }
+  let signals = new Map();
+  try {
+    signals = await collectPastParticipantSignals(maxPastEvents);
+  } catch {
+    signals = new Map();
+  }
+  for (const sub of Object.values(discordDmSubscribersState.subscribersByUserId || {})) {
+    const uid = String(sub?.userId || "").trim();
+    if (!uid || signals.has(uid)) continue;
+    signals.set(uid, {
+      userId: uid,
+      displayName: String(sub?.globalName || sub?.username || uid),
+      roles: new Set(),
+      classes: new Set(),
+      specs: new Set(),
+      samples: [],
+      raidsSeen: 0,
+      lastSeenStartTime: 0,
+    });
+  }
+  const rows = [...signals.values()];
+  const guildId = raidHelperDiscordGuildId();
+  const checks = await mapWithConcurrency(rows, 8, async (sig) => {
+    const inGuild = await isDiscordGuildMemberViaBot(sig.userId, guildId);
+    return { sig, inGuild };
+  });
+  const candidates = [];
+  for (const row of checks) {
+    const sig = row?.sig;
+    if (!sig?.userId) continue;
+    if (row.inGuild === false) continue;
+    const uid = String(sig.userId || "").trim();
+    if (!uid) continue;
+    const recent = Array.isArray(sig.samples) && sig.samples.length ? sig.samples[0] : null;
+    const rhKey = normalizeRaidHelperDisplayKey(String(sig.displayName || ""));
+    candidates.push({
+      userId: uid,
+      displayName: String(sig.displayName || uid),
+      roles: [...(sig.roles || [])].filter(Boolean),
+      recentClass: String(recent?.className || ""),
+      recentSpec: String(recent?.specName || ""),
+      guildRole: String(guildRoleByRhKey.get(rhKey) || "Peon"),
+      subscribed: subscribedById.has(uid),
+      raidsSeen: Number(sig.raidsSeen || 0),
+      inGuildConfirmed: row.inGuild === true,
+    });
+  }
+  candidates.sort((a, b) => String(a.displayName || "").localeCompare(String(b.displayName || "")));
+  return { candidates, subscribedById };
 }
 
 async function isDiscordGuildMemberViaBot(userId, guildId) {
@@ -3337,6 +3408,120 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to send role alerts" });
+  }
+});
+
+app.get("/api/admin/custom-dm/candidates", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const { candidates, subscribedById } = await buildCustomDmCandidates(120);
+    return res.json({
+      ok: true,
+      subscribedTotal: subscribedById.size,
+      candidates,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load DM candidates" });
+  }
+});
+
+app.post("/api/admin/custom-dm/send", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+      return res.status(400).json({ ok: false, error: "DISCORD_BOT_TOKEN is required for DM send" });
+    }
+    const message = String(req.body?.message || "").trim();
+    if (!message) return res.status(400).json({ ok: false, error: "message is required" });
+    if (message.length > 1800) return res.status(400).json({ ok: false, error: "message is too long (max 1800 chars)" });
+
+    const selectedRolesRaw = Array.isArray(req.body?.targetRoles) ? req.body.targetRoles : [];
+    const targetRoles = [...new Set(selectedRolesRaw.map((x) => normalizeNeedRoleKey(x)).filter(Boolean))];
+    const selectedUserIds = new Set(
+      (Array.isArray(req.body?.targetUserIds) ? req.body.targetUserIds : [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    );
+    const subscribedOnly = Boolean(req.body?.subscribedOnly);
+
+    const candidatesById = new Map();
+    if (targetRoles.length || !selectedUserIds.size) {
+      try {
+        const { candidates } = await buildCustomDmCandidates(120);
+        for (const row of candidates) {
+          const uid = String(row?.userId || "").trim();
+          if (uid) candidatesById.set(uid, row);
+        }
+      } catch (error) {
+        if (!selectedUserIds.size) {
+          return res.status(500).json({ ok: false, error: error?.message || "Failed to build DM target candidates" });
+        }
+      }
+    }
+    const targetUserSet = new Set();
+    for (const uid of selectedUserIds) {
+      targetUserSet.add(uid);
+    }
+    if (targetRoles.length) {
+      for (const row of candidatesById.values()) {
+        const roles = Array.isArray(row?.roles) ? row.roles : [];
+        if (roles.some((r) => targetRoles.includes(normalizeNeedRoleKey(r)))) {
+          targetUserSet.add(String(row.userId || ""));
+        }
+      }
+    }
+    if (subscribedOnly) {
+      await ensureDiscordDmSubscribersStore();
+      const subscribedById = new Set(
+        Object.values(discordDmSubscribersState.subscribersByUserId || {})
+          .filter((row) => row && row.subscribed && String(row.userId || "").trim())
+          .map((row) => String(row.userId || "").trim())
+      );
+      for (const uid of [...targetUserSet]) {
+        if (!subscribedById.has(uid)) targetUserSet.delete(uid);
+      }
+    }
+    if (!targetUserSet.size) {
+      return res.status(400).json({ ok: false, error: "No matching target users." });
+    }
+
+    const delivered = [];
+    const skipped = [];
+    for (const uid of targetUserSet) {
+      try {
+        const guildMember = await isDiscordGuildMemberViaBot(uid, raidHelperDiscordGuildId());
+        if (guildMember !== true) {
+          skipped.push({ userId: uid, reason: "User is not confirmed as a Discord server member" });
+          continue;
+        }
+        const dm = await discordBotApi("/users/@me/channels", { method: "POST", body: { recipient_id: uid } });
+        const channelId = String(dm?.id || "").trim();
+        if (!channelId) {
+          skipped.push({ userId: uid, reason: "Failed to open DM channel" });
+          continue;
+        }
+        await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
+          method: "POST",
+          body: { content: message, flags: 4 },
+        });
+        delivered.push({ userId: uid });
+      } catch (error) {
+        skipped.push({ userId: uid, reason: String(error?.message || "DM send failed") });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      targetUsersCount: targetUserSet.size,
+      deliveredCount: delivered.length,
+      skippedCount: skipped.length,
+      delivered,
+      skipped,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to send custom DM" });
   }
 });
 
