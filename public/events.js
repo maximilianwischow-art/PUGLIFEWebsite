@@ -188,7 +188,7 @@ if (!plb) {
   function signupActionsMarkup(event, isAuthenticated) {
     const eventId = String(event?.id || "");
     if (!isAuthenticated) {
-      const next = encodeURIComponent("/events.html");
+      const next = encodeURIComponent("/join.html#join-future-events");
       return `<a href="/auth/discord/login?next=${next}" class="event-signup-btn">Login to Sign up</a>`;
     }
     const currentStatus = String(event?.currentUserSignup?.status || "").toLowerCase();
@@ -210,7 +210,7 @@ if (!plb) {
     });
     const payload = await res.json().catch(() => ({}));
     if (res.status === 401) {
-      const next = encodeURIComponent("/events.html");
+      const next = encodeURIComponent("/join.html#join-future-events");
       window.location.href = `/auth/discord/login?next=${next}`;
       return;
     }

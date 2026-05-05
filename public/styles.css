@@ -4623,3 +4623,227 @@ button.raid-cal-run.raid-cal-run--column:hover {
     display: none;
   }
 }
+
+/* Join Us — Future Events tiles */
+.join-future-events {
+  scroll-margin-top: 100px;
+}
+
+.join-future-events-lede {
+  margin: 0 0 12px;
+}
+
+.join-events-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.join-events-loading,
+.join-events-empty,
+.join-events-error {
+  margin: 4px 0 0;
+}
+
+.join-event-tile {
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  min-height: 100%;
+}
+
+.join-event-tile-banner {
+  position: relative;
+  height: 72px;
+  background: var(--card2);
+}
+
+.join-event-tile-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  display: block;
+}
+
+.join-event-tile-body {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.join-event-tile-title {
+  margin: 0;
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 1.35rem;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.join-event-tile-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  font-size: 0.85rem;
+}
+
+.join-event-tile-date {
+  font-weight: 800;
+  color: var(--yellow);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.join-event-tile-time {
+  font-weight: 700;
+  color: var(--text2);
+}
+
+.join-event-tile-countdown {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.join-event-countdown-label {
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9px;
+}
+
+.join-event-countdown-value {
+  color: var(--mint);
+  font-weight: 700;
+}
+
+.join-event-tile-desc {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.8em;
+}
+
+.join-event-tile-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.join-event-gaps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.join-event-gaps--ok .join-event-gap-chip {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.08);
+  color: var(--mint);
+}
+
+.join-event-gap-chip {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-dim);
+}
+
+.join-event-gap-chip--need {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--yellow);
+}
+
+.join-event-gap-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.join-event-tile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.join-event-signup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.35), rgba(168, 85, 247, 0.45));
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.join-event-signup-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.35);
+}
+
+.join-event-signup-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.join-event-signup-btn--ghost {
+  background: transparent;
+  border-color: var(--border);
+  font-weight: 700;
+}
+
+.join-event-softres {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--blue-l);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 520px) {
+  .join-event-tile-countdown {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .join-event-gap-meta {
+    width: 100%;
+    margin-left: 0;
+  }
+}
