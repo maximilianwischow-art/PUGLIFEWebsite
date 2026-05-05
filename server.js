@@ -1949,13 +1949,20 @@ async function collectPastParticipantSignals(maxPastEvents = 60) {
   const serverId = raidHelperDiscordGuildId();
   if (!serverId) return out;
   const nowSec = Math.floor(Date.now() / 1000);
+  const minStartSec = Math.floor(Date.UTC(2026, 0, 1, 0, 0, 0) / 1000);
   const allEvents = await fetchRaidHelperServerEvents(serverId);
   const pastEvents = allEvents
     .map((event) => ({
       id: String(event.id || event.eventId || event.eventID || ""),
       startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
     }))
-    .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime > 0 && event.startTime <= nowSec)
+    .filter(
+      (event) =>
+        event.id &&
+        Number.isFinite(event.startTime) &&
+        event.startTime >= minStartSec &&
+        event.startTime <= nowSec
+    )
     .sort((a, b) => b.startTime - a.startTime)
     .slice(0, Math.max(1, Math.min(120, Math.floor(Number(maxPastEvents || 60)))));
   for (const ev of pastEvents) {

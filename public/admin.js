@@ -1088,6 +1088,7 @@ function roleAlertsCandidatesHtml(analysis) {
     <div class="admin-actions admin-actions--tight">
       <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsMarkAllBtn">Mark all</button>
       <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsDeselectAllBtn">Deselect all</button>
+      <button type="button" class="event-signup-btn" data-role-alert-send>Send DM to selected raiders</button>
     </div>
     <div class="admin-table-wrap">
       <table class="admin-table">
@@ -1591,26 +1592,26 @@ document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async
   }
 });
 
-document.getElementById("roleAlertsSendBtn")?.addEventListener("click", async () => {
-  const btn = document.getElementById("roleAlertsSendBtn");
+async function sendRoleAlertsDms(btn) {
+  const actionBtn = btn || document.getElementById("roleAlertsSendBtn");
   const eventId = roleAlertsSelectedEventId();
   if (!eventId) {
     status("Select a raid event first.");
-    return;
+    return false;
   }
   const targetRoles = roleAlertsReadTargetRoles();
   if (!targetRoles.length) {
     status("Select at least one role in the DM? column.");
-    return;
+    return false;
   }
   const targetUserIds = roleAlertsReadTargetUserIds();
   if (!targetUserIds.length) {
     status("Select at least one raider in the matching list.");
-    return;
+    return false;
   }
   try {
     const payload = await runWithButtonFeedback(
-      btn,
+      actionBtn,
       { idle: "Send DM to selected raiders", loading: "Sending...", success: "Sent", failure: "Failed" },
       async () =>
         getJson("/api/admin/role-alerts/send", {
@@ -1631,10 +1632,12 @@ document.getElementById("roleAlertsSendBtn")?.addEventListener("click", async ()
         payload?.deliveredCount || 0
       )}, skipped: ${Number(payload?.skippedCount || 0)}.`
     );
+    return true;
   } catch (error) {
     status(error?.message || "Failed to send role-alert DMs");
+    return false;
   }
-});
+}
 
 document.addEventListener("click", (event) => {
   const addBtn = event.target.closest("[data-role-alert-manual-add]");
@@ -1664,6 +1667,11 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const sendBtn = event.target.closest("[data-role-alert-send], #roleAlertsSendBtn");
+  if (sendBtn) {
+    sendRoleAlertsDms(sendBtn);
+    return;
+  }
   const markAll = event.target.closest("#roleAlertsMarkAllBtn");
   if (markAll) {
     document.querySelectorAll("[data-role-alert-target-user-id]").forEach((el) => {
@@ -1707,8 +1715,20 @@ document.addEventListener("input", (event) => {
   if (!filterEl) return;
   const key = String(filterEl.getAttribute("data-role-alert-filter") || "").trim();
   if (!key) return;
-  roleAlertsCandidateFilterState = { ...roleAlertsCandidateFilterState, [key]: String(filterEl.value || "").trim() };
+  const nextValue = String(filterEl.value || "");
+  const selStart = Number(filterEl.selectionStart);
+  const selEnd = Number(filterEl.selectionEnd);
+  roleAlertsCandidateFilterState = { ...roleAlertsCandidateFilterState, [key]: nextValue };
   renderRoleAlertsAnalysis(roleAlertsAnalysisState);
+  const nextEl = document.querySelector(`[data-role-alert-filter="${key}"]`);
+  if (nextEl instanceof HTMLInputElement || nextEl instanceof HTMLSelectElement) {
+    nextEl.focus();
+    if (nextEl instanceof HTMLInputElement && Number.isFinite(selStart) && Number.isFinite(selEnd)) {
+      const start = Math.max(0, Math.min(selStart, nextEl.value.length));
+      const end = Math.max(start, Math.min(selEnd, nextEl.value.length));
+      nextEl.setSelectionRange(start, end);
+    }
+  }
 });
 
 document.addEventListener("click", async (event) => {
