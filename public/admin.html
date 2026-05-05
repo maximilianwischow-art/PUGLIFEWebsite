@@ -22,6 +22,7 @@
           <a href="/voting.html">Hall of Fame</a>
           <a href="/events.html">Future Events</a>
           <a href="/p2-preparation.html">Phase 2</a>
+          <a href="/join.html">Join Us</a>
           <a href="/admin.html" class="nav-current" aria-current="page">Admin</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
@@ -39,6 +40,7 @@
               <button type="button" class="admin-submenu-btn" data-admin-nav="gargul-import">Loot import (Gargul)</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
             </div>
           </nav>
         </section>
@@ -135,6 +137,16 @@
           <p class="subtle">Adjust current quantities for P2 tracker from one admin view.</p>
           <div id="adminP2Table" class="admin-grid-note">Loading material tracker...</div>
         </section>
+
+        <section class="card admin-panel" data-admin-panel="join-needs" id="admin-panel-join-needs">
+          <h3 class="section-title">Current Needs</h3>
+          <p class="subtle">Manage class/spec priorities shown on the Join page.</p>
+          <div id="adminJoinNeedsTable" class="admin-grid-note">Loading current needs...</div>
+          <div class="admin-actions">
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="joinNeedsAddRowBtn">Add row</button>
+            <button type="button" class="event-signup-btn" id="joinNeedsSaveBtn">Save Current Needs</button>
+          </div>
+        </section>
       </main>
 
       <footer class="footer">
@@ -143,13 +155,16 @@
         </div>
         <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
         <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
-        <p class="footer-legal-links"><a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a></p>
+        <p class="footer-legal-links">
+          <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a> ·
+          <a href="/join.html?unsubscribe_dm=1">Unsuscribe</a>
+        </p>
       </footer>
     </div>
 
     <script src="/session-api-cache.js?v=20260504a"></script>
     <script src="/home.js?v=20260428d"></script>
-    <script src="/admin.js?v=20260504i"></script>
+    <script src="/admin.js?v=20260505a"></script>
     <script src="/auth-ui.js?v=20260504b"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

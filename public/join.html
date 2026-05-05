@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="PUG Life Balance — recruit for TBC Classic 25-player raids on EU Thunderstrike. Schedule, needs, and how to apply."
+    />
+    <title>PUG LIFE BALANCE · Join Us</title>
+    <link rel="icon" href="/pug-life-balance-logo.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css?v=20260505joinc" />
+  </head>
+  <body>
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/home.html">Raid Performance</a>
+          <a href="/">Leaderboard</a>
+          <a href="/voting.html">Hall of Fame</a>
+          <a href="/events.html">Future Events</a>
+          <a href="/p2-preparation.html">Phase 2</a>
+          <a href="/join.html" class="nav-current" aria-current="page">Join Us</a>
+        </nav>
+        <div class="auth-top-right" data-auth-widget></div>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container join-page">
+        <section class="card join-hero">
+          <h2 class="join-hero-title">Answer the Call</h2>
+          <p class="join-hero-lede">
+            PUG Life Balance is recruiting skilled, reliable raiders for TBC Classic progression on EU Thunderstrike — focused, chill vibes.
+          </p>
+          <div class="join-cta-row">
+            <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join Discord</a>
+            <a
+              class="join-discord-btn"
+              id="joinDmSubscribeBtn"
+              href="/auth/discord/login?next=%2Fjoin.html"
+              title="Suscribe to Discord DM for SignUps"
+              aria-label="Suscribe to Discord DM for SignUps"
+              >Suscribe</a
+            >
+          </div>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">At a glance</h3>
+          <div class="join-stats" role="list">
+            <div class="join-stat" role="listitem">
+              <span class="join-stat-label">Realm</span>
+              <span class="join-stat-value">Thunderstrike EU</span>
+            </div>
+            <div class="join-stat" role="listitem">
+              <span class="join-stat-label">Content</span>
+              <span class="join-stat-value">TBC Classic</span>
+            </div>
+            <div class="join-stat" role="listitem">
+              <span class="join-stat-label">Raid style</span>
+              <span class="join-stat-value">OG PUG</span>
+            </div>
+            <div class="join-stat" role="listitem">
+              <span class="join-stat-label">Atmosphere</span>
+              <span class="join-stat-value join-stat-value--good">Chill · Focused</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card join-prose">
+          <h3 class="section-title">Who we are</h3>
+          <p>
+            We are a collection of World of Warcraft veterans who have been exploring Azeroth since Day 1. As our lives have
+            evolved over the years, so has our approach to the game. We built this community to keep the spirit of raiding alive
+            without the unnecessary drama. At PUG Life Balance, we prioritize a healthy harmony between high-level gaming and
+            real-world responsibilities. Welcome home!
+          </p>
+          <blockquote class="join-blockquote">"Time is money, friend!"<br />— Gazlowe / Every Goblin ever</blockquote>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">P2 Raid Time</h3>
+          <div class="join-schedule-grid join-schedule-grid--split">
+            <div class="join-schedule-card">
+              <span class="day">Thursday</span>
+              <span class="time">21:00 – 23:30</span>
+              <span class="tz">Server time (CET / CEST)</span>
+              <span class="raid-name">P2 progression</span>
+            </div>
+            <div class="join-schedule-card join-schedule-card--note">
+              <p>
+                We are prioritizing SSC progression during the opening weeks. Until it is cleared, TK IDs remain open for personal
+                PUG use. Once SSC is mastered, we will transition to clearing both raids in a single, efficient night.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <div class="join-ornament" aria-hidden="true">· · · ✦ · · ·</div>
+
+        <section class="card">
+          <h3 class="section-title">Current needs</h3>
+          <p class="subtle" style="margin-bottom: 10px">Snapshot only — exceptional players are always worth a conversation.</p>
+          <div class="join-needs" id="joinNeedsList" aria-live="polite">Loading current needs…</div>
+        </section>
+
+        <section class="card">
+          <h3 class="section-title">What we expect</h3>
+          <ul class="join-expect">
+            <li>
+              <span class="join-expect-icon" aria-hidden="true">⚔</span>
+              <div>
+                <strong>Know your class</strong>
+                <p>Proper gems and enchants, full consumes on progression nights, and a game plan for your cooldowns.</p>
+              </div>
+            </li>
+            <li>
+              <span class="join-expect-icon" aria-hidden="true">📅</span>
+              <div>
+                <strong>Reliable attendance</strong>
+                <p>We plan around a full roster. Post in Discord when life gets in the way — silence is the only unforgivable sin.</p>
+              </div>
+            </li>
+            <li>
+              <span class="join-expect-icon" aria-hidden="true">📈</span>
+              <div>
+                <strong>Growth mindset</strong>
+                <p>We read logs, fix mistakes, and move on. Egos stay outside the instance portal.</p>
+              </div>
+            </li>
+            <li>
+              <span class="join-expect-icon" aria-hidden="true">🎙</span>
+              <div>
+                <strong>Communication</strong>
+                <p>Working microphone and comfortable raid-call English for progression mechanics.</p>
+              </div>
+            </li>
+          </ul>
+        </section>
+
+      </main>
+
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"PUG LIFE BALANCE — We are PUG!"</em></p>
+        <p class="footer-sub">TBC Classic · EU — Thunderstrike</p>
+        <p class="footer-legal-links">
+          <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a> ·
+          <a href="/join.html?unsubscribe_dm=1">Unsuscribe</a>
+        </p>
+      </footer>
+    </div>
+
+    <script src="/home.js?v=20260428d"></script>
+    <script src="/join.js?v=20260505a"></script>
+    <script src="/auth-ui.js?v=20260504b"></script>
+    <script src="/cookie-notice.js?v=20260428p"></script>
+  </body>
+</html>

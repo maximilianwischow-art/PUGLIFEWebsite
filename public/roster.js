@@ -1,10 +1,11 @@
 const rosterActiveGrid = document.querySelector("#rosterActiveGrid");
 
 /** Display order: officers first (must match admin Account Assignment role names). */
-const GUILD_ROLE_SECTION_ORDER = ["Guildlead", "Raidlead", "Core", "Veteran", "Grunt", "Peon"];
+const GUILD_ROLE_SECTION_ORDER = ["Puglead", "Raidlead", "Core", "Veteran", "Grunt", "Peon"];
 
 function normalizeGuildRoleForSection(player, plb) {
-  const r = plb.primaryGuildRankLabel(player);
+  const raw = plb.primaryGuildRankLabel(player);
+  const r = raw === "Guildlead" ? "Puglead" : raw;
   return GUILD_ROLE_SECTION_ORDER.includes(r) ? r : "Peon";
 }
 

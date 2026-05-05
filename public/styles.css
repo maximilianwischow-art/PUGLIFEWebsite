@@ -1942,7 +1942,7 @@ body::before {
   transform-origin: center center;
 }
 
-/* Second slot for Core / Guildlead / Raidlead: attendance Peon–Veteran (teal ring vs purple primary). */
+/* Second slot for Core / PUG Lead / Raidlead: attendance Peon–Veteran (teal ring vs purple primary). */
 .raider-badge-slot--guild-role.raider-badge-slot--attendance-companion {
   box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.45);
 }
@@ -3913,4 +3913,411 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 .leaderboard-peak-parse {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+/* —— Join Us (recruiting) —— */
+.join-page {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.join-hero {
+  text-align: center;
+  padding: 8px 4px 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.join-hero-title {
+  margin: 0 0 10px;
+  font-family: "Morpheus", serif;
+  font-size: clamp(26px, 5vw, 44px);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1.12;
+  color: #fef8ff;
+  text-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.9),
+    0 0 24px rgba(168, 85, 247, 0.45);
+}
+
+.join-hero-lede {
+  margin: 0 auto;
+  max-width: 36em;
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.join-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.join-stat {
+  text-align: center;
+  padding: 14px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.join-stat .join-stat-label {
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.join-stat .join-stat-value {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 1.15rem;
+  letter-spacing: 0.06em;
+  color: var(--text2);
+}
+
+.join-stat .join-stat-value--good {
+  color: var(--mint);
+}
+
+.join-prose .section-title {
+  margin-bottom: 18px;
+}
+
+.join-prose p {
+  margin: 0 0 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  font-size: 0.98rem;
+}
+
+.join-prose p:last-child {
+  margin-bottom: 0;
+}
+
+.join-blockquote {
+  margin: 16px 0;
+  padding: 12px 0 12px 16px;
+  border-left: 3px solid rgba(251, 191, 36, 0.45);
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 1.05rem;
+}
+
+.join-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.join-discord-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 200px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: #0f0a14;
+  background: linear-gradient(135deg, #f9a8d4 0%, #c084fc 45%, #93c5fd 100%);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12) inset,
+    0 4px 18px rgba(236, 72, 153, 0.35);
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.join-discord-btn:hover {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.25) inset,
+    0 6px 24px rgba(168, 85, 247, 0.5);
+  transform: translateY(-1px);
+}
+
+.join-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.join-schedule-card {
+  padding: 14px 16px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.join-schedule-card .day {
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--yellow);
+  margin-bottom: 4px;
+}
+
+.join-schedule-card .time {
+  display: block;
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 1.5rem;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.join-schedule-card .tz {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.join-schedule-card .raid-name {
+  display: block;
+  margin-top: 8px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.join-schedule-grid--split {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 760px) {
+  .join-schedule-grid--split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.join-schedule-card--note p {
+  margin: 0;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+
+.join-ornament {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.35em;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+}
+
+.join-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.join-need-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.join-need-row--head {
+  background: transparent;
+  border-color: transparent;
+  padding-bottom: 2px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.join-class {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.join-class-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.join-spec {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.join-priority {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-align: center;
+  border: 1px solid var(--border);
+}
+
+.join-priority--high {
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.4);
+}
+
+.join-priority--medium {
+  color: var(--yellow);
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.join-priority--open {
+  color: var(--mint);
+  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(52, 211, 153, 0.32);
+}
+
+.join-expect {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.join-expect li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.join-expect-icon {
+  flex-shrink: 0;
+  font-size: 1.1rem;
+  line-height: 1.2;
+  margin-top: 2px;
+  filter: grayscale(0.2);
+}
+
+.join-expect strong {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text2);
+  margin-bottom: 2px;
+}
+
+.join-expect p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.join-discord-apply .join-discord-lede {
+  margin: 0 0 16px;
+  font-size: 0.98rem;
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+
+.join-step-list {
+  margin: 0 0 18px;
+  padding: 0 0 0 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.join-step-list li {
+  padding-left: 4px;
+}
+
+.join-step-list li strong {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+
+.join-step-list li span {
+  display: block;
+  color: var(--text-muted);
+}
+
+.join-discord-footnote {
+  margin: 16px 0 0;
+  font-size: 0.85rem;
+  font-style: italic;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 520px) {
+  .join-need-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "class class"
+      "spec pri";
+  }
+
+  .join-need-row .join-class {
+    grid-area: class;
+  }
+
+  .join-need-row .join-spec {
+    grid-area: spec;
+  }
+
+  .join-need-row .join-priority {
+    grid-area: pri;
+    justify-self: end;
+  }
+
+  .join-need-row--head {
+    display: none;
+  }
 }

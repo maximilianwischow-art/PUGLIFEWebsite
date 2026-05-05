@@ -281,6 +281,8 @@ let votingStoreReady = null;
 let votingWriteChain = Promise.resolve();
 let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
+const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
+const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
@@ -292,6 +294,10 @@ const eventsKpiMicroCache = new Map();
 const eventsKpiInflight = new Map();
 let p2MaterialsReady = null;
 let p2MaterialsWriteChain = Promise.resolve();
+let joinNeedsReady = null;
+let joinNeedsWriteChain = Promise.resolve();
+let discordDmSubscribersReady = null;
+let discordDmSubscribersWriteChain = Promise.resolve();
 let gargulLootReady = null;
 let gargulLootWriteChain = Promise.resolve();
 let netherVortexReady = null;
@@ -310,9 +316,19 @@ const P2_MATERIALS = [
   { id: "mercurial_adamantite", name: "Mercurial Adamantite", required: 5, defaultCurrent: 5 },
   { id: "primal_nether", name: "Primal Nether", required: 3, defaultCurrent: 0 },
 ];
+const DEFAULT_JOIN_NEEDS = [
+  { className: "Shaman", specFocus: "Enhancer", priority: "high", color: "#0070dd" },
+  { className: "Druid", specFocus: "Boomkin", priority: "high", color: "#ff7d0a" },
+  { className: "Paladin", specFocus: "Retri Pala", priority: "high", color: "#f58cba" },
+  { className: "Hunter", specFocus: "Hunter", priority: "medium", color: "#abd473" },
+];
 let p2MaterialsState = {
   currentById: Object.fromEntries(P2_MATERIALS.map((m) => [m.id, Number(m.defaultCurrent || 0)])),
 };
+let joinNeedsState = { rows: DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
+let discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] };
+let raidHelperDmPollTimer = null;
+let raidHelperDmPollRunning = false;
 
 function parseCookieHeader(cookieHeader) {
   const out = {};
@@ -1279,6 +1295,247 @@ async function setP2MaterialCurrent(materialId, currentValue) {
   await p2MaterialsWriteChain;
 }
 
+function sanitizeJoinNeedsRows(rawRows) {
+  const rows = Array.isArray(rawRows) ? rawRows : [];
+  const out = [];
+  for (const row of rows.slice(0, 24)) {
+    if (!row || typeof row !== "object") continue;
+    const className = String(row.className || "")
+      .trim()
+      .slice(0, 64);
+    const specFocus = String(row.specFocus || "")
+      .trim()
+      .slice(0, 96);
+    if (!className || !specFocus) continue;
+    const prRaw = String(row.priority || "open").trim().toLowerCase();
+    const priority = prRaw === "high" || prRaw === "medium" || prRaw === "open" ? prRaw : "open";
+    const colorRaw = String(row.color || "")
+      .trim()
+      .slice(0, 20);
+    const color = /^#[0-9a-f]{6}$/i.test(colorRaw) ? colorRaw : "#ffffff";
+    out.push({ className, specFocus, priority, color });
+  }
+  return out;
+}
+
+async function persistJoinNeedsStore() {
+  const tmpPath = `${joinNeedsPath}.tmp`;
+  const json = JSON.stringify(joinNeedsState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, joinNeedsPath);
+}
+
+async function ensureJoinNeedsStore() {
+  if (joinNeedsReady) return joinNeedsReady;
+  joinNeedsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(joinNeedsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const rows = sanitizeJoinNeedsRows(parsed?.rows);
+      joinNeedsState = { rows: rows.length ? rows : DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      joinNeedsState = { rows: DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
+      await persistJoinNeedsStore();
+    }
+  })();
+  return joinNeedsReady;
+}
+
+function sanitizeDiscordDmSubscribersState(raw) {
+  const byUserIdIn = raw && typeof raw.subscribersByUserId === "object" ? raw.subscribersByUserId : {};
+  const out = {};
+  for (const [userIdRaw, rowRaw] of Object.entries(byUserIdIn)) {
+    const userId = String(userIdRaw || "")
+      .trim()
+      .slice(0, 64);
+    if (!userId) continue;
+    const row = rowRaw && typeof rowRaw === "object" ? rowRaw : {};
+    out[userId] = {
+      userId,
+      username: String(row.username || "").trim().slice(0, 128),
+      globalName: String(row.globalName || "").trim().slice(0, 128),
+      subscribed: row.subscribed !== false,
+      updatedAt: Number.isFinite(Number(row.updatedAt)) ? Number(row.updatedAt) : Date.now(),
+    };
+  }
+  const notifiedRaw = Array.isArray(raw?.notifiedEventIds) ? raw.notifiedEventIds : [];
+  const notifiedEventIds = [...new Set(notifiedRaw.map((x) => String(x || "").trim()).filter(Boolean))].slice(-600);
+  return { subscribersByUserId: out, notifiedEventIds };
+}
+
+async function persistDiscordDmSubscribersStore() {
+  const tmpPath = `${discordDmSubscribersPath}.tmp`;
+  const json = JSON.stringify(discordDmSubscribersState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, discordDmSubscribersPath);
+}
+
+async function ensureDiscordDmSubscribersStore() {
+  if (discordDmSubscribersReady) return discordDmSubscribersReady;
+  discordDmSubscribersReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(discordDmSubscribersPath, "utf8");
+      const parsed = JSON.parse(raw);
+      discordDmSubscribersState = sanitizeDiscordDmSubscribersState(parsed);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] };
+      await persistDiscordDmSubscribersStore();
+    }
+  })();
+  return discordDmSubscribersReady;
+}
+
+async function setDiscordDmSubscriptionForSessionUser(session, subscribed) {
+  await ensureDiscordDmSubscribersStore();
+  const userId = String(session?.user?.id || "").trim();
+  if (!userId) throw new Error("Login required");
+  const nextSubscribed = Boolean(subscribed);
+  const username = String(session?.user?.username || "").trim();
+  const globalName = String(session?.user?.globalName || "").trim();
+  discordDmSubscribersWriteChain = discordDmSubscribersWriteChain.catch(() => {}).then(async () => {
+    const prev =
+      discordDmSubscribersState.subscribersByUserId[userId] && typeof discordDmSubscribersState.subscribersByUserId[userId] === "object"
+        ? discordDmSubscribersState.subscribersByUserId[userId]
+        : {};
+    discordDmSubscribersState.subscribersByUserId[userId] = {
+      userId,
+      username: username || String(prev.username || ""),
+      globalName: globalName || String(prev.globalName || ""),
+      subscribed: nextSubscribed,
+      updatedAt: Date.now(),
+    };
+    await persistDiscordDmSubscribersStore();
+  });
+  await discordDmSubscribersWriteChain;
+  return discordDmSubscribersState.subscribersByUserId[userId];
+}
+
+function raidHelperDmPollIntervalMs() {
+  const raw = Number(process.env.RAID_HELPER_DM_POLL_MS);
+  if (Number.isFinite(raw) && raw >= 60_000) return Math.min(60 * 60_000, Math.floor(raw));
+  return 3 * 60_000;
+}
+
+function canRunRaidHelperDmNotifier() {
+  return Boolean(process.env.DISCORD_BOT_TOKEN?.trim() && process.env.RAID_HELPER_API_KEY?.trim() && raidHelperDiscordGuildId());
+}
+
+async function discordBotApi(pathname, { method = "GET", body } = {}) {
+  const botToken = String(process.env.DISCORD_BOT_TOKEN || "").trim();
+  if (!botToken) throw new Error("Missing DISCORD_BOT_TOKEN");
+  const res = await fetch(`${DISCORD_API_BASE}${pathname}`, {
+    method,
+    headers: {
+      Authorization: `Bot ${botToken}`,
+      "Content-Type": "application/json",
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = String(payload?.message || `Discord bot API failed (${res.status})`).slice(0, 180);
+    throw new Error(msg);
+  }
+  return payload;
+}
+
+function formatRaidHelperEventStartForDm(startTimeSec) {
+  const sec = Number(startTimeSec || 0);
+  if (!Number.isFinite(sec) || sec <= 0) return "unknown time";
+  const dt = new Date(sec * 1000);
+  if (Number.isNaN(dt.getTime())) return "unknown time";
+  return dt.toLocaleString();
+}
+
+async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
+  const evId = String(eventRow?.id || "");
+  const title = String(eventRow?.title || "New raid event").trim() || "New raid event";
+  const when = formatRaidHelperEventStartForDm(eventRow?.startTime);
+  const url = evId ? `https://raid-helper.dev/event/${encodeURIComponent(evId)}` : "";
+  const dm = await discordBotApi("/users/@me/channels", {
+    method: "POST",
+    body: { recipient_id: String(userId || "") },
+  });
+  const channelId = String(dm?.id || "").trim();
+  if (!channelId) throw new Error("Could not open DM channel");
+  const lines = [`A new Raid-Helper event was posted: **${title}**`, `Start: ${when}`];
+  if (url) lines.push(`Open event: ${url}`);
+  lines.push("");
+  lines.push("You receive this because you subscribed on wow-pug.com.");
+  await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
+    method: "POST",
+    body: { content: lines.join("\n") },
+  });
+}
+
+async function runRaidHelperDmPollOnce() {
+  if (raidHelperDmPollRunning) return;
+  raidHelperDmPollRunning = true;
+  try {
+    if (!canRunRaidHelperDmNotifier()) return;
+    await ensureDiscordDmSubscribersStore();
+    const serverId = raidHelperDiscordGuildId();
+    if (!serverId) return;
+    const events = await fetchRaidHelperServerEvents(serverId);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const latestPosted = (Array.isArray(events) ? events : [])
+      .map((event) => ({
+        id: String(event.id || event.eventId || event.eventID || "").trim(),
+        startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+        title: String(event.title || event.name || event.description || "Raid event").trim(),
+      }))
+      .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime >= nowSec - 6 * 3600)
+      .sort((a, b) => b.startTime - a.startTime)
+      .slice(0, 4);
+    const alreadyNotified = new Set(discordDmSubscribersState.notifiedEventIds || []);
+    const newEvents = latestPosted.filter((event) => !alreadyNotified.has(event.id));
+    if (!newEvents.length) return;
+    const subscribers = Object.values(discordDmSubscribersState.subscribersByUserId || {}).filter(
+      (row) => row && row.subscribed && String(row.userId || "").trim()
+    );
+    if (!subscribers.length) {
+      discordDmSubscribersState.notifiedEventIds = [...alreadyNotified, ...newEvents.map((ev) => ev.id)].slice(-600);
+      await persistDiscordDmSubscribersStore();
+      return;
+    }
+    for (const event of newEvents) {
+      for (const sub of subscribers) {
+        try {
+          await sendDiscordDmForRaidHelperEvent(sub.userId, event);
+        } catch (error) {
+          console.warn(`[dm] failed for user ${sub.userId}:`, error?.message || error);
+        }
+      }
+      alreadyNotified.add(event.id);
+    }
+    discordDmSubscribersState.notifiedEventIds = [...alreadyNotified].slice(-600);
+    await persistDiscordDmSubscribersStore();
+  } catch (error) {
+    console.warn("[dm] Raid Helper poll failed:", error?.message || error);
+  } finally {
+    raidHelperDmPollRunning = false;
+  }
+}
+
+function startRaidHelperDmNotifier() {
+  if (raidHelperDmPollTimer) return;
+  if (!canRunRaidHelperDmNotifier()) {
+    console.warn(
+      "[dm] DM notifier disabled. Set DISCORD_BOT_TOKEN + RAID_HELPER_API_KEY + DISCORD_GUILD_ID (or RAID_HELPER_SERVER_ID)."
+    );
+    return;
+  }
+  const intervalMs = raidHelperDmPollIntervalMs();
+  runRaidHelperDmPollOnce().catch(() => {});
+  raidHelperDmPollTimer = setInterval(() => {
+    runRaidHelperDmPollOnce().catch(() => {});
+  }, intervalMs);
+}
+
 async function persistGargulLootHistory() {
   const tmpPath = `${gargulLootHistoryPath}.tmp`;
   const json = JSON.stringify(gargulLootState, null, 2);
@@ -2114,6 +2371,39 @@ app.get("/api/auth/me", (req, res) => {
   });
 });
 
+app.get("/api/join/dm-subscription", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.json({ ok: true, authenticated: false, subscribed: false });
+    }
+    await ensureDiscordDmSubscribersStore();
+    const userId = String(session.user.id || "").trim();
+    const row = discordDmSubscribersState.subscribersByUserId[userId];
+    return res.json({
+      ok: true,
+      authenticated: true,
+      subscribed: Boolean(row?.subscribed),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load DM subscription state" });
+  }
+});
+
+app.put("/api/join/dm-subscription", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.status(401).json({ ok: false, error: "Login required" });
+    }
+    const subscribed = req.body?.subscribed !== false;
+    const row = await setDiscordDmSubscriptionForSessionUser(session, subscribed);
+    return res.json({ ok: true, subscribed: Boolean(row?.subscribed) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save DM subscription" });
+  }
+});
+
 app.get("/api/admin/health", (req, res) => {
   const session = getSessionFromRequest(req);
   if (!session?.user?.id) {
@@ -2150,6 +2440,46 @@ app.get("/api/p2-preparation/materials", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load materials" });
+  }
+});
+
+app.get("/api/join/current-needs", async (_req, res) => {
+  try {
+    await ensureJoinNeedsStore();
+    return res.json({ ok: true, rows: joinNeedsState.rows || [] });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load current needs" });
+  }
+});
+
+app.get("/api/admin/join/current-needs", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureJoinNeedsStore();
+    return res.json({ ok: true, rows: joinNeedsState.rows || [] });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load admin current needs" });
+  }
+});
+
+app.put("/api/admin/join/current-needs", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const rows = sanitizeJoinNeedsRows(req.body?.rows);
+    if (!rows.length) {
+      return res.status(400).json({ ok: false, error: "At least one valid row is required" });
+    }
+    await ensureJoinNeedsStore();
+    joinNeedsWriteChain = joinNeedsWriteChain.catch(() => {}).then(async () => {
+      joinNeedsState.rows = rows;
+      await persistJoinNeedsStore();
+    });
+    await joinNeedsWriteChain;
+    return res.json({ ok: true, rows: joinNeedsState.rows || [] });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save current needs" });
   }
 });
 
@@ -7268,6 +7598,13 @@ app.listen(port, () => {
   ensureP2MaterialsStore().catch((error) => {
     console.error("Failed to initialize P2 materials store:", error?.message || error);
   });
+  ensureJoinNeedsStore().catch((error) => {
+    console.error("Failed to initialize Join needs store:", error?.message || error);
+  });
+  ensureDiscordDmSubscribersStore().catch((error) => {
+    console.error("Failed to initialize Discord DM subscribers store:", error?.message || error);
+  });
+  startRaidHelperDmNotifier();
   ensureGargulLootHistoryStore().catch((error) => {
     console.error("Failed to initialize Gargul loot history store:", error?.message || error);
   });

@@ -6,8 +6,8 @@ const leaderboardTbody = document.querySelector("#leaderboardTableBody");
 const leaderboardTable = document.querySelector("#leaderboardTable");
 const leaderboardSortBar = document.querySelector("#leaderboardSortBar");
 
-/** Display / default sort: highest rank first (Guildlead → Peon). */
-const RAID_RANK_SORT_ORDER = ["Guildlead", "Raidlead", "Core", "Veteran", "Grunt", "Peon"];
+/** Display / default sort: highest rank first (PUG Lead → Peon). */
+const RAID_RANK_SORT_ORDER = ["Puglead", "Raidlead", "Core", "Veteran", "Grunt", "Peon"];
 
 /** @type {{ key: string, dir: "asc"|"desc" }} */
 let sortState = { key: "raidRank", dir: "asc" };
@@ -145,7 +145,8 @@ function totalDeathsForPlayer(player, deathMap) {
 }
 
 function raidRankSortIndex(label) {
-  const i = RAID_RANK_SORT_ORDER.indexOf(String(label || ""));
+  const normalized = String(label || "").trim() === "Guildlead" ? "Puglead" : String(label || "").trim();
+  const i = RAID_RANK_SORT_ORDER.indexOf(normalized);
   return i === -1 ? 999 : i;
 }
 
@@ -241,9 +242,10 @@ function peakParseCellHtml(p) {
   return `<strong class="leaderboard-peak-parse ${tier}" title="${escapeHtml(title)}">${escapeHtml(txt)}</strong>`;
 }
 
-/** Single-word display for pill (e.g. Guildlead → GUILDLEAD, Raid lead → RAIDLEAD). */
+/** Single-word display for pill (e.g. PUG Lead → PUGLEAD, Raid lead → RAIDLEAD). */
 function raidRankPillDisplay(label) {
-  return String(label || "")
+  const displayLabel = String(label || "").trim() === "Guildlead" ? "PUG Lead" : String(label || "");
+  return displayLabel
     .replace(/\s+/g, "")
     .toUpperCase();
 }
@@ -254,11 +256,12 @@ function raidRankPillHtml(raidRank) {
   }
   const escapeHtml = plb.escapeHtml;
   const raw = String(raidRank || "").trim();
+  const displayRaw = raw === "Guildlead" ? "PUG Lead" : raw;
   if (!raw) {
     return `<span class="leaderboard-raid-rank-pill leaderboard-raid-rank-pill--empty">—</span>`;
   }
-  const display = raidRankPillDisplay(raw);
-  return `<span class="leaderboard-raid-rank-pill" title="Raid rank: ${escapeHtml(raw)}">${escapeHtml(display)}</span>`;
+  const display = raidRankPillDisplay(displayRaw);
+  return `<span class="leaderboard-raid-rank-pill" title="Raid rank: ${escapeHtml(displayRaw)}">${escapeHtml(display)}</span>`;
 }
 
 function lootItemTooltipTitle(meta) {

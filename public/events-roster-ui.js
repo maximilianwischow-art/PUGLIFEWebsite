@@ -18,9 +18,9 @@ const IMAGE_ASSET_VERSION = "20260504j";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
-const GUILD_ROLE_BADGE_SLUGS = new Set(["peon", "grunt", "veteran", "core", "guildlead", "raidlead"]);
+const GUILD_ROLE_BADGE_SLUGS = new Set(["peon", "grunt", "veteran", "core", "puglead", "guildlead", "raidlead"]);
 /** Core / leads are set in Account Assignment; Peon–Veteran on site follow WCL attendance (last N raids). */
-const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Guildlead", "Raidlead"]);
+const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Puglead", "Guildlead", "Raidlead"]);
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 /** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
 let attendanceLeaderboardByKey = new Map();
@@ -1148,12 +1148,17 @@ function rosterCardKpisHtml(player, confirmedRoster) {
 
 function rosterGuildRoleSlug(player) {
   const raw = String(player?.guildRole ?? "Peon").trim();
-  const slug = raw.toLowerCase();
+  const slug = (raw === "Guildlead" ? "Puglead" : raw).toLowerCase();
   return GUILD_ROLE_BADGE_SLUGS.has(slug) ? slug : "peon";
 }
 
 function assignedGuildRoleFromPlayer(player) {
-  return String(player?.guildRole ?? "Peon").trim() || "Peon";
+  const raw = String(player?.guildRole ?? "Peon").trim() || "Peon";
+  return raw === "Guildlead" ? "Puglead" : raw;
+}
+
+function displayGuildRoleLabel(roleLabel) {
+  return String(roleLabel || "").trim() === "Puglead" ? "PUG Lead" : String(roleLabel || "").trim();
 }
 
 /** Raids attended in the same capped window as KPI / % (typically last 6 tracked 25-player raids). */
@@ -1177,7 +1182,7 @@ function attendanceTierGuildRole(player) {
   return attendanceTierGuildRoleFromRaids(attendanceRaidsCountForPlayer(player));
 }
 
-/** Primary rank label: manual Core / Guildlead / Raidlead; else attendance-based Peon–Veteran. */
+/** Primary rank label: manual Core / PUG Lead / Raidlead; else attendance-based Peon–Veteran. */
 function primaryGuildRankLabel(player) {
   const assigned = assignedGuildRoleFromPlayer(player);
   if (MANUAL_ONLY_GUILD_ROLES.has(assigned)) return assigned;
@@ -1196,9 +1201,10 @@ function rosterGuildRoleBadgeSrcForLabel(roleLabel) {
 /** Primary guild rank badge (manual officer art OR attendance tier for everyone else). */
 function rosterGuildRoleBadgeHtml(player) {
   const roleLabel = primaryGuildRankLabel(player);
-  const title = `Guild rank: ${roleLabel}`;
+  const displayLabel = displayGuildRoleLabel(roleLabel);
+  const title = `Guild rank: ${displayLabel}`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(roleLabel));
-  const alt = escapeHtml(`Guild rank: ${roleLabel}`);
+  const alt = escapeHtml(`Guild rank: ${displayLabel}`);
   return `<span class="raider-badge-slot raider-badge-slot--guild-role" title="${escapeHtml(title)}"><img class="raider-badge-role-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" /></span>`;
 }
 
@@ -1217,15 +1223,16 @@ function rosterAttendanceCompanionBadgeHtml(player) {
 /** Section heading for guild roster page — rank badge + label (decorative img alt empty; label is visible). */
 function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
   const label = String(roleLabel ?? "Peon").trim() || "Peon";
+  const displayLabel = displayGuildRoleLabel(label);
   const slug = rosterGuildRoleSlug({ guildRole: label });
   const src = escapeHtml(`/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`);
-  const tip = escapeHtml(`Guild rank: ${label}`);
+  const tip = escapeHtml(`Guild rank: ${displayLabel}`);
   return `
     <div class="roster-role-title roster-role-title--guild-tier">
       <span class="roster-section-guild-badge raider-badge-slot raider-badge-slot--guild-role" title="${tip}">
         <img class="raider-badge-role-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async" />
       </span>
-      <span class="roster-role-title-text">${escapeHtml(label)} <span class="roster-role-title-count">(${Number(count) || 0})</span></span>
+      <span class="roster-role-title-text">${escapeHtml(displayLabel)} <span class="roster-role-title-count">(${Number(count) || 0})</span></span>
     </div>`;
 }
 

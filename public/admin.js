@@ -9,21 +9,28 @@ function esc(v) {
 let gargulEntriesState = [];
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
+let joinNeedsState = [];
 
 /** Same guild as Leaderboard (/) / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
 const ADMIN_WCL_GUILD_ID = 817080;
 
 /** Must match `RH_WCL_GUILD_ROLES` in `lib/rh-wcl-guess.mjs` / server sanitize. */
-const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Guildlead", "Raidlead"];
+const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Puglead", "Raidlead"];
+
+function normalizeGuildRoleValue(role) {
+  const s = String(role || "").trim();
+  if (s === "Guildlead") return "Puglead";
+  return RH_WCL_GUILD_ROLES.includes(s) ? s : "Peon";
+}
 
 function rhWclGuildRoleSelectHtml(current) {
-  const sel = RH_WCL_GUILD_ROLES.includes(current) ? current : "Peon";
-  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (Core, Guildlead, Raidlead are fixed ranks; Peon–Veteran on Events and Roster follow WCL attendance)">${RH_WCL_GUILD_ROLES.map(
+  const sel = normalizeGuildRoleValue(current);
+  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (Core, PUG Lead, Raidlead are fixed ranks; Peon–Veteran on Events and Roster follow WCL attendance)">${RH_WCL_GUILD_ROLES.map(
     (r) => `<option value="${esc(r)}"${r === sel ? " selected" : ""}>${esc(r)}</option>`
   ).join("")}</select>`;
 }
 
-const ADMIN_PANEL_IDS = ["rh-wcl", "wcl-events", "gargul-import", "loot-corrections", "p2-materials"];
+const ADMIN_PANEL_IDS = ["rh-wcl", "wcl-events", "gargul-import", "loot-corrections", "p2-materials", "join-needs"];
 
 function parseAdminHash() {
   const raw = (location.hash || "").replace(/^#/, "").trim();
@@ -656,7 +663,7 @@ function readRhWclLinkRowFromTr(tr) {
   }
 
   const roleRaw = String(tr.querySelector('[data-rh-wcl-k="guildRole"]')?.value || "").trim();
-  const guildRole = RH_WCL_GUILD_ROLES.includes(roleRaw) ? roleRaw : "Peon";
+  const guildRole = normalizeGuildRoleValue(roleRaw);
 
   const row = { raidHelperName: rh, wclCharacterNames, guildRole };
   if (wclSources.length === wclCharacterNames.length && wclCharacterNames.length > 0) {
@@ -698,6 +705,54 @@ function renderP2Table(materials) {
   `;
 }
 
+function renderJoinNeedsTable(rows) {
+  joinNeedsState = Array.isArray(rows) ? rows : [];
+  const host = document.getElementById("adminJoinNeedsTable");
+  if (!host) return;
+  host.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Class</th><th>Spec focus</th><th>Priority</th><th>Color</th><th>Remove</th></tr></thead>
+        <tbody>
+          ${joinNeedsState
+            .map(
+              (row, idx) => `
+                <tr data-join-need-row="${idx}">
+                  <td><input class="admin-input" data-join-need-k="className" value="${esc(row.className || "")}" placeholder="Shaman" /></td>
+                  <td><input class="admin-input" data-join-need-k="specFocus" value="${esc(row.specFocus || "")}" placeholder="Enhancement" /></td>
+                  <td>
+                    <select class="admin-input" data-join-need-k="priority">
+                      <option value="high"${String(row.priority || "").toLowerCase() === "high" ? " selected" : ""}>High</option>
+                      <option value="medium"${String(row.priority || "").toLowerCase() === "medium" ? " selected" : ""}>Medium</option>
+                      <option value="open"${String(row.priority || "").toLowerCase() === "open" ? " selected" : ""}>Open</option>
+                    </select>
+                  </td>
+                  <td><input class="admin-input" data-join-need-k="color" value="${esc(row.color || "")}" placeholder="#0070dd" /></td>
+                  <td><button type="button" class="event-signup-btn event-signup-btn--softres" data-join-need-remove="${idx}">Remove</button></td>
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function readJoinNeedsFromTable() {
+  return [...document.querySelectorAll("[data-join-need-row]")]
+    .map((tr) => {
+      const pick = (k) => tr.querySelector(`[data-join-need-k="${k}"]`);
+      return {
+        className: String(pick("className")?.value || "").trim(),
+        specFocus: String(pick("specFocus")?.value || "").trim(),
+        priority: String(pick("priority")?.value || "open").trim().toLowerCase(),
+        color: String(pick("color")?.value || "").trim(),
+      };
+    })
+    .filter((row) => row.className && row.specFocus);
+}
+
 async function loadAdminData() {
   const me = await getJson("/api/auth/me");
   const rhHost = document.getElementById("rhWclLinksTableHost");
@@ -712,6 +767,7 @@ async function loadAdminData() {
   const gargul = await getJson("/api/loot-history/gargul");
   const loot = await getJson("/api/loot-history?limit=25");
   const p2 = await getJson("/api/p2-preparation/materials");
+  const joinNeeds = await getJson("/api/admin/join/current-needs");
   let rhLinks = [];
   try {
     const rh = await getJson("/api/admin/rh-wcl-links");
@@ -729,6 +785,7 @@ async function loadAdminData() {
   renderTargetReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
+  renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
   renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
 }
@@ -1035,6 +1092,44 @@ document.addEventListener("click", async (event) => {
   if (!Number.isFinite(idx)) return;
   links.splice(idx, 1);
   renderRhWclLinksTable(links.length ? links : [{ raidHelperName: "", wclCharacterNames: [], guildRole: "Peon" }]);
+});
+
+document.getElementById("joinNeedsAddRowBtn")?.addEventListener("click", () => {
+  const rows = readJoinNeedsFromTable();
+  rows.push({ className: "", specFocus: "", priority: "open", color: "#ffffff" });
+  renderJoinNeedsTable(rows);
+});
+
+document.getElementById("joinNeedsSaveBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("joinNeedsSaveBtn");
+  const rows = readJoinNeedsFromTable();
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Save Current Needs", loading: "Saving...", success: "Saved", failure: "Save failed" },
+      async () => {
+        const payload = await getJson("/api/admin/join/current-needs", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows }),
+        });
+        renderJoinNeedsTable(Array.isArray(payload?.rows) ? payload.rows : rows);
+      }
+    );
+    status(`Saved ${rows.length} current need row(s).`);
+  } catch (error) {
+    status(error?.message || "Failed to save current needs");
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const rm = event.target.closest("[data-join-need-remove]");
+  if (!rm) return;
+  const idx = Number(rm.getAttribute("data-join-need-remove"));
+  if (!Number.isFinite(idx)) return;
+  const rows = readJoinNeedsFromTable();
+  rows.splice(idx, 1);
+  renderJoinNeedsTable(rows);
 });
 
 document.addEventListener("click", async (event) => {
