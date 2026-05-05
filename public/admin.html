@@ -40,6 +40,7 @@
               <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="data-sync">Data sync</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Raid Roster Management</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="custom-dm">Custom messages</button>
             </div>
@@ -149,6 +150,20 @@
           </div>
         </section>
 
+        <section class="card admin-panel" data-admin-panel="data-sync" id="admin-panel-data-sync">
+          <h3 class="section-title">Public Data Sync</h3>
+          <p class="subtle">
+            Public pages use the synced snapshot for faster load times. Admin tools continue to pull live API data.
+          </p>
+          <div id="publicSnapshotStatus" class="admin-grid-note">Loading snapshot status...</div>
+          <div class="admin-actions">
+            <button type="button" class="event-signup-btn" id="publicSnapshotSyncBtn">Sync data now</button>
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="publicSnapshotReloadBtn">
+              Reload status
+            </button>
+          </div>
+        </section>
+
         <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
           <h3 class="section-title">Raid Roster Management</h3>
           <p class="subtle">
@@ -192,7 +207,7 @@
 
     <script src="/session-api-cache.js?v=20260504a"></script>
     <script src="/home.js?v=20260505black1"></script>
-    <script src="/admin.js?v=20260505customdm1"></script>
+    <script src="/admin.js?v=20260505sync1"></script>
     <script src="/auth-ui.js?v=20260504b"></script>
     <script src="/cookie-notice.js?v=20260428p"></script>
   </body>

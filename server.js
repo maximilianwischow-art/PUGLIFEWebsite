@@ -111,6 +111,32 @@ app.use(
   })
 );
 
+app.use("/api", async (req, res, next) => {
+  if (!shouldUsePublicSnapshot(req)) return next();
+  try {
+    await ensurePublicDataSnapshotStore();
+    const key = publicSnapshotKeyFromRequest(req);
+    const hit = publicDataSnapshotState.byKey?.[key];
+    if (hit && Object.prototype.hasOwnProperty.call(hit, "payload")) {
+      res.setHeader("x-plb-public-snapshot", "hit");
+      return res.json(hit.payload);
+    }
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode >= 200 && res.statusCode < 400) {
+        upsertPublicSnapshotForKey(key, body).catch((error) =>
+          console.error("[public-snapshot] write-through failed:", error?.message || error)
+        );
+      }
+      return originalJson(body);
+    };
+    return next();
+  } catch (error) {
+    console.error("[public-snapshot] middleware failed:", error?.message || error);
+    return next();
+  }
+});
+
 const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
 const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
@@ -286,6 +312,7 @@ const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
+const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
 const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
 const apiCacheDir = path.join(dataDir, "cache");
@@ -305,8 +332,11 @@ let gargulLootReady = null;
 let gargulLootWriteChain = Promise.resolve();
 let netherVortexReady = null;
 let netherVortexWriteChain = Promise.resolve();
+let publicDataSnapshotReady = null;
+let publicDataSnapshotWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
+let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let rhWclLinksReady = null;
 /** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
@@ -2222,6 +2252,70 @@ async function ensureNetherVortexStore() {
   return netherVortexReady;
 }
 
+async function persistPublicDataSnapshotStore() {
+  const tmpPath = `${publicDataSnapshotPath}.tmp`;
+  const json = JSON.stringify(publicDataSnapshotState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, publicDataSnapshotPath);
+}
+
+async function ensurePublicDataSnapshotStore() {
+  if (publicDataSnapshotReady) return publicDataSnapshotReady;
+  publicDataSnapshotReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(publicDataSnapshotPath, "utf8");
+      const parsed = JSON.parse(raw);
+      publicDataSnapshotState = {
+        updatedAt: Number(parsed?.updatedAt || 0),
+        byKey:
+          parsed?.byKey && typeof parsed.byKey === "object" && !Array.isArray(parsed.byKey)
+            ? parsed.byKey
+            : {},
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      publicDataSnapshotState = { updatedAt: 0, byKey: {} };
+      await persistPublicDataSnapshotStore();
+    }
+  })();
+  return publicDataSnapshotReady;
+}
+
+function publicSnapshotKeyFromRequest(req) {
+  const params = new URLSearchParams(req.query || {});
+  params.delete("live");
+  params.delete("snapshot_refresh");
+  const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const query = new URLSearchParams(entries).toString();
+  return query ? `${req.path}?${query}` : req.path;
+}
+
+function shouldUsePublicSnapshot(req) {
+  if (req.method !== "GET") return false;
+  if (String(req.query?.live || "") === "1") return false;
+  if (String(req.query?.snapshot_refresh || "") === "1") return false;
+  if (req.path.startsWith("/api/admin/")) return false;
+  if (req.path.startsWith("/api/auth/")) return false;
+  if (req.path === "/api/health") return false;
+  if (req.path === "/api/raid-helper/future-events") return true;
+  if (req.path === "/api/raid-helper/events-kpi") return true;
+  if (req.path === "/api/voting/hall-of-fame") return true;
+  return /^\/api\/wcl\/guild\/\d+\/(boss-times|recent-raids-calendar|latest-raid-mvp|death-leaderboard|attendance|death-encounter-heatmap|active-roster|loot-received|first-clear-participants)$/.test(
+    req.path
+  );
+}
+
+async function upsertPublicSnapshotForKey(key, payload) {
+  await ensurePublicDataSnapshotStore();
+  publicDataSnapshotState.byKey[key] = { syncedAt: Date.now(), payload };
+  publicDataSnapshotState.updatedAt = Date.now();
+  publicDataSnapshotWriteChain = publicDataSnapshotWriteChain
+    .then(() => persistPublicDataSnapshotStore())
+    .catch((error) => console.error("[public-snapshot] persist failed:", error?.message || error));
+  await publicDataSnapshotWriteChain;
+}
+
 async function ensureRhWclLinksStore() {
   if (rhWclLinksReady) return rhWclLinksReady;
   rhWclLinksReady = (async () => {
@@ -3522,6 +3616,77 @@ app.post("/api/admin/custom-dm/send", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to send custom DM" });
+  }
+});
+
+app.get("/api/admin/public-snapshot/status", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensurePublicDataSnapshotStore();
+    const keys = Object.keys(publicDataSnapshotState.byKey || {});
+    return res.json({
+      ok: true,
+      updatedAt: Number(publicDataSnapshotState.updatedAt || 0),
+      entries: keys.length,
+      keys: keys.slice(0, 120),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to read snapshot status" });
+  }
+});
+
+app.post("/api/admin/public-snapshot/sync", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensurePublicDataSnapshotStore();
+    const guildId = Number(req.body?.guildId || 817080);
+    const origin = `${req.protocol}://${req.get("host")}`;
+    const syncPaths = [
+      "/api/raid-helper/future-events",
+      `/api/raid-helper/events-kpi?guildId=${guildId}&maxPastEvents=80&wclLimit=40`,
+      `/api/wcl/guild/${guildId}/recent-raids-calendar?limit=60`,
+      `/api/wcl/guild/${guildId}/boss-times?limit=50`,
+      `/api/wcl/guild/${guildId}/latest-raid-mvp?limit=15`,
+      `/api/wcl/guild/${guildId}/death-leaderboard?limit=40&top=400`,
+      `/api/wcl/guild/${guildId}/attendance?limit=40&top=250`,
+      `/api/wcl/guild/${guildId}/death-encounter-heatmap?limit=25`,
+      `/api/wcl/guild/${guildId}/active-roster?limit=40&top=250&maxRhPastEvents=80`,
+      `/api/wcl/guild/${guildId}/loot-received?limit=40`,
+      `/api/wcl/guild/${guildId}/first-clear-participants?limit=150`,
+      "/api/voting/hall-of-fame",
+    ];
+    const results = [];
+    for (const rel of syncPaths) {
+      const joiner = rel.includes("?") ? "&" : "?";
+      const url = `${origin}${rel}${joiner}snapshot_refresh=1`;
+      try {
+        const response = await fetch(url, { method: "GET" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || (body && typeof body === "object" && body.ok === false)) {
+          throw new Error(body?.error || `Request failed (${response.status})`);
+        }
+        const key = publicSnapshotKeyFromRequest({
+          path: rel.split("?")[0],
+          query: Object.fromEntries(new URL(url).searchParams.entries()),
+        });
+        await upsertPublicSnapshotForKey(key, body);
+        results.push({ path: rel, ok: true });
+      } catch (error) {
+        results.push({ path: rel, ok: false, error: error?.message || "Sync failed" });
+      }
+    }
+    const okCount = results.filter((r) => r.ok).length;
+    return res.json({
+      ok: okCount > 0,
+      syncedAt: Date.now(),
+      okCount,
+      failCount: results.length - okCount,
+      results,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to sync public snapshot" });
   }
 });
 

@@ -52,6 +52,7 @@ const ADMIN_PANEL_IDS = [
   "loot-corrections",
   "p2-materials",
   "join-needs",
+  "data-sync",
   "role-alerts",
   "custom-dm",
 ];
@@ -1351,6 +1352,27 @@ async function loadCustomDmCandidates() {
   renderCustomDmPanel();
 }
 
+function renderPublicSnapshotStatus(payload) {
+  const host = document.getElementById("publicSnapshotStatus");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Snapshot status unavailable.</p>`;
+    return;
+  }
+  const entries = Number(payload.entries || 0);
+  const updatedAt = Number(payload.updatedAt || 0);
+  const updatedText = updatedAt ? new Date(updatedAt).toLocaleString() : "Never";
+  host.innerHTML = `
+    <p><strong>Last sync:</strong> ${esc(updatedText)}</p>
+    <p><strong>Cached endpoint variants:</strong> ${esc(String(entries))}</p>
+  `;
+}
+
+async function loadPublicSnapshotStatus() {
+  const payload = await getJson("/api/admin/public-snapshot/status");
+  renderPublicSnapshotStatus(payload);
+}
+
 async function loadAdminData() {
   const me = await getJson("/api/auth/me");
   const rhHost = document.getElementById("rhWclLinksTableHost");
@@ -1385,6 +1407,12 @@ async function loadAdminData() {
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
+  try {
+    await loadPublicSnapshotStatus();
+  } catch (error) {
+    renderPublicSnapshotStatus({ ok: false });
+    status(`Snapshot status failed: ${error?.message || "Unknown error"}`);
+  }
   renderRoleAlertsEventSelect(Array.isArray(roleAlertEvents?.events) ? roleAlertEvents.events : []);
   renderRoleAlertsAnalysis(null);
   try {
@@ -2064,6 +2092,44 @@ document.addEventListener("click", async (event) => {
     status(error?.message || "P2 update failed");
   } finally {
     btn.disabled = false;
+  }
+});
+
+document.getElementById("publicSnapshotReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("publicSnapshotReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload status", loading: "Reloading...", success: "Reloaded", failure: "Reload failed" },
+      async () => {
+        await loadPublicSnapshotStatus();
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Snapshot status reload failed");
+  }
+});
+
+document.getElementById("publicSnapshotSyncBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("publicSnapshotSyncBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Sync data now", loading: "Syncing...", success: "Synced", failure: "Sync failed" },
+      async () => {
+        const out = await getJson("/api/admin/public-snapshot/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ guildId: ADMIN_WCL_GUILD_ID }),
+        });
+        await loadPublicSnapshotStatus();
+        status(
+          `Public snapshot sync finished: ${Number(out?.okCount || 0)} ok, ${Number(out?.failCount || 0)} failed.`
+        );
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Snapshot sync failed");
   }
 });
 
