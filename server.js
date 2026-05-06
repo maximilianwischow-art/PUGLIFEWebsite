@@ -317,6 +317,7 @@ const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
+const hofNotesPath = path.join(dataDir, "hof-notes.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
@@ -336,6 +337,8 @@ let discordDmSubscribersReady = null;
 let discordDmSubscribersWriteChain = Promise.resolve();
 let roleAlertDmLogReady = null;
 let roleAlertDmLogWriteChain = Promise.resolve();
+let hofNotesReady = null;
+let hofNotesWriteChain = Promise.resolve();
 let gargulLootReady = null;
 let gargulLootWriteChain = Promise.resolve();
 let netherVortexReady = null;
@@ -384,6 +387,7 @@ let p2MaterialsState = {
 let joinNeedsState = { rows: DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
 let discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] };
 let roleAlertDmLogState = { byEventId: {} };
+let hofNotesState = { byWinnerRaidKey: {} };
 let raidHelperDmPollTimer = null;
 let raidHelperDmPollRunning = false;
 
@@ -880,6 +884,29 @@ function votingHallOfFame(currentRoundKey, limit = 8) {
     .slice(0, limit);
 }
 
+function buildMockHallOfFameRows(limit = 8) {
+  const now = Date.now();
+  const rows = [
+    {
+      roundKey: "mock-hof-highbullet",
+      raidCode: "MOCK-SWP-HIGHBULLET",
+      raidName: "Sunwell Plateau",
+      raidStartTime: now - 7 * 24 * 60 * 60 * 1000,
+      winnerName: "Highbullet",
+      winnerVotes: 41,
+    },
+    {
+      roundKey: "mock-hof-glutelf",
+      raidCode: "MOCK-BT-GLUTELF",
+      raidName: "Black Temple",
+      raidStartTime: now - 14 * 24 * 60 * 60 * 1000,
+      winnerName: "Glutelf",
+      winnerVotes: 36,
+    },
+  ];
+  return rows.slice(0, Math.max(1, Math.floor(Number(limit) || 8)));
+}
+
 const HOF_REPORT_FIGHTS_QUERY = `
   query HofReportFights($code: String!) {
     reportData {
@@ -1273,13 +1300,29 @@ async function enrichHallOfFameRows(guildId, rows) {
 
 async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureVotingStore();
+  await ensureHofNotesStore();
   const voting = await getCurrentVotingRoundCached(guildId);
   const currentRoundKey = voting?.roundKey || "";
-  const rows = votingHallOfFame(currentRoundKey, limit);
+  let rows = votingHallOfFame(currentRoundKey, limit);
+  if (!rows.length) rows = buildMockHallOfFameRows(limit);
+  const withNotes = (list) =>
+    list.map((row) => {
+      const winnerRaidKey = normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
+      const note =
+        winnerRaidKey && hofNotesState.byWinnerRaidKey && typeof hofNotesState.byWinnerRaidKey === "object"
+          ? hofNotesState.byWinnerRaidKey[winnerRaidKey]
+          : null;
+      return {
+        ...row,
+        winnerRaidKey,
+        customQuote: String(note?.quote || ""),
+      };
+    });
   try {
-    return await enrichHallOfFameRows(guildId, rows);
+    const enriched = await enrichHallOfFameRows(guildId, rows);
+    return withNotes(enriched);
   } catch {
-    return rows.map((r) => ({
+    return withNotes(rows).map((r) => ({
       ...r,
       player: null,
       peakParse: null,
@@ -1324,7 +1367,9 @@ async function upsertVote(voteInput) {
 }
 
 function p2EditorIds() {
-  return String(process.env.P2_EDITOR_DISCORD_IDS || "")
+  const raw = String(process.env.P2_EDITOR_DISCORD_IDS || "").trim();
+  const source = raw || "308667806633951243";
+  return source
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
@@ -1332,11 +1377,18 @@ function p2EditorIds() {
 
 function p2EditorNames() {
   const raw = process.env.P2_EDITOR_DISCORD_NAMES;
-  const source = raw && raw.trim() ? raw : "highbullet";
+  const source = raw && raw.trim() ? raw : "highbullet,maxwi,max";
   return source
     .split(",")
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function normalizeAdminNameValue(v) {
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function isP2Editor(session) {
@@ -1344,10 +1396,20 @@ function isP2Editor(session) {
   const userId = String(session.user.id || "").trim();
   const ids = p2EditorIds();
   if (userId && ids.includes(userId)) return true;
+  const configuredNames = p2EditorNames();
+  const configuredNamesNormalized = configuredNames.map((n) => normalizeAdminNameValue(n)).filter(Boolean);
   const nameCandidates = [session.user.globalName, session.user.username]
     .map((x) => String(x || "").trim().toLowerCase())
     .filter(Boolean);
-  return nameCandidates.some((n) => p2EditorNames().includes(n));
+  const nameCandidatesNormalized = nameCandidates.map((n) => normalizeAdminNameValue(n)).filter(Boolean);
+  const looseNameMatch = nameCandidatesNormalized.some((cand) =>
+    configuredNamesNormalized.some((cfg) => cand.includes(cfg) || cfg.includes(cand))
+  );
+  return (
+    nameCandidates.some((n) => configuredNames.includes(n)) ||
+    nameCandidatesNormalized.some((n) => configuredNamesNormalized.includes(n)) ||
+    looseNameMatch
+  );
 }
 
 function p2EditorDebug(session) {
@@ -1549,6 +1611,66 @@ function sanitizeRoleAlertDmLogState(raw) {
     byEventId[eventId] = { byUserId };
   }
   return { byEventId };
+}
+
+function normalizeHofWinnerRaidKey(raidCode, winnerName) {
+  const code = String(raidCode || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, "");
+  const winner = String(winnerName || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9 _-]+/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+  if (!code || !winner) return "";
+  return `${code}::${winner}`;
+}
+
+function sanitizeHofNotesState(raw) {
+  const byWinnerRaidKeyIn = raw && typeof raw.byWinnerRaidKey === "object" ? raw.byWinnerRaidKey : {};
+  const byWinnerRaidKey = {};
+  for (const [keyRaw, noteRaw] of Object.entries(byWinnerRaidKeyIn)) {
+    const key = String(keyRaw || "").trim().slice(0, 220);
+    if (!key) continue;
+    const note = noteRaw && typeof noteRaw === "object" ? noteRaw : {};
+    const quote = String(note.quote || "")
+      .trim()
+      .slice(0, 320);
+    byWinnerRaidKey[key] = {
+      quote,
+      updatedAt: Number.isFinite(Number(note.updatedAt)) ? Number(note.updatedAt) : Date.now(),
+      updatedBy: String(note.updatedBy || "")
+        .trim()
+        .slice(0, 128),
+    };
+  }
+  return { byWinnerRaidKey };
+}
+
+async function persistHofNotesStore() {
+  const tmpPath = `${hofNotesPath}.tmp`;
+  const json = JSON.stringify(hofNotesState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, hofNotesPath);
+}
+
+async function ensureHofNotesStore() {
+  if (hofNotesReady) return hofNotesReady;
+  hofNotesReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(hofNotesPath, "utf8");
+      const parsed = JSON.parse(raw);
+      hofNotesState = sanitizeHofNotesState(parsed);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      hofNotesState = { byWinnerRaidKey: {} };
+      await persistHofNotesStore();
+    }
+  })();
+  return hofNotesReady;
 }
 
 async function persistRoleAlertDmLogStore() {
@@ -3882,6 +4004,94 @@ app.get("/api/admin/subscribers", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load subscribers" });
+  }
+});
+
+app.get("/api/admin/hof-notes", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureHofNotesStore();
+    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 24);
+    let rows = hallOfFame.map((row) => {
+      const winnerName = String(row?.winnerName || "").trim();
+      const raidCode = String(row?.raidCode || "").trim();
+      const winnerRaidKey = normalizeHofWinnerRaidKey(raidCode, winnerName);
+      const note = winnerRaidKey ? hofNotesState.byWinnerRaidKey[winnerRaidKey] : null;
+      return {
+        winnerRaidKey,
+        winnerName,
+        raidCode,
+        raidName: String(row?.raidName || row?.raidCode || "").trim(),
+        raidStartTime: Number(row?.raidStartTime || 0),
+        quote: String(note?.quote || row?.customQuote || ""),
+        updatedAt: Number(note?.updatedAt || 0),
+        updatedBy: String(note?.updatedBy || ""),
+      };
+    });
+    if (!rows.length) {
+      const now = Date.now();
+      const mockRows = [
+        {
+          winnerName: "Highbullet",
+          raidCode: "MOCK-SWP-HIGHBULLET",
+          raidName: "Sunwell Plateau",
+          raidStartTime: now - 7 * 24 * 60 * 60 * 1000,
+        },
+        {
+          winnerName: "Glutelf",
+          raidCode: "MOCK-BT-GLUTELF",
+          raidName: "Black Temple",
+          raidStartTime: now - 14 * 24 * 60 * 60 * 1000,
+        },
+      ];
+      rows = mockRows.map((row) => {
+        const winnerRaidKey = normalizeHofWinnerRaidKey(row.raidCode, row.winnerName);
+        const note = winnerRaidKey ? hofNotesState.byWinnerRaidKey[winnerRaidKey] : null;
+        return {
+          winnerRaidKey,
+          winnerName: row.winnerName,
+          raidCode: row.raidCode,
+          raidName: row.raidName,
+          raidStartTime: Number(row.raidStartTime || 0),
+          quote: String(note?.quote || ""),
+          updatedAt: Number(note?.updatedAt || 0),
+          updatedBy: String(note?.updatedBy || ""),
+        };
+      });
+    }
+    return res.json({ ok: true, rows });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame notes" });
+  }
+});
+
+app.put("/api/admin/hof-notes", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const winnerRaidKey = String(req.body?.winnerRaidKey || "").trim().slice(0, 220);
+    const quote = String(req.body?.quote || "")
+      .trim()
+      .slice(0, 320);
+    if (!winnerRaidKey) {
+      return res.status(400).json({ ok: false, error: "winnerRaidKey is required" });
+    }
+    await ensureHofNotesStore();
+    const actor =
+      String(session?.user?.globalName || "").trim() || String(session?.user?.username || "").trim() || "admin";
+    hofNotesWriteChain = hofNotesWriteChain.catch(() => {}).then(async () => {
+      hofNotesState.byWinnerRaidKey[winnerRaidKey] = {
+        quote,
+        updatedAt: Date.now(),
+        updatedBy: actor,
+      };
+      await persistHofNotesStore();
+    });
+    await hofNotesWriteChain;
+    return res.json({ ok: true, winnerRaidKey, quote });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save hall of fame note" });
   }
 });
 

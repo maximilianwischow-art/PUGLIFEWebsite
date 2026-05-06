@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Loot History</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260505perf" />
+    <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260506framework3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body>
@@ -14,7 +15,7 @@
       <header class="hero">
         <div class="hero-brand">
           <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
-          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" />
+          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px" />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
@@ -59,3 +60,8 @@
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
+
+
+
+
+

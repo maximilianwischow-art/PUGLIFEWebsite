@@ -9,16 +9,17 @@
     />
     <title>PUG LIFE BALANCE · Join Us</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260505perf" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260506framework3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
-  <body>
+  <body class="framework-bg-vivid">
     <div class="stars" id="stars" aria-hidden="true"></div>
     <div class="app-wrap">
       <header class="hero">
@@ -30,7 +31,7 @@
             alt=""
             width="1024"
             height="409"
-            decoding="async"
+            decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px"
           />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
@@ -54,7 +55,7 @@
           aria-labelledby="welcomePopupTitle"
           hidden
         >
-          <img class="welcome-popup-img" src="/welcome-popup-hyjal.png" alt="" width="1600" height="900" decoding="async" />
+          <img class="welcome-popup-img" src="/welcome-popup-hyjal.png" alt="" width="1600" height="900" decoding="async" loading="lazy" fetchpriority="low" />
           <button type="button" id="welcomePopupClose" class="welcome-popup-close" aria-label="Close welcome popup">×</button>
           <div class="welcome-popup-copy">
             <h2 id="welcomePopupTitle" class="welcome-popup-title">Welcome to our lair, Friend!</h2>
@@ -62,126 +63,138 @@
           </div>
         </section>
 
-        <section class="card join-hero">
-          <h2 class="join-hero-title">Answer the Call</h2>
-          <p class="join-hero-lede">
-            PUG Life Balance is recruiting skilled, reliable raiders for TBC Classic progression on EU Thunderstrike — focused, chill vibes.
-          </p>
-          <div class="join-cta-row">
-            <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join Discord</a>
-            <a
-              class="join-discord-btn"
-              id="joinDmSubscribeBtn"
-              href="/auth/discord/login?next=%2Fjoin.html"
-              title="Subscribe to Discord DM for SignUps"
-              aria-label="Subscribe to Discord DM for SignUps"
-              ><span class="join-subscribe-btn-text">Subscribe</span><span class="join-subscribe-btn-status" aria-hidden="true">○</span></a
-            >
-          </div>
-        </section>
-
-        <section class="card">
-          <h3 class="section-title">At a glance</h3>
-          <div class="join-stats" role="list">
-            <div class="join-stat" role="listitem">
-              <span class="join-stat-label">Realm</span>
-              <span class="join-stat-value">Thunderstrike EU</span>
+        <section>
+          <section class="card surface-highlight join-hero">
+            <p class="join-hero-kicker">Recruitment Open</p>
+            <h2 class="join-hero-title">Answer the Call</h2>
+            <p class="join-hero-lede">
+              PUG Life Balance is recruiting skilled, reliable raiders for TBC Classic progression on EU Thunderstrike — focused, chill vibes.
+            </p>
+            <div class="join-value-chips" role="list" aria-label="Recruitment highlights">
+              <span class="join-value-chip" role="listitem">Raid Day: Thursday</span>
+              <span class="join-value-chip" role="listitem">Server: Thunderstrike EU</span>
+              <span class="join-value-chip" role="listitem">Application: under 2 min</span>
             </div>
-            <div class="join-stat" role="listitem">
-              <span class="join-stat-label">Content</span>
-              <span class="join-stat-value">TBC Classic</span>
+            <div class="join-cta-row">
+              <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Apply on Discord</a>
+              <a
+                class="join-discord-btn join-discord-btn--soft"
+                id="joinDmSubscribeBtn"
+                href="/auth/discord/login?next=%2Fjoin.html"
+                title="Subscribe to Discord DM for SignUps"
+                aria-label="Subscribe to Discord DM for SignUps"
+                ><span class="join-subscribe-btn-text">Subscribe</span><span class="join-subscribe-btn-status" aria-hidden="true">○</span></a
+              >
             </div>
-            <div class="join-stat" role="listitem">
-              <span class="join-stat-label">Raid style</span>
-              <span class="join-stat-value">OG PUG</span>
-            </div>
-            <div class="join-stat" role="listitem">
-              <span class="join-stat-label">Atmosphere</span>
-              <span class="join-stat-value join-stat-value--good">Chill · Focused</span>
-            </div>
-          </div>
-        </section>
+          </section>
 
-        <section class="card join-prose">
-          <h3 class="section-title">Who we are</h3>
-          <p>
-            We are a collection of World of Warcraft veterans who have been exploring Azeroth since Day 1. As our lives have
-            evolved over the years, so has our approach to the game. We built this community to keep the spirit of raiding alive
-            without the unnecessary drama. At PUG Life Balance, we prioritize a healthy harmony between high-level gaming and
-            real-world responsibilities. Welcome home!
-          </p>
-          <blockquote class="join-blockquote">"Time is money, friend!"<br />— Gazlowe / Every Goblin ever</blockquote>
-        </section>
-
-        <section class="card">
-          <h3 class="section-title">P2 Raid Time</h3>
-          <div class="join-schedule-grid join-schedule-grid--split">
-            <div class="join-schedule-card">
-              <span class="day">Thursday</span>
-              <span class="time">21:00 – 23:30</span>
-              <span class="tz">Server time (CET / CEST)</span>
-              <span class="raid-name">P2 progression</span>
-            </div>
-            <div class="join-schedule-card join-schedule-card--note">
-              <p>
-                We are prioritizing SSC progression during the opening weeks. Until it is cleared, TK IDs remain open for personal
-                PUG use. Once SSC is mastered, we will transition to clearing both raids in a single, efficient night.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <div class="join-ornament" aria-hidden="true">· · · ✦ · · ·</div>
-
-        <section class="card">
-          <h3 class="section-title">Current needs</h3>
-          <p class="subtle" style="margin-bottom: 10px">Snapshot only — exceptional players are always worth a conversation.</p>
-          <div class="join-needs" id="joinNeedsList" aria-live="polite">Loading current needs…</div>
-        </section>
-
-        <section class="card join-future-events" id="join-future-events">
-          <h3 class="section-title">Future Events</h3>
-          <p class="subtle join-future-events-lede">Upcoming Raid Helper runs — roster gaps update as people sign.</p>
-          <div class="join-events-grid" id="joinEventsList" aria-live="polite">
-            <p class="subtle join-events-loading">Loading upcoming events…</p>
-          </div>
-        </section>
-
-        <section class="card">
-          <h3 class="section-title">What we expect</h3>
-          <ul class="join-expect">
-            <li>
-              <span class="join-expect-icon" aria-hidden="true">⚔</span>
-              <div>
-                <strong>Know your class</strong>
-                <p>Proper gems and enchants, full consumes on progression nights, and a game plan for your cooldowns.</p>
+          <section class="card surface-elevated">
+            <h3 class="section-title">At a glance</h3>
+            <div class="join-stats" role="list">
+              <div class="join-stat" role="listitem">
+                <span class="join-stat-label">Realm</span>
+                <span class="join-stat-value">Thunderstrike EU</span>
               </div>
-            </li>
-            <li>
-              <span class="join-expect-icon" aria-hidden="true">📅</span>
-              <div>
-                <strong>Reliable attendance</strong>
-                <p>We plan around a full roster. Post in Discord when life gets in the way — silence is the only unforgivable sin.</p>
+              <div class="join-stat" role="listitem">
+                <span class="join-stat-label">Content</span>
+                <span class="join-stat-value">TBC Classic</span>
               </div>
-            </li>
-            <li>
-              <span class="join-expect-icon" aria-hidden="true">📈</span>
-              <div>
-                <strong>Growth mindset</strong>
-                <p>We read logs, fix mistakes, and move on. Egos stay outside the instance portal.</p>
+              <div class="join-stat" role="listitem">
+                <span class="join-stat-label">Raid style</span>
+                <span class="join-stat-value">OG PUG</span>
               </div>
-            </li>
-            <li>
-              <span class="join-expect-icon" aria-hidden="true">🎙</span>
-              <div>
-                <strong>Communication</strong>
-                <p>Working microphone and comfortable raid-call English for progression mechanics.</p>
+              <div class="join-stat" role="listitem">
+                <span class="join-stat-label">Atmosphere</span>
+                <span class="join-stat-value join-stat-value--good">Chill · Focused</span>
               </div>
-            </li>
-          </ul>
-        </section>
+            </div>
+          </section>
 
+          <section class="card surface-highlight">
+            <h3 class="section-title">Current needs</h3>
+            <p class="subtle join-demand-subtle">Snapshot only — exceptional players are always worth a conversation.</p>
+            <div class="join-needs" id="joinNeedsList" aria-live="polite">Loading current needs…</div>
+          </section>
+
+          <section class="card join-prose">
+            <h3 class="section-title">Who we are</h3>
+            <p>
+              We are a collection of World of Warcraft veterans who have been exploring Azeroth since Day 1. As our lives have
+              evolved over the years, so has our approach to the game. We built this community to keep the spirit of raiding alive
+              without the unnecessary drama. At PUG Life Balance, we prioritize a healthy harmony between high-level gaming and
+              real-world responsibilities. Welcome home!
+            </p>
+            <blockquote class="join-blockquote">"Time is money, friend!"<br />— Gazlowe / Every Goblin ever</blockquote>
+          </section>
+
+          <section class="card">
+            <h3 class="section-title">P2 Raid Time</h3>
+            <div class="join-schedule-grid join-schedule-grid--split">
+              <div class="join-schedule-card">
+                <span class="day">Thursday</span>
+                <span class="time">21:00 – 23:30</span>
+                <span class="tz">Server time (CET / CEST)</span>
+                <span class="raid-name">P2 progression</span>
+              </div>
+              <div class="join-schedule-card join-schedule-card--note">
+                <p>
+                  We are prioritizing SSC progression during the opening weeks. Until it is cleared, TK IDs remain open for personal
+                  PUG use. Once SSC is mastered, we will transition to clearing both raids in a single, efficient night.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <div class="join-ornament" aria-hidden="true">· · · ✦ · · ·</div>
+
+          <section class="card join-future-events" id="join-future-events">
+            <h3 class="section-title">Future Events</h3>
+            <p class="subtle join-future-events-lede">Upcoming Raid Helper runs — roster gaps update as people sign.</p>
+            <div class="join-events-grid" id="joinEventsList" aria-live="polite">
+              <p class="subtle join-events-loading">Loading upcoming events…</p>
+            </div>
+          </section>
+
+          <section class="card surface-elevated">
+            <h3 class="section-title">What we expect</h3>
+            <ul class="join-expect">
+              <li>
+                <span class="join-expect-icon" aria-hidden="true">⚔</span>
+                <div>
+                  <strong>Know your class</strong>
+                  <p>Proper gems and enchants, full consumes on progression nights, and a game plan for your cooldowns.</p>
+                </div>
+              </li>
+              <li>
+                <span class="join-expect-icon" aria-hidden="true">📅</span>
+                <div>
+                  <strong>Reliable attendance</strong>
+                  <p>We plan around a full roster. Post in Discord when life gets in the way — silence is the only unforgivable sin.</p>
+                </div>
+              </li>
+              <li>
+                <span class="join-expect-icon" aria-hidden="true">📈</span>
+                <div>
+                  <strong>Growth mindset</strong>
+                  <p>We read logs, fix mistakes, and move on. Egos stay outside the instance portal.</p>
+                </div>
+              </li>
+              <li>
+                <span class="join-expect-icon" aria-hidden="true">🎙</span>
+                <div>
+                  <strong>Communication</strong>
+                  <p>Working microphone and comfortable raid-call English for progression mechanics.</p>
+                </div>
+              </li>
+            </ul>
+            <div class="join-cta-row join-cta-row--footer">
+              <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Apply on Discord</a>
+            </div>
+          </section>
+        </section>
       </main>
+
+      <a class="join-mobile-cta" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Apply on Discord</a>
 
       <div id="joinSubscribePopupBackdrop" class="join-subscribe-popup-backdrop" hidden></div>
       <section
@@ -217,8 +230,14 @@
     </div>
 
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/join.js?v=20260505joinevents"></script>
+    <script defer src="/join.js?v=20260506joinv1"></script>
     <script defer src="/auth-ui.js?v=20260506nav1"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
+
+
+
+
+
+

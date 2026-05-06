@@ -234,8 +234,19 @@ async function loadRaidPerfKpi() {
   if (!raidPerfKpiGrid) return;
   raidPerfKpiGrid.innerHTML = `
     <div class="raid-kpi-tile raid-kpi-tile--loading">
-      <span class="raid-kpi-value">…</span>
-      <span class="raid-kpi-label">Loading KPIs</span>
+      <span class="raid-kpi-label">Loading</span>
+      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-label">Fetching KPI overview</span>
+    </div>
+    <div class="raid-kpi-tile raid-kpi-tile--loading">
+      <span class="raid-kpi-label">Loading</span>
+      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-label">Fetching KPI overview</span>
+    </div>
+    <div class="raid-kpi-tile raid-kpi-tile--loading">
+      <span class="raid-kpi-label">Loading</span>
+      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-label">Fetching KPI overview</span>
     </div>`;
   try {
     const q = new URLSearchParams({
@@ -256,22 +267,27 @@ async function loadRaidPerfKpi() {
 
     raidPerfKpiGrid.innerHTML = `
       <div class="raid-kpi-tile raid-kpi-tile--primary">
+        <span class="raid-kpi-label">Roster footprint</span>
         <span class="raid-kpi-value">${escapeHtml(String(uniqueN ?? "—"))}</span>
         <span class="raid-kpi-label">Unique raiders in past events</span>
       </div>
       <div class="raid-kpi-tile">
+        <span class="raid-kpi-label">Attendance quality</span>
         <span class="raid-kpi-value">${escapeHtml(fmtKpiAttendancePct(coreAvg))}</span>
         <span class="raid-kpi-label">${
           data.coreAttendanceSource === "core" ? "Core attendance (avg WCL %)" : "Attendance (avg WCL %)"
         }</span>
       </div>
       <div class="raid-kpi-tile">
+        <span class="raid-kpi-label">Loot distribution</span>
         <span class="raid-kpi-value">${escapeHtml(itemsLabel)}</span>
-        <span class="raid-kpi-label">Items distributed (Gargul history)</span>
+        <span class="raid-kpi-label">Items distributed</span>
       </div>
     `;
   } catch (err) {
     raidPerfKpiGrid.innerHTML = `<div class="raid-kpi-tile raid-kpi-tile--error">
+      <span class="raid-kpi-label">Unavailable</span>
+      <span class="raid-kpi-value">—</span>
       <span class="raid-kpi-label">${escapeHtml(err?.message || "Could not load KPIs")}</span>
     </div>`;
   }
@@ -419,7 +435,9 @@ function renderDashboardOverview(raidSummary) {
           }
         </article>`;
     });
-    dashboardPbRow.innerHTML = tiles.join("") || '<p class="subtle">No raid data.</p>';
+    dashboardPbRow.innerHTML =
+      tiles.join("") ||
+      '<article class="pb-tile raidperf-shell"><div class="pb-tile-body"><p class="subtle">No raid data available yet.</p></div></article>';
   }
 }
 
@@ -550,7 +568,12 @@ function closeRaidDayModal() {
 
 async function loadRecentRaidsCalendar() {
   if (!raidCalendarGrid) return;
-  raidCalendarGrid.innerHTML = '<div class="subtle">Loading…</div>';
+  raidCalendarGrid.innerHTML = `
+    <div class="raid-cal-columns">
+      <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
+      <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
+      <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
+    </div>`;
   try {
     const payload = await apiGetJson(
       `/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=${DASHBOARD_CALENDAR_LIMIT}`
@@ -571,7 +594,7 @@ async function loadRecentRaidsCalendar() {
     }
     renderRaidCalendarColumns();
   } catch (error) {
-    raidCalendarGrid.innerHTML = `<div class="subtle">${escapeHtml(error.message)}</div>`;
+    raidCalendarGrid.innerHTML = `<div class="subtle">Could not load raid calendar: ${escapeHtml(error.message)}</div>`;
   }
 }
 

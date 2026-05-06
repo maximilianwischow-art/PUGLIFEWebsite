@@ -5,27 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Hall of Fame</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260505perf" />
+    <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260506framework3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/voting-redesign.css?v=20260506hofcss5" />
+    <link rel="stylesheet" href="/voting-redesign.css?v=20260506hofcss8" />
     <style>
       .hof-page {
         display: grid;
         gap: 14px;
       }
       .hof-intro {
-        padding: 26px 24px;
-        background:
-          linear-gradient(115deg, rgba(168, 85, 247, 0.18), rgba(255, 110, 180, 0.08)),
-          rgba(10, 8, 20, 0.9);
+        position: relative;
+        overflow: hidden;
+        min-height: clamp(160px, 24vw, 280px);
+        padding: clamp(22px, 4vw, 42px) 24px clamp(18px, 5.5vw, 58px);
         text-align: center;
+        display: flex;
+        justify-content: center;
+        align-items: flex-end;
+      }
+      .hof-intro::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(180deg, rgba(8, 4, 14, 0.2), rgba(8, 4, 14, 0.7)),
+          linear-gradient(115deg, rgba(168, 85, 247, 0.26), rgba(255, 110, 180, 0.14));
+      }
+      .hof-intro-bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+        transform: scale(1.02);
+        z-index: 0;
+      }
+      .hof-intro > :not(.hof-intro-bg) {
+        position: relative;
+        z-index: 1;
       }
       .hof-intro .section-title {
         margin: 0;
-        font-size: clamp(34px, 7.2vw, 74px);
+        font-size: clamp(40px, 8vw, 88px);
         letter-spacing: 0.09em;
-        color: #f4d03f;
-        text-shadow: 0 0 20px rgba(244, 208, 63, 0.35), 0 0 40px rgba(244, 208, 63, 0.2);
+        color: #f8f0df;
+        text-shadow: 0 0 20px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 0, 0, 0.45);
       }
       .hof-intro-copy {
         margin: 10px auto 0;
@@ -271,13 +297,13 @@
       }
     </style>
   </head>
-  <body>
+  <body class="framework-bg-soft">
     <div class="stars" id="stars" aria-hidden="true"></div>
     <div class="app-wrap">
       <header class="hero">
         <div class="hero-brand">
           <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
-          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" />
+          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px" />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
@@ -292,11 +318,16 @@
 
       <main class="container hof-page">
         <section class="card tw-plb-card hof-intro" aria-labelledby="hofIntroTitle">
-          <div class="hof-hero-kicker">⚔ Hall of Fame ⚔</div>
+          <img
+            class="hof-intro-bg"
+            src="/images/hall-of-fame-header-bg.png?v=20260506hofheader2"
+            alt=""
+            width="1920"
+            height="820"
+            loading="eager"
+            decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px"
+          />
           <h2 id="hofIntroTitle" class="section-title tw-plb-title">Hall of Fame</h2>
-          <p class="subtle hof-intro-copy">
-            Champions Eternal · Heroes of PUG LIFE BALANCE
-          </p>
         </section>
 
         <section class="card tw-plb-card hof-winner-card potr-section" aria-labelledby="potr-title">
@@ -325,7 +356,7 @@
         </section>
 
         <section class="card tw-plb-card hof-roll-card">
-          <h3 class="section-title hof-block-title">The Eternal Roll</h3>
+          <h3 class="section-title hof-block-title">The Eternal Hall</h3>
           <p class="subtle hof-block-subtle">All-time MVP winners from previous rounds with badges and parse context.</p>
           <div id="votingHallOfFame" class="hof-list"></div>
         </section>
@@ -360,8 +391,13 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/app.js?v=20260504a"></script>
     <script defer src="/events-roster-ui.js?v=20260506death3"></script>
-    <script defer src="/voting.js?v=20260506hofredesign6"></script>
+    <script defer src="/voting.js?v=20260506hofredesign7"></script>
     <script defer src="/auth-ui.js?v=20260506nav1"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
+
+
+
+
+

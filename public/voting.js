@@ -298,6 +298,33 @@ function hofMvpAchievementBadgesHtml(row) {
   return `<div class="raider-badges hof-mvp-badges">${out.join("")}</div>`;
 }
 
+function hofWinnerSpecPortraitHtml(row) {
+  const plb = window.plbEventsRoster;
+  const esc = plb?.escapeHtml || escapeHtml;
+  const p = row?.player;
+  const fallback = "/images/achievements/hall-of-fame.png?v=20260506hofspec1";
+  if (!plb || !p) {
+    return `<img class="hof-winner-spec-portrait" src="${fallback}" alt="Winner spec portrait" width="118" height="118" loading="lazy" decoding="async" />`;
+  }
+  let chain = [];
+  if (typeof plb.specBadgePortraitChain === "function") {
+    chain = plb.specBadgePortraitChain(p) || [];
+  }
+  if ((!Array.isArray(chain) || !chain.length) && typeof plb.rosterPortraitChain === "function") {
+    chain = plb.rosterPortraitChain(p) || [];
+  }
+  const urls = (Array.isArray(chain) ? chain : []).map((u) => String(u || "").trim()).filter(Boolean);
+  const src = esc(urls[0] || fallback);
+  const fb = urls
+    .slice(1)
+    .concat([fallback])
+    .map((u) => esc(String(u || "")))
+    .filter(Boolean)
+    .join("|");
+  const label = plb.displaySpecNameForRoster ? plb.displaySpecNameForRoster(String(p.specName || "").trim()) : "Spec";
+  return `<img class="hof-winner-spec-portrait" src="${src}" alt="${esc(label || "Winner spec portrait")}" width="118" height="118" loading="lazy" decoding="async" data-hof-winner-spec-fallbacks="${fb}" onerror="(function(el){var raw=el.getAttribute('data-hof-winner-spec-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.hofWinnerSpecI||0);if(i<parts.length){el.dataset.hofWinnerSpecI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)" />`;
+}
+
 function buildMockHallOfFamePreviewRows() {
   const now = Date.now();
   return [
@@ -358,9 +385,12 @@ function renderHallOfFame(payload) {
   };
   const championSubtitleForRow = (row) => {
     const raidName = String(row?.raidName || row?.raidCode || "Recent Raid").trim();
-    return `Champion of ${raidName}`;
+    const when = row?.raidStartTime ? new Date(row.raidStartTime).toLocaleDateString() : "Unknown date";
+    return `Champion of ${raidName} on ${when}`;
   };
   const quoteForRow = (row) => {
+    const custom = String(row?.customQuote || "").trim();
+    if (custom) return custom;
     const role = roleLabelForRow(row);
     if (role === "TANK") return '"Frontline unbroken."';
     if (role === "HEALER") return '"Hold the raid together."';
@@ -390,7 +420,6 @@ function renderHallOfFame(payload) {
   };
   host.innerHTML = rows
     .map((row, idx) => {
-      const when = row?.raidStartTime ? new Date(row.raidStartTime).toLocaleString() : "Unknown date";
       const playerCell = hofRaiderCell(row);
       const role = roleLabelForRow(row);
       const subtitle = championSubtitleForRow(row);
@@ -399,7 +428,7 @@ function renderHallOfFame(payload) {
       const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
       const roleIcon = roleIconForRow(row);
       const specIconHtml = hofSpecIconHtml(row);
-      const crownedRaid = String(row?.raidName || row?.raidCode || "Unknown raid").trim();
+      const specPortrait = hofWinnerSpecPortraitHtml(row);
       return `
         <article class="hof-champion-card ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
           <div class="hof-rank-bg" aria-hidden="true">${idx + 1}</div>
@@ -412,14 +441,13 @@ function renderHallOfFame(payload) {
                   <span class="hof-role-chip tw-plb-chip">${escapeHtml(role)}</span>
                 </div>
               </div>
+              <div class="hof-winner-spec-wrap">${specPortrait}</div>
               <div class="hof-champion-player">${playerCell}</div>
               <div class="hof-champion-copy">
                 <p class="hof-champion-subtle">${escapeHtml(subtitle)}</p>
-                <p class="hof-crowned-raid">Crowned for: ${escapeHtml(crownedRaid)}</p>
                 <p class="hof-achievements-title">Achievements</p>
                 ${hofMvpAchievementBadgesHtml(row)}
                 <p class="hof-champion-quote">${escapeHtml(quote)}</p>
-                <p class="subtle hof-log-line">${escapeHtml(when)}</p>
               </div>
             </div>
             <aside class="hof-chronicle-pane">

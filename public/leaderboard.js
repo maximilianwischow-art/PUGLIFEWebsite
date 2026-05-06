@@ -485,6 +485,13 @@ function renderLeaderboardTable() {
     })
     .join("");
 
+  // Upgrade badge hover UX from default title to styled tooltip cards.
+  leaderboardTbody.querySelectorAll(".raider-badge-slot[title]").forEach((el) => {
+    const tip = String(el.getAttribute("title") || "").trim();
+    if (!tip) return;
+    el.setAttribute("data-badge-tip", tip);
+  });
+
   document.querySelectorAll("[data-leaderboard-sort]").forEach((btn) => {
     const k = String(btn.getAttribute("data-leaderboard-sort") || "");
     const active = k === sortState.key;

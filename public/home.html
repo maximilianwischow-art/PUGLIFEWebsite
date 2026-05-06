@@ -5,16 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Raid Performance</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260505perf" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260506framework3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <style>
+      .raidperf-shell {
+        border-color: rgba(168, 85, 247, 0.24);
+        background: linear-gradient(180deg, rgba(30, 24, 48, 0.92), rgba(18, 14, 30, 0.94));
+      }
+      .raidperf-card-stack {
+        display: grid;
+        gap: 12px;
+      }
+    </style>
   </head>
-  <body>
+  <body class="framework-bg-vivid">
     <div class="stars" id="stars" aria-hidden="true"></div>
     <div class="app-wrap">
       <header class="hero">
@@ -26,7 +37,7 @@
             alt=""
             width="1024"
             height="409"
-            decoding="async"
+            decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px"
           />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
@@ -49,7 +60,7 @@
             alt=""
             width="1600"
             height="900"
-            decoding="async"
+            decoding="async" loading="lazy" fetchpriority="low"
           />
           <button type="button" id="welcomePopupClose" class="welcome-popup-close" aria-label="Close welcome popup">×</button>
           <div class="welcome-popup-copy">
@@ -58,22 +69,23 @@
           </div>
         </section>
 
-        <section class="card raid-kpi-section" aria-labelledby="raid-kpi-heading">
+        <section class="card tw-plb-card raidperf-shell raid-kpi-section" aria-labelledby="raid-kpi-heading">
           <h2 id="raid-kpi-heading" class="section-title">KPI overview</h2>
           <div class="raid-kpi-grid" id="raidPerfKpiGrid">
             <div class="raid-kpi-tile raid-kpi-tile--loading">
-              <span class="raid-kpi-value">…</span>
-              <span class="raid-kpi-label">Loading KPIs</span>
+              <span class="raid-kpi-label">Loading</span>
+              <span class="raid-kpi-value">—</span>
+              <span class="raid-kpi-label">Fetching KPI overview</span>
             </div>
           </div>
         </section>
 
-        <section class="card dashboard-overview" aria-labelledby="best-time-raids-title">
+        <section class="card tw-plb-card raidperf-shell dashboard-overview" aria-labelledby="best-time-raids-title">
           <h2 id="best-time-raids-title" class="section-title">Best Time Raids</h2>
-          <div id="dashboardPbRow" class="pb-row"><p class="subtle pb-row-status">Loading personal bests…</p></div>
+          <div id="dashboardPbRow" class="pb-row raidperf-card-stack"><p class="subtle pb-row-status">Loading personal bests…</p></div>
         </section>
 
-        <section class="card raid-calendar-card" aria-labelledby="raid-calendar-title">
+        <section class="card tw-plb-card raidperf-shell raid-calendar-card" aria-labelledby="raid-calendar-title">
           <h2 id="raid-calendar-title" class="section-title">Raid calendar</h2>
           <p class="subtle raid-cal-intro">Latest 20 logs per raid (newest first).</p>
           <div id="raidCalendarGrid" class="raid-cal raid-cal--columns" aria-live="polite">
@@ -112,9 +124,14 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/app.js?v=20260504c"></script>
+    <script defer src="/app.js?v=20260506perf2"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/auth-ui.js?v=20260506nav1"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
+
+
+
+
+

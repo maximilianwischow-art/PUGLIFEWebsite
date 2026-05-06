@@ -5,16 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260505perf" />
+    <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260506framework3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
-  <body>
+  <body class="framework-bg-soft">
     <div class="stars" id="stars" aria-hidden="true"></div>
     <div class="app-wrap">
       <header class="hero">
         <div class="hero-brand">
           <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
-          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" />
+          <img class="hero-banner" src="/plb-hero-banner.png" alt="" width="1024" height="409" decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px" />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
         <nav class="top-nav" aria-label="Main">
@@ -29,7 +30,7 @@
       </header>
 
       <main class="container admin-page-main">
-        <section class="card admin-intro-card">
+        <section class="card surface-highlight admin-intro-card">
           <h2 class="section-title">Admin Panel</h2>
           <p id="adminStatus" class="subtle">Checking permissions...</p>
           <nav class="admin-submenu" aria-label="Admin tools">
@@ -42,6 +43,7 @@
               <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="data-sync">Data sync</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="analytics">Analytics</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Raid Roster Management</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="custom-dm">Custom messages</button>
             </div>
@@ -183,6 +185,17 @@
           <div id="adminSubscribersTable" class="admin-grid-note">Loading subscribers list...</div>
         </section>
 
+        <section class="card admin-panel" data-admin-panel="hof-notes" id="admin-panel-hof-notes">
+          <h3 class="section-title">Hall of Fame Quotes</h3>
+          <p class="subtle">Edit per-winner quote text shown in The Eternal Hall cards.</p>
+          <div class="admin-actions admin-actions--tight">
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminHofNotesReloadBtn">
+              Reload winners
+            </button>
+          </div>
+          <div id="adminHofNotesTable" class="admin-grid-note">Loading Hall of Fame winners...</div>
+        </section>
+
         <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
           <h3 class="section-title">Raid Roster Management</h3>
           <p class="subtle">
@@ -226,8 +239,13 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/admin.js?v=20260506analytics1"></script>
+    <script defer src="/admin.js?v=20260506hofnotes1"></script>
     <script defer src="/auth-ui.js?v=20260506nav1"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
+
+
+
+
+

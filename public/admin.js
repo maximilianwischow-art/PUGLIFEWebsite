@@ -54,6 +54,7 @@ const ADMIN_PANEL_IDS = [
   "join-needs",
   "data-sync",
   "analytics",
+  "hof-notes",
   "role-alerts",
   "custom-dm",
 ];
@@ -1477,6 +1478,53 @@ function renderSubscribers(payload) {
   `;
 }
 
+function renderHofNotesTable(payload) {
+  const host = document.getElementById("adminHofNotesTable");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Hall of Fame quotes unavailable.</p>`;
+    return;
+  }
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle">No Hall of Fame winners found yet.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="admin-table-wrap role-alert-candidates-wrap">
+      <table class="admin-table role-alert-candidates-table">
+        <thead>
+          <tr><th>Winner</th><th>Raid</th><th>Date</th><th>Quote</th><th>Updated</th><th>Save</th></tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `<tr data-hof-note-row="${esc(String(row.winnerRaidKey || ""))}">
+                <td>${esc(String(row.winnerName || "-"))}</td>
+                <td>${esc(String(row.raidName || row.raidCode || "-"))}</td>
+                <td>${esc(fmtWhen(row.raidStartTime))}</td>
+                <td>
+                  <textarea
+                    class="admin-input"
+                    data-hof-note-quote
+                    rows="2"
+                    maxlength="320"
+                    placeholder="Type quote..."
+                  >${esc(String(row.quote || ""))}</textarea>
+                </td>
+                <td class="subtle">${esc(row.updatedAt ? `${fmtWhen(row.updatedAt)}${row.updatedBy ? ` · ${row.updatedBy}` : ""}` : "-")}</td>
+                <td>
+                  <button type="button" class="event-signup-btn" data-hof-note-save="${esc(String(row.winnerRaidKey || ""))}">Save</button>
+                </td>
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 async function loadAnalyticsPanel() {
   const daysInput = document.getElementById("adminAnalyticsDays");
   const days = Math.max(1, Math.min(365, Number(daysInput?.value || 30) || 30));
@@ -1489,6 +1537,11 @@ async function loadAnalyticsPanel() {
   renderAnalyticsTopPages(analyticsPayload);
   renderAnalyticsDaily(analyticsPayload);
   renderSubscribers(subscribersPayload);
+}
+
+async function loadHofNotesPanel() {
+  const payload = await getJson("/api/admin/hof-notes");
+  renderHofNotesTable(payload);
 }
 
 async function loadPublicSnapshotStatus() {
@@ -1544,6 +1597,12 @@ async function loadAdminData() {
     renderAnalyticsDaily({ ok: false });
     renderSubscribers({ ok: false });
     status(`Analytics load failed: ${error?.message || "Unknown error"}`);
+  }
+  try {
+    await loadHofNotesPanel();
+  } catch (error) {
+    renderHofNotesTable({ ok: false });
+    status(`Hall of Fame quotes load failed: ${error?.message || "Unknown error"}`);
   }
   renderRoleAlertsEventSelect(Array.isArray(roleAlertEvents?.events) ? roleAlertEvents.events : []);
   renderRoleAlertsAnalysis(null);
@@ -2278,6 +2337,51 @@ document.getElementById("adminAnalyticsReloadBtn")?.addEventListener("click", as
     status("Analytics reloaded.");
   } catch (error) {
     status(error?.message || "Analytics reload failed");
+  }
+});
+
+document.getElementById("adminHofNotesReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("adminHofNotesReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload winners", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => {
+        await loadHofNotesPanel();
+      }
+    );
+    status("Hall of Fame winners reloaded.");
+  } catch (error) {
+    status(error?.message || "Hall of Fame reload failed");
+  }
+});
+
+document.addEventListener("click", async (event) => {
+  const saveBtn = event.target.closest("[data-hof-note-save]");
+  if (!saveBtn) return;
+  const winnerRaidKey = String(saveBtn.getAttribute("data-hof-note-save") || "").trim();
+  if (!winnerRaidKey) return;
+  const row = saveBtn.closest("[data-hof-note-row]");
+  const quote = String(row?.querySelector("[data-hof-note-quote]")?.value || "").trim();
+  saveBtn.disabled = true;
+  try {
+    await runWithButtonFeedback(
+      saveBtn,
+      { idle: "Save", loading: "Saving...", success: "Saved", failure: "Failed" },
+      async () => {
+        await getJson("/api/admin/hof-notes", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ winnerRaidKey, quote }),
+        });
+      }
+    );
+    status("Hall of Fame quote saved.");
+    await loadHofNotesPanel();
+  } catch (error) {
+    status(error?.message || "Failed to save Hall of Fame quote");
+  } finally {
+    saveBtn.disabled = false;
   }
 });
 
