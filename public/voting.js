@@ -188,7 +188,36 @@ function hofRaiderCell(row) {
       : "";
   const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
   const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
-  const badges = plb.rosterBadgeRowHtml(p);
+  const baseBadges = plb.rosterBadgeRowHtml(p);
+  const hasAnyBaseBadge = /<img\b/i.test(String(baseBadges || ""));
+  const cacheKey = "20260506hofbadges1";
+  const fallbackBadge = (pngFile, title, alt) => {
+    const png = `/images/achievements/${pngFile}?v=${cacheKey}`;
+    const svg = pngFile.toLowerCase().endsWith(".png")
+      ? `/images/achievements/${pngFile.replace(/\.png$/i, ".svg")}?v=${cacheKey}`
+      : png;
+    return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${esc(title)}"><img class="raider-badge-achievement-img" src="${esc(svg)}" alt="${esc(alt)}" width="44" height="44" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${esc(
+      png
+    )}'" /></span>`;
+  };
+  const parse = Number(row?.peakParse || 0);
+  const fallbackBadges = [
+    fallbackBadge(
+      "hall-of-fame.png",
+      "MVP hall of fame — You won a raid MVP vote in a past round.",
+      "MVP hall of fame"
+    ),
+    ...(parse >= 95
+      ? [
+          fallbackBadge(
+            "parsing-ceiling.png",
+            "Parsing ceiling — High parse performance in tracked raid history.",
+            "Parsing ceiling"
+          ),
+        ]
+      : []),
+  ].join("");
+  const badges = hasAnyBaseBadge ? baseBadges : fallbackBadges;
   return `
     <div class="leaderboard-player-row">
       <div class="leaderboard-portrait-stack">
@@ -213,41 +242,206 @@ function hofRaiderCell(row) {
               : ""
           }
         </div>
-        <div class="leaderboard-player-badges"><div class="raider-badges">${badges}</div></div>
+        <div class="leaderboard-player-badges hof-mvp-badges-wrap"><div class="raider-badges hof-mvp-badges">${badges}</div></div>
       </div>
     </div>`;
 }
 
+function hofSpecIconHtml(row) {
+  const plb = window.plbEventsRoster;
+  const esc = plb?.escapeHtml || escapeHtml;
+  const p = row?.player;
+  if (!plb || !p) return "";
+  let chain = [];
+  if (typeof plb.specBadgePortraitChain === "function") {
+    chain = plb.specBadgePortraitChain(p) || [];
+  }
+  if ((!Array.isArray(chain) || !chain.length) && typeof plb.rosterPortraitChain === "function") {
+    chain = plb.rosterPortraitChain(p) || [];
+  }
+  const src = esc(String((Array.isArray(chain) && chain[0]) || ""));
+  const fb = (Array.isArray(chain) ? chain.slice(1) : [])
+    .map((u) => esc(String(u || "")))
+    .filter(Boolean)
+    .join("|");
+  const label = plb.displaySpecNameForRoster ? plb.displaySpecNameForRoster(String(p.specName || "").trim()) : "Spec";
+  const initials = esc(String(label || p.className || "Spec").slice(0, 2).toUpperCase());
+  if (!src) {
+    return `<span class="hof-spec-icon-wrap hof-spec-icon-wrap--fallback" title="${esc(label || "Spec")}">${initials}</span>`;
+  }
+  return `<span class="hof-spec-icon-wrap" title="${esc(label || "Spec")}"><img class="hof-spec-icon" src="${src}" alt="${esc(
+    label || "Spec icon"
+  )}" width="28" height="28" loading="lazy" decoding="async" data-hof-spec-fallbacks="${fb}" onerror="(function(el){var raw=el.getAttribute('data-hof-spec-fallbacks');if(raw){var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.hofSpecI||0);if(i<parts.length){el.dataset.hofSpecI=String(i+1);el.src=parts[i];return;}} var host=el.closest('.hof-spec-icon-wrap'); if(host){host.classList.add('hof-spec-icon-wrap--fallback');host.textContent='${initials}';} el.remove();})(this)" /></span>`;
+}
+
+function hofMvpAchievementBadgesHtml(row) {
+  const esc = escapeHtml;
+  const cacheKey = "20260506hofachv2";
+  const badge = (file, title, alt) => {
+    const png = `/images/achievements/${file}?v=${cacheKey}`;
+    const svg = file.toLowerCase().endsWith(".png")
+      ? `/images/achievements/${file.replace(/\.png$/i, ".svg")}?v=${cacheKey}`
+      : png;
+    return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${esc(title)}"><img class="raider-badge-achievement-img" src="${esc(svg)}" alt="${esc(
+      alt
+    )}" width="44" height="44" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${esc(
+      png
+    )}'" /></span>`;
+  };
+  const parse = Number(row?.peakParse || 0);
+  const out = [
+    badge("hall-of-fame.png", "MVP hall of fame winner", "MVP hall of fame"),
+    ...(parse >= 95
+      ? [badge("parsing-ceiling.png", "Top parsing performance", "Parsing ceiling")]
+      : [badge("best-time-participant.png", "Best time participant", "Best time participant")]),
+  ];
+  return `<div class="raider-badges hof-mvp-badges">${out.join("")}</div>`;
+}
+
+function buildMockHallOfFamePreviewRows() {
+  const now = Date.now();
+  return [
+    {
+      winnerName: "Highbullet",
+      bracket: "dps",
+      raidName: "Sunwell Plateau",
+      raidCode: "MOCK-SWP-HIGHBULLET",
+      raidStartTime: now - 7 * 24 * 60 * 60 * 1000,
+      peakParse: 97,
+      winnerVotes: 41,
+      player: {
+        name: "Highbullet",
+        characterName: "Highbullet",
+        className: "Hunter",
+        specName: "Marksmanship",
+        roleName: "Ranged",
+        pastRhEvents: 127,
+        attendanceRate: 94,
+        wclCharacters: ["Highbullet"],
+      },
+    },
+    {
+      winnerName: "Glutelf",
+      bracket: "dps",
+      raidName: "Black Temple",
+      raidCode: "MOCK-BT-GLUTELF",
+      raidStartTime: now - 14 * 24 * 60 * 60 * 1000,
+      peakParse: 93,
+      winnerVotes: 36,
+      player: {
+        name: "Glutelf",
+        characterName: "Glutelf",
+        className: "Mage",
+        specName: "Arcane",
+        roleName: "Ranged",
+        pastRhEvents: 98,
+        attendanceRate: 89,
+        wclCharacters: ["Glutelf"],
+      },
+    },
+  ];
+}
+
 function renderHallOfFame(payload) {
   const host = document.getElementById("votingHallOfFame");
-  const rows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
-  if (!rows.length) {
-    host.innerHTML = `<div class="subtle">No past MVP rounds yet.</div>`;
-    return;
-  }
+  const apiRows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
+  const rows = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
+  const isMock = apiRows.length === 0;
+  const roleLabelForRow = (row) => {
+    const bracket = String(row?.bracket || "").trim().toLowerCase();
+    if (bracket === "heal" || bracket === "healer") return "HEALER";
+    if (bracket === "tank") return "TANK";
+    const roleName = String(row?.player?.roleName || "").trim().toLowerCase();
+    if (roleName.includes("heal")) return "HEALER";
+    if (roleName.includes("tank")) return "TANK";
+    return "DPS";
+  };
+  const championSubtitleForRow = (row) => {
+    const raidName = String(row?.raidName || row?.raidCode || "Recent Raid").trim();
+    return `Champion of ${raidName}`;
+  };
+  const quoteForRow = (row) => {
+    const role = roleLabelForRow(row);
+    if (role === "TANK") return '"Frontline unbroken."';
+    if (role === "HEALER") return '"Hold the raid together."';
+    return '"Push for every percent."';
+  };
+  const roleIconForRow = (row) => {
+    const role = roleLabelForRow(row);
+    if (role === "TANK") return "🛡";
+    if (role === "HEALER") return "❤";
+    return "⚔";
+  };
+  const attendancePct = (row) => {
+    const v = Number(row?.player?.attendanceRate);
+    return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
+  };
+  const avgParsePct = (row) => {
+    const v = Number(row?.peakParse);
+    return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
+  };
+  const totalRaids = (row) => {
+    const v = Number(row?.player?.pastRhEvents || row?.player?.raidsAttended || 0);
+    return Number.isFinite(v) && v > 0 ? numberFmt(v) : "—";
+  };
+  const topParse = (row) => {
+    const v = Number(row?.peakParse);
+    return Number.isFinite(v) && v >= 0 ? Math.round(v) : "—";
+  };
   host.innerHTML = rows
     .map((row, idx) => {
       const when = row?.raidStartTime ? new Date(row.raidStartTime).toLocaleString() : "Unknown date";
-      const raidLabel = row?.raidCode ? `Log ${row.raidCode}` : "Previous raid";
-      const votes = Number(row?.winnerVotes || 0);
-      const voteLabel = votes === 1 ? "1 vote" : `${numberFmt(votes)} votes`;
-      const peakCell = hofPeakParseCellHtml(row);
       const playerCell = hofRaiderCell(row);
+      const role = roleLabelForRow(row);
+      const subtitle = championSubtitleForRow(row);
+      const quote = quoteForRow(row);
+      const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
+      const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
+      const roleIcon = roleIconForRow(row);
+      const specIconHtml = hofSpecIconHtml(row);
+      const crownedRaid = String(row?.raidName || row?.raidCode || "Unknown raid").trim();
       return `
-        <article class="hof-row">
-          <div class="hof-rank">#${idx + 1}</div>
-          <div class="hof-body">
-            ${playerCell}
-            <span class="subtle hof-log-line">${raidLabel} · ${when}</span>
-          </div>
-          <div class="hof-metrics">
-            <div class="hof-peak">${peakCell}</div>
-            <div class="hof-votes">${voteLabel}</div>
+        <article class="hof-champion-card ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
+          <div class="hof-rank-bg" aria-hidden="true">${idx + 1}</div>
+          <div class="hof-cine-row ${rowDirCls}">
+            <div class="hof-champion-main">
+              <div class="hof-champion-topline">
+                <div class="hof-role-pill-wrap">
+                  ${specIconHtml}
+                  <span class="hof-role-emblem">${roleIcon}</span>
+                  <span class="hof-role-chip tw-plb-chip">${escapeHtml(role)}</span>
+                </div>
+              </div>
+              <div class="hof-champion-player">${playerCell}</div>
+              <div class="hof-champion-copy">
+                <p class="hof-champion-subtle">${escapeHtml(subtitle)}</p>
+                <p class="hof-crowned-raid">Crowned for: ${escapeHtml(crownedRaid)}</p>
+                <p class="hof-achievements-title">Achievements</p>
+                ${hofMvpAchievementBadgesHtml(row)}
+                <p class="hof-champion-quote">${escapeHtml(quote)}</p>
+                <p class="subtle hof-log-line">${escapeHtml(when)}</p>
+              </div>
+            </div>
+            <aside class="hof-chronicle-pane">
+              <div class="hof-chronicle-title">᛫ Chronicle ᛫</div>
+              <div class="hof-chronicle-grid">
+                <div class="hof-chronicle-kpi"><span class="subtle">Total raids</span><strong>${escapeHtml(totalRaids(row))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle">Attendance</span><strong>${escapeHtml(attendancePct(row))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle">Avg parse</span><strong>${escapeHtml(avgParsePct(row))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle">Top parse</span><strong>${escapeHtml(String(topParse(row)))}</strong></div>
+              </div>
+            </aside>
           </div>
         </article>
       `;
     })
     .join("");
+  if (isMock) {
+    host.insertAdjacentHTML(
+      "afterbegin",
+      `<div class="hof-empty-roll" style="margin-bottom:10px">Preview mode: showing mock winners (Highbullet, Glutelf) because no archived MVP rounds are available yet.</div>`
+    );
+  }
 }
 
 async function votingGetJson(url, init) {

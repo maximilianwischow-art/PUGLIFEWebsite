@@ -1,0 +1,24 @@
+@config "../tailwind.config.js";
+@import "tailwindcss";
+
+@source "../public/**/*.{html,js}";
+
+@layer base {
+  body {
+    @apply bg-plb-bg text-plb-text;
+  }
+}
+
+@layer components {
+  .tw-plb-card {
+    @apply rounded-xl2 border border-purple-500/20 bg-plb-card/90 shadow-plb-glow;
+  }
+
+  .tw-plb-title {
+    @apply font-display tracking-[0.08em] text-plb-gold;
+  }
+
+  .tw-plb-chip {
+    @apply inline-flex items-center rounded-full border border-pink-400/50 bg-pink-500/15 px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.13em];
+  }
+}

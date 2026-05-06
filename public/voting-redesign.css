@@ -1,0 +1,318 @@
+.hof-page {
+  display: grid;
+  gap: 14px;
+}
+.hof-intro {
+  padding: 26px 24px;
+  background: linear-gradient(115deg, rgba(168, 85, 247, 0.18), rgba(255, 110, 180, 0.08)), rgba(10, 8, 20, 0.9);
+  text-align: center;
+}
+.hof-intro .section-title {
+  margin: 0;
+  font-size: clamp(34px, 7.2vw, 74px);
+  letter-spacing: 0.09em;
+  color: #f4d03f;
+  text-shadow: 0 0 20px rgba(244, 208, 63, 0.35), 0 0 40px rgba(244, 208, 63, 0.2);
+}
+.hof-intro-copy {
+  margin: 10px auto 0;
+  max-width: 74ch;
+  color: #dec88e;
+  letter-spacing: 0.05em;
+}
+.hof-block-title {
+  margin: 0 0 6px;
+}
+.hof-block-subtle {
+  margin: 0 0 12px;
+}
+.hof-winner-card {
+  padding: 14px;
+  border: 1px solid rgba(244, 208, 63, 0.28);
+  background: linear-gradient(180deg, rgba(38, 22, 8, 0.35), rgba(20, 12, 30, 0.9));
+}
+.hof-roll-card {
+  padding: 14px;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  background: linear-gradient(180deg, rgba(22, 14, 38, 0.78), rgba(8, 8, 18, 0.95));
+}
+.hof-hero-kicker {
+  display: inline-block;
+  margin-bottom: 6px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #f4d27a;
+  font-size: 12px;
+  opacity: 0.95;
+}
+.hof-list {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.hof-champion-card {
+  border: 1px solid rgba(168, 85, 247, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(18, 12, 32, 0.9), rgba(8, 8, 16, 0.95));
+  padding: 12px;
+  position: relative;
+  overflow: hidden;
+  min-height: 250px;
+}
+.hof-rank-bg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(130px, 26vw, 290px);
+  font-weight: 900;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.04);
+  pointer-events: none;
+  user-select: none;
+}
+.hof-champion-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.25;
+  pointer-events: none;
+}
+.hof-role-dps::before {
+  background: radial-gradient(circle at 16% 50%, rgba(220, 38, 38, 0.4), transparent 45%);
+}
+.hof-role-heal::before {
+  background: radial-gradient(circle at 16% 50%, rgba(34, 197, 94, 0.34), transparent 45%);
+}
+.hof-role-tank::before {
+  background: radial-gradient(circle at 16% 50%, rgba(59, 130, 246, 0.34), transparent 45%);
+}
+.hof-cine-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr minmax(220px, 270px);
+  gap: 14px;
+  align-items: stretch;
+}
+.hof-cine-row--reverse {
+  direction: rtl;
+}
+.hof-cine-row--reverse > * {
+  direction: ltr;
+}
+.hof-champion-main {
+  display: grid;
+  gap: 8px;
+}
+.hof-champion-topline {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.hof-role-pill-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.hof-role-emblem {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(244, 208, 122, 0.38);
+  background: rgba(244, 208, 122, 0.14);
+  box-shadow: 0 0 18px rgba(244, 208, 122, 0.22);
+  font-size: 16px;
+}
+.hof-role-chip {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 110, 180, 0.45);
+  background: rgba(255, 110, 180, 0.14);
+}
+.hof-champion-player .leaderboard-player-row {
+  align-items: flex-start;
+}
+.hof-champion-player .leaderboard-player-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hof-spec-icon-wrap {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 208, 122, 0.5);
+  background: rgba(6, 6, 12, 0.9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex: 0 0 auto;
+  box-shadow: 0 0 14px rgba(244, 208, 122, 0.24);
+}
+.hof-spec-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.hof-spec-icon-wrap--fallback {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: #f4d27a;
+}
+.hof-champion-player .leaderboard-player-name {
+  font-size: clamp(28px, 4.8vw, 52px);
+  line-height: 1;
+  letter-spacing: 0.03em;
+}
+.hof-champion-player .leaderboard-player-meta {
+  font-size: 14px;
+  opacity: 0.92;
+}
+.hof-mvp-badges-wrap {
+  margin-top: 8px;
+}
+.hof-mvp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border-top: 0;
+  padding-top: 0;
+  margin: 6px 0 2px;
+}
+.hof-mvp-badges .raider-badge-slot {
+  width: 56px;
+  height: 56px;
+  box-shadow: 0 0 0 1px rgba(244, 208, 122, 0.22) inset, 0 0 14px rgba(244, 208, 122, 0.18);
+}
+.hof-achievements-title {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #c6b07a;
+}
+.hof-champion-copy p {
+  margin: 0;
+}
+.hof-champion-subtle {
+  font-size: 12px;
+  color: #cbb4ff;
+}
+.hof-champion-quote {
+  font-style: italic;
+  color: #f3e5ff;
+}
+.hof-crowned-raid {
+  color: #f4d27a;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.hof-chronicle-title {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: #c4b5fd;
+  text-align: center;
+  margin-bottom: 8px;
+}
+.hof-chronicle-pane {
+  border: 1px solid rgba(201, 164, 80, 0.34);
+  border-radius: 10px;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(52, 36, 10, 0.32), rgba(20, 14, 6, 0.24));
+  backdrop-filter: blur(2px);
+}
+.hof-chronicle-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.hof-chronicle-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(5, 5, 12, 0.3);
+}
+.hof-chronicle-kpi strong {
+  font-size: 18px;
+  line-height: 1;
+  color: #f4d27a;
+}
+.potr-grid {
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.potr-grid .mvp-card {
+  border: 1px solid rgba(244, 208, 63, 0.24);
+  background: linear-gradient(180deg, rgba(36, 24, 12, 0.65), rgba(16, 10, 22, 0.84));
+}
+.potr-grid .mvp-card h3 {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #f4d27a;
+}
+.voting-row {
+  border: 1px solid rgba(168, 85, 247, 0.36);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(32, 22, 52, 0.9), rgba(12, 10, 24, 0.94));
+}
+.voting-player-name {
+  font-size: 22px;
+  letter-spacing: 0.02em;
+}
+.voting-metric-value {
+  color: #f4d27a;
+}
+#votingStatus {
+  border: 1px solid rgba(244, 208, 63, 0.24);
+  background: rgba(35, 26, 8, 0.35);
+  color: #f4dca6;
+}
+.hof-empty-roll {
+  border: 1px dashed rgba(244, 208, 63, 0.35);
+  border-radius: 12px;
+  padding: 16px;
+  background: rgba(26, 18, 8, 0.28);
+  color: #dcc48a;
+}
+.voting-list {
+  gap: 10px;
+}
+@media (max-width: 900px) {
+  .hof-intro {
+    padding: 16px;
+  }
+  .hof-cine-row {
+    grid-template-columns: 1fr;
+  }
+  .hof-cine-row--reverse {
+    direction: ltr;
+  }
+  .hof-chronicle-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .potr-grid {
+    grid-template-columns: 1fr;
+  }
+  .hof-champion-player .leaderboard-player-name {
+    font-size: clamp(26px, 7.2vw, 42px);
+  }
+}
