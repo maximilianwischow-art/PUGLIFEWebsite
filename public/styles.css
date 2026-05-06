@@ -351,6 +351,12 @@ body::before {
     inset 0 0 22px rgba(168, 85, 247, 0.18);
 }
 
+/* Keep nav slot width stable while auth-gated links are hidden. */
+.top-nav a.nav-auth-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .auth-top-right {
   position: absolute;
   top: 18px;

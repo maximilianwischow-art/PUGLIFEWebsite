@@ -4,9 +4,39 @@ async function mountAuthHeaderWidget() {
 
   const currentPath = window.location.pathname || "/";
   const loginHref = `/auth/discord/login?next=${encodeURIComponent(currentPath)}`;
+  const nav = document.querySelector(".top-nav");
+
+  function ensurePhase2NavLink() {
+    if (!nav) return null;
+    let phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+    if (!phase2Link) {
+      phase2Link = document.createElement("a");
+      phase2Link.href = "/p2-preparation.html";
+      phase2Link.textContent = "Phase 2";
+      nav.appendChild(phase2Link);
+    }
+    // Keep DOM order stable across pages/sessions; only visibility changes with auth state.
+    phase2Link.classList.add("nav-auth-hidden");
+    return phase2Link;
+  }
+
+  function updatePhase2NavState(isAuthenticated) {
+    const phase2Link = ensurePhase2NavLink();
+    if (!phase2Link) return;
+    if (currentPath === "/p2-preparation.html") {
+      phase2Link.classList.add("nav-current");
+      phase2Link.setAttribute("aria-current", "page");
+    } else {
+      phase2Link.classList.remove("nav-current");
+      phase2Link.removeAttribute("aria-current");
+    }
+    if (isAuthenticated) phase2Link.classList.remove("nav-auth-hidden");
+    else phase2Link.classList.add("nav-auth-hidden");
+  }
 
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
+    updatePhase2NavState(false);
   };
 
   try {
@@ -46,42 +76,7 @@ async function mountAuthHeaderWidget() {
       }
       window.location.reload();
     });
-
-    const nav = document.querySelector(".top-nav");
-    if (nav) {
-      const path = window.location.pathname || "";
-
-      let adminLink = nav.querySelector('a[href="/admin.html"]');
-      if (!adminLink) {
-        adminLink = document.createElement("a");
-        adminLink.href = "/admin.html";
-        adminLink.textContent = "Admin";
-      }
-      if (path === "/admin.html") {
-        adminLink.className = "nav-current";
-        adminLink.setAttribute("aria-current", "page");
-      } else {
-        adminLink.classList.remove("nav-current");
-        adminLink.removeAttribute("aria-current");
-      }
-      if (!adminLink.parentElement) nav.appendChild(adminLink);
-
-      let phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
-      if (!phase2Link) {
-        phase2Link = document.createElement("a");
-        phase2Link.href = "/p2-preparation.html";
-        phase2Link.textContent = "Phase 2";
-      }
-      if (path === "/p2-preparation.html") {
-        phase2Link.className = "nav-current";
-        phase2Link.setAttribute("aria-current", "page");
-      } else {
-        phase2Link.classList.remove("nav-current");
-        phase2Link.removeAttribute("aria-current");
-      }
-      // Keep Phase 2 as the right-most main-nav item after login.
-      nav.appendChild(phase2Link);
-    }
+    updatePhase2NavState(true);
   } catch {
     renderLoggedOut();
   }
