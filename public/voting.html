@@ -8,7 +8,7 @@
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
     <link rel="stylesheet" href="/styles.min.css?v=20260506framework6" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/voting-redesign.css?v=20260506hofcss16" />
+    <link rel="stylesheet" href="/voting-redesign.css?v=20260506hofcss21" />
     <style>
       .hof-page {
         display: grid;
@@ -101,30 +101,20 @@
       .hof-champion-card {
         border: 1px solid rgba(168, 85, 247, 0.22);
         border-radius: 12px;
-        background: linear-gradient(160deg, rgba(18, 12, 32, 0.9), rgba(8, 8, 16, 0.95));
+        background:
+          linear-gradient(160deg, rgba(10, 7, 16, 0.44), rgba(7, 6, 12, 0.62)),
+          linear-gradient(90deg, rgba(6, 4, 12, 0.36) 0%, rgba(10, 8, 18, 0.2) 42%, rgba(8, 6, 14, 0.3) 100%),
+          url("/images/hof-player-card-bg.png?v=20260506hofplayerbg1") center center / cover no-repeat;
         padding: 12px;
         position: relative;
         overflow: hidden;
         min-height: 250px;
       }
-      .hof-rank-bg {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: clamp(130px, 26vw, 290px);
-        font-weight: 900;
-        line-height: 1;
-        color: rgba(255, 255, 255, 0.04);
-        pointer-events: none;
-        user-select: none;
-      }
       .hof-champion-card::before {
         content: "";
         position: absolute;
         inset: 0;
-        opacity: 0.25;
+        opacity: 0.12;
         pointer-events: none;
       }
       .hof-role-dps::before {
@@ -370,7 +360,7 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/events-roster-ui.js?v=20260506death3"></script>
-    <script defer src="/voting.js?v=20260506hofredesign19"></script>
+    <script defer src="/voting.js?v=20260506hofredesign23"></script>
     <script defer src="/auth-ui.js?v=20260506nav2"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>

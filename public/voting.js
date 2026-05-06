@@ -99,18 +99,106 @@ function renderRaidHeader(payload) {
   host.hidden = false;
 }
 
-function votingClassColor(className) {
-  const key = String(className || "").trim().toLowerCase();
-  if (key === "druid") return "#ff7d0a";
-  if (key === "hunter") return "#abd473";
-  if (key === "mage") return "#69ccf0";
-  if (key === "paladin") return "#f58cba";
-  if (key === "priest") return "#ffffff";
-  if (key === "rogue") return "#fff569";
-  if (key === "shaman") return "#0070de";
-  if (key === "warlock") return "#9482c9";
-  if (key === "warrior") return "#c79c6e";
-  return "#f8f0ff";
+/** Official default UI palette (matches `events-roster-ui` WOW_CLASS_COLORS). */
+const VOTING_CLASS_HEX = {
+  warrior: "#c79c6e",
+  paladin: "#f58cba",
+  hunter: "#abd473",
+  rogue: "#fff569",
+  priest: "#ffffff",
+  shaman: "#0070dd",
+  mage: "#69ccf0",
+  warlock: "#9482c9",
+  druid: "#ff7d0a",
+  deathknight: "#c41f3b",
+};
+
+const VOTING_VALID_CLASS_SLUGS = new Set(Object.keys(VOTING_CLASS_HEX));
+
+/** Mirrors server `LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG` one-word class labels. */
+const VOTING_LOCALIZED_CLASS_SLUG = {
+  krieger: "warrior",
+  jaeger: "hunter",
+  jager: "hunter",
+  schurke: "rogue",
+  priester: "priest",
+  schamane: "shaman",
+  magier: "mage",
+  hexenmeister: "warlock",
+  druide: "druid",
+  todesritter: "deathknight",
+  guerrier: "warrior",
+  chasseur: "hunter",
+  voleur: "rogue",
+  pretre: "priest",
+  chaman: "shaman",
+  demoniste: "warlock",
+  chevalierdelamort: "deathknight",
+  guerrero: "warrior",
+  cazador: "hunter",
+  picaro: "rogue",
+  sacerdote: "priest",
+  brujo: "warlock",
+  druida: "druid",
+};
+
+function votingSlugifyLabel(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\u2019/g, "'")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * Resolve API/WCL class labels (often English display class OR combat spec `type`) to a canonical slug.
+ * Does not depend on `plb.wowClassColor` (spec strings otherwise fell through to `var(--text)` ≈ white).
+ */
+function votingResolveClassSlug(rawLabel) {
+  const cleaned = String(rawLabel || "")
+    .replace(/\u00a0/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  const t = votingSlugifyLabel(cleaned);
+  if (!t) return "";
+  if (VOTING_VALID_CLASS_SLUGS.has(t)) return t;
+  const loc = VOTING_LOCALIZED_CLASS_SLUG[t];
+  if (loc) return loc;
+
+  /* Spec tokens — mirrors server `classSlugFromWclDamageDoneType` (+ retribution). */
+  if (t === "arms" || t === "fury") return "warrior";
+  if (t === "elemental" || t === "enhancement") return "shaman";
+  if (t === "balance" || t === "feral" || t === "guardian") return "druid";
+  if (t === "arcane" || t === "fire" || t === "frost") return "mage";
+  if (t === "affliction" || t === "demonology" || t === "destruction") return "warlock";
+  if (t === "assassination" || t === "combat" || t === "subtlety") return "rogue";
+  if (t === "beastmastery" || t === "marksmanship" || t === "survival") return "hunter";
+  if (t === "shadow" || t === "discipline") return "priest";
+  if (t === "retribution") return "paladin";
+
+  const compounds = [
+    ["deathknight", "deathknight"],
+    ["paladin", "paladin"],
+    ["warrior", "warrior"],
+    ["shaman", "shaman"],
+    ["hunter", "hunter"],
+    ["rogue", "rogue"],
+    ["warlock", "warlock"],
+    ["mage", "mage"],
+    ["priest", "priest"],
+    ["druid", "druid"],
+  ];
+  for (const [needle, slug] of compounds) {
+    if (t.includes(needle)) return slug;
+  }
+  return "";
+}
+
+function votingPlayerNameColor(classLabelRaw) {
+  const slug = votingResolveClassSlug(classLabelRaw);
+  return (slug && VOTING_CLASS_HEX[slug]) || "#ded6ee";
 }
 
 function votingPeakParseTierClass(value) {
@@ -142,7 +230,8 @@ function renderCandidates(payload, canVote) {
       const peakParse = Number(c?.peakParse);
       const peakParseText = Number.isFinite(peakParse) && peakParse >= 0 ? `${peakParse.toFixed(1)}%` : "—";
       const peakParseClass = votingPeakParseTierClass(peakParse);
-      const classColor = votingClassColor(c?.className);
+      const classSlug = votingResolveClassSlug(c?.className) || "unknown";
+      const classColor = votingPlayerNameColor(c?.className);
       const mvpClasses = [
         isRoleMvpDps ? "is-role-mvp-dps" : "",
         isRoleMvpHeal ? "is-role-mvp-heal" : "",
@@ -161,7 +250,7 @@ function renderCandidates(payload, canVote) {
         html: `
         <article class="voting-row ${selected ? "is-selected" : ""} ${mvpClasses}">
           <div class="voting-player">
-            <strong class="voting-player-name" style="color:${classColor}">${c.name || "Unknown"}</strong>
+            <strong class="voting-player-name voting-class--${classSlug}" style="color:${escapeHtmlAttr(classColor)}">${c.name || "Unknown"}</strong>
             <span class="subtle">${c.className || "Unknown class"}</span>
             ${mvpLabels ? `<div class="voting-role-mvp-badges">${mvpLabels}</div>` : ""}
           </div>
@@ -389,7 +478,8 @@ function buildMockHallOfFamePreviewRows() {
 function renderHallOfFame(payload) {
   const host = document.getElementById("votingHallOfFame");
   const apiRows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
-  const rows = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
+  const rowsUnsorted = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
+  const rows = [...rowsUnsorted].sort((a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0));
   const isMock = apiRows.length === 0;
   const roleLabelForRow = (row) => {
     const bracket = String(row?.bracket || "").trim().toLowerCase();
@@ -439,11 +529,12 @@ function renderHallOfFame(payload) {
       const quote = quoteForRow(row);
       const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
       const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
+      /* Odd ranks (1,3,…) vs even ranks (2,4,…) — alternating card glow / tint */
+      const parityCls = idx % 2 === 0 ? "hof-champion-card--parity-a" : "hof-champion-card--parity-b";
       const roleIcon = roleIconForRow(row);
       const specPortrait = hofWinnerSpecPortraitHtml(row);
       return `
-        <article class="hof-champion-card ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
-          <div class="hof-rank-bg" aria-hidden="true">${idx + 1}</div>
+        <article class="hof-champion-card ${parityCls} ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
           <div class="hof-cine-row ${rowDirCls}">
             <div class="hof-champion-main">
               <div class="hof-champion-topline">

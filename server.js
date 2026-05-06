@@ -1372,6 +1372,10 @@ async function enrichHallOfFameRows(guildId, rows) {
   });
 }
 
+function sortHallOfFameRowsByRaidStartDesc(list) {
+  return [...list].sort((a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0));
+}
+
 async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureVotingStore();
   await ensureHofNotesStore();
@@ -1395,10 +1399,10 @@ async function getHallOfFameForGuild(guildId, limit = 10) {
   try {
     const enriched = await enrichHallOfFameRows(guildId, rows);
     const withRaidNames = await hydrateHallOfFameRaidMetadata(enriched);
-    return withNotes(withRaidNames);
+    return withNotes(sortHallOfFameRowsByRaidStartDesc(withRaidNames));
   } catch {
     const hydrated = await hydrateHallOfFameRaidMetadata(rows).catch(() => rows);
-    return withNotes(hydrated).map((r) => ({
+    return sortHallOfFameRowsByRaidStartDesc(withNotes(hydrated)).map((r) => ({
       ...r,
       player: null,
       peakParse: null,
@@ -5890,9 +5894,11 @@ async function getLatestRaidVotingPayload(guildId) {
   const candidates = [...rosterNames]
     .map((name) => {
       const k = name.toLowerCase();
+      const rawCombatType = playerClassByName.get(k) || "";
+      const className = englishClassDisplayFromWclCombatType(rawCombatType) || rawCombatType;
       return {
         name,
-        className: playerClassByName.get(k) || "",
+        className,
         dps: Math.round(dpsByName.get(k) || 0),
         hps: Math.round(hpsByName.get(k) || 0),
         damageTaken: Math.round(takenByName.get(k) || 0),
@@ -7184,8 +7190,44 @@ function classSlugFromWclDamageDoneType(typeRaw) {
   if (t === "assassination" || t === "combat" || t === "subtlety") return "rogue";
   if (t === "beastmastery" || t === "marksmanship" || t === "survival") return "hunter";
   if (t === "shadow" || t === "discipline") return "priest";
-  /** Restoration / Protection appear on two classes — rely on texture checks instead. */
+  if (t === "retribution") return "paladin";
+  /** Restoration / Protection / Holy appear on two classes — rely on texture checks instead. */
   return "";
+}
+
+/** MVP voting list — normalize WCL combat `type` (often a spec name) to English class for UI + colors. */
+function englishClassDisplayFromWclCombatType(typeRaw) {
+  const raw = String(typeRaw || "").trim();
+  if (!raw) return "";
+
+  const displayFromSlug = (slug) => (slug && ENGLISH_CLASS_SLUG_TO_DISPLAY[slug]) || "";
+
+  let slug = englishCanonicalClassSlugFromLocalizedDisplay(raw);
+  if (slug) return displayFromSlug(slug);
+
+  slug = classSlugFromWclDamageDoneType(typeRaw);
+  if (slug) return displayFromSlug(slug);
+
+  const t = slugifyLocaleText(raw);
+  if (!t) return raw;
+
+  const compoundClasses = [
+    ["deathknight", "deathknight"],
+    ["paladin", "paladin"],
+    ["warrior", "warrior"],
+    ["shaman", "shaman"],
+    ["hunter", "hunter"],
+    ["rogue", "rogue"],
+    ["warlock", "warlock"],
+    ["mage", "mage"],
+    ["priest", "priest"],
+    ["druid", "druid"],
+  ];
+  for (const [needle, cls] of compoundClasses) {
+    if (t.includes(needle)) return displayFromSlug(cls);
+  }
+
+  return raw;
 }
 
 function wclCombatSpecTypeAgreesWithRoster(row, wclTypeRaw) {
