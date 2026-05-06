@@ -40,6 +40,7 @@
               <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="data-sync">Data sync</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="analytics">Analytics</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Raid Roster Management</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="custom-dm">Custom messages</button>
             </div>
@@ -163,6 +164,24 @@
           </div>
         </section>
 
+        <section class="card admin-panel" data-admin-panel="analytics" id="admin-panel-analytics">
+          <h3 class="section-title">Website Analytics</h3>
+          <p class="subtle">Traffic totals, top visited subpages, and DM subscribers list.</p>
+          <div id="adminAnalyticsSummary" class="admin-grid-note">Loading analytics...</div>
+          <div class="admin-actions admin-actions--tight">
+            <label class="subtle" for="adminAnalyticsDays">Range (days)</label>
+            <input id="adminAnalyticsDays" class="admin-input" type="number" min="1" max="365" value="30" style="max-width: 110px" />
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminAnalyticsReloadBtn">
+              Reload analytics
+            </button>
+          </div>
+          <div id="adminAnalyticsTopPages" class="admin-grid-note">Loading top pages...</div>
+          <div id="adminAnalyticsDaily" class="admin-grid-note">Loading daily trend...</div>
+          <h4 class="section-title" style="margin-top: 14px">Subscribers</h4>
+          <div id="adminSubscribersSummary" class="admin-grid-note">Loading subscribers...</div>
+          <div id="adminSubscribersTable" class="admin-grid-note">Loading subscribers list...</div>
+        </section>
+
         <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
           <h3 class="section-title">Raid Roster Management</h3>
           <p class="subtle">
@@ -206,7 +225,7 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/admin.js?v=20260505sync1"></script>
+    <script defer src="/admin.js?v=20260506analytics1"></script>
     <script defer src="/auth-ui.js?v=20260504b"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>

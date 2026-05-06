@@ -14,6 +14,46 @@ function initBackgroundStars() {
   el.appendChild(frag);
 }
 
+function initBasicAnalytics() {
+  if (window.__plbAnalyticsBooted) return;
+  window.__plbAnalyticsBooted = true;
+  const sessionKey = "plb_analytics_session_v1";
+  let sessionId = "session-unavailable";
+  try {
+    sessionId = window.sessionStorage.getItem(sessionKey) || "";
+    if (!sessionId) {
+      sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      window.sessionStorage.setItem(sessionKey, sessionId);
+    }
+  } catch {
+    /* ignore */
+  }
+  const payload = {
+    type: "pageview",
+    path: String(window.location.pathname || "/"),
+    title: String(document.title || "").slice(0, 160),
+    referrer: String(document.referrer || "").slice(0, 220),
+    sessionId,
+  };
+  const body = JSON.stringify(payload);
+  try {
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "application/json" });
+      navigator.sendBeacon("/api/analytics/track", blob);
+      return;
+    }
+  } catch {
+    /* fallback */
+  }
+  fetch("/api/analytics/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+    credentials: "same-origin",
+  }).catch(() => {});
+}
+
 const statusEl = document.querySelector("#status");
 const dashboardPbRow = document.querySelector("#dashboardPbRow");
 const GUILD_ID = 817080;
@@ -770,6 +810,7 @@ async function loadDeathEncounterHeatmap() {
 }
 
 initBackgroundStars();
+initBasicAnalytics();
 if (raidPerfKpiGrid) {
   loadRaidPerfKpi();
 }

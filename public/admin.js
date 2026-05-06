@@ -53,6 +53,7 @@ const ADMIN_PANEL_IDS = [
   "p2-materials",
   "join-needs",
   "data-sync",
+  "analytics",
   "role-alerts",
   "custom-dm",
 ];
@@ -1368,6 +1369,128 @@ function renderPublicSnapshotStatus(payload) {
   `;
 }
 
+function fmtWhen(ms) {
+  const n = Number(ms || 0);
+  if (!n) return "-";
+  const d = new Date(n);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString();
+}
+
+function renderAnalyticsSummary(payload) {
+  const host = document.getElementById("adminAnalyticsSummary");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Analytics unavailable.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Range</td><td>${esc(String(payload.days || 0))} days</td></tr>
+          <tr><td>Total events</td><td>${Number(payload.totalEvents || 0)}</td></tr>
+          <tr><td>Pageviews</td><td>${Number(payload.pageviews || 0)}</td></tr>
+          <tr><td>Unique visitors (sessions)</td><td>${Number(payload.uniqueSessions || 0)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAnalyticsTopPages(payload) {
+  const host = document.getElementById("adminAnalyticsTopPages");
+  if (!host) return;
+  const rows = Array.isArray(payload?.topPages) ? payload.topPages : [];
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle">No pageview data yet.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <h4 class="subtle" style="margin: 0 0 6px"><strong>Top subpages</strong></h4>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Path</th><th>Views</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr><td><code>${esc(String(r.path || "/"))}</code></td><td>${Number(r.views || 0)}</td></tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAnalyticsDaily(payload) {
+  const host = document.getElementById("adminAnalyticsDaily");
+  if (!host) return;
+  const rows = Array.isArray(payload?.daily) ? payload.daily : [];
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle">No daily trend data yet.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <h4 class="subtle" style="margin: 0 0 6px"><strong>Daily pageviews</strong></h4>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Date</th><th>Views</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `<tr><td>${esc(String(r.day || "-"))}</td><td>${Number(r.views || 0)}</td></tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderSubscribers(payload) {
+  const summary = document.getElementById("adminSubscribersSummary");
+  const table = document.getElementById("adminSubscribersTable");
+  if (!summary || !table) return;
+  if (!payload || payload.ok === false) {
+    summary.innerHTML = `<p class="subtle">Subscribers unavailable.</p>`;
+    table.innerHTML = "";
+    return;
+  }
+  summary.innerHTML = `<p><strong>Total records:</strong> ${Number(payload.total || 0)} · <strong>Subscribed:</strong> ${Number(payload.subscribed || 0)}</p>`;
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (!rows.length) {
+    table.innerHTML = `<p class="subtle">No subscribers found.</p>`;
+    return;
+  }
+  table.innerHTML = `
+    <div class="admin-table-wrap role-alert-candidates-wrap">
+      <table class="admin-table role-alert-candidates-table">
+        <thead><tr><th>User</th><th>User ID</th><th>Subscribed</th><th>Subscribed at</th><th>Updated at</th></tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `<tr>
+            <td>${esc(String(row.globalName || row.username || "-"))}</td>
+            <td><code>${esc(String(row.userId || "-"))}</code></td>
+            <td>${row.subscribed ? "Yes" : "No"}</td>
+            <td>${esc(fmtWhen(row.subscribedAt))}</td>
+            <td>${esc(fmtWhen(row.updatedAt))}</td>
+          </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function loadAnalyticsPanel() {
+  const daysInput = document.getElementById("adminAnalyticsDays");
+  const days = Math.max(1, Math.min(365, Number(daysInput?.value || 30) || 30));
+  if (daysInput) daysInput.value = String(days);
+  const [analyticsPayload, subscribersPayload] = await Promise.all([
+    getJson(`/api/admin/analytics/summary?days=${days}`),
+    getJson("/api/admin/subscribers"),
+  ]);
+  renderAnalyticsSummary(analyticsPayload);
+  renderAnalyticsTopPages(analyticsPayload);
+  renderAnalyticsDaily(analyticsPayload);
+  renderSubscribers(subscribersPayload);
+}
+
 async function loadPublicSnapshotStatus() {
   const payload = await getJson("/api/admin/public-snapshot/status");
   renderPublicSnapshotStatus(payload);
@@ -1412,6 +1535,15 @@ async function loadAdminData() {
   } catch (error) {
     renderPublicSnapshotStatus({ ok: false });
     status(`Snapshot status failed: ${error?.message || "Unknown error"}`);
+  }
+  try {
+    await loadAnalyticsPanel();
+  } catch (error) {
+    renderAnalyticsSummary({ ok: false });
+    renderAnalyticsTopPages({ ok: false });
+    renderAnalyticsDaily({ ok: false });
+    renderSubscribers({ ok: false });
+    status(`Analytics load failed: ${error?.message || "Unknown error"}`);
   }
   renderRoleAlertsEventSelect(Array.isArray(roleAlertEvents?.events) ? roleAlertEvents.events : []);
   renderRoleAlertsAnalysis(null);
@@ -2130,6 +2262,22 @@ document.getElementById("publicSnapshotSyncBtn")?.addEventListener("click", asyn
     );
   } catch (error) {
     status(error?.message || "Snapshot sync failed");
+  }
+});
+
+document.getElementById("adminAnalyticsReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("adminAnalyticsReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload analytics", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => {
+        await loadAnalyticsPanel();
+      }
+    );
+    status("Analytics reloaded.");
+  } catch (error) {
+    status(error?.message || "Analytics reload failed");
   }
 });
 

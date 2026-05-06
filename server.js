@@ -320,6 +320,7 @@ const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
+const analyticsStorePath = path.join(dataDir, "site-analytics.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
 const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
 const apiCacheDir = path.join(dataDir, "cache");
@@ -341,9 +342,12 @@ let netherVortexReady = null;
 let netherVortexWriteChain = Promise.resolve();
 let publicDataSnapshotReady = null;
 let publicDataSnapshotWriteChain = Promise.resolve();
+let analyticsStoreReady = null;
+let analyticsWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
 let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
+let analyticsStoreState = { events: [] };
 let rhWclLinksReady = null;
 /** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
@@ -739,6 +743,92 @@ async function ensureVotingStore() {
     }
   })();
   return votingStoreReady;
+}
+
+async function persistAnalyticsStore() {
+  const tmpPath = `${analyticsStorePath}.tmp`;
+  const json = JSON.stringify(analyticsStoreState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, analyticsStorePath);
+}
+
+async function ensureAnalyticsStore() {
+  if (analyticsStoreReady) return analyticsStoreReady;
+  analyticsStoreReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(analyticsStorePath, "utf8");
+      const parsed = JSON.parse(raw);
+      const rows = Array.isArray(parsed?.events) ? parsed.events : [];
+      analyticsStoreState = {
+        events: rows
+          .map((row) => ({
+            at: Number(row?.at || 0),
+            type: String(row?.type || "pageview"),
+            path: String(row?.path || "/"),
+            title: String(row?.title || "").slice(0, 160),
+            referrer: String(row?.referrer || "").slice(0, 220),
+            sessionId: String(row?.sessionId || "").slice(0, 120),
+          }))
+          .filter((row) => row.at > 0 && row.path),
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      analyticsStoreState = { events: [] };
+      await persistAnalyticsStore();
+    }
+  })();
+  return analyticsStoreReady;
+}
+
+async function appendAnalyticsEvent(event) {
+  await ensureAnalyticsStore();
+  analyticsWriteChain = analyticsWriteChain.then(async () => {
+    analyticsStoreState.events.push(event);
+    const maxEvents = 20_000;
+    if (analyticsStoreState.events.length > maxEvents) {
+      analyticsStoreState.events = analyticsStoreState.events.slice(-maxEvents);
+    }
+    await persistAnalyticsStore();
+  });
+  await analyticsWriteChain;
+}
+
+function analyticsSummary({ days = 30 } = {}) {
+  const safeDays = Math.max(1, Math.min(365, Math.floor(Number(days) || 30)));
+  const since = Date.now() - safeDays * 24 * 60 * 60 * 1000;
+  const rows = (analyticsStoreState.events || []).filter((row) => Number(row?.at || 0) >= since);
+  const pageviews = rows.filter((row) => row.type === "pageview");
+
+  const byPath = new Map();
+  const byDay = new Map();
+  const uniqueSessions = new Set();
+  for (const row of pageviews) {
+    const pathKey = String(row.path || "/");
+    byPath.set(pathKey, (byPath.get(pathKey) || 0) + 1);
+    if (row.sessionId) uniqueSessions.add(String(row.sessionId));
+    const d = new Date(Number(row.at || 0));
+    const day = Number.isNaN(d.getTime()) ? "unknown" : d.toISOString().slice(0, 10);
+    byDay.set(day, (byDay.get(day) || 0) + 1);
+  }
+
+  const topPages = [...byPath.entries()]
+    .map(([path, views]) => ({ path, views }))
+    .sort((a, b) => b.views - a.views)
+    .slice(0, 25);
+  const daily = [...byDay.entries()]
+    .map(([day, views]) => ({ day, views }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+
+  return {
+    ok: true,
+    days: safeDays,
+    totalEvents: rows.length,
+    pageviews: pageviews.length,
+    uniqueSessions: uniqueSessions.size,
+    topPages,
+    daily,
+  };
 }
 
 function getVotingTallies(roundKey) {
@@ -3724,6 +3814,75 @@ app.get("/api/auth/config", (_req, res) => {
     discordRedirectUri,
     publicBaseUrl,
   });
+});
+
+app.post("/api/analytics/track", async (req, res) => {
+  try {
+    await ensureAnalyticsStore();
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const type = String(body.type || "pageview").trim().toLowerCase();
+    const pathVal = String(body.path || "/").trim();
+    const title = String(body.title || "").trim().slice(0, 160);
+    const referrer = String(body.referrer || "").trim().slice(0, 220);
+    const sessionId = String(body.sessionId || "").trim().slice(0, 120);
+    if (!pathVal.startsWith("/")) {
+      return res.status(400).json({ ok: false, error: "Invalid path" });
+    }
+    if (!["pageview", "event"].includes(type)) {
+      return res.status(400).json({ ok: false, error: "Invalid analytics type" });
+    }
+    await appendAnalyticsEvent({
+      at: Date.now(),
+      type,
+      path: pathVal,
+      title,
+      referrer,
+      sessionId,
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to track analytics" });
+  }
+});
+
+app.get("/api/admin/analytics/summary", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureAnalyticsStore();
+    const days = Number(req.query.days || 30);
+    return res.json(analyticsSummary({ days }));
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load analytics summary" });
+  }
+});
+
+app.get("/api/admin/subscribers", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureDiscordDmSubscribersStore();
+    const rows = Object.values(discordDmSubscribersState.subscribersByUserId || {})
+      .map((row) => ({
+        userId: String(row?.userId || ""),
+        username: String(row?.username || ""),
+        globalName: String(row?.globalName || ""),
+        subscribed: Boolean(row?.subscribed),
+        subscribedAt: Number(row?.subscribedAt || 0),
+        updatedAt: Number(row?.updatedAt || 0),
+      }))
+      .filter((row) => row.userId)
+      .sort((a, b) => Number(b.subscribedAt || b.updatedAt || 0) - Number(a.subscribedAt || a.updatedAt || 0));
+
+    return res.json({
+      ok: true,
+      total: rows.length,
+      subscribed: rows.filter((r) => r.subscribed).length,
+      rows,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load subscribers" });
+  }
 });
 
 app.get("/api/p2-preparation/materials", async (req, res) => {
