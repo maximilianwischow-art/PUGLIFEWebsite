@@ -2920,6 +2920,10 @@ function dedupeGargulEntries(entries) {
 
 // Explicit page routes keep frontend reachable in all environments.
 app.get("/", (_req, res) => {
+  res.sendFile(path.join(publicDir, "join.html"));
+});
+
+app.get(["/leaderboard", "/leaderboard/", "/leaderboard.html"], (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 

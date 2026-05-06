@@ -14,6 +14,10 @@ function initBackgroundStars() {
 }
 
 function initWelcomePopup() {
+  const path = String(window.location.pathname || "").replace(/\/+$/, "") || "/";
+  const isJoinPage = path === "/" || path === "/join.html" || path.endsWith("/join.html");
+  if (!isJoinPage) return;
+
   const card = document.getElementById("welcomePopupCard");
   const backdrop = document.getElementById("welcomePopupBackdrop");
   const closeBtn = document.getElementById("welcomePopupClose");
@@ -26,50 +30,25 @@ function initWelcomePopup() {
     document.body.appendChild(card);
   }
 
-  /** Once dismissed (any control), never show again on this origin. Bump key when popup markup/behavior changes. */
-  const dismissKey = "plb_welcome_popup_dismissed_v4";
-
-  let dismissedInMemory = false;
-
-  function readDismissed() {
-    try {
-      if (window.localStorage.getItem(dismissKey) === "1") return true;
-    } catch {}
-    try {
-      if (window.sessionStorage.getItem(dismissKey) === "1") return true;
-    } catch {}
-    return dismissedInMemory;
+  const dismissKey = "plb_welcome_popup_seen_session_v1";
+  let alreadySeen = false;
+  try {
+    alreadySeen = window.sessionStorage.getItem(dismissKey) === "1";
+  } catch {
+    alreadySeen = false;
   }
+  if (alreadySeen) return;
 
-  function persistDismissed() {
-    dismissedInMemory = true;
-    try {
-      window.localStorage.setItem(dismissKey, "1");
-    } catch {}
-    try {
-      window.sessionStorage.setItem(dismissKey, "1");
-    } catch {}
-  }
-
-  /** Root Leaderboard (/) and Raid Performance home both skip the "Enter" redirect. */
-  function pathShouldSkipEnterRedirect() {
-    const p = String(window.location.pathname || "").replace(/\/+$/, "") || "/";
-    if (p === "/") return true;
-    return p === "/home.html" || p.endsWith("/home.html");
-  }
-
-  if (!readDismissed()) {
-    backdrop.removeAttribute("hidden");
-    card.removeAttribute("hidden");
+  backdrop.removeAttribute("hidden");
+  card.removeAttribute("hidden");
+  backdrop.hidden = false;
+  card.hidden = false;
+  card.setAttribute("aria-hidden", "false");
+  backdrop.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(() => {
     backdrop.hidden = false;
     card.hidden = false;
-    card.setAttribute("aria-hidden", "false");
-    backdrop.setAttribute("aria-hidden", "false");
-    requestAnimationFrame(() => {
-      backdrop.hidden = false;
-      card.hidden = false;
-    });
-  }
+  });
 
   const hidePopup = () => {
     backdrop.setAttribute("hidden", "");
@@ -80,13 +59,16 @@ function initWelcomePopup() {
 
   const dismiss = () => {
     hidePopup();
-    persistDismissed();
+    try {
+      window.sessionStorage.setItem(dismissKey, "1");
+    } catch {
+      /* ignore */
+    }
   };
 
-  /** Enter: dismiss permanently; open Raid Performance only when not already on / or home (avoids reload loops). */
+  /** Enter only closes popup; reappears after each reload by design. */
   const enterGoHome = () => {
     dismiss();
-    if (!pathShouldSkipEnterRedirect()) window.location.assign("/home.html");
   };
 
   /** Capture phase: runs before other document handlers that might interfere with closing. */

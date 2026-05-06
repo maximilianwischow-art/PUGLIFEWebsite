@@ -411,13 +411,8 @@ function joinRenderFutureEvents(events, isAuthenticated) {
       const confirmed = Number(event?.signups?.confirmed ?? 0);
       const signupsTotal = Number(event?.signups?.total ?? 0);
       const gapsHtml = joinMissingGapsHtml(event.rosterByRole, cap, confirmed);
-      const softres =
-        event.softres?.enabled && event.softres?.url
-          ? `<a class="join-event-softres" href="${escJoin(event.softres.url)}" target="_blank" rel="noreferrer">SoftRes</a>`
-          : "";
       const { date, time } = joinFmtEventDateTime(event.startTime);
       const startSec = Number(event.startTime || 0);
-      const desc = joinTruncateDesc(event.description, 140);
       const actions = joinSignupActionsHtml(event, isAuthenticated);
 
       return `
@@ -435,7 +430,6 @@ function joinRenderFutureEvents(events, isAuthenticated) {
                 <span class="join-event-countdown-value">—</span>
               </span>
             </div>
-            ${desc ? `<p class="join-event-tile-desc subtle">${escJoin(desc)}</p>` : ""}
             <div class="join-event-tile-stats">
               <span title="Primary roster">${escJoin(String(confirmed))}/${escJoin(String(cap))} roster</span>
               <span title="Total signups incl. bench etc.">${escJoin(String(signupsTotal))} signups</span>
@@ -443,7 +437,6 @@ function joinRenderFutureEvents(events, isAuthenticated) {
             ${gapsHtml}
             <div class="join-event-tile-actions">
               ${actions}
-              ${softres}
             </div>
           </div>
         </article>`;
