@@ -318,6 +318,11 @@ const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const hofNotesPath = path.join(dataDir, "hof-notes.json");
+/** Persisted enriched Hall of Fame payload (roster match + peak parses + raid names). Refreshed when winners list changes or TTL expires. */
+const hofEnrichedCachePath = path.join(dataDir, "hof-enriched-cache.json");
+let hofEnrichedWriteChain = Promise.resolve();
+/** @type {{ guildId: number, limit: number, fingerprint: string, generatedAt: number, hallOfFame: any[] } | null} */
+let hofEnrichedMemoryCache = null;
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
@@ -970,28 +975,25 @@ async function hallOfFameReportMetaForCode(raidCode) {
 
 async function hydrateHallOfFameRaidMetadata(rows) {
   if (!Array.isArray(rows) || !rows.length) return rows;
-  const out = [];
-  for (const row of rows) {
-    const currentRaidName = String(row?.raidName || "").trim();
-    const raidCode = String(row?.raidCode || "").trim();
-    const shouldResolve = !currentRaidName || currentRaidName === raidCode || looksLikeWclReportCode(currentRaidName);
-    if (!shouldResolve) {
-      out.push(row);
-      continue;
-    }
-    let meta = null;
-    try {
-      meta = await hallOfFameReportMetaForCode(raidCode);
-    } catch {
-      meta = null;
-    }
-    out.push({
-      ...row,
-      raidName: String(meta?.raidName || currentRaidName || raidCode || "Raid").trim(),
-      raidStartTime: Number(row?.raidStartTime || meta?.raidStartTime || 0),
-    });
-  }
-  return out;
+  return Promise.all(
+    rows.map(async (row) => {
+      const currentRaidName = String(row?.raidName || "").trim();
+      const raidCode = String(row?.raidCode || "").trim();
+      const shouldResolve = !currentRaidName || currentRaidName === raidCode || looksLikeWclReportCode(currentRaidName);
+      if (!shouldResolve) return row;
+      let meta = null;
+      try {
+        meta = await hallOfFameReportMetaForCode(raidCode);
+      } catch {
+        meta = null;
+      }
+      return {
+        ...row,
+        raidName: String(meta?.raidName || currentRaidName || raidCode || "Raid").trim(),
+        raidStartTime: Number(row?.raidStartTime || meta?.raidStartTime || 0),
+      };
+    })
+  );
 }
 
 async function trackedBossFightIdsForHallOfFameReport(raidCode) {
@@ -1381,28 +1383,25 @@ async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureHofNotesStore();
   const voting = await getCurrentVotingRoundCached(guildId);
   const currentRoundKey = voting?.roundKey || "";
-  let rows = votingHallOfFame(currentRoundKey, limit);
-  if (!rows.length) rows = buildMockHallOfFameRows(limit);
-  const withNotes = (list) =>
-    list.map((row) => {
-      const winnerRaidKey = normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
-      const note =
-        winnerRaidKey && hofNotesState.byWinnerRaidKey && typeof hofNotesState.byWinnerRaidKey === "object"
-          ? hofNotesState.byWinnerRaidKey[winnerRaidKey]
-          : null;
-      return {
-        ...row,
-        winnerRaidKey,
-        customQuote: String(note?.quote || ""),
-      };
-    });
+  let identityRows = votingHallOfFame(currentRoundKey, limit);
+  if (!identityRows.length) identityRows = buildMockHallOfFameRows(limit);
+  identityRows = sortHallOfFameRowsByRaidStartDesc(identityRows);
+  const fingerprint = computeHallOfFameWinnerFingerprint(identityRows);
+
+  const cached = await tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint);
+  if (cached) {
+    return applyHofNotesToHallOfFameRows(cached);
+  }
+
   try {
-    const enriched = await enrichHallOfFameRows(guildId, rows);
+    const enriched = await enrichHallOfFameRows(guildId, identityRows);
     const withRaidNames = await hydrateHallOfFameRaidMetadata(enriched);
-    return withNotes(sortHallOfFameRowsByRaidStartDesc(withRaidNames));
+    const sorted = sortHallOfFameRowsByRaidStartDesc(withRaidNames);
+    await persistHallOfFameEnrichedCache(guildId, limit, fingerprint, stripHallOfFameRowsForDiskCache(sorted));
+    return applyHofNotesToHallOfFameRows(sorted);
   } catch {
-    const hydrated = await hydrateHallOfFameRaidMetadata(rows).catch(() => rows);
-    return sortHallOfFameRowsByRaidStartDesc(withNotes(hydrated)).map((r) => ({
+    const hydrated = await hydrateHallOfFameRaidMetadata(identityRows).catch(() => identityRows);
+    return sortHallOfFameRowsByRaidStartDesc(applyHofNotesToHallOfFameRows(hydrated)).map((r) => ({
       ...r,
       player: null,
       peakParse: null,
@@ -1706,6 +1705,121 @@ function normalizeHofWinnerRaidKey(raidCode, winnerName) {
     .slice(0, 80);
   if (!code || !winner) return "";
   return `${code}::${winner}`;
+}
+
+function applyHofNotesToHallOfFameRows(rows) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    const winnerRaidKey = normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
+    const note =
+      winnerRaidKey && hofNotesState.byWinnerRaidKey && typeof hofNotesState.byWinnerRaidKey === "object"
+        ? hofNotesState.byWinnerRaidKey[winnerRaidKey]
+        : null;
+    return {
+      ...row,
+      winnerRaidKey,
+      customQuote: String(note?.quote || ""),
+    };
+  });
+}
+
+function hallOfFameEnrichedCacheTtlMs() {
+  const n = Number(process.env.HOF_ENRICHED_DISK_CACHE_MS);
+  if (Number.isFinite(n) && n >= 60_000) return Math.min(168 * 3600_000, n);
+  return 6 * 3600_000;
+}
+
+function computeHallOfFameWinnerFingerprint(rows) {
+  if (!Array.isArray(rows) || !rows.length) return "empty";
+  const parts = rows.map((r) =>
+    [
+      String(r?.roundKey || ""),
+      String(r?.raidCode || ""),
+      String(r?.winnerName || ""),
+      String(Number(r?.raidStartTime || 0)),
+    ].join("|")
+  );
+  parts.sort();
+  return createHash("sha256").update(parts.join("\n")).digest("hex");
+}
+
+function stripHallOfFameRowsForDiskCache(rows) {
+  return rows.map((row) => {
+    const copy = { ...(row || {}) };
+    delete copy.winnerRaidKey;
+    delete copy.customQuote;
+    return copy;
+  });
+}
+
+async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
+  const ttl = hallOfFameEnrichedCacheTtlMs();
+  const now = Date.now();
+  const mem = hofEnrichedMemoryCache;
+  if (
+    mem &&
+    Number(mem.guildId) === Number(guildId) &&
+    Number(mem.limit) === Number(limit) &&
+    mem.fingerprint === fingerprint &&
+    now - Number(mem.generatedAt || 0) < ttl &&
+    Array.isArray(mem.hallOfFame)
+  ) {
+    return mem.hallOfFame;
+  }
+  try {
+    const raw = await readFile(hofEnrichedCachePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (
+      parsed?.v === 1 &&
+      Number(parsed.guildId) === Number(guildId) &&
+      Number(parsed.limit) === Number(limit) &&
+      parsed.fingerprint === fingerprint &&
+      Array.isArray(parsed.hallOfFame) &&
+      now - Number(parsed.generatedAt || 0) < ttl
+    ) {
+      hofEnrichedMemoryCache = {
+        guildId: Number(guildId),
+        limit: Number(limit),
+        fingerprint,
+        generatedAt: Number(parsed.generatedAt || 0),
+        hallOfFame: parsed.hallOfFame,
+      };
+      return parsed.hallOfFame;
+    }
+  } catch {
+    /* cache miss */
+  }
+  return null;
+}
+
+async function persistHallOfFameEnrichedCache(guildId, limit, fingerprint, hallOfFame) {
+  const generatedAt = Date.now();
+  const payload = {
+    v: 1,
+    guildId: Number(guildId),
+    limit: Number(limit),
+    fingerprint,
+    generatedAt,
+    hallOfFame,
+  };
+  hofEnrichedMemoryCache = {
+    guildId: Number(guildId),
+    limit: Number(limit),
+    fingerprint,
+    generatedAt,
+    hallOfFame,
+  };
+  hofEnrichedWriteChain = hofEnrichedWriteChain.then(async () => {
+    try {
+      await mkdir(dataDir, { recursive: true });
+      const tmpPath = `${hofEnrichedCachePath}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(payload, null, 2), "utf8");
+      await rename(tmpPath, hofEnrichedCachePath);
+    } catch {
+      /* disk optional */
+    }
+  });
+  await hofEnrichedWriteChain;
 }
 
 function sanitizeHofNotesState(raw) {
@@ -4699,7 +4813,6 @@ app.get("/api/voting/current", async (req, res) => {
       },
       myVote: myVoteRow?.candidateName || null,
       candidates,
-      hallOfFame: await getHallOfFameForGuild(votingGuildId, 10),
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load voting round" });

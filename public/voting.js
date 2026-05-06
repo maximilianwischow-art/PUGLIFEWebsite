@@ -604,7 +604,6 @@ async function loadHallOfFame() {
   try {
     const payload = await votingGetJson("/api/voting/hall-of-fame", {
       credentials: "include",
-      skipCache: true,
     });
     renderHallOfFame(payload);
     await preload;
