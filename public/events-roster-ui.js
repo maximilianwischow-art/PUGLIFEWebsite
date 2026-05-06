@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260504j";
+const IMAGE_ASSET_VERSION = "20260505k";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -31,6 +31,8 @@ let attendanceLeaderboardRows = [];
 let pbBestTimeRankedNameKeys = new Set();
 /** MVP winners from `/api/voting/hall-of-fame`. */
 let hallOfFameWinnerNameKeys = new Set();
+/** Top death totals from `/death-leaderboard` over the last 6 raids (ties included). */
+let mostDeathsLastSixNameKeys = new Set();
 /** First-clear participants by raid from `/first-clear-participants`. */
 let firstClearKaraNameKeys = new Set();
 let firstClearGruulNameKeys = new Set();
@@ -936,6 +938,10 @@ function playerEarnedHallOfFameMvpBadge(player) {
   return playerMatchesAchievementNameSet(player, hallOfFameWinnerNameKeys);
 }
 
+function playerEarnedMostDeathsLastSixBadge(player) {
+  return playerMatchesAchievementNameSet(player, mostDeathsLastSixNameKeys);
+}
+
 function playerEarnedIronAttendanceBadge(player) {
   const row = attendanceRowForRosterPlayerResolved(player);
   const cap = attendanceConsideredRaids;
@@ -989,6 +995,17 @@ function playerEarnedFirstClearMagBadge(player) {
   return playerMatchesAchievementNameSet(player, firstClearMagNameKeys);
 }
 
+function achievementBadgeIconUrlWithFallback(fileName) {
+  const file = String(fileName || "").trim();
+  const png = `/images/achievements/${file}?v=${IMAGE_ASSET_VERSION}`;
+  if (!/\.png$/i.test(file)) {
+    return { src: png, onerror: "" };
+  }
+  const svgFile = file.replace(/\.png$/i, ".svg");
+  const svg = `/images/achievements/${svgFile}?v=${IMAGE_ASSET_VERSION}`;
+  return { src: svg, onerror: ` onerror="this.onerror=null;this.src='${png}'"` };
+}
+
 /** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
 function rosterAchievementBadgesHtml(player) {
   const badges = [
@@ -1005,6 +1022,13 @@ function rosterAchievementBadgesHtml(player) {
         "MVP hall of fame — You won a raid MVP vote in a past round (listed on the Hall of Fame page).",
       alt: "MVP hall of fame",
       ok: playerEarnedHallOfFameMvpBadge(player),
+    },
+    {
+      file: "most-deaths-last-6-raids.png",
+      title:
+        "Most deaths (last 6 raids) — You are currently tied for the highest total deaths across the tracked last six raids window.",
+      alt: "Most deaths last 6 raids",
+      ok: playerEarnedMostDeathsLastSixBadge(player),
     },
     {
       file: "iron-attendance.png",
@@ -1044,10 +1068,10 @@ function rosterAchievementBadgesHtml(player) {
   ];
   return badges
     .filter((b) => b.ok)
-    .map(
-      (b) =>
-        `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${escapeHtml(b.title)}"><img class="raider-badge-achievement-img" src="${escapeHtml(`/images/achievements/${b.file}?v=${IMAGE_ASSET_VERSION}`)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async" /></span>`
-    )
+    .map((b) => {
+      const icon = achievementBadgeIconUrlWithFallback(b.file);
+      return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${escapeHtml(b.title)}"><img class="raider-badge-achievement-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} /></span>`;
+    })
     .join("");
 }
 
@@ -1057,6 +1081,7 @@ async function loadWclAttendanceForEvents() {
   attendanceLeaderboardRows = [];
   pbBestTimeRankedNameKeys = new Set();
   hallOfFameWinnerNameKeys = new Set();
+  mostDeathsLastSixNameKeys = new Set();
   firstClearKaraNameKeys = new Set();
   firstClearGruulNameKeys = new Set();
   firstClearMagNameKeys = new Set();
@@ -1071,13 +1096,14 @@ async function loadWclAttendanceForEvents() {
             if (!res.ok) throw new Error(body.error || "Request failed");
             return body;
           });
-    const [attPayload, btPayload, hofPayload, firstClearPayload] = await Promise.all([
+    const [attPayload, btPayload, hofPayload, firstClearPayload, deathPayload] = await Promise.all([
       getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=250`, { credentials: "include" }).catch(
         () => ({})
       ),
       getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/boss-times?limit=50`).catch(() => ({})),
       getJson(`/api/voting/hall-of-fame`, { credentials: "include" }).catch(() => ({})),
       getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/first-clear-participants?limit=150`).catch(() => ({})),
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/death-leaderboard?limit=6&top=400`).catch(() => ({})),
     ]);
 
     if (attPayload && typeof attPayload === "object") {
@@ -1129,6 +1155,18 @@ async function loadWclAttendanceForEvents() {
         outSet.add(s.toLowerCase());
       }
     };
+    if (Array.isArray(deathPayload?.leaderboard)) {
+      const maxDeaths = deathPayload.leaderboard.reduce((max, row) => {
+        const deaths = Number(row?.deaths || 0);
+        return Number.isFinite(deaths) ? Math.max(max, deaths) : max;
+      }, 0);
+      if (maxDeaths > 0) {
+        const topDeathNames = deathPayload.leaderboard
+          .filter((row) => Number(row?.deaths || 0) === maxDeaths)
+          .map((row) => row?.name);
+        addRowsToSet(topDeathNames, mostDeathsLastSixNameKeys);
+      }
+    }
     addRowsToSet(firstClears?.["Karazhan"]?.participants, firstClearKaraNameKeys);
     addRowsToSet(firstClears?.["Gruul's Lair"]?.participants, firstClearGruulNameKeys);
     addRowsToSet(firstClears?.["Magtheridon's Lair"]?.participants, firstClearMagNameKeys);

@@ -10,6 +10,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { mergeRhWclGuess, normalizeRhWclGuildRole, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
+import { syncBadgePngsToSvgs, watchBadgePngsToSvgs } from "./lib/badge-png-svg-sync.mjs";
 
 dotenv.config({ override: true });
 
@@ -19,6 +20,12 @@ const port = Number(process.env.PORT || 8787);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
+const achievementBadgeDir = path.join(publicDir, "images", "achievements");
+
+// Badge workflow helper: any PNG dropped into `public/images/achievements` gets a same-name SVG generated.
+// This keeps badge assets "auto-converted to svg" for frontend usage without requiring manual export steps.
+syncBadgePngsToSvgs(achievementBadgeDir).catch(() => {});
+watchBadgePngsToSvgs(achievementBadgeDir);
 
 if (process.env.TRUST_PROXY === "1" || process.env.TRUST_PROXY === "true") {
   app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1) || 1);
@@ -2925,15 +2932,15 @@ app.get("/landing.html", (_req, res) => {
 });
 
 app.get("/events.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "events.html"));
+  res.sendFile(path.join(publicDir, "join.html"));
 });
 
 app.get("/roster.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "roster.html"));
+  res.sendFile(path.join(publicDir, "index.html"));
 });
 
 app.get(["/roster", "/roster/"], (_req, res) => {
-  res.redirect(302, "/roster.html");
+  res.sendFile(path.join(publicDir, "index.html"));
 });
 
 app.get("/voting.html", (_req, res) => {
@@ -2949,7 +2956,7 @@ app.get("/loot-history.html", (_req, res) => {
 });
 
 app.get("/nether-vortex.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "nether-vortex.html"));
+  res.sendFile(path.join(publicDir, "p2-preparation.html"));
 });
 
 app.get("/privacy.html", (_req, res) => {
