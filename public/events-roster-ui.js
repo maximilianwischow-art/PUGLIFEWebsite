@@ -1067,13 +1067,10 @@ function rosterAchievementBadgesHtml(player) {
     },
   ];
   return badges
+    .filter((b) => b.ok)
     .map((b) => {
       const icon = achievementBadgeIconUrlWithFallback(b.file);
-      const cls = b.ok
-        ? "raider-badge-slot raider-badge-slot--achievement-earned"
-        : "raider-badge-slot raider-badge-slot--achievement-earned raider-badge-slot--pending";
-      const tip = b.ok ? b.title : `${b.title} (not earned yet)`;
-      return `<span class="${cls}" title="${escapeHtml(tip)}"><img class="raider-badge-achievement-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} /></span>`;
+      return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${escapeHtml(b.title)}"><img class="raider-badge-achievement-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} /></span>`;
     })
     .join("");
 }
