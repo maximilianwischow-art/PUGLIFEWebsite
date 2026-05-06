@@ -2,7 +2,7 @@ function initBackgroundStars() {
   const el = document.getElementById("stars");
   if (!el || el.childElementCount > 0) return;
   const frag = document.createDocumentFragment();
-  for (let i = 0; i < 70; i += 1) {
+  for (let i = 0; i < 40; i += 1) {
     const s = document.createElement("div");
     s.className = "star";
     const sz = Math.random() * 1.8 + 0.4;
@@ -11,6 +11,14 @@ function initBackgroundStars() {
     frag.appendChild(s);
   }
   el.appendChild(frag);
+}
+
+function scheduleNonCritical(task, timeoutMs = 1200) {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => task(), { timeout: timeoutMs });
+    return;
+  }
+  window.setTimeout(task, 0);
 }
 
 function numberFmt(v) {
@@ -44,38 +52,44 @@ function normalizedRaidBannerKey(s) {
 const VOTING_RAID_BANNER_VER = "20260509a";
 
 /** Split Gruul + Mag into two headers; substring matching for combined nights. */
-function votingRaidHeaderInnerHtml(raidName) {
+function votingRaidImagePath(raidName) {
   const raw = String(raidName || "").trim();
   const n = normalizedRaidBannerKey(raw);
   const bust = `?v=${VOTING_RAID_BANNER_VER}`;
-  const img = (src, alt) =>
-    `<img src="${src}${bust}" alt="${escapeHtmlAttr(alt)}" loading="lazy" decoding="async" />`;
 
   const hasGruul = n.includes("gruul");
   const hasMag = n.includes("magtheridon");
+  if (n.includes("karazhan") || /\bkara\b/.test(n)) return `/raid-images/kara.png${bust}`;
+  if (n.includes("serpentshrine") || n.includes("ssc")) return `/raid-images/ssc.png${bust}`;
+  if (n.includes("tempest") || n.includes("the eye") || /\btk\b/.test(n)) return `/raid-images/tk.png${bust}`;
+  if (hasMag && !hasGruul) return `/raid-images/magtheridon.png${bust}`;
+  if (hasGruul) return `/raid-images/gruul.png${bust}`;
+  return `/raid-images/kara.png${bust}`;
+}
+
+function votingRaidHeaderInnerHtml(raidName) {
+  const raw = String(raidName || "").trim();
+  const n = normalizedRaidBannerKey(raw);
+  const hasGruul = n.includes("gruul");
+  const hasMag = n.includes("magtheridon");
+
+  const tile = (label) => {
+    const src = votingRaidImagePath(label);
+    return `<div class="voting-raid-tile">
+      <img class="voting-raid-tile-img" src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(label)}" loading="lazy" decoding="async" />
+      <div class="voting-raid-tile-copy">
+        <span class="subtle voting-raid-kicker">Current raid</span>
+        <strong class="voting-raid-title">${escapeHtml(label || "Raid")}</strong>
+      </div>
+    </div>`;
+  };
 
   if (hasGruul && hasMag) {
-    return `<div class="voting-raid-header-inner voting-raid-header-inner--split">
-      ${img("/raid-images/pb-header-gruul.png", "Gruul's Lair")}
-      ${img("/raid-images/pb-header-magtheridon.png", "Magtheridon's Lair")}
-    </div>`;
+    return `<div class="voting-raid-header-inner voting-raid-header-inner--split">${tile("Gruul's Lair")}${tile(
+      "Magtheridon's Lair"
+    )}</div>`;
   }
-  if (n.includes("karazhan") || /\bkara\b/.test(n)) {
-    return img("/raid-images/pb-header-kara.png", raw || "Karazhan");
-  }
-  if (n.includes("serpentshrine") || n.includes("ssc")) {
-    return img("/raid-images/pb-header-ssc.png", raw || "Serpentshrine Cavern");
-  }
-  if (n.includes("tempest") || n.includes("the eye") || /\btk\b/.test(n)) {
-    return img("/raid-images/pb-header-tk.png", raw || "Tempest Keep");
-  }
-  if (hasMag && !hasGruul) {
-    return img("/raid-images/pb-header-magtheridon.png", raw || "Magtheridon's Lair");
-  }
-  if (hasGruul) {
-    return img("/raid-images/pb-header-gruul.png", raw || "Gruul's Lair");
-  }
-  return img("/raid-images/pb-header-kara.png", raw || "Raid");
+  return `<div class="voting-raid-header-inner">${tile(raw || "Raid")}</div>`;
 }
 
 function renderRaidHeader(payload) {
@@ -85,32 +99,99 @@ function renderRaidHeader(payload) {
   host.hidden = false;
 }
 
-function renderCandidates(payload) {
+function votingClassColor(className) {
+  const key = String(className || "").trim().toLowerCase();
+  if (key === "druid") return "#ff7d0a";
+  if (key === "hunter") return "#abd473";
+  if (key === "mage") return "#69ccf0";
+  if (key === "paladin") return "#f58cba";
+  if (key === "priest") return "#ffffff";
+  if (key === "rogue") return "#fff569";
+  if (key === "shaman") return "#0070de";
+  if (key === "warlock") return "#9482c9";
+  if (key === "warrior") return "#c79c6e";
+  return "#f8f0ff";
+}
+
+function votingPeakParseTierClass(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "leaderboard-peak-parse--empty";
+  if (n >= 100) return "leaderboard-peak-parse--wcl100";
+  if (n >= 99) return "leaderboard-peak-parse--wcl99";
+  if (n >= 95) return "leaderboard-peak-parse--wcl95";
+  if (n >= 75) return "leaderboard-peak-parse--wcl75";
+  if (n >= 50) return "leaderboard-peak-parse--wcl50";
+  if (n >= 25) return "leaderboard-peak-parse--wcl25";
+  return "leaderboard-peak-parse--wcl0";
+}
+
+function renderCandidates(payload, canVote) {
   const list = document.getElementById("votingList");
   const myVote = String(payload?.myVote || "");
   const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
-  list.innerHTML = candidates
+  const maxDps = Math.max(0, ...candidates.map((c) => Number(c?.dps) || 0));
+  const maxHps = Math.max(0, ...candidates.map((c) => Number(c?.hps) || 0));
+  const maxTank = Math.max(0, ...candidates.map((c) => Number(c?.damageTaken) || 0));
+  const rows = candidates
     .map((c) => {
       const selected = myVote && myVote.toLowerCase() === String(c.name || "").toLowerCase();
-      return `
-        <article class="voting-row ${selected ? "is-selected" : ""}">
+      const isRoleMvpDps = maxDps > 0 && Number(c?.dps || 0) === maxDps;
+      const isRoleMvpHeal = maxHps > 0 && Number(c?.hps || 0) === maxHps;
+      const isRoleMvpTank = maxTank > 0 && Number(c?.damageTaken || 0) === maxTank;
+      const mvpScore = Number(isRoleMvpDps) + Number(isRoleMvpHeal) + Number(isRoleMvpTank);
+      const peakParse = Number(c?.peakParse);
+      const peakParseText = Number.isFinite(peakParse) && peakParse >= 0 ? `${peakParse.toFixed(1)}%` : "—";
+      const peakParseClass = votingPeakParseTierClass(peakParse);
+      const classColor = votingClassColor(c?.className);
+      const mvpClasses = [
+        isRoleMvpDps ? "is-role-mvp-dps" : "",
+        isRoleMvpHeal ? "is-role-mvp-heal" : "",
+        isRoleMvpTank ? "is-role-mvp-tank" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const mvpLabels = [
+        isRoleMvpDps ? '<span class="voting-role-mvp-badge">DPS MVP</span>' : "",
+        isRoleMvpHeal ? '<span class="voting-role-mvp-badge">Healer MVP</span>' : "",
+        isRoleMvpTank ? '<span class="voting-role-mvp-badge">Tank MVP</span>' : "",
+      ]
+        .filter(Boolean)
+        .join("");
+      return {
+        html: `
+        <article class="voting-row ${selected ? "is-selected" : ""} ${mvpClasses}">
           <div class="voting-player">
-            <strong class="voting-player-name">${c.name || "Unknown"}</strong>
+            <strong class="voting-player-name" style="color:${classColor}">${c.name || "Unknown"}</strong>
             <span class="subtle">${c.className || "Unknown class"}</span>
+            ${mvpLabels ? `<div class="voting-role-mvp-badges">${mvpLabels}</div>` : ""}
           </div>
-          <div class="voting-metric"><span class="subtle">DPS</span><strong class="voting-metric-value">${numberFmt(c.dps)}</strong></div>
-          <div class="voting-metric"><span class="subtle">HPS</span><strong class="voting-metric-value">${numberFmt(c.hps)}</strong></div>
-          <div class="voting-metric"><span class="subtle">Damage Taken</span><strong class="voting-metric-value">${numberFmt(c.damageTaken)}</strong></div>
+          <div class="voting-metric voting-metric--dps"><span class="subtle">DPS</span><strong class="voting-metric-value">${numberFmt(c.dps)}</strong></div>
+          <div class="voting-metric voting-metric--hps"><span class="subtle">HPS</span><strong class="voting-metric-value">${numberFmt(c.hps)}</strong></div>
+          <div class="voting-metric voting-metric--taken"><span class="subtle">Damage Taken</span><strong class="voting-metric-value">${numberFmt(c.damageTaken)}</strong></div>
+          <div class="voting-metric"><span class="subtle">Peak Parse (raid)</span><strong class="voting-metric-value leaderboard-peak-parse ${peakParseClass}">${peakParseText}</strong></div>
           <div class="voting-metric"><span class="subtle">Votes</span><strong class="voting-metric-value">${numberFmt(c.votes)}</strong></div>
           <div class="voting-actions">
-            <button class="event-signup-btn voting-btn" data-candidate="${encodeURIComponent(c.name || "")}">
-              ${selected ? "Your Vote" : "Vote"}
+            <button class="event-signup-btn voting-btn" data-candidate="${encodeURIComponent(c.name || "")}" data-login-required="${
+              canVote ? "0" : "1"
+            }">
+              ${canVote ? (selected ? "Your Vote" : "Vote") : "Login to Vote"}
             </button>
           </div>
         </article>
-      `;
-    })
-    .join("");
+      `,
+        mvpScore,
+        selected,
+        votes: Number(c?.votes || 0),
+        name: String(c?.name || ""),
+      };
+    });
+  rows.sort((a, b) => {
+    if (b.mvpScore !== a.mvpScore) return b.mvpScore - a.mvpScore;
+    if (b.selected !== a.selected) return Number(b.selected) - Number(a.selected);
+    if (b.votes !== a.votes) return b.votes - a.votes;
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  });
+  list.innerHTML = rows.map((row) => row.html).join("");
   list.hidden = false;
 }
 
@@ -158,7 +239,7 @@ function hofRaiderCell(row) {
   const nameRaw = String(row?.winnerName || "Unknown");
   const esc = plb?.escapeHtml || escapeHtml;
   if (!plb) {
-    return `<div class="hof-fallback-name"><strong>${esc(nameRaw)}</strong></div>`;
+    return { playerHtml: `<div class="hof-fallback-name"><strong>${esc(nameRaw)}</strong></div>`, badgesHtml: "" };
   }
   let p = row?.player;
   if (!p && row?.wclClassName) {
@@ -172,12 +253,9 @@ function hofRaiderCell(row) {
     };
   }
   if (!p) {
-    return `<div class="hof-fallback-name"><strong>${esc(nameRaw)}</strong></div>`;
+    return { playerHtml: `<div class="hof-fallback-name"><strong>${esc(nameRaw)}</strong></div>`, badgesHtml: "" };
   }
 
-  const chain = plb.rosterPortraitChain(p);
-  const portraitSrc = esc(chain[0] || "");
-  const portraitFb = chain.slice(1).map((u) => esc(u)).join("|");
   const displayName = plb.eventsRosterCharacterLabel(p);
   const className = plb.mergedClassDisplayLabel(p);
   const specLabel = plb.displaySpecNameForRoster(String(p.specName || "").trim());
@@ -186,7 +264,6 @@ function hofRaiderCell(row) {
     plb.effectiveRosterClassSlug(p) === "priest"
       ? "text-shadow:0 0 6px rgba(0,0,0,.85),0 1px 2px rgba(0,0,0,.9);"
       : "";
-  const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
   const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
   const baseBadges = plb.rosterBadgeRowHtml(p);
   const hasAnyBaseBadge = /<img\b/i.test(String(baseBadges || ""));
@@ -218,21 +295,8 @@ function hofRaiderCell(row) {
       : []),
   ].join("");
   const badges = hasAnyBaseBadge ? baseBadges : fallbackBadges;
-  return `
+  const playerHtml = `
     <div class="leaderboard-player-row">
-      <div class="leaderboard-portrait-stack">
-        <img
-          class="raider-champion-img leaderboard-spec-img"
-          src="${portraitSrc}"
-          alt="${esc(portraitAlt)}"
-          width="44"
-          height="44"
-          loading="lazy"
-          decoding="async"
-          data-champ-fallbacks="${portraitFb}"
-          onerror="(function(el){var raw=el.getAttribute('data-champ-fallbacks');if(!raw){el.onerror=null;return;}var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.champI||0);if(i<parts.length){el.dataset.champI=String(i+1);el.src=parts[i];}else{el.onerror=null;}})(this)"
-        />
-      </div>
       <div class="leaderboard-player-cell">
         <div class="leaderboard-player-main">
           <span class="leaderboard-player-name" style="color:${esc(color)};${priestGlow}">${esc(displayName)}</span>
@@ -242,60 +306,12 @@ function hofRaiderCell(row) {
               : ""
           }
         </div>
-        <div class="leaderboard-player-badges hof-mvp-badges-wrap"><div class="raider-badges hof-mvp-badges">${badges}</div></div>
       </div>
     </div>`;
-}
-
-function hofSpecIconHtml(row) {
-  const plb = window.plbEventsRoster;
-  const esc = plb?.escapeHtml || escapeHtml;
-  const p = row?.player;
-  if (!plb || !p) return "";
-  let chain = [];
-  if (typeof plb.specBadgePortraitChain === "function") {
-    chain = plb.specBadgePortraitChain(p) || [];
-  }
-  if ((!Array.isArray(chain) || !chain.length) && typeof plb.rosterPortraitChain === "function") {
-    chain = plb.rosterPortraitChain(p) || [];
-  }
-  const src = esc(String((Array.isArray(chain) && chain[0]) || ""));
-  const fb = (Array.isArray(chain) ? chain.slice(1) : [])
-    .map((u) => esc(String(u || "")))
-    .filter(Boolean)
-    .join("|");
-  const label = plb.displaySpecNameForRoster ? plb.displaySpecNameForRoster(String(p.specName || "").trim()) : "Spec";
-  const initials = esc(String(label || p.className || "Spec").slice(0, 2).toUpperCase());
-  if (!src) {
-    return `<span class="hof-spec-icon-wrap hof-spec-icon-wrap--fallback" title="${esc(label || "Spec")}">${initials}</span>`;
-  }
-  return `<span class="hof-spec-icon-wrap" title="${esc(label || "Spec")}"><img class="hof-spec-icon" src="${src}" alt="${esc(
-    label || "Spec icon"
-  )}" width="28" height="28" loading="lazy" decoding="async" data-hof-spec-fallbacks="${fb}" onerror="(function(el){var raw=el.getAttribute('data-hof-spec-fallbacks');if(raw){var parts=raw.split('|').filter(Boolean);var i=Number(el.dataset.hofSpecI||0);if(i<parts.length){el.dataset.hofSpecI=String(i+1);el.src=parts[i];return;}} var host=el.closest('.hof-spec-icon-wrap'); if(host){host.classList.add('hof-spec-icon-wrap--fallback');host.textContent='${initials}';} el.remove();})(this)" /></span>`;
-}
-
-function hofMvpAchievementBadgesHtml(row) {
-  const esc = escapeHtml;
-  const cacheKey = "20260506hofachv2";
-  const badge = (file, title, alt) => {
-    const png = `/images/achievements/${file}?v=${cacheKey}`;
-    const svg = file.toLowerCase().endsWith(".png")
-      ? `/images/achievements/${file.replace(/\.png$/i, ".svg")}?v=${cacheKey}`
-      : png;
-    return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${esc(title)}"><img class="raider-badge-achievement-img" src="${esc(svg)}" alt="${esc(
-      alt
-    )}" width="44" height="44" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${esc(
-      png
-    )}'" /></span>`;
+  return {
+    playerHtml,
+    badgesHtml: `<div class="leaderboard-player-badges hof-mvp-badges-wrap"><div class="raider-badges hof-mvp-badges">${badges}</div></div>`,
   };
-  const parse = Number(row?.peakParse || 0);
-  const out = [
-    badge("hall-of-fame.png", "MVP hall of fame winner", "MVP hall of fame"),
-    ...(parse >= 95
-      ? [badge("parsing-ceiling.png", "Top parsing performance", "Parsing ceiling")]
-      : [badge("best-time-participant.png", "Best time participant", "Best time participant")]),
-  ];
-  return `<div class="raider-badges hof-mvp-badges">${out.join("")}</div>`;
 }
 
 function hofWinnerSpecPortraitHtml(row) {
@@ -303,6 +319,7 @@ function hofWinnerSpecPortraitHtml(row) {
   const esc = plb?.escapeHtml || escapeHtml;
   const p = row?.player;
   const fallback = "/images/achievements/hall-of-fame.png?v=20260506hofspec1";
+  const classIconFallback = p?.className ? `/class-icons/${encodeURIComponent(String(p.className))}.jpg` : "";
   if (!plb || !p) {
     return `<img class="hof-winner-spec-portrait" src="${fallback}" alt="Winner spec portrait" width="118" height="118" loading="lazy" decoding="async" />`;
   }
@@ -314,10 +331,10 @@ function hofWinnerSpecPortraitHtml(row) {
     chain = plb.rosterPortraitChain(p) || [];
   }
   const urls = (Array.isArray(chain) ? chain : []).map((u) => String(u || "").trim()).filter(Boolean);
-  const src = esc(urls[0] || fallback);
+  const src = esc(urls[0] || classIconFallback || fallback);
   const fb = urls
     .slice(1)
-    .concat([fallback])
+    .concat([classIconFallback, fallback].filter(Boolean))
     .map((u) => esc(String(u || "")))
     .filter(Boolean)
     .join("|");
@@ -406,17 +423,13 @@ function renderHallOfFame(payload) {
     const v = Number(row?.player?.attendanceRate);
     return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
   };
-  const avgParsePct = (row) => {
+  const highestPeakPct = (row) => {
     const v = Number(row?.peakParse);
     return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
   };
   const totalRaids = (row) => {
     const v = Number(row?.player?.pastRhEvents || row?.player?.raidsAttended || 0);
     return Number.isFinite(v) && v > 0 ? numberFmt(v) : "—";
-  };
-  const topParse = (row) => {
-    const v = Number(row?.peakParse);
-    return Number.isFinite(v) && v >= 0 ? Math.round(v) : "—";
   };
   host.innerHTML = rows
     .map((row, idx) => {
@@ -427,7 +440,6 @@ function renderHallOfFame(payload) {
       const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
       const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
       const roleIcon = roleIconForRow(row);
-      const specIconHtml = hofSpecIconHtml(row);
       const specPortrait = hofWinnerSpecPortraitHtml(row);
       return `
         <article class="hof-champion-card ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
@@ -436,27 +448,24 @@ function renderHallOfFame(payload) {
             <div class="hof-champion-main">
               <div class="hof-champion-topline">
                 <div class="hof-role-pill-wrap">
-                  ${specIconHtml}
                   <span class="hof-role-emblem">${roleIcon}</span>
                   <span class="hof-role-chip tw-plb-chip">${escapeHtml(role)}</span>
                 </div>
               </div>
               <div class="hof-winner-spec-wrap">${specPortrait}</div>
-              <div class="hof-champion-player">${playerCell}</div>
+              <div class="hof-champion-player">${playerCell.playerHtml}</div>
               <div class="hof-champion-copy">
                 <p class="hof-champion-subtle">${escapeHtml(subtitle)}</p>
-                <p class="hof-achievements-title">Achievements</p>
-                ${hofMvpAchievementBadgesHtml(row)}
                 <p class="hof-champion-quote">${escapeHtml(quote)}</p>
               </div>
+              ${playerCell.badgesHtml}
             </div>
             <aside class="hof-chronicle-pane">
               <div class="hof-chronicle-title">᛫ Chronicle ᛫</div>
               <div class="hof-chronicle-grid">
                 <div class="hof-chronicle-kpi"><span class="subtle">Total raids</span><strong>${escapeHtml(totalRaids(row))}</strong></div>
                 <div class="hof-chronicle-kpi"><span class="subtle">Attendance</span><strong>${escapeHtml(attendancePct(row))}</strong></div>
-                <div class="hof-chronicle-kpi"><span class="subtle">Avg parse</span><strong>${escapeHtml(avgParsePct(row))}</strong></div>
-                <div class="hof-chronicle-kpi"><span class="subtle">Top parse</span><strong>${escapeHtml(String(topParse(row)))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle">Highest peak (all raids)</span><strong>${escapeHtml(highestPeakPct(row))}</strong></div>
               </div>
             </aside>
           </div>
@@ -538,42 +547,46 @@ async function loadVotingRound() {
   const statusEl = document.getElementById("votingStatus");
   const metaEl = document.getElementById("votingRoundMeta");
   const list = document.getElementById("votingList");
-  const loginCta = document.getElementById("votingLoginCta");
   const headerEl = document.getElementById("votingRaidHeader");
   list.hidden = true;
   list.innerHTML = "";
-  loginCta.hidden = true;
-  loginCta.style.display = "none";
   headerEl.hidden = true;
   headerEl.innerHTML = "";
 
   const res = await fetch("/api/voting/current", { credentials: "include" });
   const payload = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    statusEl.textContent = "Please login with Discord to vote.";
-    metaEl.textContent = "";
-    loginCta.hidden = false;
-    loginCta.style.display = "";
-    return;
-  }
   if (!res.ok || !payload?.ok) {
+    statusEl.hidden = false;
     statusEl.textContent = payload?.error || "Failed to load current voting round.";
     metaEl.textContent = "";
     return;
   }
 
-  statusEl.textContent = payload?.myVote
-    ? `You voted for ${payload.myVote}. You can change your vote anytime.`
-    : "Choose one MVP from the latest raid.";
+  const canVote = Boolean(payload?.authenticated);
+  if (!canVote) {
+    statusEl.textContent = "";
+    statusEl.hidden = true;
+  } else {
+    statusEl.hidden = false;
+    statusEl.textContent = payload?.myVote
+      ? `You voted for ${payload.myVote}. You can change your vote anytime.`
+      : "Choose one MVP from the latest raid.";
+  }
   metaEl.textContent = `${payload?.raid?.name || "Raid"} · ${new Date(payload?.raid?.startTime || Date.now()).toLocaleString()}`;
   renderRaidHeader(payload);
-  renderCandidates(payload);
+  renderCandidates(payload, canVote);
   void preloadVotingPlbData();
 }
 
 document.addEventListener("click", async (event) => {
   const btn = event.target.closest(".voting-btn");
   if (!btn) return;
+  const loginRequired = String(btn.getAttribute("data-login-required") || "0") === "1";
+  if (loginRequired) {
+    const next = encodeURIComponent(window.location.pathname || "/voting.html");
+    window.location.href = `/auth/discord/login?next=${next}`;
+    return;
+  }
   const candidateName = decodeURIComponent(String(btn.dataset.candidate || ""));
   if (!candidateName) return;
   btn.disabled = true;
@@ -588,6 +601,6 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-initBackgroundStars();
-loadHallOfFame();
+scheduleNonCritical(initBackgroundStars, 900);
+scheduleNonCritical(loadHallOfFame, 1400);
 loadVotingRound();

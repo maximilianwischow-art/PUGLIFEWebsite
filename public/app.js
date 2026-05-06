@@ -3,7 +3,7 @@ function initBackgroundStars() {
   const el = document.getElementById("stars");
   if (!el || el.childElementCount > 0) return;
   const frag = document.createDocumentFragment();
-  for (let i = 0; i < 70; i += 1) {
+  for (let i = 0; i < 40; i += 1) {
     const s = document.createElement("div");
     s.className = "star";
     const sz = Math.random() * 1.8 + 0.4;
@@ -12,6 +12,14 @@ function initBackgroundStars() {
     frag.appendChild(s);
   }
   el.appendChild(frag);
+}
+
+function scheduleNonCritical(task, timeoutMs = 1500) {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => task(), { timeout: timeoutMs });
+    return;
+  }
+  window.setTimeout(task, 0);
 }
 
 function initBasicAnalytics() {
@@ -676,7 +684,7 @@ function renderPotrRaidStrip(raid) {
   const ts = raid?.startTime;
 
   if (raidName) {
-    potrRaidBanner.src = raidPbHeaderImagePath(raidName);
+    potrRaidBanner.src = raidListingImagePath(raidName);
     potrRaidBanner.alt = `${shortRaidName(raidName)}`;
     potrRaidBanner.hidden = false;
     if (potrRaidName) {
@@ -832,26 +840,27 @@ async function loadDeathEncounterHeatmap() {
   }
 }
 
-initBackgroundStars();
-initBasicAnalytics();
+scheduleNonCritical(initBackgroundStars, 900);
+scheduleNonCritical(initBasicAnalytics, 1200);
 if (raidPerfKpiGrid) {
+  // KPI block is above-the-fold, so keep it eager.
   loadRaidPerfKpi();
 }
 if (dashboardPbRow) {
-  loadBossTimes();
+  scheduleNonCritical(loadBossTimes, 1600);
 }
 if (potrRaidBanner && potrRaidDate) {
-  loadLatestRaidMvp();
+  scheduleNonCritical(loadLatestRaidMvp, 1700);
 }
 if (deathMeta && deathLeaderboard) {
-  loadDeathLeaderboard();
+  scheduleNonCritical(loadDeathLeaderboard, 1800);
 }
 if (attendanceMeta && attendanceList) {
-  loadAttendanceTracker();
+  scheduleNonCritical(loadAttendanceTracker, 2000);
 }
 if (deathEncounterMeta && deathEncounterHeatmap) {
-  loadDeathEncounterHeatmap();
+  scheduleNonCritical(loadDeathEncounterHeatmap, 2200);
 }
 if (raidCalendarGrid) {
-  loadRecentRaidsCalendar();
+  scheduleNonCritical(loadRecentRaidsCalendar, 1800);
 }

@@ -6,9 +6,9 @@
     <title>PUG LIFE BALANCE · Hall of Fame</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260506framework3" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260506framework6" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/voting-redesign.css?v=20260506hofcss8" />
+    <link rel="stylesheet" href="/voting-redesign.css?v=20260506hofcss16" />
     <style>
       .hof-page {
         display: grid;
@@ -18,7 +18,7 @@
         position: relative;
         overflow: hidden;
         min-height: clamp(160px, 24vw, 280px);
-        padding: clamp(22px, 4vw, 42px) 24px clamp(18px, 5.5vw, 58px);
+        padding: clamp(18px, 3.8vw, 36px) 24px clamp(0px, 0.5vw, 6px);
         text-align: center;
         display: flex;
         justify-content: center;
@@ -50,8 +50,16 @@
         margin: 0;
         font-size: clamp(40px, 8vw, 88px);
         letter-spacing: 0.09em;
-        color: #f8f0df;
-        text-shadow: 0 0 20px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 0, 0, 0.45);
+        line-height: 0.92;
+        margin-top: auto;
+        transform: translateY(6px);
+        background: linear-gradient(180deg, #fff3bf 0%, #f4d27a 36%, #d6a94d 68%, #9f6c22 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-shadow:
+          0 2px 16px rgba(0, 0, 0, 0.62),
+          0 0 26px rgba(184, 134, 46, 0.35);
       }
       .hof-intro-copy {
         margin: 10px auto 0;
@@ -330,31 +338,6 @@
           <h2 id="hofIntroTitle" class="section-title tw-plb-title">Hall of Fame</h2>
         </section>
 
-        <section class="card tw-plb-card hof-winner-card potr-section" aria-labelledby="potr-title">
-          <h3 id="potr-title" class="section-title hof-block-title">Winner Section · MVP Last Raid</h3>
-          <p class="subtle hof-block-subtle">Current raid MVP snapshot with live DPS/Healer/Tank winners.</p>
-          <div id="potrRaidStrip" class="potr-raid-strip">
-            <img id="potrRaidBanner" class="potr-raid-banner" alt="" loading="lazy" hidden />
-            <p id="potrRaidName" class="subtle">Loading raid...</p>
-            <time id="potrRaidDate" class="potr-raid-date"></time>
-          </div>
-          <p id="potrRaidStatus" class="subtle potr-raid-status">Loading latest raid...</p>
-          <div class="potr-grid">
-            <article class="mini-card mvp-card dps">
-              <h3>DPS</h3>
-              <div id="potrDps">No data yet.</div>
-            </article>
-            <article class="mini-card mvp-card heal">
-              <h3>Healer</h3>
-              <div id="potrHeal">No data yet.</div>
-            </article>
-            <article class="mini-card mvp-card tank">
-              <h3>Tank</h3>
-              <div id="potrTank">No data yet.</div>
-            </article>
-          </div>
-        </section>
-
         <section class="card tw-plb-card hof-roll-card">
           <h3 class="section-title hof-block-title">The Eternal Hall</h3>
           <p class="subtle hof-block-subtle">All-time MVP winners from previous rounds with badges and parse context.</p>
@@ -367,9 +350,6 @@
           <div id="votingStatus" class="status">Checking login…</div>
           <div id="votingRoundMeta" class="subtle"></div>
           <div id="votingRaidHeader" class="voting-raid-header" hidden></div>
-          <div id="votingLoginCta" class="event-links" style="justify-content:flex-start" hidden>
-            <a class="event-signup-btn" href="/auth/discord/login?next=%2Fvoting.html">Login with Discord</a>
-          </div>
           <div id="votingList" class="voting-list" hidden></div>
         </section>
 
@@ -389,13 +369,15 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/app.js?v=20260504a"></script>
     <script defer src="/events-roster-ui.js?v=20260506death3"></script>
-    <script defer src="/voting.js?v=20260506hofredesign7"></script>
-    <script defer src="/auth-ui.js?v=20260506nav1"></script>
+    <script defer src="/voting.js?v=20260506hofredesign19"></script>
+    <script defer src="/auth-ui.js?v=20260506nav2"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
+
+
+
 
 
 

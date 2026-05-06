@@ -33,38 +33,9 @@ async function mountAuthHeaderWidget() {
     else adminLink.classList.add("nav-auth-hidden");
   }
 
-  function ensurePhase2NavLink() {
-    if (!nav) return null;
-    let phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
-    if (!phase2Link) {
-      phase2Link = document.createElement("a");
-      phase2Link.href = "/p2-preparation.html";
-      phase2Link.textContent = "Phase 2";
-      nav.appendChild(phase2Link);
-    }
-    // Keep DOM order stable across pages/sessions; only visibility changes with auth state.
-    phase2Link.classList.add("nav-auth-hidden");
-    return phase2Link;
-  }
-
-  function updatePhase2NavState(isAuthenticated) {
-    const phase2Link = ensurePhase2NavLink();
-    if (!phase2Link) return;
-    if (currentPath === "/p2-preparation.html") {
-      phase2Link.classList.add("nav-current");
-      phase2Link.setAttribute("aria-current", "page");
-    } else {
-      phase2Link.classList.remove("nav-current");
-      phase2Link.removeAttribute("aria-current");
-    }
-    if (isAuthenticated) phase2Link.classList.remove("nav-auth-hidden");
-    else phase2Link.classList.add("nav-auth-hidden");
-  }
-
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
     updateAdminNavState(false);
-    updatePhase2NavState(false);
   };
 
   try {
@@ -105,7 +76,6 @@ async function mountAuthHeaderWidget() {
       window.location.reload();
     });
     updateAdminNavState(Boolean(payload?.isAdmin));
-    updatePhase2NavState(true);
   } catch {
     renderLoggedOut();
   }

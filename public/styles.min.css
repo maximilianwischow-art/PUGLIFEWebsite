@@ -138,6 +138,12 @@ body.framework-bg-vivid {
   }
 }
 
+@media (max-width: 900px) {
+  body::before {
+    background-attachment: scroll;
+  }
+}
+
 .stars {
   position: fixed;
   inset: 0;
@@ -1242,18 +1248,20 @@ body.framework-bg-vivid {
 .potr-raid-strip {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 8px;
   margin: 6px 0 14px;
 }
 
 .potr-raid-banner {
-  width: 100%;
+  width: clamp(92px, 12vw, 132px);
+  aspect-ratio: 1 / 1;
   height: auto;
-  object-fit: contain;
-  object-position: left center;
-  border-radius: 12px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 14px;
   border: 1px solid rgba(168, 85, 247, 0.28);
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.34);
 }
 
 .potr-raid-date {
@@ -2904,37 +2912,72 @@ button.raid-cal-run.raid-cal-run--column:hover {
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  background: var(--panel-2);
+  background: linear-gradient(160deg, rgba(20, 14, 34, 0.92), rgba(10, 9, 20, 0.98));
+  padding: 10px;
 }
 
-/* Full banner visible (no edge crop); split Gruul+Mag stay readable side-by-side */
-.voting-raid-header img {
-  display: block;
-  margin: 0 auto;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: clamp(160px, 34vw, 280px);
-  object-fit: contain;
+.voting-raid-header-inner {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.voting-raid-tile {
+  display: grid;
+  grid-template-columns: clamp(72px, 12vw, 96px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(244, 208, 122, 0.24);
+  border-radius: 10px;
+  padding: 10px;
+  background: linear-gradient(160deg, rgba(31, 21, 49, 0.84), rgba(14, 11, 27, 0.94));
+}
+
+.voting-raid-tile-img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 208, 122, 0.36);
+  object-fit: cover;
   object-position: center;
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.24);
+}
+
+.voting-raid-tile-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.voting-raid-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+  color: #ceb98c;
+}
+
+.voting-raid-title {
+  font-size: clamp(18px, 3.2vw, 24px);
+  line-height: 1.1;
+  letter-spacing: 0.03em;
+  color: #f4e2b4;
 }
 
 .voting-raid-header-inner--split {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  align-items: center;
-  padding: 8px;
+  align-items: stretch;
 }
 
-.voting-raid-header-inner--split img {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+@media (max-width: 740px) {
+  .voting-raid-header-inner--split {
+    grid-template-columns: 1fr;
+  }
 }
 
 .voting-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.25fr) repeat(4, minmax(84px, 0.85fr)) minmax(120px, auto);
+  grid-template-columns: minmax(160px, 1.2fr) repeat(5, minmax(84px, 0.8fr)) minmax(120px, auto);
   gap: 12px;
   align-items: center;
   padding: 12px;

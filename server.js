@@ -911,6 +911,8 @@ const HOF_REPORT_FIGHTS_QUERY = `
   query HofReportFights($code: String!) {
     reportData {
       report(code: $code) {
+        title
+        startTime
         zone { name }
         fights {
           id
@@ -939,6 +941,57 @@ function trackedBossFightIdsFromHallOfFameReport(report) {
     .filter((f) => Number(f?.encounterID || 0) > 0 && resolvedTrackedRaidForFight(f, report))
     .map((f) => Number(f.id))
     .filter((id) => Number.isInteger(id) && id > 0);
+}
+
+function looksLikeWclReportCode(value) {
+  const v = String(value || "").trim();
+  return /^[A-Za-z0-9]{8,20}$/.test(v);
+}
+
+async function hallOfFameReportMetaForCode(raidCode) {
+  const code = String(raidCode || "").trim();
+  if (!code || !looksLikeWclReportCode(code)) return null;
+  return getOrRefreshCachedPayload(`hof-report-meta-v1-${code}`, {
+    ttlMs: 7 * 24 * 60 * 60 * 1000,
+    maxStaleMs: 14 * 24 * 60 * 60 * 1000,
+    loader: async () => {
+      const data = await queryWcl(HOF_REPORT_FIGHTS_QUERY, { code });
+      const report = data?.reportData?.report;
+      if (!report) return null;
+      const inferredPrimary = primaryTrackedRaidNameFromReport(report);
+      const raidName = mvpUiRaidName(report, inferredPrimary || String(report?.zone?.name || ""));
+      return {
+        raidName: String(raidName || "").trim(),
+        raidStartTime: reportStartTimeMs(report?.startTime),
+      };
+    },
+  });
+}
+
+async function hydrateHallOfFameRaidMetadata(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const out = [];
+  for (const row of rows) {
+    const currentRaidName = String(row?.raidName || "").trim();
+    const raidCode = String(row?.raidCode || "").trim();
+    const shouldResolve = !currentRaidName || currentRaidName === raidCode || looksLikeWclReportCode(currentRaidName);
+    if (!shouldResolve) {
+      out.push(row);
+      continue;
+    }
+    let meta = null;
+    try {
+      meta = await hallOfFameReportMetaForCode(raidCode);
+    } catch {
+      meta = null;
+    }
+    out.push({
+      ...row,
+      raidName: String(meta?.raidName || currentRaidName || raidCode || "Raid").trim(),
+      raidStartTime: Number(row?.raidStartTime || meta?.raidStartTime || 0),
+    });
+  }
+  return out;
 }
 
 async function trackedBossFightIdsForHallOfFameReport(raidCode) {
@@ -1287,9 +1340,30 @@ async function enrichHallOfFameRows(guildId, rows) {
       const k = String(row.winnerName).trim().toLowerCase();
       wclClassName = bundle.classByNameLower[k] || "";
     }
+    const fallbackPeakFromRoster =
+      bracket === "heal"
+        ? Number(matched?.parseSummaries?.bestHeal)
+        : bracket === "tank"
+          ? Number(matched?.parseSummaries?.bestTank)
+          : Number(matched?.parseSummaries?.bestDps);
+    const fallbackPeak = Number.isFinite(fallbackPeakFromRoster) ? fallbackPeakFromRoster : null;
+    if (peakParse == null) peakParse = fallbackPeak;
+    if (!wclClassName && matched?.className) wclClassName = String(matched.className || "");
+    const syntheticPlayer =
+      matched ||
+      (row?.winnerName
+        ? {
+            name: String(row.winnerName || ""),
+            characterName: String(row.winnerName || ""),
+            className: wclClassName || "",
+            specName: "",
+            roleName: bracket === "heal" ? "Healer" : bracket === "tank" ? "Tank" : "Ranged",
+            wclCharacters: [],
+          }
+        : null);
     return {
       ...row,
-      player: matched || null,
+      player: syntheticPlayer,
       peakParse,
       peakParseSource,
       peakParseBracket: bracket,
@@ -1320,9 +1394,11 @@ async function getHallOfFameForGuild(guildId, limit = 10) {
     });
   try {
     const enriched = await enrichHallOfFameRows(guildId, rows);
-    return withNotes(enriched);
+    const withRaidNames = await hydrateHallOfFameRaidMetadata(enriched);
+    return withNotes(withRaidNames);
   } catch {
-    return withNotes(rows).map((r) => ({
+    const hydrated = await hydrateHallOfFameRaidMetadata(rows).catch(() => rows);
+    return withNotes(hydrated).map((r) => ({
       ...r,
       player: null,
       peakParse: null,
@@ -4588,9 +4664,8 @@ app.get("/api/voting/hall-of-fame", async (_req, res) => {
 app.get("/api/voting/current", async (req, res) => {
   try {
     const session = getSessionFromRequest(req);
-    if (!session?.user?.id) {
-      return res.status(401).json({ ok: false, error: "Login required" });
-    }
+    const userId = session?.user?.id ? String(session.user.id) : "";
+    const authenticated = Boolean(userId);
 
     const voting = await getCurrentVotingRoundCached(votingGuildId);
     if (!voting) {
@@ -4599,7 +4674,7 @@ app.get("/api/voting/current", async (req, res) => {
 
     await ensureVotingStore();
     const votesByCandidate = getVotingTallies(voting.roundKey);
-    const myVoteRow = getUserVote(voting.roundKey, String(session.user.id));
+    const myVoteRow = authenticated ? getUserVote(voting.roundKey, userId) : null;
 
     const candidates = voting.candidates
       .map((c) => ({
@@ -4610,6 +4685,7 @@ app.get("/api/voting/current", async (req, res) => {
 
     return res.json({
       ok: true,
+      authenticated,
       raid: {
         roundKey: voting.roundKey,
         code: voting.raidCode,
