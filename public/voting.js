@@ -448,6 +448,7 @@ function buildMockHallOfFamePreviewRows() {
         className: "Hunter",
         specName: "Marksmanship",
         roleName: "Ranged",
+        wclEventCount: 127,
         pastRhEvents: 127,
         attendanceRate: 94,
         wclCharacters: ["Highbullet"],
@@ -467,6 +468,7 @@ function buildMockHallOfFamePreviewRows() {
         className: "Mage",
         specName: "Arcane",
         roleName: "Ranged",
+        wclEventCount: 98,
         pastRhEvents: 98,
         attendanceRate: 89,
         wclCharacters: ["Glutelf"],
@@ -518,7 +520,15 @@ function renderHallOfFame(payload) {
     return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
   };
   const totalRaids = (row) => {
-    const v = Number(row?.player?.pastRhEvents || row?.player?.raidsAttended || 0);
+    /* Prefer the WCL-confirmed Events count (raid_appearances scoped to
+       admin-curated reports). Fall back to legacy Raid Helper signups, then
+       to last-window WCL attendance for very old cached payloads. */
+    const v = Number(
+      row?.player?.wclEventCount ||
+        row?.player?.pastRhEvents ||
+        row?.player?.raidsAttended ||
+        0,
+    );
     return Number.isFinite(v) && v > 0 ? numberFmt(v) : "—";
   };
   host.innerHTML = rows
@@ -554,7 +564,7 @@ function renderHallOfFame(payload) {
             <aside class="hof-chronicle-pane">
               <div class="hof-chronicle-title">᛫ Chronicle ᛫</div>
               <div class="hof-chronicle-grid">
-                <div class="hof-chronicle-kpi"><span class="subtle">Total raids</span><strong>${escapeHtml(totalRaids(row))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle" title="Number of Warcraft Logs reports for our guild that the admin has marked as official events.">Total raids</span><strong>${escapeHtml(totalRaids(row))}</strong></div>
                 <div class="hof-chronicle-kpi"><span class="subtle">Attendance</span><strong>${escapeHtml(attendancePct(row))}</strong></div>
                 <div class="hof-chronicle-kpi"><span class="subtle">Highest peak (all raids)</span><strong>${escapeHtml(highestPeakPct(row))}</strong></div>
               </div>
