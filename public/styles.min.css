@@ -3461,6 +3461,21 @@ button.raid-cal-run.raid-cal-run--column:hover {
   margin-left: 8px;
 }
 
+.admin-rh-discord-cell {
+  vertical-align: top;
+  min-width: 180px;
+}
+
+.admin-rh-discord-cell .admin-input {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+
+.admin-rh-discord-meta {
+  margin-top: 6px;
+  font-size: 0.7rem;
+}
+
 .admin-details {
   margin: 8px 0 12px;
   padding: 8px 12px;

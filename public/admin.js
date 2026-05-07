@@ -526,6 +526,7 @@ function renderRhWclLinksTable(rows) {
       <table class="admin-table">
         <thead>
             <tr>
+            <th title="Stable Discord user id (snowflake). Auto-populated from Raid Helper signups when possible — overrides RH-name matching when set.">Discord ID</th>
             <th>Raid Helper name</th>
             <th>Guild role</th>
             <th>WCL characters</th>
@@ -545,8 +546,25 @@ function renderRhWclLinksTable(rows) {
                   ? ` data-rh-wcl-meta="${encodeURIComponent(JSON.stringify(metaObj))}"`
                   : "";
               const storedRh = String(row.raidHelperName ?? "");
+              const discordId = String(row.discordUserId || "");
+              const idSource = String(row.discordUserIdSource || "").trim();
+              const idChip = discordId
+                ? `<span class="admin-rh-src-chip ${idSource === "rh-scan" ? "admin-rh-src-guess" : "admin-rh-src-manual"}" title="${esc(idSource || "manual")}">${idSource === "rh-scan" ? "Auto (RH scan)" : "Manual"}</span>`
+                : `<span class="subtle">unset</span>`;
               return `
-            <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}"${metaAttr}>
+            <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}" data-rh-wcl-stored-id="${esc(discordId)}"${metaAttr}>
+              <td class="admin-rh-discord-cell">
+                <input
+                  class="admin-input"
+                  data-rh-wcl-k="discordId"
+                  value="${esc(discordId)}"
+                  placeholder="17–20 digit Discord ID"
+                  inputmode="numeric"
+                  pattern="\\d{17,20}"
+                  autocomplete="off"
+                />
+                <div class="admin-rh-discord-meta">${idChip}</div>
+              </td>
               <td><input class="admin-input" data-rh-wcl-k="rh" value="${esc(row.raidHelperName || "")}" placeholder="As on signup" /></td>
               <td class="admin-rh-role-cell">${rhWclGuildRoleSelectHtml(row.guildRole)}</td>
               <td class="admin-rh-wcl-cell">
@@ -579,7 +597,7 @@ function renderRhWclLinksTable(rows) {
       </table>
     </div>
   `;
-  host.querySelectorAll('[data-rh-wcl-k="rh"], [data-rh-wcl-k="wcl"]').forEach((inp) => {
+  host.querySelectorAll('[data-rh-wcl-k="rh"], [data-rh-wcl-k="wcl"], [data-rh-wcl-k="discordId"]').forEach((inp) => {
     inp.addEventListener("input", () => {
       const tr = inp.closest("tr");
       tr?.setAttribute("data-rh-wcl-dirty", "1");
@@ -659,7 +677,8 @@ function readRhWclLinkRowFromTr(tr) {
   if (!tr) return null;
   const rh = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim();
   const wclRaw = String(tr.querySelector('[data-rh-wcl-k="wcl"]')?.value || "").trim();
-  if (!rh && !wclRaw) return null;
+  const discordIdRaw = String(tr.querySelector('[data-rh-wcl-k="discordId"]')?.value || "").trim();
+  if (!rh && !wclRaw && !discordIdRaw) return null;
   const wclCharacterNames = wclRaw
     .split(/[,;\n]+/)
     .map((s) => s.trim())
@@ -698,6 +717,14 @@ function readRhWclLinkRowFromTr(tr) {
   const guildRole = normalizeGuildRoleValue(roleRaw);
 
   const row = { raidHelperName: rh, wclCharacterNames, guildRole };
+  if (/^\d{17,20}$/.test(discordIdRaw)) {
+    row.discordUserId = discordIdRaw;
+    // Source is "manual" whenever the operator's value differs from the
+    // stored auto-populated id; otherwise we preserve the stored provenance
+    // so an "Auto (RH scan)" chip isn't lost on a no-op save.
+    const stored = String(tr.getAttribute("data-rh-wcl-stored-id") || "").trim();
+    row.discordUserIdSource = stored && stored === discordIdRaw ? "rh-scan" : "manual";
+  }
   if (wclSources.length === wclCharacterNames.length && wclCharacterNames.length > 0) {
     row.wclSources = wclSources;
     if (wclGuessConfidence.some((x) => typeof x === "number")) row.wclGuessConfidence = wclGuessConfidence;

@@ -2993,6 +2993,18 @@ async function getGuildCharacterLinkRows() {
   return sortRhWclLinkRows(rhWclLinksState.links || []);
 }
 
+/**
+ * Validates a Discord user id snowflake — Discord ids are 17-20 digit numeric
+ * strings. We only accept the bare digits to avoid storing arbitrary garbage
+ * the operator may have pasted by accident.
+ */
+function sanitizeDiscordUserId(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (!/^\d{17,20}$/.test(s)) return "";
+  return s;
+}
+
 /** Caps and trims client-submitted Raid Helper ↔ WCL name rows (preserves guess provenance). */
 function sanitizeRhWclLinksPayload(rawLinks) {
   const arr = Array.isArray(rawLinks) ? rawLinks : [];
@@ -3027,6 +3039,13 @@ function sanitizeRhWclLinksPayload(rawLinks) {
       wclCharacterNames: names,
       guildRole: normalizeRhWclGuildRole(row?.guildRole),
     };
+    const discordUserId = sanitizeDiscordUserId(row?.discordUserId);
+    if (discordUserId) out.discordUserId = discordUserId;
+    // Provenance for the Discord id field — `manual` when the operator typed
+    // it, `rh-scan` when our auto-resolver backfilled it from a Raid Helper
+    // signup. Never required, but lets the admin UI show an "auto" chip.
+    const discordIdSource = String(row?.discordUserIdSource || "").trim().slice(0, 24);
+    if (discordUserId && discordIdSource) out.discordUserIdSource = discordIdSource;
     if (wclSources.length) out.wclSources = wclSources;
     if (wclGuessConfidence.some((x) => typeof x === "number")) out.wclGuessConfidence = wclGuessConfidence;
     links.push(out);
@@ -4633,10 +4652,12 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
         const discordName = String(row.displayName || "Unknown");
         const userId = String(row.userId || "");
         const rhSignupName = rhNamesByUserId.get(userId) || "";
-        // Prefer the canonical RH signup name (Discord-ID-keyed) over the
-        // volatile Discord display name we captured at submission time —
-        // that's how the Account Assignment table is keyed.
+        // Lookup chain (most stable first):
+        //   1. Direct Discord-ID match against rh-wcl-character-links.json
+        //   2. RH-signup-name match (canonical, Discord-ID-keyed via cache)
+        //   3. Discord display-name match (legacy fallback)
         const linked =
+          resolveLinkedWowCharacterByDiscordUserId(userId) ||
           (rhSignupName && resolveLinkedWowCharacterFromRhWcl(rhSignupName)) ||
           resolveLinkedWowCharacterFromRhWcl(discordName);
         const characterName = String(linked || rhSignupName || discordName).trim() || discordName;
@@ -7129,6 +7150,26 @@ function wowRealmSlugForLookup(realmRaw) {
     .replace(/^-+|-+$/g, "");
 }
 
+/**
+ * Preferred lookup: WoW character for a given Discord user id. The
+ * Account Assignment table now stores `discordUserId` per row (auto-populated
+ * from Raid Helper signups, or hand-entered on /admin.html). Falls back to
+ * legacy name matching at the call site if this returns null.
+ */
+function resolveLinkedWowCharacterByDiscordUserId(discordUserId) {
+  const id = sanitizeDiscordUserId(discordUserId);
+  if (!id) return null;
+  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  for (const link of links) {
+    const linkId = sanitizeDiscordUserId(link?.discordUserId);
+    if (!linkId || linkId !== id) continue;
+    const wcl = Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames.filter(Boolean) : [];
+    const pick = String(wcl[0] || "").trim() || String(link?.raidHelperName || "").trim();
+    return pick || null;
+  }
+  return null;
+}
+
 /** WoW character name from admin-maintained RH ↔ WCL roster (`rh-wcl-character-links.json`), matched on Discord display name. */
 function resolveLinkedWowCharacterFromRhWcl(discordDisplayName) {
   const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
@@ -7216,6 +7257,60 @@ async function persistDiscordIdToRhNameCache() {
 }
 
 /**
+ * Backfill `discordUserId` onto existing Account Assignment rows by matching
+ * `raidHelperName` against the freshly-built `byUserId` map. Persists the
+ * updated rh-wcl-character-links.json only if anything changed. Cheap to run
+ * after every cache refresh — operations are O(n_links).
+ */
+async function backfillDiscordIdsOntoRhWclLinks(byUserId) {
+  if (!byUserId || typeof byUserId !== "object") return;
+  try {
+    await ensureRhWclLinksStore();
+  } catch {
+    return;
+  }
+  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  if (!links.length) return;
+
+  // Build a name-key → Discord ID lookup once. Multiple Discord ids could in
+  // theory map to the same RH key (Mainsadin|Mainzer style alts) — when that
+  // happens we keep the most recently seen one to match what the resolver
+  // would return for that name.
+  const idByRhKey = new Map();
+  const lastSeenByRhKey = new Map();
+  for (const [userId, entry] of Object.entries(byUserId)) {
+    const rhName = String(entry?.rhName || "").trim();
+    const key = normalizeRaidHelperDisplayKey(rhName);
+    if (!key) continue;
+    const ts = Number(entry?.lastSeenAt || 0);
+    if (ts >= (lastSeenByRhKey.get(key) || 0)) {
+      idByRhKey.set(key, sanitizeDiscordUserId(userId));
+      lastSeenByRhKey.set(key, ts);
+    }
+  }
+
+  let dirty = false;
+  for (const link of links) {
+    if (sanitizeDiscordUserId(link?.discordUserId)) continue; // already set, leave alone
+    const key = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    if (!key) continue;
+    const id = idByRhKey.get(key);
+    if (!id) continue;
+    link.discordUserId = id;
+    if (!link.discordUserIdSource) link.discordUserIdSource = "rh-scan";
+    dirty = true;
+  }
+
+  if (dirty) {
+    try {
+      await persistRhWclLinksStore();
+    } catch (err) {
+      console.warn("[rh-wcl-links] backfill persist failed:", err?.message || err);
+    }
+  }
+}
+
+/**
  * Scan recent Raid Helper events and merge the (userId → RH display name) map
  * into the on-disk cache. Idempotent — concurrent callers share one inflight
  * Promise and re-use the latest signals snapshot.
@@ -7246,6 +7341,15 @@ async function refreshDiscordIdToRhNameCache() {
         await persistDiscordIdToRhNameCache();
       } catch (err) {
         console.warn("[discord-rh-cache] persist failed:", err?.message || err);
+      }
+      // Side-effect: now that we have a fresh ID-by-RH-name map, write the
+      // canonical Discord id onto any Account Assignment rows that still lack
+      // one. Means rh-wcl-character-links.json self-heals over time without
+      // anyone touching the admin UI.
+      try {
+        await backfillDiscordIdsOntoRhWclLinks(next.byUserId);
+      } catch (err) {
+        console.warn("[rh-wcl-links] backfill failed:", err?.message || err);
       }
       return next;
     } catch (err) {
