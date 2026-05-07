@@ -5348,15 +5348,15 @@ app.get("/api/profile/me/badges", async (req, res) => {
           "Magtheridon's Lair",
         ]);
         const matchAny = (group) => {
-          const names = Array.isArray(group?.characters) ? group.characters : [];
+          const names = Array.isArray(group?.participants) ? group.participants : [];
           return names.some((n) => {
             const key = normalizeRaidHelperDisplayKey(String(n || ""));
             return key && linkedKeys.has(key);
           });
         };
-        if (matchAny(firstClears?.kara)) earned.add("kara-first-time-clear");
-        if (matchAny(firstClears?.gruul)) earned.add("gruul-first-time-clear");
-        if (matchAny(firstClears?.magtheridon)) earned.add("magtheridon-first-time-clear");
+        if (matchAny(firstClears?.["Karazhan"])) earned.add("kara-first-time-clear");
+        if (matchAny(firstClears?.["Gruul's Lair"])) earned.add("gruul-first-time-clear");
+        if (matchAny(firstClears?.["Magtheridon's Lair"])) earned.add("magtheridon-first-time-clear");
       }
     } catch {}
 

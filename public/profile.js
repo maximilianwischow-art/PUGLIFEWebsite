@@ -289,7 +289,7 @@
     const names = (linkedCharacters || []).map((s) => String(s || "").trim()).filter(Boolean);
     if (!names.length) return;
 
-    await plb.loadWclAttendanceForEvents();
+    await plb.loadWclAttendanceForEvents({ skipCache: true });
 
     const resolvers = {
       "best-time-participant": plb.playerEarnedBestTimeParticipantBadge,

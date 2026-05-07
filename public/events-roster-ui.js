@@ -1275,7 +1275,19 @@ function rosterAchievementBadgesHtml(player) {
     .join("");
 }
 
-async function loadWclAttendanceForEvents() {
+/**
+ * Load WCL attendance + badge feeds (boss-times PB roster, HoF winners,
+ * first-clear participants, death leaderboard). Used by Events roster,
+ * Leaderboard, Hall of Fame, and the Profile badge grid.
+ *
+ * @param {{ skipCache?: boolean }} [opts] Pass `{ skipCache: true }` from the
+ *        Profile page so badge resolution always hits the origin — otherwise
+ *        `plbSessionApiCache` can replay an empty or stale first response for
+ *        the whole tab session (same failure mode we fixed on the Leaderboard).
+ */
+async function loadWclAttendanceForEvents(opts = {}) {
+  const skipCache = Boolean(opts?.skipCache);
+  const cacheInit = skipCache ? { skipCache: true } : {};
   attendanceLeaderboardByKey = new Map();
   attendanceConsideredRaids = 0;
   attendanceLeaderboardRows = [];
@@ -1288,22 +1300,29 @@ async function loadWclAttendanceForEvents() {
   parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
   try {
     const api = window.plbSessionApiCache;
-    const getJson = (url, init) =>
-      api
-        ? api.getJson(url, init)
-        : fetch(url, { method: "GET", ...init }).then(async (res) => {
+    const getJson = (url, init) => {
+      const merged = { ...(init || {}), ...cacheInit };
+      return api
+        ? api.getJson(url, merged)
+        : fetch(url, { method: "GET", ...merged }).then(async (res) => {
             const body = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(body.error || "Request failed");
             return body;
           });
+    };
     const [attPayload, btPayload, hofPayload, firstClearPayload, deathPayload] = await Promise.all([
-      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=250`, { credentials: "include" }).catch(
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/attendance?limit=40&top=250`, {
+        credentials: "include",
+        ...cacheInit,
+      }).catch(() => ({})),
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/boss-times?limit=50`, cacheInit).catch(() => ({})),
+      getJson(`/api/voting/hall-of-fame`, { credentials: "include", ...cacheInit }).catch(() => ({})),
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/first-clear-participants?limit=150`, cacheInit).catch(
         () => ({})
       ),
-      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/boss-times?limit=50`).catch(() => ({})),
-      getJson(`/api/voting/hall-of-fame`, { credentials: "include" }).catch(() => ({})),
-      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/first-clear-participants?limit=150`).catch(() => ({})),
-      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/death-leaderboard?limit=6&top=400`).catch(() => ({})),
+      getJson(`/api/wcl/guild/${EVENTS_WCL_GUILD_ID}/death-leaderboard?limit=6&top=400`, cacheInit).catch(
+        () => ({})
+      ),
     ]);
 
     if (attPayload && typeof attPayload === "object") {
@@ -1682,7 +1701,8 @@ window.plbEventsRoster = {
   effectiveRosterClassSlug,
   // Badge resolvers — exposed so the profile page can light up the same
   // achievement tiles the leaderboard does without re-implementing the logic.
-  // Caller must `await loadWclAttendanceForEvents()` first.
+  // Caller must `await loadWclAttendanceForEvents()` first (optionally with
+  // `{ skipCache: true }` when resolving Profile badges).
   playerEarnedBestTimeParticipantBadge,
   playerEarnedHallOfFameMvpBadge,
   playerEarnedMostDeathsLastSixBadge,
