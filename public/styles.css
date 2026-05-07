@@ -4151,7 +4151,10 @@ button.raid-cal-run.raid-cal-run--column:hover {
 }
 
 .leaderboard-spec-img {
-  border-radius: 10px;
+  /* Sized to fit a full raider row without dwarfing the name/meta column. */
+  width: 92px;
+  height: 92px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.35);
 }
