@@ -21,6 +21,38 @@ async function mountAuthHeaderWidget() {
     return phase2Link;
   }
 
+  function ensureProfileNavLink() {
+    if (!nav) return null;
+    let profileLink = nav.querySelector('a[href="/profile.html"]');
+    if (!profileLink) {
+      profileLink = document.createElement("a");
+      profileLink.href = "/profile.html";
+      profileLink.textContent = "Profile";
+      const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+      const adminLink = nav.querySelector('a[href="/admin.html"]');
+      // Insert before Phase 2 / Admin so the order reads Hall of Fame · Profile · Phase 2 · Admin.
+      const anchor = phase2Link || adminLink;
+      if (anchor) nav.insertBefore(profileLink, anchor);
+      else nav.appendChild(profileLink);
+    }
+    profileLink.classList.add("nav-auth-hidden");
+    return profileLink;
+  }
+
+  function updateProfileNavState(isAuthenticated) {
+    const profileLink = ensureProfileNavLink();
+    if (!profileLink) return;
+    if (currentPath === "/profile.html" && isAuthenticated) {
+      profileLink.classList.add("nav-current");
+      profileLink.setAttribute("aria-current", "page");
+    } else {
+      profileLink.classList.remove("nav-current");
+      profileLink.removeAttribute("aria-current");
+    }
+    if (isAuthenticated) profileLink.classList.remove("nav-auth-hidden");
+    else profileLink.classList.add("nav-auth-hidden");
+  }
+
   function updatePhase2NavState(isAuthenticated) {
     const phase2Link = ensurePhase2NavLink();
     if (!phase2Link) return;
@@ -68,6 +100,7 @@ async function mountAuthHeaderWidget() {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
     updatePhase2NavState(false);
     updateAdminNavState(false);
+    updateProfileNavState(false);
   };
 
   try {
@@ -109,6 +142,7 @@ async function mountAuthHeaderWidget() {
     });
     updatePhase2NavState(true);
     updateAdminNavState(Boolean(payload?.isAdmin));
+    updateProfileNavState(true);
   } catch {
     renderLoggedOut();
   }

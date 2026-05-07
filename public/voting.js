@@ -605,6 +605,20 @@ async function loadHallOfFame() {
     const payload = await votingGetJson("/api/voting/hall-of-fame", {
       credentials: "include",
     });
+    // Pull profile-picture overrides for the embedded `row.player` records
+    // (each has the canonical `discordUserId`) so portraits show the avatar
+    // instead of the class crest.
+    const plb = window.plbEventsRoster;
+    if (plb && typeof plb.prefetchRosterProfilePictures === "function") {
+      const players = (Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [])
+        .map((row) => row?.player)
+        .filter(Boolean);
+      try {
+        await plb.prefetchRosterProfilePictures(players);
+      } catch {
+        /* best-effort */
+      }
+    }
     renderHallOfFame(payload);
     await preload;
     renderHallOfFame(payload);

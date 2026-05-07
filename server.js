@@ -16,6 +16,11 @@ import {
   nvUpsertCurrent,
   nvGetAllCurrent,
   nvGetHistory,
+  profileGetByUserId,
+  profileGetByUserIds,
+  profileSetPicture,
+  profileSetMainCharacter,
+  profileGetHistory,
   p2UpsertMaterial,
   p2GetAllCurrent,
   p2GetHistory,
@@ -1423,11 +1428,30 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
   enriched = await Promise.all(enriched.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
   enriched = await enrichConfirmedRosterWithWclSpecIcons(enriched);
 
+  // Build a `RH-name-key → discordUserId` index once so each player row can
+  // declare its canonical Discord id. Roster pages then call
+  // `/api/profiles/by-user-ids?ids=...` to render uploaded profile pictures
+  // instead of the class crest.
+  const discordIdByRhKey = new Map();
+  for (const link of rhWclLinksState?.links || []) {
+    const id = sanitizeDiscordUserId(link?.discordUserId);
+    const key = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    if (id && key && !discordIdByRhKey.has(key)) discordIdByRhKey.set(key, id);
+  }
+  // Augment with the live RH-signup scan cache so newly observed users still
+  // resolve before the next manual save on /admin.html.
+  for (const [userId, entry] of Object.entries(discordIdToRhNameState?.byUserId || {})) {
+    const key = normalizeRaidHelperDisplayKey(String(entry?.rhName || ""));
+    const id = sanitizeDiscordUserId(userId);
+    if (id && key && !discordIdByRhKey.has(key)) discordIdByRhKey.set(key, id);
+  }
+
   const players = enriched.map((row, i) => {
     const att = pairs[i].attRow;
     const stripped = stripInternalRosterFields(row);
     const rhKey = normalizeRaidHelperDisplayKey(String(stripped?.name || ""));
     const rhPastEventCount = rhKey ? rhSignupCounts.counts.get(rhKey) || 0 : 0;
+    const discordUserId = rhKey ? discordIdByRhKey.get(rhKey) || null : null;
     return {
       ...stripped,
       guildRole: normalizeRhWclGuildRole(att.guildRole),
@@ -1437,6 +1461,7 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       parseSummaries: att.parseSummaries,
       attendanceHistory: att.attendanceHistory,
       rhPastEventCount,
+      discordUserId,
     };
   });
 
@@ -4842,6 +4867,419 @@ app.post("/api/admin/discord-rh-name-cache/refresh", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to refresh cache" });
+  }
+});
+
+/* =============================================================================
+ * Profiles — per-Discord-user profile picture, main-character pick, badge view.
+ * Storage:
+ *   - Metadata: SQLite `user_profiles` / `user_profile_history` tables.
+ *   - Picture bytes: `<dataDir>/profile-pictures/<userId>.<ext>` on disk.
+ * ============================================================================= */
+
+const profilePicturesDir = path.join(dataDir, "profile-pictures");
+mkdirSync(profilePicturesDir, { recursive: true });
+
+const PROFILE_PICTURE_MAX_BYTES = 4 * 1024 * 1024; // 4 MB
+const PROFILE_PICTURE_ALLOWED_MIME = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/jpg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"],
+]);
+
+/** Magic-byte sniff so we don't trust the client-declared mime when persisting. */
+function detectImageMimeFromBytes(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "image/gif";
+  if (
+    buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+  ) return "image/webp";
+  return null;
+}
+
+function profilePictureFilenameFor(userId, ext) {
+  const safe = String(userId).replace(/[^0-9]/g, "");
+  return `${safe || "user"}.${ext}`;
+}
+
+async function safeUnlinkProfilePicture(filename) {
+  if (!filename) return;
+  try {
+    await unlink(path.join(profilePicturesDir, filename));
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.warn("[profile] failed to unlink old picture:", err?.message || err);
+    }
+  }
+}
+
+/**
+ * WoW characters this Discord user can pick as their "main". Pulls from the
+ * Account Assignment table (`rh-wcl-character-links.json`) — we search by
+ * Discord ID first (canonical) then fall back to the legacy display-name
+ * match for rows that haven't been backfilled yet.
+ */
+function listLinkedWowCharactersForDiscordUserId(userId, displayName) {
+  const id = sanitizeDiscordUserId(userId);
+  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  const out = [];
+  const seen = new Set();
+  const push = (raw) => {
+    const name = String(raw || "").trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(name);
+  };
+
+  for (const link of links) {
+    if (id && sanitizeDiscordUserId(link?.discordUserId) === id) {
+      for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) push(cn);
+      const rh = String(link?.raidHelperName || "").trim();
+      if (rh) push(rh);
+    }
+  }
+  if (!out.length) {
+    const dnKey = normalizeRaidHelperDisplayKey(String(displayName || ""));
+    for (const link of links) {
+      const rhKey = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+      if (rhKey && rhKey === dnKey) {
+        for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) push(cn);
+        push(link?.raidHelperName);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Catalog of every badge surfaced anywhere on the site, grouped by category so
+ * the profile page can render an "all badges" overview. Mirrors the artwork
+ * already shipped under `/public/images/`.
+ */
+const BADGE_CATALOG = [
+  {
+    id: "guild-rank",
+    label: "Guild rank",
+    description: "Manual officer ranks and attendance-based tiers.",
+    badges: [
+      { id: "guildlead", name: "PUG Lead", icon: "/images/guild-roles/guildlead.png", tier: "officer" },
+      { id: "raidlead", name: "Raid Lead", icon: "/images/guild-roles/raidlead.png", tier: "officer" },
+      { id: "core", name: "Core", icon: "/images/guild-roles/core.png", tier: "officer" },
+      { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance" },
+      { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance" },
+      { id: "peon", name: "Peon", icon: "/images/guild-roles/peon.png", tier: "attendance" },
+    ],
+  },
+  {
+    id: "achievements",
+    label: "Achievements",
+    description: "Earned by appearing in WCL rosters / MVP votes.",
+    badges: [
+      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png" },
+      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png" },
+      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png" },
+      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png" },
+      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png" },
+    ],
+  },
+  {
+    id: "first-clears",
+    label: "First clears",
+    description: "Listed in the ranked roster of the guild's first full clear of each raid.",
+    badges: [
+      { id: "kara-first-time-clear", name: "Karazhan first clear", icon: "/images/achievements/kara-first-time-clear.png" },
+      { id: "gruul-first-time-clear", name: "Gruul first clear", icon: "/images/achievements/gruul-first-time-clear.png" },
+      { id: "magtheridon-first-time-clear", name: "Magtheridon first clear", icon: "/images/achievements/magtheridon-first-time-clear.png" },
+    ],
+  },
+];
+
+/** Public profile getter — same payload shape we hand back from /me, minus the ability to upload. */
+function publicProfileFromDb(userId) {
+  const row = profileGetByUserId(userId);
+  if (!row) return null;
+  return {
+    userId: row.userId,
+    displayName: row.displayName,
+    mainCharacterName: row.mainCharacterName,
+    pictureUrl: row.pictureFilename ? `/api/profile/picture/${encodeURIComponent(row.userId)}?v=${row.pictureEtag || row.pictureUpdatedAt || 0}` : null,
+    pictureUpdatedAt: row.pictureUpdatedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** GET /api/profile/me — caller's own profile (auth required). */
+app.get("/api/profile/me", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "");
+    let row = profileGetByUserId(userId);
+    if (!row) {
+      // Lazy-create an empty profile so the UI has something to bind to.
+      row = profileSetMainCharacter({ userId, displayName, mainCharacterName: null });
+    }
+    const characters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
+    return res.json({
+      ok: true,
+      profile: publicProfileFromDb(userId),
+      linkedCharacters: characters,
+      pictureLimits: {
+        maxBytes: PROFILE_PICTURE_MAX_BYTES,
+        allowedMime: [...PROFILE_PICTURE_ALLOWED_MIME.keys()],
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load profile" });
+  }
+});
+
+/** PUT /api/profile/me/main-character — pick which linked WCL character is "main". */
+app.put("/api/profile/me/main-character", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "");
+    const requested = String(req.body?.mainCharacterName || "").trim();
+    let chosen = null;
+    if (requested) {
+      const candidates = listLinkedWowCharactersForDiscordUserId(userId, displayName);
+      const lower = requested.toLowerCase();
+      chosen = candidates.find((c) => c.toLowerCase() === lower) || null;
+      if (!chosen) {
+        return res.status(400).json({
+          ok: false,
+          error: "Choose one of your linked Warcraft Logs characters. Add a mapping on /admin.html if it's missing.",
+          linkedCharacters: candidates,
+        });
+      }
+    }
+    profileSetMainCharacter({ userId, displayName, mainCharacterName: chosen });
+    return res.json({ ok: true, profile: publicProfileFromDb(userId) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update main character" });
+  }
+});
+
+/**
+ * PUT /api/profile/me/picture — upload (raw body, `Content-Type` declares mime).
+ * The page sends `fetch(..., { method: 'PUT', body: blob, headers: { 'Content-Type': type } })`
+ * instead of multipart so we don't have to add a parser dependency.
+ */
+app.put(
+  "/api/profile/me/picture",
+  express.raw({ type: () => true, limit: PROFILE_PICTURE_MAX_BYTES }),
+  async (req, res) => {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+    try {
+      const declaredMime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ ok: false, error: "Empty upload" });
+      }
+      if (req.body.length > PROFILE_PICTURE_MAX_BYTES) {
+        return res.status(413).json({ ok: false, error: "File too large (max 4 MB)" });
+      }
+      const sniffedMime = detectImageMimeFromBytes(req.body);
+      const finalMime = sniffedMime || (PROFILE_PICTURE_ALLOWED_MIME.has(declaredMime) ? declaredMime : null);
+      if (!finalMime || !PROFILE_PICTURE_ALLOWED_MIME.has(finalMime)) {
+        return res.status(415).json({ ok: false, error: "Only JPEG, PNG, WebP, or GIF images are allowed." });
+      }
+      const ext = PROFILE_PICTURE_ALLOWED_MIME.get(finalMime);
+      const userId = String(session.user.id);
+      const displayName = String(session.user.globalName || session.user.username || "");
+      const filename = profilePictureFilenameFor(userId, ext);
+
+      // If switching extension, remove the old file (`.png` after `.jpg` etc.)
+      const existing = profileGetByUserId(userId);
+      if (existing?.pictureFilename && existing.pictureFilename !== filename) {
+        await safeUnlinkProfilePicture(existing.pictureFilename);
+      }
+      await writeFile(path.join(profilePicturesDir, filename), req.body);
+      const etag = createHash("sha256").update(req.body).digest("hex").slice(0, 16);
+      profileSetPicture({
+        userId,
+        displayName,
+        pictureFilename: filename,
+        pictureMime: finalMime,
+        pictureSizeBytes: req.body.length,
+        pictureEtag: etag,
+      });
+      return res.json({ ok: true, profile: publicProfileFromDb(userId) });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error?.message || "Failed to save picture" });
+    }
+  }
+);
+
+/** DELETE /api/profile/me/picture — clear the uploaded picture. */
+app.delete("/api/profile/me/picture", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "");
+    const existing = profileGetByUserId(userId);
+    if (existing?.pictureFilename) {
+      await safeUnlinkProfilePicture(existing.pictureFilename);
+    }
+    profileSetPicture({ userId, displayName, pictureFilename: null });
+    return res.json({ ok: true, profile: publicProfileFromDb(userId) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to remove picture" });
+  }
+});
+
+/**
+ * GET /api/profile/picture/:userId — serve the stored picture bytes.
+ * Public (no auth) so leaderboard / Hall of Fame can render avatars without
+ * requiring viewers to be logged in. ETag-based for efficient revalidation.
+ */
+app.get("/api/profile/picture/:userId", async (req, res) => {
+  const userId = sanitizeDiscordUserId(req.params.userId);
+  if (!userId) return res.status(400).end();
+  const profile = profileGetByUserId(userId);
+  if (!profile?.pictureFilename) return res.status(404).end();
+  const filePath = path.join(profilePicturesDir, profile.pictureFilename);
+  // Aggressive caching keyed on the etag (URLs include `?v=<etag>`), so a new
+  // upload changes the URL and side-steps any cached response.
+  res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+  res.setHeader("Content-Type", profile.pictureMime || "application/octet-stream");
+  if (profile.pictureEtag) res.setHeader("ETag", `"${profile.pictureEtag}"`);
+  return res.sendFile(filePath, (err) => {
+    if (err) {
+      if (!res.headersSent) res.status(404).end();
+    }
+  });
+});
+
+/**
+ * GET /api/profiles/by-user-ids?ids=A,B,C — batch metadata lookup for the
+ * leaderboard / Hall of Fame portrait override. Public, capped at 200 ids.
+ */
+app.get("/api/profiles/by-user-ids", async (req, res) => {
+  try {
+    const raw = String(req.query?.ids || "");
+    const ids = raw
+      .split(",")
+      .map((x) => sanitizeDiscordUserId(x))
+      .filter(Boolean)
+      .slice(0, 200);
+    if (!ids.length) return res.json({ ok: true, profiles: {} });
+    const rows = profileGetByUserIds(ids);
+    const out = {};
+    for (const row of rows) {
+      out[row.userId] = {
+        userId: row.userId,
+        mainCharacterName: row.mainCharacterName,
+        pictureUrl: row.pictureFilename
+          ? `/api/profile/picture/${encodeURIComponent(row.userId)}?v=${row.pictureEtag || row.pictureUpdatedAt || 0}`
+          : null,
+      };
+    }
+    return res.json({ ok: true, profiles: out });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load profiles" });
+  }
+});
+
+/** GET /api/profile/me/badges — full catalog with obtained / not obtained per badge. */
+app.get("/api/profile/me/badges", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "");
+    const linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
+    const linkedKeys = new Set(linkedCharacters.map((c) => normalizeRaidHelperDisplayKey(c)).filter(Boolean));
+
+    // The leaderboard / Hall of Fame badge logic lives client-side, but we can
+    // reproduce the *first-clear* and *MVP hall of fame* facts cheaply server-
+    // side from existing stores. Other achievements (iron attendance, peak
+    // ceiling, most deaths, best-time) require the rolling roster + WCL
+    // computation we already cache for the leaderboard — return them as
+    // "earned via leaderboard" so the client can lazily resolve from the
+    // active-roster API on render. Keeping this simple ships the page today
+    // without forcing a roster fetch on every profile load.
+    const earned = new Set();
+
+    // MVP hall of fame: any past round where this user's linked character
+    // won the vote. `votingHallOfFame` aggregates rounds and surfaces the
+    // single winner per round - same source the public Hall of Fame uses.
+    try {
+      await ensureVotingStore();
+      const rounds = votingHallOfFame("", 200);
+      for (const round of rounds) {
+        const win = String(round?.winnerName || "").trim();
+        if (!win) continue;
+        if (linkedKeys.has(normalizeRaidHelperDisplayKey(win))) {
+          earned.add("hall-of-fame");
+          break;
+        }
+      }
+    } catch {}
+
+    // First clears: scan recent guild reports for the canonical first-clear
+    // raids and check whether a linked character appeared in the ranked roster.
+    try {
+      const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
+      if (Number.isInteger(guildId) && guildId > 0 && linkedKeys.size) {
+        const limit = Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80));
+        const reports = await getFilteredGuildReportsForGuild(guildId, Math.min(wclMaxGuildReportsLimit(), limit));
+        const firstClears = firstClearParticipantsByRaidFromReports(reports, [
+          "Karazhan",
+          "Gruul's Lair",
+          "Magtheridon's Lair",
+        ]);
+        const matchAny = (group) => {
+          const names = Array.isArray(group?.characters) ? group.characters : [];
+          return names.some((n) => {
+            const key = normalizeRaidHelperDisplayKey(String(n || ""));
+            return key && linkedKeys.has(key);
+          });
+        };
+        if (matchAny(firstClears?.kara)) earned.add("kara-first-time-clear");
+        if (matchAny(firstClears?.gruul)) earned.add("gruul-first-time-clear");
+        if (matchAny(firstClears?.magtheridon)) earned.add("magtheridon-first-time-clear");
+      }
+    } catch {}
+
+    // Guild rank: derive from Account Assignment.
+    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+    const myRow = links.find(
+      (l) => sanitizeDiscordUserId(l?.discordUserId) === userId
+    ) || null;
+    const guildRoleSlug = String(myRow?.guildRole || "Peon").toLowerCase().replace(/\s+/g, "-");
+    if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
+    else if (guildRoleSlug === "raidlead") earned.add("raidlead");
+    else if (guildRoleSlug === "core") earned.add("core");
+    else if (guildRoleSlug === "veteran") earned.add("veteran");
+    else if (guildRoleSlug === "grunt") earned.add("grunt");
+    else earned.add("peon");
+
+    const categories = BADGE_CATALOG.map((cat) => ({
+      ...cat,
+      badges: cat.badges.map((b) => ({ ...b, earned: earned.has(b.id) })),
+    }));
+    return res.json({
+      ok: true,
+      categories,
+      // The client should also call `/api/wcl/guild/<id>/active-roster` on the
+      // profile page to lazily light up the leaderboard-only badges (iron
+      // attendance, peak ceiling, most deaths last 6, best-time participant).
+      lazyBadges: ["iron-attendance", "parsing-ceiling", "most-deaths-last-6-raids", "best-time-participant"],
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load badges" });
   }
 });
 

@@ -12,3 +12,6 @@ data/*.sqlite-shm
 
 # Auto-generated runtime caches — populated on the server, never hand-edited.
 data/discord-id-rh-name-cache.json
+
+# User-uploaded profile pictures live on the deploy disk, not in git.
+data/profile-pictures/

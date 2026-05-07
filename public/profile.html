@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="PUG Life Balance — your raider profile. Upload an avatar, choose a main character, review your earned badges."
+    />
+    <title>PUG LIFE BALANCE · Profile</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.min.css?v=20260507profile1" />
+    <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+  </head>
+  <body class="framework-bg-vivid">
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+            loading="eager"
+            fetchpriority="high"
+            sizes="(max-width: 960px) 100vw, 960px"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/join.html">Join Us</a>
+          <a href="/home.html">Raid Performance</a>
+          <a href="/leaderboard">Leaderboard</a>
+          <a href="/voting.html">Hall of Fame</a>
+        </nav>
+        <div class="auth-top-right" data-auth-widget></div>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container profile-page">
+        <section class="card profile-hero">
+          <h2 class="section-title">Your Profile</h2>
+          <p class="subtle profile-hero-lede">
+            Upload a picture to replace the class crest everywhere on the site, pick which of your linked WoW
+            characters represents you, and review the badges you've earned.
+          </p>
+        </section>
+
+        <section
+          class="card profile-locked-card"
+          id="profileLockedCard"
+          aria-live="polite"
+          hidden
+        >
+          <h3 class="section-title">Sign in to manage your profile</h3>
+          <p class="subtle">
+            Log in with Discord using the button in the top-right to upload a profile picture, choose your main
+            character, and view your badges.
+          </p>
+        </section>
+
+        <div class="profile-grid" id="profileGrid" hidden>
+          <section class="card profile-picture-card">
+            <h3 class="section-title">Profile picture</h3>
+            <p class="subtle profile-card-lede">
+              JPEG, PNG, WebP, or GIF · max 4&nbsp;MB. Shown on the Leaderboard, Hall of Fame, and the guild roster
+              instead of the class crest.
+            </p>
+            <div class="profile-picture-wrap">
+              <div
+                class="profile-picture-drop"
+                id="profilePictureDrop"
+                tabindex="0"
+                role="button"
+                aria-label="Drop a profile picture here, or click to choose a file"
+              >
+                <img
+                  class="profile-picture-preview"
+                  id="profilePicturePreview"
+                  alt=""
+                  width="160"
+                  height="160"
+                />
+                <span class="profile-picture-placeholder" id="profilePicturePlaceholder">
+                  Drag &amp; drop or click to choose
+                </span>
+              </div>
+              <div class="profile-picture-actions">
+                <input
+                  type="file"
+                  id="profilePictureInput"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  hidden
+                />
+                <button type="button" class="primary-btn" id="profilePictureChooseBtn">
+                  Choose file
+                </button>
+                <button type="button" class="secondary-btn" id="profilePictureRemoveBtn" hidden>
+                  Remove picture
+                </button>
+                <p class="profile-picture-status" id="profilePictureStatus" aria-live="polite"></p>
+              </div>
+            </div>
+          </section>
+
+          <section class="card profile-main-card">
+            <h3 class="section-title">Main character</h3>
+            <p class="subtle profile-card-lede">
+              If you have more than one Warcraft Logs character linked to your Discord ID, pick the one to use
+              site-wide. Linking is managed on the
+              <a class="text-link" href="/admin.html">Account Assignment table</a>.
+            </p>
+            <div class="profile-main-row">
+              <label for="profileMainSelect" class="profile-main-label">Display this character:</label>
+              <select id="profileMainSelect" class="profile-main-select" aria-describedby="profileMainHint">
+                <option value="">— No character linked —</option>
+              </select>
+              <button type="button" class="primary-btn" id="profileMainSaveBtn" disabled>Save</button>
+            </div>
+            <p class="profile-main-hint subtle" id="profileMainHint"></p>
+          </section>
+
+          <section class="card profile-badges-card">
+            <h3 class="section-title">Badges</h3>
+            <p class="subtle profile-card-lede">
+              Earned badges are full-color; locked ones are dimmed. Hover for what they mean.
+            </p>
+            <div class="profile-badges-categories" id="profileBadgesCategories" aria-live="polite">
+              <p class="subtle">Loading badges…</p>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"PUG LIFE BALANCE — We are PUG!"</em></p>
+        <p class="footer-sub">TBC Classic · EU — Thunderstrike</p>
+        <p class="footer-legal-links">
+          <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a>
+        </p>
+      </footer>
+    </div>
+
+    <script defer src="/profile.js?v=20260507profile1"></script>
+    <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
+    <script defer src="/cookie-notice.js?v=20260428p"></script>
+  </body>
+</html>

@@ -616,6 +616,15 @@ async function fetchAndBuildLeaderboardRows(gid, reportLimit) {
   const deathMap = buildDeathTotalsMap(deathPayload.leaderboard);
   const consideredRaids = Number(rosterPayload.consideredRaids || 0);
   const recentRaidCap = Number(rosterPayload.attendanceScope?.recentRaidCap || 6);
+  // Resolve any uploaded profile pictures so portraits render the avatar
+  // override rather than the class crest. Best-effort — failures are silent.
+  if (typeof plb?.prefetchRosterProfilePictures === "function") {
+    try {
+      await plb.prefetchRosterProfilePictures(players);
+    } catch {
+      /* leaderboard still renders with class crests */
+    }
+  }
 
   const rows = players.map((p) => {
     const ps = plb.rosterParseForDisplay(p, p);
@@ -670,6 +679,16 @@ async function loadGuildLeaderboard() {
         leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       } else {
         renderLeaderboardTable();
+        // Lazily fetch profile pictures for the cached rows; re-render once
+        // any avatars come back so the class crests get replaced in place.
+        if (typeof plb?.prefetchRosterProfilePictures === "function") {
+          plb
+            .prefetchRosterProfilePictures(leaderboardRows)
+            .then((res) => {
+              if (res?.updatedCount > 0) renderLeaderboardTable();
+            })
+            .catch(() => {});
+        }
       }
       void refreshLeaderboardFromNetwork(gid, reportLimit);
       try {

@@ -37,6 +37,12 @@ let mostDeathsLastSixNameKeys = new Set();
 let firstClearKaraNameKeys = new Set();
 let firstClearGruulNameKeys = new Set();
 let firstClearMagNameKeys = new Set();
+/** Uploaded profile pictures keyed by Discord user id ⇒ absolute URL (or null if explicitly cleared). */
+const rosterProfilePictureByDiscordId = new Map();
+/** Discord ids we've already asked the batch endpoint about — avoids spamming network on re-renders. */
+const rosterProfilePictureRequestedIds = new Set();
+/** Resolves once the very first batch lookup for a render returns, so callers can await it before painting. */
+let rosterProfilePicturesPendingFetch = null;
 /** Legacy fallback: global max peak parse % per bracket (used when API has no encounter-top flags). */
 let parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
 /** Official WoW class colours (default UI palette). */
@@ -708,14 +714,91 @@ function specBadgePortraitChain(player) {
   return out;
 }
 
-/** One portrait: spec icons first (when known), then race champion art, deduped — removes nested “badge” overlay. */
+/**
+ * Look up the uploaded profile picture URL for a roster player (if any).
+ * The leaderboard / Hall of Fame call `prefetchRosterProfilePictures(players)`
+ * before rendering so this is just a synchronous Map read at paint time.
+ */
+function profilePictureUrlForRosterPlayer(player) {
+  const id = String(player?.discordUserId || "").trim();
+  if (!id) return "";
+  const url = rosterProfilePictureByDiscordId.get(id);
+  return url ? String(url) : "";
+}
+
+/**
+ * Batch-fetch uploaded profile pictures for every roster player that declares a
+ * `discordUserId`. Cached so subsequent calls skip ids we've already resolved.
+ *
+ * @param {Array<{ discordUserId?: string | null }>} players
+ * @returns {Promise<{ updatedCount: number }>}
+ */
+async function prefetchRosterProfilePictures(players) {
+  const ids = [];
+  const seen = new Set();
+  for (const p of Array.isArray(players) ? players : []) {
+    const id = String(p?.discordUserId || "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (rosterProfilePictureRequestedIds.has(id)) continue;
+    ids.push(id);
+  }
+  if (!ids.length) return { updatedCount: 0 };
+
+  rosterProfilePicturesPendingFetch = (async () => {
+    let updated = 0;
+    try {
+      const res = await fetch(`/api/profiles/by-user-ids?ids=${encodeURIComponent(ids.join(","))}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return { updatedCount: 0 };
+      const payload = await res.json();
+      const profiles = payload?.profiles && typeof payload.profiles === "object" ? payload.profiles : {};
+      for (const id of ids) {
+        rosterProfilePictureRequestedIds.add(id);
+        const url = profiles[id]?.pictureUrl || null;
+        if (url) {
+          rosterProfilePictureByDiscordId.set(id, url);
+          updated++;
+        } else {
+          // Explicitly remember "no picture" so we don't keep re-querying.
+          rosterProfilePictureByDiscordId.set(id, null);
+        }
+      }
+    } catch {
+      // Swallow — leaderboard will simply use the class crest fallback.
+    }
+    return { updatedCount: updated };
+  })();
+  return rosterProfilePicturesPendingFetch;
+}
+
+/**
+ * Discard cached profile-picture URLs (e.g. after the user uploads a new image
+ * via /profile.html and re-navigates to the leaderboard). Currently unused at
+ * runtime but exported for future re-render flows.
+ */
+function resetRosterProfilePictureCache() {
+  rosterProfilePictureByDiscordId.clear();
+  rosterProfilePictureRequestedIds.clear();
+  rosterProfilePicturesPendingFetch = null;
+}
+
+/** One portrait: profile-picture override → spec icons → race champion art → class crest fallback. */
 function rosterPortraitChain(player) {
   const specUrls = specBadgePortraitChain(player);
   const race = String(player?.race || "").trim();
   const gender = String(player?.gender || "").trim();
   const raceUrls = championPortraitCandidates(race, gender);
+  const profileUrl = profilePictureUrlForRosterPlayer(player);
   const seen = new Set();
   const out = [];
+  // Profile picture wins so a raider who uploaded an avatar always sees it on
+  // Leaderboard / Hall of Fame, regardless of how rich their WCL data is.
+  if (profileUrl) {
+    seen.add(profileUrl);
+    out.push(profileUrl);
+  }
   for (const u of [...specUrls, ...raceUrls]) {
     if (!u || seen.has(u)) continue;
     seen.add(u);
@@ -1507,6 +1590,8 @@ window.plbEventsRoster = {
   specBadgePortraitChain,
   rosterBadgeRowHtml,
   rosterPortraitChain,
+  prefetchRosterProfilePictures,
+  resetRosterProfilePictureCache,
   mergedClassDisplayLabel,
   displaySpecNameForRoster,
   wowClassColor,
