@@ -721,6 +721,20 @@ const eventsKpiDiskMirror = new Map();
  * (lazy, idempotent) so the very first call after a Render cold start can answer
  * from disk instead of hammering Raid Helper + WCL.
  */
+/**
+ * A KPI payload is "poisoned" when we scanned past events but couldn't extract
+ * any unique raiders — almost always a transient Raid-Helper outage / 429 burst
+ * or a cold-boot RH cache miss. Caching that 0 keeps the leaderboard stuck on
+ * "0 unique raiders" until the TTL expires, so we treat these as failures and
+ * never persist them.
+ */
+function isPoisonedEventsKpiPayload(data) {
+  if (!data || typeof data !== "object") return false;
+  const unique = Number(data.uniqueRaiderCount);
+  const scanned = Number(data.pastEventsScanned);
+  return Number.isFinite(unique) && unique <= 0 && Number.isFinite(scanned) && scanned > 0;
+}
+
 async function ensureEventsKpiDiskCache() {
   if (eventsKpiDiskCacheReady) return eventsKpiDiskCacheReady;
   eventsKpiDiskCacheReady = (async () => {
@@ -728,12 +742,21 @@ async function ensureEventsKpiDiskCache() {
       const raw = await readFile(eventsKpiDiskCachePath, "utf8");
       const parsed = JSON.parse(raw);
       const byKey = parsed && typeof parsed === "object" && parsed.byKey ? parsed.byKey : {};
+      let poisonedDropped = 0;
       for (const [key, entry] of Object.entries(byKey)) {
         if (!entry || typeof entry !== "object") continue;
         const at = Number(entry.at);
         if (!Number.isFinite(at)) continue;
+        if (isPoisonedEventsKpiPayload(entry.data)) {
+          poisonedDropped += 1;
+          continue;
+        }
         eventsKpiDiskMirror.set(key, { at, data: entry.data });
         eventsKpiMicroCache.set(key, { at, data: entry.data });
+      }
+      if (poisonedDropped > 0) {
+        console.warn(`[events-kpi] dropped ${poisonedDropped} poisoned cache entry(s) at hydrate`);
+        persistEventsKpiDiskCache().catch(() => {});
       }
     } catch (err) {
       if (err?.code !== "ENOENT") {
@@ -769,20 +792,38 @@ async function getEventsKpiCached(cacheKey, loader) {
   const ttlMs = eventsKpiCacheTtlMs();
   const maxStaleMs = eventsKpiCacheMaxStaleMs();
   const now = Date.now();
-  const cached = eventsKpiMicroCache.get(cacheKey);
+  let cached = eventsKpiMicroCache.get(cacheKey);
+  /* Belt-and-braces: a previous build may have written a poisoned entry before
+     we started validating. Evict it on read so we recompute synchronously. */
+  if (cached && isPoisonedEventsKpiPayload(cached.data)) {
+    console.warn("[events-kpi] evicting poisoned in-memory entry for", cacheKey);
+    eventsKpiMicroCache.delete(cacheKey);
+    eventsKpiDiskMirror.delete(cacheKey);
+    persistEventsKpiDiskCache().catch(() => {});
+    cached = null;
+  }
   const age = cached ? now - Number(cached.at || 0) : Number.POSITIVE_INFINITY;
 
   if (cached && age < ttlMs) return cached.data;
+
+  const persistFreshIfClean = (data) => {
+    if (isPoisonedEventsKpiPayload(data)) {
+      console.warn("[events-kpi] refusing to cache poisoned payload (uniqueRaiderCount<=0); will retry next call");
+      return false;
+    }
+    const at = Date.now();
+    eventsKpiMicroCache.set(cacheKey, { at, data });
+    eventsKpiDiskMirror.set(cacheKey, { at, data });
+    persistEventsKpiDiskCache().catch(() => {});
+    return true;
+  };
 
   if (cached && age < maxStaleMs) {
     if (!eventsKpiInflight.get(cacheKey)) {
       const refresh = (async () => {
         try {
           const data = await loader();
-          const at = Date.now();
-          eventsKpiMicroCache.set(cacheKey, { at, data });
-          eventsKpiDiskMirror.set(cacheKey, { at, data });
-          persistEventsKpiDiskCache().catch(() => {});
+          persistFreshIfClean(data);
         } catch (err) {
           console.warn("[events-kpi] background refresh failed:", err?.message || err);
         } finally {
@@ -798,10 +839,7 @@ async function getEventsKpiCached(cacheKey, loader) {
   if (running) return running;
   const task = (async () => {
     const data = await loader();
-    const at = Date.now();
-    eventsKpiMicroCache.set(cacheKey, { at, data });
-    eventsKpiDiskMirror.set(cacheKey, { at, data });
-    persistEventsKpiDiskCache().catch(() => {});
+    persistFreshIfClean(data);
     return data;
   })().finally(() => {
     eventsKpiInflight.delete(cacheKey);
