@@ -18,6 +18,7 @@ import {
   nvGetHistory,
   profileGetByUserId,
   profileGetByUserIds,
+  profileGetAllWithPicture,
   profileSetPicture,
   profileSetMainCharacter,
   profileGetHistory,
@@ -1428,15 +1429,21 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
   enriched = await Promise.all(enriched.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
   enriched = await enrichConfirmedRosterWithWclSpecIcons(enriched);
 
-  // Build a `RH-name-key → discordUserId` index once so each player row can
-  // declare its canonical Discord id. Roster pages then call
-  // `/api/profiles/by-user-ids?ids=...` to render uploaded profile pictures
-  // instead of the class crest.
+  // Build a `name-key → discordUserId` index once so each player row can
+  // declare its canonical Discord id. Indexed by *both* the Raid Helper
+  // signup name and every WCL character name on the link, so a roster row
+  // whose `name` is the WoW character (e.g. "Highbullet") still resolves to
+  // a Discord ID even when the link's RH-name is the Discord nick instead.
   const discordIdByRhKey = new Map();
   for (const link of rhWclLinksState?.links || []) {
     const id = sanitizeDiscordUserId(link?.discordUserId);
-    const key = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
-    if (id && key && !discordIdByRhKey.has(key)) discordIdByRhKey.set(key, id);
+    if (!id) continue;
+    const rhKey = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    if (rhKey && !discordIdByRhKey.has(rhKey)) discordIdByRhKey.set(rhKey, id);
+    for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) {
+      const cnKey = normalizeRaidHelperDisplayKey(String(cn || ""));
+      if (cnKey && !discordIdByRhKey.has(cnKey)) discordIdByRhKey.set(cnKey, id);
+    }
   }
   // Augment with the live RH-signup scan cache so newly observed users still
   // resolve before the next manual save on /admin.html.
@@ -5160,6 +5167,85 @@ app.get("/api/profile/picture/:userId", async (req, res) => {
       if (!res.headersSent) res.status(404).end();
     }
   });
+});
+
+/**
+ * GET /api/profiles/by-character-names?names=A,B,C — fallback lookup for the
+ * leaderboard / Hall of Fame when a player row has no `discordUserId` yet
+ * (e.g. the Account Assignment table hasn't been backfilled with the user's
+ * Discord ID). Resolves a profile picture for a WoW character name via:
+ *   1. Direct match on `user_profiles.main_character_name`.
+ *   2. Reverse-lookup through `rhWclLinksState`: any link that lists the
+ *      requested name in `wclCharacterNames` → take its `discordUserId`
+ *      → fetch the matching `user_profiles` row.
+ * Public, capped at 200 names.
+ */
+app.get("/api/profiles/by-character-names", async (req, res) => {
+  try {
+    const raw = String(req.query?.names || "");
+    const namesIn = raw
+      .split(",")
+      .map((n) => String(n || "").trim())
+      .filter(Boolean)
+      .slice(0, 200);
+    if (!namesIn.length) return res.json({ ok: true, profiles: {} });
+
+    const wantedKeys = new Map();
+    for (const name of namesIn) {
+      const key = normalizeRaidHelperDisplayKey(name);
+      if (!key || wantedKeys.has(key)) continue;
+      wantedKeys.set(key, name);
+    }
+    if (!wantedKeys.size) return res.json({ ok: true, profiles: {} });
+
+    // Pull every profile that has an uploaded picture (small set, opt-in).
+    // We walk it once, matching against (a) its main character name and
+    // (b) every WCL character name on the Account Assignment row that
+    // shares the user's Discord id. First match per requested name wins.
+    const profilesWithPicture = profileGetAllWithPicture();
+    if (!profilesWithPicture.length) return res.json({ ok: true, profiles: {} });
+
+    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+    const linksByDiscordId = new Map();
+    for (const link of links) {
+      const id = sanitizeDiscordUserId(link?.discordUserId);
+      if (!id) continue;
+      if (!linksByDiscordId.has(id)) linksByDiscordId.set(id, []);
+      linksByDiscordId.get(id).push(link);
+    }
+
+    const profileByMatchKey = new Map();
+    const remember = (key, row) => {
+      if (!key || profileByMatchKey.has(key)) return;
+      profileByMatchKey.set(key, row);
+    };
+    for (const row of profilesWithPicture) {
+      const mainKey = normalizeRaidHelperDisplayKey(String(row.mainCharacterName || ""));
+      if (mainKey) remember(mainKey, row);
+      const myLinks = linksByDiscordId.get(row.userId) || [];
+      for (const link of myLinks) {
+        remember(normalizeRaidHelperDisplayKey(String(link?.raidHelperName || "")), row);
+        for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) {
+          remember(normalizeRaidHelperDisplayKey(String(cn || "")), row);
+        }
+      }
+    }
+
+    const out = {};
+    for (const [key, originalName] of wantedKeys.entries()) {
+      const row = profileByMatchKey.get(key);
+      if (row?.pictureFilename) {
+        out[originalName] = {
+          userId: row.userId,
+          mainCharacterName: row.mainCharacterName,
+          pictureUrl: `/api/profile/picture/${encodeURIComponent(row.userId)}?v=${row.pictureEtag || row.pictureUpdatedAt || 0}`,
+        };
+      }
+    }
+    return res.json({ ok: true, profiles: out });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load profiles" });
+  }
 });
 
 /**

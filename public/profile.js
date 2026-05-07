@@ -159,6 +159,14 @@
       if (!res.ok || !payload?.ok) throw new Error(payload?.error || "Upload failed");
       lastProfile = payload.profile;
       applyPictureToUI(payload.profile);
+      // Bust the leaderboard / Hall of Fame session caches so the next
+      // navigation re-fetches active-roster + profile pictures and the
+      // newly-uploaded avatar replaces the class crest immediately.
+      try {
+        window.plbSessionApiCache?.clearAll();
+      } catch {
+        /* ignore */
+      }
       setStatus(els.pictureStatus, "Saved. It will replace your class crest across the site.", "success");
     } catch (error) {
       setStatus(els.pictureStatus, error?.message || "Upload failed", "error");
@@ -176,6 +184,11 @@
       if (!res.ok || !payload?.ok) throw new Error(payload?.error || "Failed to remove picture");
       lastProfile = payload.profile;
       applyPictureToUI(payload.profile);
+      try {
+        window.plbSessionApiCache?.clearAll();
+      } catch {
+        /* ignore */
+      }
       setStatus(els.pictureStatus, "Picture removed.", "success");
     } catch (error) {
       setStatus(els.pictureStatus, error?.message || "Failed to remove picture", "error");

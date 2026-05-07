@@ -39,8 +39,13 @@ let firstClearGruulNameKeys = new Set();
 let firstClearMagNameKeys = new Set();
 /** Uploaded profile pictures keyed by Discord user id ⇒ absolute URL (or null if explicitly cleared). */
 const rosterProfilePictureByDiscordId = new Map();
+/** Same pictures keyed by `rosterNameKey`-style normalized character name — populated by the
+ *  character-name fallback when a player row has no Discord id available yet. */
+const rosterProfilePictureByCharacterKey = new Map();
 /** Discord ids we've already asked the batch endpoint about — avoids spamming network on re-renders. */
 const rosterProfilePictureRequestedIds = new Set();
+/** Character keys we've already asked the fallback endpoint about — same dedupe goal as above. */
+const rosterProfilePictureRequestedCharacterKeys = new Set();
 /** Resolves once the very first batch lookup for a render returns, so callers can await it before painting. */
 let rosterProfilePicturesPendingFetch = null;
 /** Legacy fallback: global max peak parse % per bracket (used when API has no encounter-top flags). */
@@ -716,58 +721,135 @@ function specBadgePortraitChain(player) {
 
 /**
  * Look up the uploaded profile picture URL for a roster player (if any).
- * The leaderboard / Hall of Fame call `prefetchRosterProfilePictures(players)`
- * before rendering so this is just a synchronous Map read at paint time.
+ * Tries the Discord-id-keyed map first (canonical), then falls back to the
+ * character-name-keyed map for rows whose Account Assignment entry hasn't
+ * been backfilled with a `discordUserId` yet — common right after a fresh
+ * upload from someone whose admin-table row only has their RH display
+ * name. Both maps are populated by `prefetchRosterProfilePictures`.
  */
 function profilePictureUrlForRosterPlayer(player) {
   const id = String(player?.discordUserId || "").trim();
-  if (!id) return "";
-  const url = rosterProfilePictureByDiscordId.get(id);
-  return url ? String(url) : "";
+  if (id) {
+    const direct = rosterProfilePictureByDiscordId.get(id);
+    if (direct) return String(direct);
+  }
+  const candidates = [
+    String(player?.characterName || "").trim(),
+    String(player?.name || "").trim(),
+    ...(Array.isArray(player?.wclCharacters) ? player.wclCharacters : []).map((x) => String(x || "").trim()),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const key = rosterNameKey(candidate);
+    if (!key) continue;
+    const url = rosterProfilePictureByCharacterKey.get(key);
+    if (url) return String(url);
+  }
+  return "";
 }
 
 /**
- * Batch-fetch uploaded profile pictures for every roster player that declares a
- * `discordUserId`. Cached so subsequent calls skip ids we've already resolved.
+ * Batch-fetch uploaded profile pictures for every roster player.
+ * Two passes:
+ *   1. Discord-ID lookup for rows that already declare `discordUserId`
+ *      (canonical, fastest, populates `rosterProfilePictureByDiscordId`).
+ *   2. Character-name fallback for rows still without a picture — covers
+ *      users whose Account Assignment entry hasn't been backfilled with a
+ *      Discord id yet but who already uploaded a picture and either set a
+ *      main character or have a link row that lists their WCL name.
  *
- * @param {Array<{ discordUserId?: string | null }>} players
+ * Both passes cache "asked already" sets so re-renders don't re-fetch.
+ *
+ * @param {Array<{ discordUserId?: string | null, characterName?: string, name?: string, wclCharacters?: string[] }>} players
  * @returns {Promise<{ updatedCount: number }>}
  */
 async function prefetchRosterProfilePictures(players) {
+  const list = Array.isArray(players) ? players : [];
   const ids = [];
-  const seen = new Set();
-  for (const p of Array.isArray(players) ? players : []) {
+  const seenIds = new Set();
+  for (const p of list) {
     const id = String(p?.discordUserId || "").trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
+    if (!id || seenIds.has(id)) continue;
+    seenIds.add(id);
     if (rosterProfilePictureRequestedIds.has(id)) continue;
     ids.push(id);
   }
-  if (!ids.length) return { updatedCount: 0 };
 
   rosterProfilePicturesPendingFetch = (async () => {
     let updated = 0;
-    try {
-      const res = await fetch(`/api/profiles/by-user-ids?ids=${encodeURIComponent(ids.join(","))}`, {
-        credentials: "include",
-      });
-      if (!res.ok) return { updatedCount: 0 };
-      const payload = await res.json();
-      const profiles = payload?.profiles && typeof payload.profiles === "object" ? payload.profiles : {};
-      for (const id of ids) {
-        rosterProfilePictureRequestedIds.add(id);
-        const url = profiles[id]?.pictureUrl || null;
-        if (url) {
-          rosterProfilePictureByDiscordId.set(id, url);
-          updated++;
-        } else {
-          // Explicitly remember "no picture" so we don't keep re-querying.
-          rosterProfilePictureByDiscordId.set(id, null);
+
+    // Pass 1: Discord-id batch.
+    if (ids.length) {
+      try {
+        const res = await fetch(`/api/profiles/by-user-ids?ids=${encodeURIComponent(ids.join(","))}`, {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const payload = await res.json();
+          const profiles = payload?.profiles && typeof payload.profiles === "object" ? payload.profiles : {};
+          for (const id of ids) {
+            rosterProfilePictureRequestedIds.add(id);
+            const url = profiles[id]?.pictureUrl || null;
+            if (url) {
+              rosterProfilePictureByDiscordId.set(id, url);
+              updated++;
+            } else {
+              rosterProfilePictureByDiscordId.set(id, null);
+            }
+          }
         }
+      } catch {
+        /* fall through to pass 2 */
       }
-    } catch {
-      // Swallow — leaderboard will simply use the class crest fallback.
     }
+
+    // Pass 2: character-name fallback for any player still without a hit.
+    const missingNames = [];
+    const nameKeysIncluded = new Set();
+    for (const p of list) {
+      if (profilePictureUrlForRosterPlayer(p)) continue;
+      const candidates = [
+        String(p?.characterName || "").trim(),
+        String(p?.name || "").trim(),
+      ].filter(Boolean);
+      for (const candidate of candidates) {
+        const key = rosterNameKey(candidate);
+        if (!key) continue;
+        if (rosterProfilePictureRequestedCharacterKeys.has(key)) continue;
+        if (nameKeysIncluded.has(key)) continue;
+        nameKeysIncluded.add(key);
+        missingNames.push(candidate);
+        // Only ask once per player; the server checks all variants for us.
+        break;
+      }
+    }
+    if (missingNames.length) {
+      try {
+        const res = await fetch(
+          `/api/profiles/by-character-names?names=${encodeURIComponent(missingNames.join(","))}`,
+          { credentials: "include" }
+        );
+        if (res.ok) {
+          const payload = await res.json();
+          const profiles = payload?.profiles && typeof payload.profiles === "object" ? payload.profiles : {};
+          for (const name of missingNames) {
+            const key = rosterNameKey(name);
+            if (!key) continue;
+            rosterProfilePictureRequestedCharacterKeys.add(key);
+            const url = profiles[name]?.pictureUrl || null;
+            if (url) {
+              rosterProfilePictureByCharacterKey.set(key, url);
+              updated++;
+            } else {
+              rosterProfilePictureByCharacterKey.set(key, null);
+            }
+          }
+        }
+      } catch {
+        /* leaderboard still renders with class crests */
+      }
+    }
+
     return { updatedCount: updated };
   })();
   return rosterProfilePicturesPendingFetch;
@@ -780,7 +862,9 @@ async function prefetchRosterProfilePictures(players) {
  */
 function resetRosterProfilePictureCache() {
   rosterProfilePictureByDiscordId.clear();
+  rosterProfilePictureByCharacterKey.clear();
   rosterProfilePictureRequestedIds.clear();
+  rosterProfilePictureRequestedCharacterKeys.clear();
   rosterProfilePicturesPendingFetch = null;
 }
 
