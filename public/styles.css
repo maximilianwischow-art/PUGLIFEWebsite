@@ -2531,7 +2531,7 @@ body.framework-bg-vivid {
   position: fixed;
   left: 14px;
   right: 14px;
-  bottom: 14px;
+  bottom: max(14px, env(safe-area-inset-bottom));
   z-index: 20;
   display: flex;
   align-items: center;
@@ -2568,13 +2568,33 @@ body.framework-bg-vivid {
   text-transform: uppercase;
   cursor: pointer;
   white-space: nowrap;
+  /* Touch-friendly minimum tap area (Apple HIG / Material both target 44px). */
+  min-height: 44px;
+  min-width: 64px;
 }
+
+/**
+ * Reserve bottom space for the fixed cookie notice so it never covers
+ * primary CTAs (e.g. Phase 2 "Save need"). cookie-notice.js toggles this
+ * class on <body> while the notice is mounted, then removes it on dismiss.
+ */
+body.has-cookie-notice .footer { padding-bottom: 96px; }
 
 @media (max-width: 900px) {
   .cookie-notice {
+    /* Two-line stack on phones: copy on top, OK button beneath full-width.
+       Capped width keeps long sentences from pushing the button off-screen. */
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 11px;
+    line-height: 1.4;
   }
+  .cookie-notice p { text-align: left; }
+  .cookie-notice-btn { width: 100%; }
+  body.has-cookie-notice .footer { padding-bottom: 140px; }
+  body.has-cookie-notice .app-wrap { padding-bottom: 140px; }
 }
 
 .raid-calendar-card {
@@ -5665,5 +5685,81 @@ button.raid-cal-run.raid-cal-run--column:hover {
   word-break: break-word;
 }
 
-/* Visually-hidden helper used in the page for the H1 (matches join.html). */
+/* =============================================================================
+ * Mobile polish (≤640px / phone viewports)
+ *
+ * Targets (Apple HIG / Material): every interactive control >= 44×44px so
+ * users don't fat-finger them. Disables `:hover` transforms on touch-only
+ * devices so iOS doesn't leave buttons in a "stuck hover" state after a tap.
+ * ============================================================================= */
+
+/* iOS keeps a default tap-highlight rectangle that flashes on every touch —
+   replace with subtle ring driven by `:active` instead so taps feel native. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Disable hover lift on touch-only devices. Without this, a single tap on iOS
+   leaves the button raised + glowing until the user taps somewhere else,
+   which looks like the click "didn't fire". */
+@media (hover: none) {
+  .event-signup-btn:hover { transform: none; }
+}
+
+/* Phone breakpoint: bump key tap targets, prevent horizontal overflow on
+   long links / chips, and tighten the demand table on narrow screens. */
+@media (max-width: 640px) {
+  /* Primary CTAs across the site (Phase 2 Save, Add item, event signup) */
+  .event-signup-btn {
+    min-height: 44px;
+    padding: 12px 18px;
+    font-size: 12px;
+  }
+
+  /* The auth-chip-btn is reused by the chip remove buttons, the logout
+     button, and a few admin actions — make sure each is tappable. */
+  .auth-chip-btn,
+  .auth-chip-link {
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
+  /* Phase 2 selected-item chip remove × button (re-uses .auth-chip-btn). */
+  .vortex-chip-remove {
+    min-height: 32px;
+    min-width: 32px;
+    padding: 4px 10px;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  /* Profile picture drop tile shrinks slightly on narrow phones so the
+     adjacent button column has room to breathe without wrapping. */
+  .profile-picture-drop {
+    width: 140px;
+    height: 140px;
+  }
+
+  /* Badge grid: smaller tiles on phones so 3-4 fit per row instead of 2. */
+  .profile-badge-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 0.55rem;
+  }
+  .profile-badge-tile { padding: 0.55rem 0.4rem; }
+  .profile-badge-tile img { width: 48px; height: 48px; }
+  .profile-badge-name { font-size: 0.74rem; }
+
+  /* Phase 2 demand search box: keep the input full width above the table
+     instead of crammed into the heading row. */
+  .p2-demand .flex.items-center.gap-2 { width: 100%; }
+  .p2-demand .flex.items-center.gap-2 input { width: 100%; max-width: none; }
+}
+
+/* Smaller phones (< 380px, e.g. iPhone SE) — tighten further so nothing
+   overflows even at the narrowest practical viewport. */
+@media (max-width: 380px) {
+  .profile-picture-drop { width: 120px; height: 120px; }
+  .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+  .top-nav a { font-size: 11px; padding: 8px 6px; letter-spacing: 0.04em; }
+}
 

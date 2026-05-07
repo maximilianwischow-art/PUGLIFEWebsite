@@ -174,7 +174,7 @@ function renderSelectedItems() {
           </span>
           ${
             vortexCanEdit
-              ? `<button type="button" class="auth-chip-btn" data-remove-item="${idx}" style="padding:2px 6px;">x</button>`
+              ? `<button type="button" class="auth-chip-btn vortex-chip-remove" data-remove-item="${idx}" aria-label="Remove ${esc(String(row.itemName || "item"))}">×</button>`
               : ""
           }
         </span>`
