@@ -2522,15 +2522,16 @@ function renderAdminDatabaseSync(payload) {
     .map((t) => {
       const status = String(t.status || "idle");
       const tone = status === "failed" ? "color:#c44" : status === "running" ? "color:#3a82c4" : "";
+      const taskId = String(t.id || t.taskId || "").trim();
       return `<tr>
-        <td><code>${esc(t.taskId || "")}</code></td>
+        <td><code>${esc(taskId)}</code></td>
         <td style="${tone}">${esc(status)}</td>
         <td>${esc(fmtTs(t.lastCompletedAt))}</td>
         <td>${esc(fmtDuration(t.lastDurationMs))}</td>
         <td>${esc(t.lastError || "")}</td>
         <td>
           <button type="button" class="event-signup-btn event-signup-btn--softres"
-            data-admin-database-sync-trigger="${esc(t.taskId || "")}">
+            data-admin-database-sync-trigger="${esc(taskId)}">
             Run now
           </button>
         </td>
@@ -2539,6 +2540,14 @@ function renderAdminDatabaseSync(payload) {
     .join("");
   host.innerHTML = `
     <h4 class="section-title" style="margin-top:8px">Background sync workers</h4>
+    <div class="admin-actions admin-actions--tight" style="margin-bottom:8px">
+      <button type="button" class="event-signup-btn" data-admin-database-sync-all="1">
+        Run all syncs now
+      </button>
+      <span class="subtle">
+        Runs every task in order (identity → attendance → loot → parses → badges → …).
+      </span>
+    </div>
     <table class="admin-table">
       <thead>
         <tr>
@@ -2797,6 +2806,41 @@ document.addEventListener("click", async (event) => {
     } finally {
       syncBtn.disabled = false;
       syncBtn.textContent = orig || "Run now";
+    }
+    return;
+  }
+  const syncAllBtn = event.target.closest("[data-admin-database-sync-all]");
+  if (syncAllBtn) {
+    event.preventDefault();
+    syncAllBtn.disabled = true;
+    const orig = syncAllBtn.textContent;
+    syncAllBtn.textContent = "Running all syncs…";
+    status("Running all sync tasks (this can take a couple of minutes)…");
+    let pollHandle = null;
+    try {
+      pollHandle = setInterval(() => {
+        loadAdminDatabasePanel({ silent: true }).catch(() => {});
+      }, 4000);
+      const payload = await getJson("/api/admin/sync-all", { method: "POST" });
+      const okCount = Number(payload?.okCount || 0);
+      const failedCount = Number(payload?.failedCount || 0);
+      const skippedCount = Number(payload?.skippedCount || 0);
+      const totalSeconds = Math.max(1, Math.round(Number(payload?.totalDurationMs || 0) / 1000));
+      const summary = `Sync-all finished in ${totalSeconds}s — ${okCount} ok, ${failedCount} failed, ${skippedCount} skipped.`;
+      status(summary);
+      if (failedCount > 0 && Array.isArray(payload?.results)) {
+        const failed = payload.results.filter((r) => r && r.ok === false);
+        if (failed.length) {
+          console.warn("[sync-all] failed tasks:", failed);
+        }
+      }
+    } catch (error) {
+      status(`Run all syncs failed: ${error?.message || "Unknown error"}`);
+    } finally {
+      if (pollHandle) clearInterval(pollHandle);
+      syncAllBtn.disabled = false;
+      syncAllBtn.textContent = orig || "Run all syncs now";
+      await loadAdminDatabasePanel({ silent: true }).catch(() => {});
     }
   }
 });

@@ -5721,6 +5721,65 @@ app.post("/api/admin/sync/:taskId", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/admin/sync-all — run every registered sync task once, sequentially.
+ *
+ * Sequential rather than parallel because:
+ *   1. Tasks have implicit ordering (e.g. `attendance` populates
+ *      `raid_appearances`, which `badges` reads) — running them in
+ *      registration order keeps each downstream task fed with fresh data.
+ *   2. Several tasks call the same upstream APIs (Warcraft Logs, Raid Helper);
+ *      running in series is gentler on quotas and easier to reason about.
+ *
+ * Single-flight is preserved per-task: if one is already running, this
+ * endpoint awaits it instead of starting a duplicate. `?force=1` forces
+ * a fresh run for tasks that aren't currently inflight.
+ */
+app.post("/api/admin/sync-all", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const force = String(req.query?.force || "").trim() === "1";
+  const tasks = listSyncTasks();
+  const results = [];
+  const startedAt = Date.now();
+  for (const task of tasks) {
+    const taskId = task.id;
+    const taskStartedAt = Date.now();
+    try {
+      if (!force && isSyncTaskRunning(taskId)) {
+        results.push({ taskId, ok: true, skipped: true, reason: "already running" });
+        continue;
+      }
+      const result = await runSyncTaskNow(taskId, { force });
+      results.push({
+        taskId,
+        ok: true,
+        rowsChanged: Number(result?.rowsChanged) || 0,
+        durationMs: Number(result?.durationMs) || Date.now() - taskStartedAt,
+      });
+    } catch (error) {
+      console.error(`[admin-sync-all] '${taskId}' failed:`, error?.stack || error);
+      results.push({
+        taskId,
+        ok: false,
+        error: error?.message || "sync run failed",
+        durationMs: Date.now() - taskStartedAt,
+      });
+    }
+  }
+  const okCount = results.filter((r) => r.ok && !r.skipped).length;
+  const failedCount = results.filter((r) => !r.ok).length;
+  const skippedCount = results.filter((r) => r.skipped).length;
+  return res.json({
+    ok: failedCount === 0,
+    totalDurationMs: Date.now() - startedAt,
+    okCount,
+    failedCount,
+    skippedCount,
+    results,
+  });
+});
+
 /* =============================================================================
  * Profiles — per-Discord-user profile picture, main-character pick, badge view.
  * Storage:
