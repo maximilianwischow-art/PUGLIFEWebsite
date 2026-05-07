@@ -6186,16 +6186,31 @@ app.get("/api/profile/me/badges", async (req, res) => {
 
     try {
       const canonical = identityUserGetByDiscordId(userId);
+      let raidsInWindow = 0;
       if (canonical?.id) {
         const fresh = raidAttendanceGetFreshestWindow();
         if (fresh?.windowLabel) {
           const attRows = raidAttendanceGetByWindow(fresh.windowLabel);
           const mine = attRows.find((r) => Number(r.userId) === Number(canonical.id));
-          const n = Math.max(0, Math.floor(Number(mine?.raidsAttended) || 0));
-          for (const t of RAID_MILESTONE_THRESHOLDS) {
-            if (n >= t) earned.add(`raids-with-guild-${t}`);
+          raidsInWindow = Math.max(0, Math.floor(Number(mine?.raidsAttended) || 0));
+        }
+      }
+      let rhSignups = 0;
+      try {
+        const result = await countRaidHelperPrimarySignupsPerRhKey(80);
+        const counts = result?.counts instanceof Map ? result.counts : null;
+        if (counts) {
+          for (const k of linkedKeys) {
+            const c = Number(counts.get(k) || 0);
+            if (c > rhSignups) rhSignups = c;
           }
         }
+      } catch {
+        /* RH count is best-effort here; badge sync will catch up next cycle */
+      }
+      const milestoneCount = Math.max(raidsInWindow, rhSignups);
+      for (const t of RAID_MILESTONE_THRESHOLDS) {
+        if (milestoneCount >= t) earned.add(`raids-with-guild-${t}`);
       }
     } catch {}
 
@@ -12141,6 +12156,18 @@ async function runSyncBadges() {
     console.warn("[sync:badges] raid attendance snapshot read failed:", error?.message || error);
   }
 
+  /* Pull the same Raid Helper signup counts the leaderboard's "Events" KPI
+     uses, so milestone badges align with what the user can already see in
+     the row. raidsAttended is window-capped (~6 reports); rhPastEventCount
+     covers the broader signup history scanned by the active-roster pipeline. */
+  let rhSignupCountsByKey = new Map();
+  try {
+    const result = await countRaidHelperPrimarySignupsPerRhKey(80);
+    rhSignupCountsByKey = result?.counts instanceof Map ? result.counts : new Map();
+  } catch (error) {
+    console.warn("[sync:badges] RH signup count load failed:", error?.message || error);
+  }
+
   let rowsChanged = 0;
   const now = Date.now();
   for (const user of identityUserListAll()) {
@@ -12172,18 +12199,30 @@ async function runSyncBadges() {
     }
 
     const raidStats = raidsByUserId.get(user.id);
-    if (raidStats) {
-      const n = raidStats.raidsAttended;
+    /* Milestone count: max(window-attended, RH signups across the linked
+       names). RH signups can be higher than the WCL window because the
+       window is capped to the most recent ~6 synced reports. */
+    let rhSignupsForUser = 0;
+    for (const k of linkedKeys) {
+      const c = Number(rhSignupCountsByKey.get(k) || 0);
+      if (c > rhSignupsForUser) rhSignupsForUser = c;
+    }
+    const milestoneCount = Math.max(
+      raidStats ? raidStats.raidsAttended : 0,
+      rhSignupsForUser
+    );
+    if (milestoneCount > 0) {
       for (const t of RAID_MILESTONE_THRESHOLDS) {
-        if (n >= t) {
+        if (milestoneCount >= t) {
           const bid = `raids-with-guild-${t}`;
           earned.add(bid);
           evidenceById.set(bid, {
             type: "raid-milestone",
             threshold: t,
-            raidsAttended: raidStats.raidsAttended,
-            raidsConsidered: raidStats.raidsConsidered,
-            windowLabel: raidStats.windowLabel,
+            raidsAttended: raidStats?.raidsAttended || 0,
+            raidsConsidered: raidStats?.raidsConsidered || 0,
+            rhPastEventCount: rhSignupsForUser,
+            windowLabel: raidStats?.windowLabel || null,
           });
         }
       }

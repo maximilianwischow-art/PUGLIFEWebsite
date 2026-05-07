@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507raidmilestones2";
+const IMAGE_ASSET_VERSION = "20260507raidmilestones3";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1206,19 +1206,30 @@ function achievementBadgeIconUrlWithFallback(fileName) {
   return { src: svg, onerror: ` onerror="this.onerror=null;this.src='${png}'"` };
 }
 
-/** Full-window raid count for milestone badges (not capped at 6 like attendance-tier KPIs). */
-function raidsAttendedFullWindowForPlayer(player) {
+/**
+ * Total raids the user has been part of for milestone badges. We deliberately
+ * use the bigger of (a) raidsAttended in the synced WCL window — which is
+ * usually capped to the most recent ~6 reports — and (b) rhPastEventCount,
+ * the Raid Helper signup count visible on the leaderboard's "Events" KPI. A
+ * raider with 11 RH events but only 5 raids in the WCL window is the case
+ * that motivated this: the leaderboard already shows "Events: 11", so the
+ * 10-raid milestone should light up.
+ */
+function raidsWithGuildCountForPlayer(player) {
   const direct = Number(player?.raidsAttended);
-  if (Number.isFinite(direct) && direct >= 0) return Math.floor(direct);
   const row = attendanceRowForRosterPlayerResolved(player);
-  if (row) return Math.max(0, Math.floor(Number(row.raidsAttended || 0)));
-  return 0;
+  const fromRow = row ? Number(row.raidsAttended || 0) : 0;
+  const fromRh = Number(player?.rhPastEventCount || 0);
+  const candidates = [direct, fromRow, fromRh].map((n) =>
+    Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  );
+  return Math.max(0, ...candidates);
 }
 
 function playerEarnedRaidsWithGuildMilestone(player, threshold) {
   const t = Math.floor(Number(threshold) || 0);
   if (t <= 0) return false;
-  return raidsAttendedFullWindowForPlayer(player) >= t;
+  return raidsWithGuildCountForPlayer(player) >= t;
 }
 
 /** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
