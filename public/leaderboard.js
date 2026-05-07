@@ -21,9 +21,17 @@ let expandedPlayerKey = null;
 /** Item metadata from `GET /api/wow-classic/items` for leaderboard loot lines (icons + tooltips). */
 let leaderboardLootItemMetaMap = new Map();
 
-/** Session-only cache (tab lifetime) to avoid re-fetching heavy roster/death/loot APIs on every navigation. */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v1";
+/**
+ * Session-only cache (tab lifetime) to avoid re-fetching heavy roster/death/loot APIs on every navigation.
+ *
+ * Bumped to v2 (2026-05-07) to discard cached rows from before active-roster
+ * stabilised className for every player — those cached rows triggered the
+ * `inv_misc_questionmark.jpg` fallback in `rosterPortraitChain`.
+ */
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v2";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
+/** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
+const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;
 
 function lbApiGetJson(url, init) {
   const c = window.plbSessionApiCache;
@@ -35,13 +43,35 @@ function lbApiGetJson(url, init) {
   });
 }
 
+function rowsAppearPoisoned(rows) {
+  if (!Array.isArray(rows) || !rows.length) return false;
+  let missing = 0;
+  for (const r of rows) {
+    const cls = String(r?.className || r?.blizzardClassName || r?.raiderIoClassName || "").trim();
+    if (!cls) missing++;
+  }
+  return missing / rows.length > LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD;
+}
+
 function readLeaderboardSessionCache(guildId) {
   try {
-    const raw = sessionStorage.getItem(`${LEADERBOARD_SESSION_CACHE_KEY}:${guildId}`);
+    const key = `${LEADERBOARD_SESSION_CACHE_KEY}:${guildId}`;
+    const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const o = JSON.parse(raw);
     if (!o || typeof o.at !== "number" || !Array.isArray(o.rows) || !Array.isArray(o.lootEntries)) return null;
     if (Date.now() - o.at > LEADERBOARD_SESSION_TTL_MS) return null;
+    // Defence-in-depth: if a previous session captured rows that were missing
+    // className for too many players, those rows would render the question-mark
+    // portrait fallback. Drop the cache so we re-fetch from server.
+    if (rowsAppearPoisoned(o.rows)) {
+      try {
+        sessionStorage.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+      return null;
+    }
     return o;
   } catch {
     return null;
@@ -578,12 +608,21 @@ function wireSortHeaders() {
  * Fetches roster, deaths, loot + item icons from the API and builds row models (same work as a full reload).
  * @returns {{ rows: object[], lootMap: Map<number, object> }}
  */
-async function fetchAndBuildLeaderboardRows(gid, reportLimit) {
+/**
+ * @param {number} gid
+ * @param {number} reportLimit
+ * @param {{ skipCache?: boolean }} [opts] when true, bypass session-api-cache
+ *        for the active-roster + death + loot fetches. Used by the explicit
+ *        background refresh after rendering from cache, so we actually get
+ *        fresh server data instead of replaying the same cached body.
+ */
+async function fetchAndBuildLeaderboardRows(gid, reportLimit, opts = {}) {
+  const skipCache = !!opts.skipCache;
   const rosterUrl = `/api/wcl/guild/${gid}/active-roster?limit=${reportLimit}&top=250&maxRhPastEvents=80`;
   const [rosterPayload, deathPayload, lootPayload] = await Promise.all([
-    lbApiGetJson(rosterUrl, { credentials: "include" }),
-    lbApiGetJson(`/api/wcl/guild/${gid}/death-leaderboard?limit=${reportLimit}&top=400`),
-    lbApiGetJson(`/api/wcl/guild/${gid}/loot-received?limit=${reportLimit}`).catch(() => ({ items: [] })),
+    lbApiGetJson(rosterUrl, { credentials: "include", skipCache }),
+    lbApiGetJson(`/api/wcl/guild/${gid}/death-leaderboard?limit=${reportLimit}&top=400`, { skipCache }),
+    lbApiGetJson(`/api/wcl/guild/${gid}/loot-received?limit=${reportLimit}`, { skipCache }).catch(() => ({ items: [] })),
   ]);
   const allLootItems = Array.isArray(lootPayload?.items) ? lootPayload.items : [];
 
@@ -647,7 +686,11 @@ async function fetchAndBuildLeaderboardRows(gid, reportLimit) {
 
 async function refreshLeaderboardFromNetwork(gid, reportLimit) {
   try {
-    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, reportLimit);
+    // skipCache: this is the *post-cache-render* refresh — bypass
+    // plbSessionApiCache so we hit the origin and get fresh roster rows.
+    // Without skipCache, the cache layer just replays the same stale body
+    // we already rendered, defeating the refresh.
+    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, reportLimit, { skipCache: true });
     leaderboardRows = rows;
     leaderboardLootItemMetaMap = lootMap;
     writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
