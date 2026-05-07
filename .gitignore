@@ -9,3 +9,6 @@ tmp_raid_assets/
 data/*.sqlite
 data/*.sqlite-wal
 data/*.sqlite-shm
+
+# Auto-generated runtime caches — populated on the server, never hand-edited.
+data/discord-id-rh-name-cache.json

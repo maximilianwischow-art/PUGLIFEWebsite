@@ -4614,15 +4614,37 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
     } catch {
       // Still return rows; per-line counts fall back to stored values.
     }
-    const rows = [...(netherVortexState.entries || [])]
+    const rawEntries = [...(netherVortexState.entries || [])];
+    // Resolve every row's Discord-ID → RH-signup-name in parallel before the
+    // sync map step so a slow disk-cache load on the very first request does
+    // not serialize across rows.
+    const rhNamesByUserId = new Map(
+      await Promise.all(
+        rawEntries.map(async (row) => {
+          const id = String(row?.userId || "");
+          if (!id) return [id, ""];
+          const rhName = await resolveRaidHelperNameByDiscordUserId(id);
+          return [id, rhName];
+        })
+      )
+    );
+    const rows = rawEntries
       .map((row) => {
         const discordName = String(row.displayName || "Unknown");
-        const linked = resolveLinkedWowCharacterFromRhWcl(discordName);
-        const characterName = String(linked || discordName).trim() || discordName;
+        const userId = String(row.userId || "");
+        const rhSignupName = rhNamesByUserId.get(userId) || "";
+        // Prefer the canonical RH signup name (Discord-ID-keyed) over the
+        // volatile Discord display name we captured at submission time —
+        // that's how the Account Assignment table is keyed.
+        const linked =
+          (rhSignupName && resolveLinkedWowCharacterFromRhWcl(rhSignupName)) ||
+          resolveLinkedWowCharacterFromRhWcl(discordName);
+        const characterName = String(linked || rhSignupName || discordName).trim() || discordName;
         const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
         return {
-          userId: String(row.userId || ""),
+          userId,
           displayName: discordName,
+          raidHelperName: rhSignupName || null,
           characterName,
           characterProfileUrl,
           neededCount: 0,
@@ -4754,6 +4776,51 @@ app.get("/api/admin/item-needs/history", async (req, res) => {
     return res.json({ ok: true, kind: "nv", rows: nvGetHistory({ limit, userId }) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to read history" });
+  }
+});
+
+/**
+ * Force-refresh of the Discord-ID → RH-signup-name cache. Useful after a fresh
+ * Raid Helper signup that added a new Discord user we haven't seen before;
+ * otherwise the cache picks them up automatically on the next 1h TTL refresh.
+ *
+ * GET  → return current cache snapshot (size + sample entries) for diagnosis.
+ * POST → trigger a refresh and return the resulting snapshot.
+ */
+app.get("/api/admin/discord-rh-name-cache", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureDiscordIdToRhNameCacheLoaded();
+    const byUserId = discordIdToRhNameState?.byUserId || {};
+    const entries = Object.entries(byUserId)
+      .map(([userId, v]) => ({ userId, rhName: v?.rhName || "", lastSeenAt: Number(v?.lastSeenAt || 0) }))
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+    return res.json({
+      ok: true,
+      updatedAt: Number(discordIdToRhNameState?.updatedAt || 0),
+      total: entries.length,
+      sample: entries.slice(0, 50),
+      refreshing: Boolean(discordIdToRhNameRefreshInflight),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to read cache" });
+  }
+});
+
+app.post("/api/admin/discord-rh-name-cache/refresh", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await refreshDiscordIdToRhNameCache();
+    const total = Object.keys(discordIdToRhNameState?.byUserId || {}).length;
+    return res.json({
+      ok: true,
+      total,
+      updatedAt: Number(discordIdToRhNameState?.updatedAt || 0),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to refresh cache" });
   }
 });
 
@@ -7084,6 +7151,130 @@ function resolveLinkedWowCharacterFromRhWcl(discordDisplayName) {
     }
   }
   return null;
+}
+
+/* ============================================================================
+ * Discord user ID → Raid Helper signup name cache.
+ *
+ * Raid Helper signup payloads include `entry.userId` (the actual Discord user
+ * id) and `entry.name` (the RH display name as typed by the user). We harvest
+ * those into a disk-cached map so any Discord-authenticated feature (Phase 2
+ * demand table, future DM tooling, …) can resolve the canonical RH signup name
+ * for a given Discord ID without depending on the volatile Discord global /
+ * username string a user happens to have at submission time.
+ *
+ * Lookup chain at the call site (e.g. `/api/nether-vortex/needs`):
+ *
+ *   discordUserId → resolveRaidHelperNameByDiscordUserId() → rhSignupName →
+ *   resolveLinkedWowCharacterFromRhWcl(rhSignupName) → wclCharacterName
+ *
+ * The cache is populated by background scans of recent past Raid Helper events
+ * (re-uses {@link collectPastParticipantSignals}). It's intentionally
+ * non-blocking: a cold request returns whatever we have on disk (possibly
+ * empty) and triggers an async refresh; the *next* request gets the new map.
+ * ============================================================================ */
+const discordIdToRhNameCachePath = path.join(dataDir, "discord-id-rh-name-cache.json");
+let discordIdToRhNameState = null;
+let discordIdToRhNameLoadInflight = null;
+let discordIdToRhNameRefreshInflight = null;
+
+const DISCORD_RH_NAME_CACHE_TTL_MS = 60 * 60_000; // refresh after ~1h
+const DISCORD_RH_NAME_CACHE_SCAN_EVENTS = 60;
+
+async function ensureDiscordIdToRhNameCacheLoaded() {
+  if (discordIdToRhNameState) return discordIdToRhNameState;
+  if (discordIdToRhNameLoadInflight) return discordIdToRhNameLoadInflight;
+  discordIdToRhNameLoadInflight = (async () => {
+    try {
+      const raw = await readFile(discordIdToRhNameCachePath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.byUserId === "object" && parsed.byUserId) {
+        discordIdToRhNameState = {
+          byUserId: parsed.byUserId,
+          updatedAt: Number(parsed.updatedAt) || 0,
+        };
+        return discordIdToRhNameState;
+      }
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        console.warn("[discord-rh-cache] load failed:", err?.message || err);
+      }
+    }
+    discordIdToRhNameState = { byUserId: {}, updatedAt: 0 };
+    return discordIdToRhNameState;
+  })().finally(() => {
+    discordIdToRhNameLoadInflight = null;
+  });
+  return discordIdToRhNameLoadInflight;
+}
+
+async function persistDiscordIdToRhNameCache() {
+  if (!discordIdToRhNameState) return;
+  const tmp = `${discordIdToRhNameCachePath}.tmp`;
+  await writeFile(tmp, JSON.stringify(discordIdToRhNameState, null, 2), "utf8");
+  await rename(tmp, discordIdToRhNameCachePath);
+}
+
+/**
+ * Scan recent Raid Helper events and merge the (userId → RH display name) map
+ * into the on-disk cache. Idempotent — concurrent callers share one inflight
+ * Promise and re-use the latest signals snapshot.
+ */
+async function refreshDiscordIdToRhNameCache() {
+  if (discordIdToRhNameRefreshInflight) return discordIdToRhNameRefreshInflight;
+  discordIdToRhNameRefreshInflight = (async () => {
+    try {
+      await ensureDiscordIdToRhNameCacheLoaded();
+      const signals = await collectPastParticipantSignals(DISCORD_RH_NAME_CACHE_SCAN_EVENTS);
+      const next = { byUserId: { ...(discordIdToRhNameState?.byUserId || {}) }, updatedAt: Date.now() };
+      for (const [userId, row] of signals) {
+        const id = String(userId || "").trim();
+        const rhName = String(row?.displayName || "").trim();
+        if (!id || !rhName) continue;
+        const lastSeenAt = Number(row?.lastSeenStartTime || 0) * 1000;
+        const prev = next.byUserId[id];
+        // Always overwrite — the most recent scan is authoritative for the
+        // RH signup name. We only preserve a previous entry if this scan
+        // didn't see the user (handled by the `{...prev}` spread above).
+        next.byUserId[id] = {
+          rhName,
+          lastSeenAt: Math.max(Number(prev?.lastSeenAt || 0), lastSeenAt || 0),
+        };
+      }
+      discordIdToRhNameState = next;
+      try {
+        await persistDiscordIdToRhNameCache();
+      } catch (err) {
+        console.warn("[discord-rh-cache] persist failed:", err?.message || err);
+      }
+      return next;
+    } catch (err) {
+      console.warn("[discord-rh-cache] refresh failed:", err?.message || err);
+      return discordIdToRhNameState;
+    } finally {
+      discordIdToRhNameRefreshInflight = null;
+    }
+  })();
+  return discordIdToRhNameRefreshInflight;
+}
+
+/**
+ * Synchronous-ish lookup: returns the RH signup display name for a Discord
+ * user id from the disk-cached map. If the cache hasn't been populated yet,
+ * or is stale (>1h), kicks off a background refresh — but never blocks the
+ * caller, so the demand-table API stays snappy.
+ */
+async function resolveRaidHelperNameByDiscordUserId(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return "";
+  await ensureDiscordIdToRhNameCacheLoaded();
+  const hit = discordIdToRhNameState?.byUserId?.[id];
+  const cacheAge = Date.now() - Number(discordIdToRhNameState?.updatedAt || 0);
+  const stale = cacheAge > DISCORD_RH_NAME_CACHE_TTL_MS || !discordIdToRhNameState?.updatedAt;
+  if (stale && !discordIdToRhNameRefreshInflight) {
+    refreshDiscordIdToRhNameCache().catch(() => {});
+  }
+  return String(hit?.rhName || "").trim();
 }
 
 function raiderIoCharacterProfileWebUrl(characterName) {
@@ -10077,4 +10268,13 @@ app.listen(port, () => {
   ensureNetherVortexStore().catch((error) => {
     console.error("Failed to initialize Nether Vortex store:", error?.message || error);
   });
+  // Warm the Discord-ID → RH-signup-name cache so the first user opening the
+  // Phase 2 demand table on a cold deploy gets canonical character names
+  // immediately, without waiting for a stale-while-revalidate cycle. Run on
+  // a delay so it doesn't compete with the initial WCL/RH bootstraps above.
+  setTimeout(() => {
+    refreshDiscordIdToRhNameCache().catch((error) => {
+      console.warn("[discord-rh-cache] initial warm-up failed:", error?.message || error);
+    });
+  }, 5_000);
 });
