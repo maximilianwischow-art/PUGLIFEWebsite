@@ -229,37 +229,10 @@ function demandRowMatchesFilter(row, q) {
   return false;
 }
 
-/* Inline style strings — applied directly on rendered elements to defeat any
- * stale/global CSS that might override the section's <style> block. */
-const DEMAND_S = {
-  td:
-    "padding:0.85rem 1rem;vertical-align:middle;border-bottom:1px solid rgba(167,139,250,0.1);color:rgba(232,222,255,0.95);overflow:hidden;text-overflow:ellipsis;",
-  tdRaider:
-    "padding:0.95rem 1rem 0.85rem;vertical-align:top;border-bottom:1px solid rgba(167,139,250,0.1);color:rgba(232,222,255,0.95);",
-  tdNum:
-    "padding:0.85rem 1rem;vertical-align:middle;border-bottom:1px solid rgba(167,139,250,0.1);color:rgba(232,222,255,0.95);text-align:right;font-variant-numeric:tabular-nums;font-weight:600;",
-  tdTime:
-    "padding:0.85rem 1rem;vertical-align:middle;border-bottom:1px solid rgba(167,139,250,0.1);color:rgba(170,160,200,0.88);font-size:0.85rem;white-space:nowrap;",
-  tdProf:
-    "padding:0.85rem 1rem;vertical-align:middle;border-bottom:1px solid rgba(167,139,250,0.1);color:rgba(196,181,253,0.88);font-size:0.85rem;",
-  groupEndExtra: "border-bottom-color:rgba(167,139,250,0.32);",
-  raiderName:
-    "font-weight:600;font-size:0.95rem;color:rgba(232,222,255,1);line-height:1.2;",
-  raiderSub:
-    "display:block;font-size:0.7rem;font-weight:500;color:rgba(170,160,200,0.78);margin-top:0.2rem;",
-  raiderLink:
-    "color:inherit;text-decoration:none;border-bottom:1px solid rgba(167,139,250,0.45);",
-  itemWrap:
-    "display:flex;align-items:center;gap:0.6rem;min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;",
-  itemIcon:
-    "flex:0 0 28px;width:28px;height:28px;border-radius:6px;",
-  itemName: "min-width:0;overflow:hidden;text-overflow:ellipsis;",
-  tfootCell:
-    "padding:0.85rem 1rem;border-top:2px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.75);font-weight:600;color:rgba(216,200,255,1);",
-  tfootCellNum:
-    "padding:0.85rem 1rem;border-top:2px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.75);font-weight:700;color:rgba(216,200,255,1);text-align:right;font-variant-numeric:tabular-nums;",
-};
-
+/**
+ * Renders the "Raider" cell — character link (when available) + optional
+ * Discord name subtitle.
+ */
 function buildDemandRaiderCell(row) {
   const discordName = String(row.displayName || "").trim();
   const characterName = String(row.characterName || "").trim() || discordName || "Unknown";
@@ -272,28 +245,31 @@ function buildDemandRaiderCell(row) {
     discordName.toLowerCase() !== characterName.toLowerCase();
 
   const nameMarkup = url
-    ? `<a style="${DEMAND_S.raiderLink}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(characterName)}</a>`
+    ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(characterName)}</a>`
     : esc(characterName);
-  const subtitle = resolvedDifferent ? `<span style="${DEMAND_S.raiderSub}">${esc(discordName)}</span>` : "";
-  return `<div style="${DEMAND_S.raiderName}">${nameMarkup}${subtitle}</div>`;
+  const subtitle = resolvedDifferent ? `<span class="p2-demand-raider-sub">${esc(discordName)}</span>` : "";
+  return `<div class="p2-demand-raider-name">${nameMarkup}${subtitle}</div>`;
 }
 
-/** Item chip variant that uses inline styles instead of `.loot-item-name`. */
+/**
+ * Item cell content — keeps the `.loot-item-name` hook so the global tooltip
+ * binder still wires up Wowhead lookups, then layers `.p2-demand-item*`
+ * presentation on top.
+ */
 function renderDemandItemCell(itemId, itemName) {
   const id = canonicalItemId(itemName, itemId);
   const meta = itemMetaById.get(id);
   const iconUrl = normalizeItemIconUrl(meta?.icon || "");
   const icon = iconUrl
-    ? `<img style="${DEMAND_S.itemIcon}" src="${esc(iconUrl)}" alt="" width="28" height="28" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
-    : `<span style="${DEMAND_S.itemIcon};display:inline-block;background:rgba(167,139,250,0.15);"></span>`;
-  return `<div class="loot-item-name" data-loot-item-id="${id}" title="${esc(tooltipText(meta))}" style="${DEMAND_S.itemWrap}">${icon}<span style="${DEMAND_S.itemName}">${esc(itemName)}</span></div>`;
+    ? `<img class="p2-demand-item-icon" src="${esc(iconUrl)}" alt="" width="28" height="28" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+    : `<span class="p2-demand-item-icon"></span>`;
+  return `<div class="loot-item-name p2-demand-item" data-loot-item-id="${id}" title="${esc(tooltipText(meta))}">${icon}<span class="p2-demand-item-name">${esc(itemName)}</span></div>`;
 }
 
 /**
  * Build the table rows for one raider as a single string. Multi-item raiders
- * use `rowspan` on the Raider/Total NV/Updated cells so the wide Item column
- * still gets a row per item without forcing the operator to read a nested
- * list inside a single cell.
+ * use `rowspan` on the Raider / Total NV / Updated cells so the Item column
+ * still gets a row per item without nesting a list inside a single cell.
  */
 function buildDemandRowsForRaider(row) {
   const items = Array.isArray(row.items) && row.items.length ? row.items : [];
@@ -307,11 +283,11 @@ function buildDemandRowsForRaider(row) {
 
   if (!items.length) {
     return `
-      <tr>
-        <td style="${DEMAND_S.tdRaider}${DEMAND_S.groupEndExtra}">${raiderCell}</td>
-        <td colspan="2" style="${DEMAND_S.td}${DEMAND_S.groupEndExtra}"><span class="subtle">No items selected.</span></td>
-        <td style="${DEMAND_S.tdNum}${DEMAND_S.groupEndExtra}">0</td>
-        <td style="${DEMAND_S.tdTime}${DEMAND_S.groupEndExtra}">${timeMarkup}</td>
+      <tr class="is-group-end">
+        <td class="cell-raider">${raiderCell}</td>
+        <td colspan="2"><span class="subtle">No items selected.</span></td>
+        <td class="cell-num">0</td>
+        <td class="cell-time">${timeMarkup}</td>
       </tr>
     `;
   }
@@ -321,28 +297,24 @@ function buildDemandRowsForRaider(row) {
     .map((it, idx) => {
       const isFirst = idx === 0;
       const isLast = idx === items.length - 1;
-      const groupEnd = isLast ? DEMAND_S.groupEndExtra : "";
+      const trCls = isLast ? ' class="is-group-end"' : "";
       const cells = [];
       if (isFirst) {
         cells.push(
-          `<td style="${DEMAND_S.tdRaider}${groupEnd}"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`
+          `<td class="cell-raider"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`
         );
       }
-      cells.push(
-        `<td style="${DEMAND_S.td}${groupEnd}">${renderDemandItemCell(it.itemID, it.itemName)}</td>`
-      );
-      cells.push(
-        `<td style="${DEMAND_S.tdProf}${groupEnd}">${it.profession ? esc(it.profession) : "—"}</td>`
-      );
+      cells.push(`<td class="cell-item">${renderDemandItemCell(it.itemID, it.itemName)}</td>`);
+      cells.push(`<td class="cell-prof">${it.profession ? esc(it.profession) : "—"}</td>`);
       if (isFirst) {
         cells.push(
-          `<td style="${DEMAND_S.tdNum}${groupEnd}"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`
+          `<td class="cell-num"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`
         );
         cells.push(
-          `<td style="${DEMAND_S.tdTime}${groupEnd}"${span > 1 ? ` rowspan="${span}"` : ""}>${timeMarkup}</td>`
+          `<td class="cell-time"${span > 1 ? ` rowspan="${span}"` : ""}>${timeMarkup}</td>`
         );
       }
-      return `<tr>${cells.join("")}</tr>`;
+      return `<tr${trCls}>${cells.join("")}</tr>`;
     })
     .join("");
 }
@@ -398,11 +370,11 @@ function refreshDemandTable() {
     tfoot.hidden = false;
     tfoot.innerHTML = `
       <tr>
-        <td colspan="3" style="${DEMAND_S.tfootCell}">${rows.length} ${
-      rows.length === 1 ? "raider" : "raiders"
-    }${rows.length !== all.length ? ` (of ${all.length})` : ""}</td>
-        <td style="${DEMAND_S.tfootCellNum}">${grandTotal}</td>
-        <td style="${DEMAND_S.tfootCell}"></td>
+        <td colspan="3">${rows.length} ${rows.length === 1 ? "raider" : "raiders"}${
+      rows.length !== all.length ? ` (of ${all.length})` : ""
+    }</td>
+        <td class="cell-num">${grandTotal}</td>
+        <td class="cell-time"></td>
       </tr>
     `;
   }

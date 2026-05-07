@@ -6,144 +6,8 @@
     <title>PUG LIFE BALANCE · Phase 2</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260506framework6" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260507demand-css1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <style>
-      /* Global `.card { overflow: hidden }` clips native <select> dropdowns — allow menus to paint */
-      .p2-your-need.card,
-      .p2-guild-needs.card,
-      .p2-demand.card {
-        overflow: visible;
-      }
-      .raidperf-shell {
-        border-color: rgba(168, 85, 247, 0.24);
-        background: linear-gradient(180deg, rgba(30, 24, 48, 0.92), rgba(18, 14, 30, 0.94));
-      }
-      .p2-input-focus.admin-input:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.45);
-      }
-
-      /* Demand-by-raider table — one row per (raider × item).
-         `table-layout: fixed` plus a <colgroup> guarantees columns honour the
-         widths instead of auto-collapsing to content. */
-      .p2-demand-table-wrap {
-        width: 100%;
-        overflow-x: auto;
-      }
-      .p2-demand-table {
-        width: 100%;
-        min-width: 720px;
-        border-collapse: separate;
-        border-spacing: 0;
-        table-layout: fixed;
-        font-size: 0.9rem;
-      }
-      .p2-demand-table thead th {
-        text-align: left;
-        padding: 0.75rem 1rem;
-        font-size: 0.7rem;
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: rgba(196, 181, 253, 0.9);
-        border-bottom: 1px solid rgba(167, 139, 250, 0.32);
-        background: rgba(20, 15, 34, 0.7);
-        white-space: nowrap;
-      }
-      .p2-demand-table tbody td {
-        padding: 0.85rem 1rem;
-        vertical-align: middle;
-        border-bottom: 1px solid rgba(167, 139, 250, 0.1);
-        color: rgba(232, 222, 255, 0.95);
-      }
-      /* The <td rowspan> cells (raider, total NV, updated) get a thicker bottom
-         border between *raider groups* so the eye can split groups easily. */
-      .p2-demand-table tbody tr.demand-group-end td { border-bottom-color: rgba(167, 139, 250, 0.28); }
-      .p2-demand-table tbody tr:last-child td { border-bottom: none; }
-      .p2-demand-table tbody tr:hover td { background: rgba(139, 92, 246, 0.05); }
-      .p2-demand-table tfoot td {
-        padding: 0.85rem 1rem;
-        border-top: 2px solid rgba(167, 139, 250, 0.32);
-        background: rgba(20, 15, 34, 0.75);
-        font-weight: 600;
-        color: rgba(216, 200, 255, 1);
-      }
-      .p2-demand-table .col-num {
-        text-align: right;
-        white-space: nowrap;
-        font-variant-numeric: tabular-nums;
-      }
-      .p2-demand-table .col-time {
-        white-space: nowrap;
-        color: rgba(170, 160, 200, 0.88);
-        font-size: 0.85rem;
-      }
-      .p2-demand-table .col-prof {
-        color: rgba(196, 181, 253, 0.88);
-        font-size: 0.85rem;
-      }
-      .p2-demand-table .raider-cell {
-        vertical-align: top;
-        padding-top: 0.95rem;
-      }
-      .p2-demand-raider-name {
-        font-weight: 600;
-        font-size: 0.95rem;
-        color: rgba(232, 222, 255, 1);
-        line-height: 1.2;
-      }
-      .p2-demand-raider-name a {
-        color: inherit;
-        text-decoration: none;
-        border-bottom: 1px solid rgba(167, 139, 250, 0.45);
-      }
-      .p2-demand-raider-name a:hover { border-bottom-color: rgba(167, 139, 250, 0.9); }
-      .p2-demand-raider-sub {
-        display: block;
-        font-size: 0.7rem;
-        font-weight: 500;
-        color: rgba(170, 160, 200, 0.78);
-        margin-top: 0.2rem;
-      }
-      /* Item cell: icon + truncated name. Wraps the existing .loot-item-name
-         markup so the global tooltip handler still works. */
-      .p2-demand-table .loot-item-name {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.55rem;
-        min-width: 0;
-        max-width: 100%;
-        font-size: 0.9rem;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .p2-demand-table .loot-item-name img.loot-item-icon,
-      .p2-demand-table .loot-item-name .loot-item-icon--fallback {
-        flex: 0 0 28px;
-        width: 28px;
-        height: 28px;
-        border-radius: 6px;
-      }
-      .p2-demand-empty {
-        padding: 2rem 1rem;
-        text-align: center;
-        color: rgba(170, 160, 200, 0.85);
-        border: 1px dashed rgba(167, 139, 250, 0.25);
-        border-radius: 12px;
-        background: rgba(20, 15, 34, 0.4);
-      }
-      @media (max-width: 720px) {
-        .p2-demand-table { min-width: 560px; }
-        .p2-demand-table .col-time { display: none; }
-        .p2-demand-table thead th,
-        .p2-demand-table tbody td,
-        .p2-demand-table tfoot td {
-          padding: 0.6rem 0.7rem;
-        }
-      }
-    </style>
   </head>
   <body class="framework-bg-vivid">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -247,27 +111,22 @@
               />
             </div>
           </div>
-          <div class="mt-5" id="vortexDemandWrap" style="width:100%;overflow-x:auto;">
-            <table
-              class="p2-demand-table"
-              id="vortexDemandTable"
-              aria-describedby="p2-demand-heading"
-              style="width:100%;min-width:680px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:0.9rem;color:rgba(232,222,255,0.95);"
-            >
+          <div class="mt-5 p2-demand-table-wrap" id="vortexDemandWrap">
+            <table class="p2-demand-table" id="vortexDemandTable" aria-describedby="p2-demand-heading">
               <colgroup>
-                <col style="width:22%;" />
-                <col />
-                <col style="width:18%;" />
-                <col style="width:80px;" />
-                <col style="width:110px;" />
+                <col class="col-raider" />
+                <col class="col-item" />
+                <col class="col-prof" />
+                <col class="col-num" />
+                <col class="col-time" />
               </colgroup>
               <thead>
                 <tr>
-                  <th scope="col" style="text-align:left;padding:0.75rem 1rem;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(196,181,253,0.9);border-bottom:1px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.7);white-space:nowrap;">Raider</th>
-                  <th scope="col" style="text-align:left;padding:0.75rem 1rem;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(196,181,253,0.9);border-bottom:1px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.7);white-space:nowrap;">Item</th>
-                  <th scope="col" style="text-align:left;padding:0.75rem 1rem;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(196,181,253,0.9);border-bottom:1px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.7);white-space:nowrap;">Profession</th>
-                  <th scope="col" style="text-align:right;padding:0.75rem 1rem;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(196,181,253,0.9);border-bottom:1px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.7);white-space:nowrap;">NV</th>
-                  <th scope="col" style="text-align:left;padding:0.75rem 1rem;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:rgba(196,181,253,0.9);border-bottom:1px solid rgba(167,139,250,0.32);background:rgba(20,15,34,0.7);white-space:nowrap;">Updated</th>
+                  <th scope="col">Raider</th>
+                  <th scope="col">Item</th>
+                  <th scope="col">Profession</th>
+                  <th scope="col" class="is-num">NV</th>
+                  <th scope="col" class="col-time-th">Updated</th>
                 </tr>
               </thead>
               <tbody id="vortexDemandTbody"></tbody>
@@ -297,6 +156,6 @@
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/auth-ui.js?v=20260506p2nav1"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
-    <script defer src="/nether-vortex.20260507a.js?v=demand-table-inline-3"></script>
+    <script defer src="/nether-vortex.20260507a.js?v=demand-table-css1"></script>
   </body>
 </html>
