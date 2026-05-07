@@ -241,18 +241,14 @@ function buildDemandRaiderCell(row) {
   const linkedCharacter = String(row.characterName || "").trim();
   const hasLink = Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
   const display = linkedCharacter || discordName || "Unknown";
-  const url = String(row.characterProfileUrl || "").trim();
 
-  const nameMarkup = url
-    ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(display)}</a>`
-    : esc(display);
   // When no Account Assignment exists, hint that this is a Discord username so
   // the operator knows to add a mapping on /admin.html instead of treating it
   // as a typo'd character. The hint is hidden the moment a link is saved.
   const hint = !hasLink && discordName
     ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row on /admin.html to show the WoW character.">unassigned</span>`
     : "";
-  return `<div class="p2-demand-raider-name">${nameMarkup}${hint}</div>`;
+  return `<div class="p2-demand-raider-name">${esc(display)}${hint}</div>`;
 }
 
 /**
