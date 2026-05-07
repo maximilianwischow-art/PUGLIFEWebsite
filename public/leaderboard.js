@@ -24,11 +24,11 @@ let leaderboardLootItemMetaMap = new Map();
 /**
  * Session-only cache (tab lifetime) to avoid re-fetching heavy roster/death/loot APIs on every navigation.
  *
- * Bumped to v2 (2026-05-07) to discard cached rows from before active-roster
- * stabilised className for every player — those cached rows triggered the
- * `inv_misc_questionmark.jpg` fallback in `rosterPortraitChain`.
+ * Bumped to v3 (2026-05-08) to discard cached rows from before active-roster
+ * carried `specificEventBadges` (AOE Cleave etc.) — v2 session rows never
+ * re-fetched and the achievement column stayed empty after deploy.
  */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v2";
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v3";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
 /** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
 const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;

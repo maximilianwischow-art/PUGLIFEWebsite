@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507profile-milestones-all1";
+const IMAGE_ASSET_VERSION = "20260507aoe-cleave1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1195,6 +1195,21 @@ function playerEarnedFirstClearMagBadge(player) {
   return playerMatchesAchievementNameSet(player, firstClearMagNameKeys);
 }
 
+/**
+ * Specific-raid attendance awards (e.g. "AOE Cleave — May 7 2026") are
+ * resolved server-side from `raid_appearances` and stamped onto the
+ * leaderboard payload as `player.specificEventBadges = ["aoe-cleave", ...]`.
+ * No name-set lookup needed — we just check whether the badge id is in the
+ * list the server attached for this canonical user.
+ */
+function playerEarnedSpecificEventBadge(player, badgeId) {
+  const id = String(badgeId || "").trim();
+  if (!id) return false;
+  const list = Array.isArray(player?.specificEventBadges) ? player.specificEventBadges : null;
+  if (!list) return false;
+  return list.indexOf(id) !== -1;
+}
+
 function achievementBadgeIconUrlWithFallback(fileName) {
   const file = String(fileName || "").trim();
   const png = `/images/achievements/${file}?v=${IMAGE_ASSET_VERSION}`;
@@ -1296,6 +1311,13 @@ function rosterAchievementBadgesHtml(player) {
         "Most deaths (last 6 raids) — You are currently tied for the highest total deaths across the tracked last six raids window.",
       alt: "Most deaths last 6 raids",
       ok: playerEarnedMostDeathsLastSixBadge(player),
+    },
+    {
+      file: "aoe-cleave.png",
+      title:
+        "AOE Cleave — Attended the raid on May 7, 2026. Awarded to every raider with a Warcraft Logs appearance in any guild raid report from that night.",
+      alt: "AOE Cleave",
+      ok: playerEarnedSpecificEventBadge(player, "aoe-cleave"),
     },
     {
       file: "iron-attendance.png",
@@ -1778,6 +1800,7 @@ window.plbEventsRoster = {
   playerEarnedFirstClearKaraBadge,
   playerEarnedFirstClearGruulBadge,
   playerEarnedFirstClearMagBadge,
+  playerEarnedSpecificEventBadge,
   playerEarnedRaidsWithGuildMilestone,
   highestEarnedRaidsWithGuildMilestoneThreshold,
   attendanceRowForRosterPlayerResolved,

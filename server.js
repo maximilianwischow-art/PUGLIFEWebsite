@@ -75,6 +75,7 @@ import {
   raidAppearancesCountsByUser,
   raidAppearancesDistinctReportCount,
   raidAppearancesDistinctUserCount,
+  raidAppearancesUserIdsInDateRange,
   raidAppearancesListReports,
   raidAppearancesRecent,
   parseSummaryReplaceAll,
@@ -1584,6 +1585,27 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
         .filter(Boolean)
     )
   );
+  /** Per-canonical-user set of one-off "you attended raid X" badge ids the
+      leaderboard payload can stamp onto each row, so `events-roster-ui.js`
+      can light up the matching achievement tile without re-fetching badge
+      state. */
+  const specificRaidAwardsByUserId = (() => {
+    /** @type {Map<number, string[]>} */
+    const byUser = new Map();
+    try {
+      const awards = resolveSpecificRaidAttendanceAwards();
+      for (const [badgeId, userIds] of awards.entries()) {
+        for (const uid of userIds) {
+          const list = byUser.get(uid) || [];
+          list.push(badgeId);
+          byUser.set(uid, list);
+        }
+      }
+    } catch (error) {
+      console.warn("[roster] specific-raid attendance award resolve failed:", error?.message || error);
+    }
+    return byUser;
+  })();
   /** @type {Map<number, number>} */
   let wclAppearanceCountsByUserId = new Map();
   let wclAppearanceReportCount = 0;
@@ -1792,6 +1814,9 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
         ? Number(wclAppearanceCountsByUserId.get(dbUserId) || 0)
         : 0;
     const cutoverActive = useMaterialisedAppearances && wclAppearanceCountsByUserId.size > 0;
+    const specificEventBadges = dbUserId
+      ? [...(specificRaidAwardsByUserId.get(Number(dbUserId)) || [])]
+      : [];
     return {
       ...stripped,
       guildRole: normalizeRhWclGuildRole(att.guildRole),
@@ -1806,6 +1831,7 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       discordUserId,
       dbUserId,
       mainCharacterName,
+      specificEventBadges,
     };
   });
 
@@ -2390,12 +2416,12 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
   try {
     const raw = await readFile(hofEnrichedCachePath, "utf8");
     const parsed = JSON.parse(raw);
-    /* v2 = post-WCL-pivot; the player payload now always carries
-       `wclEventCount`, so older v1 caches must be ignored otherwise the
-       "Total raids" KPI silently falls back to the (much smaller)
-       last-window WCL attendance. */
+    /* v2 = post-WCL-pivot; v3 = post event-award badges (`specificEventBadges`
+       on each enriched `player`). v2 disk caches pin `specificEventBadges: []`
+       forever while the fingerprint is unchanged, so HoF / API never re-runs
+       `enrichHallOfFameRows` and the AOE Cleave tile never appears. */
     if (
-      parsed?.v === 2 &&
+      parsed?.v === 3 &&
       Number(parsed.guildId) === Number(guildId) &&
       Number(parsed.limit) === Number(limit) &&
       parsed.fingerprint === fingerprint &&
@@ -2420,7 +2446,7 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
 async function persistHallOfFameEnrichedCache(guildId, limit, fingerprint, hallOfFame) {
   const generatedAt = Date.now();
   const payload = {
-    v: 2,
+    v: 3,
     guildId: Number(guildId),
     limit: Number(limit),
     fingerprint,
@@ -5994,6 +6020,75 @@ function inferRaidMilestoneEventCountFromBadgeStates(stateById) {
 }
 
 /**
+ * One-off "you attended this specific raid" awards. Each entry pins a badge
+ * id to a calendar window of WCL `report_started_at` values and/or an
+ * explicit list of `reportCodes`; every canonical user with at least one
+ * row in `raid_appearances` matching either constraint earns the badge.
+ *
+ * Date math is in epoch milliseconds (UTC). To award everyone who raided on
+ * a given local-Europe day, span the full day in CEST (UTC+2): start at
+ * `Date.UTC(yyyy, mm, dd-1, 22, 0, 0)` (i.e. yesterday-22:00 UTC = today-00:00
+ * CEST) and end at `Date.UTC(yyyy, mm, dd, 22, 0, 0)`. We pad the end out by
+ * a few hours to capture raids that finish past midnight local time.
+ *
+ * Optional `reportCodes`: when set, every appearance in any of those WCL
+ * report codes counts on its own (OR-combined with the date window). Use
+ * this to pin the badge to a known report even before the next sync, or
+ * to add late uploads that fall outside the calendar window.
+ */
+const SPECIFIC_RAID_ATTENDANCE_BADGES = [
+  {
+    badgeId: "aoe-cleave",
+    label: "AOE Cleave",
+    description:
+      "Attended the AOE Cleave raid on May 7, 2026. Awarded automatically to every canonical user with a Warcraft Logs appearance in any guild raid report whose start time falls on the night of May 7, 2026 (CEST).",
+    icon: "/images/achievements/aoe-cleave.png",
+    /* May 7 2026 00:00 CEST = May 6 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 4, 6, 22, 0, 0),
+    /* May 8 2026 04:00 UTC = May 8 2026 06:00 CEST — pad 6h past midnight
+       local so a raid that goes long still counts. */
+    endMs: Date.UTC(2026, 4, 8, 4, 0, 0),
+    /* Known May 7 raid log(s). Adding new codes here is the safe way to
+       pin the badge to a specific upload regardless of clock fuzz on
+       `report_started_at`. */
+    reportCodes: ["XVH1LmTWYDq6Zr7t"],
+  },
+];
+
+/** Set of every `badgeId` covered by `SPECIFIC_RAID_ATTENDANCE_BADGES`. */
+const SPECIFIC_RAID_ATTENDANCE_BADGE_IDS = new Set(
+  SPECIFIC_RAID_ATTENDANCE_BADGES.map((b) => b.badgeId)
+);
+
+/**
+ * Resolve every specific-raid-attendance badge against the canonical user
+ * tables. Returns a `Map<badgeId, Set<userId>>` so callers can both sync
+ * `badge_state` rows and stamp per-player flags on the leaderboard payload
+ * without re-querying SQLite per user.
+ */
+function resolveSpecificRaidAttendanceAwards() {
+  /** @type {Map<string, Set<number>>} */
+  const out = new Map();
+  for (const cfg of SPECIFIC_RAID_ATTENDANCE_BADGES) {
+    let userIds = new Set();
+    try {
+      userIds = raidAppearancesUserIdsInDateRange({
+        startMs: cfg.startMs,
+        endMs: cfg.endMs,
+        reportCodes: Array.isArray(cfg.reportCodes) ? cfg.reportCodes : undefined,
+      });
+    } catch (error) {
+      console.warn(
+        `[badges] raid_appearances lookup failed for ${cfg.badgeId}:`,
+        error?.message || error
+      );
+    }
+    out.set(cfg.badgeId, userIds);
+  }
+  return out;
+}
+
+/**
  * Catalog of every badge surfaced anywhere on the site, grouped by category so
  * the profile page can render an "all badges" overview. Mirrors the artwork
  * already shipped under `/public/images/`.
@@ -6023,6 +6118,16 @@ const BADGE_CATALOG = [
       { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png" },
       { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png" },
     ],
+  },
+  {
+    id: "event-awards",
+    label: "Event awards",
+    description: "One-off badges pinned to a specific raid night. Earned by appearing in the WCL roster of that raid.",
+    badges: SPECIFIC_RAID_ATTENDANCE_BADGES.map((cfg) => ({
+      id: cfg.badgeId,
+      name: cfg.label,
+      icon: cfg.icon,
+    })),
   },
   {
     id: "first-clears",
@@ -6648,6 +6753,20 @@ app.get("/api/profile/me/badges", async (req, res) => {
       }
       for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) {
         earned.add(bid);
+      }
+    } catch {}
+
+    /* Specific-raid attendance awards in the live fallback path. We only
+       try to resolve these when a canonical user row exists for the
+       caller (their Discord id is present in `users`); without it we
+       can't tie the WCL appearance back to the session. */
+    try {
+      const canonical = identityUserGetByDiscordId(userId);
+      if (canonical?.id) {
+        const awards = resolveSpecificRaidAttendanceAwards();
+        for (const [badgeId, userIds] of awards.entries()) {
+          if (userIds.has(canonical.id)) earned.add(badgeId);
+        }
       }
     } catch {}
 
@@ -12808,6 +12927,22 @@ async function runSyncBadges() {
     }
   }
 
+  /* Specific-raid attendance awards (e.g. "AOE Cleave — May 7 2026"). Resolved
+     once per sync from raid_appearances and reused for every user. */
+  const specificRaidAttendanceAwards = resolveSpecificRaidAttendanceAwards();
+  const specificRaidAttendanceEvidence = new Map(
+    SPECIFIC_RAID_ATTENDANCE_BADGES.map((cfg) => [
+      cfg.badgeId,
+      {
+        type: "specific-raid-attendance",
+        source: "raid_appearances",
+        startMs: cfg.startMs,
+        endMs: cfg.endMs,
+        label: cfg.label,
+      },
+    ])
+  );
+
   let rowsChanged = 0;
   const now = Date.now();
   for (const user of identityUserListAll()) {
@@ -12871,6 +13006,14 @@ async function runSyncBadges() {
         threshold: t,
         highestTierReached: highestMilestoneT || null,
       });
+    }
+
+    for (const [badgeId, userIds] of specificRaidAttendanceAwards.entries()) {
+      if (userIds.has(user.id)) {
+        earned.add(badgeId);
+        const ev = specificRaidAttendanceEvidence.get(badgeId);
+        if (ev) evidenceById.set(badgeId, ev);
+      }
     }
 
     const rows = [];

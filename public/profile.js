@@ -535,6 +535,10 @@
       "raids-with-guild-25": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 25),
       "raids-with-guild-50": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 50),
       "raids-with-guild-100": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 100),
+      "aoe-cleave":
+        typeof plb.playerEarnedSpecificEventBadge === "function"
+          ? (p) => plb.playerEarnedSpecificEventBadge(p, "aoe-cleave")
+          : () => false,
     };
 
     // Synthetic "player" — feeding the user's primary linked name as
@@ -549,10 +553,30 @@
       typeof plb.attendanceRowForRosterPlayerResolved === "function"
         ? plb.attendanceRowForRosterPlayerResolved(synthPlayer)
         : null;
+    let rosterPlayer = null;
+    try {
+      const guildId = window.plbEventsRoster?.EVENTS_WCL_GUILD_ID || 817080;
+      const res = await fetch(
+        `/api/wcl/guild/${guildId}/active-roster?limit=40&top=250&maxRhPastEvents=0&_badgeBust=${Date.now()}`,
+        { credentials: "include", cache: "no-store" },
+      );
+      const rosterPayload = res.ok ? await res.json() : { players: [] };
+      rosterPlayer = findRosterRowForLinkedNames(
+        rosterPayload,
+        linkedCharacters,
+        lastProfile?.mainCharacterName || null,
+      );
+    } catch {
+      rosterPlayer = null;
+    }
+
     const synthPlayerMerged = {
       ...synthPlayer,
       wclEventCount: attRow?.wclEventCount,
       rhPastEventCount: attRow?.rhPastEventCount,
+      ...(Array.isArray(rosterPlayer?.specificEventBadges)
+        ? { specificEventBadges: rosterPlayer.specificEventBadges }
+        : {}),
     };
 
     const earnedFromClient = new Set();
