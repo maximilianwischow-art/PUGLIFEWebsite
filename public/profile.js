@@ -300,11 +300,11 @@
       "kara-first-time-clear": plb.playerEarnedFirstClearKaraBadge,
       "gruul-first-time-clear": plb.playerEarnedFirstClearGruulBadge,
       "magtheridon-first-time-clear": plb.playerEarnedFirstClearMagBadge,
-      "raids-with-guild-5": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 5),
-      "raids-with-guild-10": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 10),
-      "raids-with-guild-25": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 25),
-      "raids-with-guild-50": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 50),
-      "raids-with-guild-100": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 100),
+      "raids-with-guild-5": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 5,
+      "raids-with-guild-10": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 10,
+      "raids-with-guild-25": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 25,
+      "raids-with-guild-50": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 50,
+      "raids-with-guild-100": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 100,
     };
 
     // Synthetic "player" — feeding the user's primary linked name as
@@ -335,18 +335,42 @@
       }
     }
 
+    const milestonePrefix = "raids-with-guild-";
+    let highestRaidMilestone = 0;
+    if (plb && typeof plb.highestEarnedRaidsWithGuildMilestoneThreshold === "function") {
+      try {
+        highestRaidMilestone = plb.highestEarnedRaidsWithGuildMilestoneThreshold(synthPlayer);
+      } catch {
+        highestRaidMilestone = 0;
+      }
+    }
+
     if (!els.badgesHost) return;
     const tiles = els.badgesHost.querySelectorAll("[data-badge-id]");
     tiles.forEach((tile) => {
       const id = tile.getAttribute("data-badge-id") || "";
-      const isEarnedNow = serverEarnedIds.has(id) || earnedFromClient.has(id);
-      if (!isEarnedNow) return;
-      if (tile.classList.contains("is-earned")) return;
-      tile.classList.remove("is-locked");
-      tile.classList.add("is-earned");
       const img = tile.querySelector("img");
-      const name = img?.getAttribute("alt") || "";
-      tile.setAttribute("title", `${name} — earned`);
+      const badgeName = img?.getAttribute("alt") || id;
+
+      let isEarnedNow = serverEarnedIds.has(id) || earnedFromClient.has(id);
+      if (id.startsWith(milestonePrefix)) {
+        const tier = Number(id.slice(milestonePrefix.length));
+        isEarnedNow = highestRaidMilestone > 0 && tier === highestRaidMilestone && Number.isFinite(tier);
+      }
+
+      if (isEarnedNow) {
+        if (tile.classList.contains("is-earned")) return;
+        tile.classList.remove("is-locked");
+        tile.classList.add("is-earned");
+        tile.setAttribute("title", `${badgeName} — earned`);
+        return;
+      }
+
+      if (id.startsWith(milestonePrefix) && tile.classList.contains("is-earned")) {
+        tile.classList.remove("is-earned");
+        tile.classList.add("is-locked");
+        tile.setAttribute("title", `${badgeName} — not yet earned`);
+      }
     });
 
     // Recount each category meter.

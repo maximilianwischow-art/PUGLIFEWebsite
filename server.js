@@ -70,6 +70,10 @@ import {
   raidAttendanceReplaceForWindow,
   raidAttendanceGetByWindow,
   raidAttendanceGetFreshestWindow,
+  raidAppearancesReplaceForReports,
+  raidAppearancesCountsByUser,
+  raidAppearancesDistinctReportCount,
+  raidAppearancesRecent,
   parseSummaryReplaceAll,
   parseSummaryGetByUserId,
   parseSummaryGetByMainCharacterIds,
@@ -100,6 +104,21 @@ function materializeBadgesEnabled() {
  */
 function materializeAttendanceEnabled() {
   const v = String(process.env.MATERIALIZE_ATTENDANCE ?? "1").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+/**
+ * Phase 9 cutover flag. Default ON — once `syncAttendance` has written
+ * the new `raid_appearances` table at least once, the leaderboard
+ * "Events" KPI and the 5/10/25/50/100 raid milestone badges read the
+ * count of distinct **admin-curated** WCL guild raid reports a user
+ * appeared in (Event Management → `gargulLootState.selectedReportCodes`)
+ * straight from SQLite. Set `MATERIALIZE_RAID_APPEARANCES=0` to fall
+ * back to the legacy Raid Helper signup count if WCL drift is found
+ * post-cutover.
+ */
+function materializeRaidAppearancesEnabled() {
+  const v = String(process.env.MATERIALIZE_RAID_APPEARANCES ?? "1").trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "off" || v === "no");
 }
 
@@ -1504,6 +1523,41 @@ function rhPrimarySignupTotalForRosterRow(rhSignupResult, attRow, stripped) {
 async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top = 250, maxRhPastEvents = 0 } = {}) {
   const rhSignupCounts = await countRaidHelperPrimarySignupsPerRhKey(maxRhPastEvents);
   await ensureRhWclLinksStore();
+
+  // Phase 9 cutover — read distinct admin-curated WCL guild raid reports
+  // each canonical user appeared in straight from `raid_appearances`.
+  // The set of report codes that "counts" is the admin Event Management
+  // selection (`gargulLootState.selectedReportCodes`); when no selection
+  // has been saved we use every code we have in `raid_appearances`,
+  // matching the existing loot-history fallback semantics. Falls back to
+  // an empty Map if the table is empty (first deploy before any sync) so
+  // the legacy Raid Helper signup count keeps serving in the meantime.
+  const useMaterialisedAppearances = materializeRaidAppearancesEnabled();
+  const selectedReportCodesList = Array.from(
+    new Set(
+      (gargulLootState?.selectedReportCodes || [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    )
+  );
+  /** @type {Map<number, number>} */
+  let wclAppearanceCountsByUserId = new Map();
+  let wclAppearanceReportCount = 0;
+  if (useMaterialisedAppearances) {
+    try {
+      const totalRows = raidAppearancesDistinctReportCount();
+      if (totalRows > 0) {
+        wclAppearanceCountsByUserId = raidAppearancesCountsByUser(
+          selectedReportCodesList.length ? { reportCodes: selectedReportCodesList } : {}
+        );
+        wclAppearanceReportCount = selectedReportCodesList.length || totalRows;
+      }
+    } catch (error) {
+      console.warn("[roster] raid_appearances lookup failed, falling back to RH signups:", error?.message || error);
+      wclAppearanceCountsByUserId = new Map();
+      wclAppearanceReportCount = 0;
+    }
+  }
   const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
     guildId,
     reportLimit,
@@ -1682,6 +1736,18 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
         /* canonical lookup is non-essential; live data still serves */
       }
     }
+    // WCL-confirmed appearances across the admin-curated Event Management
+    // set. `wclEventCount` is the new authoritative "Events" KPI — driven
+    // by `raid_appearances`, scoped to `gargulLootState.selectedReportCodes`.
+    // We keep `rhPastEventCount` populated for backward compat: when the
+    // materialised cutover is producing data, we set it equal to
+    // `wclEventCount` so older clients (still reading the RH field) get
+    // the same number as the new ones.
+    const wclEventCount =
+      dbUserId && wclAppearanceCountsByUserId.size
+        ? Number(wclAppearanceCountsByUserId.get(dbUserId) || 0)
+        : 0;
+    const cutoverActive = useMaterialisedAppearances && wclAppearanceCountsByUserId.size > 0;
     return {
       ...stripped,
       guildRole: normalizeRhWclGuildRole(att.guildRole),
@@ -1690,7 +1756,9 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       wclCharacters: att.wclCharacters,
       parseSummaries: att.parseSummaries,
       attendanceHistory: att.attendanceHistory,
-      rhPastEventCount,
+      wclEventCount,
+      rhPastEventCount: cutoverActive ? wclEventCount : rhPastEventCount,
+      legacyRhSignupCount: rhPastEventCount,
       discordUserId,
       dbUserId,
       mainCharacterName,
@@ -1721,9 +1789,14 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       scanAllPastPostedEvents: maxRhPastEvents <= 0,
       pastEventsScanned: rhSignupCounts.pastEventsScanned,
       note:
-        maxRhPastEvents <= 0
-          ? "rhPastEventCount: primary signups across every posted past Raid Helper event (all API pages; excludes Absence/Bench/Tentative/Late). Memoized server-side for a few minutes. Attendance % / iron badge still use only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6)."
-          : "rhPastEventCount: primary signups in past Raid Helper events (scanned up to maxPastEvents, newest first).",
+        "Legacy Raid Helper signup scan. Surfaced as `legacyRhSignupCount` on each player; the leaderboard \"Events\" KPI now uses `wclEventCount` (Warcraft Logs appearances scoped to the admin Event Management selection).",
+    },
+    wclEventScope: {
+      source: useMaterialisedAppearances && wclAppearanceCountsByUserId.size > 0 ? "raid_appearances" : "rh_signups_fallback",
+      selectedReportCodes: selectedReportCodesList,
+      reportCodesCounted: wclAppearanceReportCount,
+      note:
+        "wclEventCount: distinct WCL guild raid reports each canonical user appeared in, scoped to `gargulLootState.selectedReportCodes` (admin Event Management). Falls back to the Raid Helper signup count for one release if `raid_appearances` is empty.",
     },
     players,
   };
@@ -5446,15 +5519,40 @@ app.get("/api/admin/cutover-readiness", async (req, res) => {
       MATERIALIZE_ATTENDANCE: materializeAttendanceEnabled(),
       MATERIALIZE_LOOT: materializeLootEnabled(),
       MATERIALIZE_PHASE3: materializePhase3Enabled(),
+      MATERIALIZE_RAID_APPEARANCES: materializeRaidAppearancesEnabled(),
     };
     const ready = Object.values(counts).every(
       (v) => typeof v === "number" && v > 0
     );
+    let raidAppearancesContext = null;
+    try {
+      const distinctReports = raidAppearancesDistinctReportCount();
+      const selectedReportCodes = Array.from(
+        new Set(
+          (gargulLootState?.selectedReportCodes || [])
+            .map((x) => String(x || "").trim())
+            .filter(Boolean)
+        )
+      );
+      const counts = raidAppearancesCountsByUser(
+        selectedReportCodes.length ? { reportCodes: selectedReportCodes } : {}
+      );
+      raidAppearancesContext = {
+        distinctReports,
+        selectedReportCodes: selectedReportCodes.length,
+        usersWithCount: counts.size,
+        cutoverActive: materializeRaidAppearancesEnabled() && counts.size > 0,
+        countsScope: selectedReportCodes.length ? "admin-event-management" : "all-known-reports",
+      };
+    } catch (error) {
+      raidAppearancesContext = { error: error?.message || "raid_appearances inspect failed" };
+    }
     return res.json({
       ok: true,
       ready,
       counts,
       flags,
+      raidAppearances: raidAppearancesContext,
       checkedAt: Date.now(),
       note: ready
         ? "Every materialised table is non-empty. Safe to proceed with Phase 8 cleanup once a snapshot of legacy JSON has been taken."
@@ -5732,8 +5830,18 @@ function listLinkedWowCharactersForDiscordUserId(userId, displayName) {
   return out;
 }
 
-/** Raid-count milestones: same `raids_attended` window as the attendance leaderboard materialisation. */
+/** Raid-count milestones: distinct WCL guild raid reports (admin Event Management scope); see highestRaidMilestoneThresholdMet. */
 const RAID_MILESTONE_THRESHOLDS = [5, 10, 25, 50, 100];
+
+/** Largest milestone in {@link RAID_MILESTONE_THRESHOLDS} that `count` satisfies, or 0. */
+function highestRaidMilestoneThresholdMet(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (n <= 0) return 0;
+  for (const t of [...RAID_MILESTONE_THRESHOLDS].sort((a, b) => b - a)) {
+    if (n >= t) return t;
+  }
+  return 0;
+}
 
 /**
  * Catalog of every badge surfaced anywhere on the site, grouped by category so
@@ -5780,7 +5888,7 @@ const BADGE_CATALOG = [
     id: "raid-milestones",
     label: "Raid milestones",
     description:
-      "Primary signups across every posted past Raid Helper event (leaderboard \"Events\"). Attendance % still uses only the recent Warcraft Logs window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). Milestone badges use **only** this Raid Helper total — not WCL window attendance — so a 5-badge never appears when Events shows fewer than five.",
+      "Distinct guild raid reports a player appeared in on Warcraft Logs, scoped to the admin Event Management selection (only WCL events explicitly marked as guild raids count). Attendance % still uses only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). Only the **highest** milestone tier reached is awarded and shown (e.g. at 12 events you earn the 10-raid badge, not 5 and 10 together).",
     badges: [
       { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png" },
       { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png" },
@@ -6137,13 +6245,29 @@ app.get("/api/profile/me/badges", async (req, res) => {
           const states = badgeStateGetByUserId(canonical.id);
           if (states.length) {
             const stateById = new Map(states.map((s) => [s.badgeId, s]));
+            let highestRaidMilestoneFromDb = 0;
+            for (const t of [...RAID_MILESTONE_THRESHOLDS].sort((a, b) => b - a)) {
+              const bid = `raids-with-guild-${t}`;
+              if (stateById.get(bid)?.earned) {
+                highestRaidMilestoneFromDb = t;
+                break;
+              }
+            }
             const categories = BADGE_CATALOG.map((cat) => ({
               ...cat,
               badges: cat.badges.map((b) => {
                 const st = stateById.get(b.id);
+                let earned = !!st?.earned;
+                if (String(b.id || "").startsWith("raids-with-guild-")) {
+                  const tier = Number(String(b.id).replace("raids-with-guild-", ""));
+                  earned =
+                    highestRaidMilestoneFromDb > 0 &&
+                    Number.isFinite(tier) &&
+                    tier === highestRaidMilestoneFromDb;
+                }
                 return {
                   ...b,
-                  earned: !!st?.earned,
+                  earned,
                   firstEarnedAt: st?.firstEarnedAt || null,
                 };
               }),
@@ -6237,24 +6361,53 @@ app.get("/api/profile/me/badges", async (req, res) => {
     else if (guildRoleSlug === "grunt") earned.add("grunt");
     else earned.add("peon");
 
+    // Phase 9 cutover: raid milestone badges (5/10/25/50/100) are gated on
+    // distinct WCL guild raid reports the user appeared in, scoped to the
+    // admin Event Management selection. Falls back to the legacy Raid
+    // Helper signup count if `raid_appearances` is empty (first deploy
+    // before any sync) so the badges keep working during transition.
     try {
-      let rhSignups = 0;
-      try {
-        const result = await countRaidHelperPrimarySignupsPerRhKey(0);
-        const counts = result?.counts instanceof Map ? result.counts : null;
-        if (counts) {
-          for (const k of linkedKeys) {
-            const c = Number(counts.get(k) || 0);
-            if (c > rhSignups) rhSignups = c;
+      let milestoneCount = 0;
+      let milestoneSource = "rh-signups";
+      const cutoverOn = materializeRaidAppearancesEnabled();
+      if (cutoverOn) {
+        try {
+          const totalRows = raidAppearancesDistinctReportCount();
+          if (totalRows > 0) {
+            const canonical = identityUserGetByDiscordId(userId);
+            if (canonical?.id) {
+              const codes = Array.from(
+                new Set(
+                  (gargulLootState?.selectedReportCodes || [])
+                    .map((x) => String(x || "").trim())
+                    .filter(Boolean)
+                )
+              );
+              const counts = raidAppearancesCountsByUser(codes.length ? { reportCodes: codes } : {});
+              milestoneCount = Number(counts.get(canonical.id) || 0);
+              milestoneSource = "raid_appearances";
+            }
           }
+        } catch {
+          milestoneSource = "rh-signups";
         }
-      } catch {
-        /* RH count is best-effort here; badge sync will catch up next cycle */
       }
-      const milestoneCount = rhSignups;
-      for (const t of RAID_MILESTONE_THRESHOLDS) {
-        if (milestoneCount >= t) earned.add(`raids-with-guild-${t}`);
+      if (milestoneSource !== "raid_appearances") {
+        try {
+          const result = await countRaidHelperPrimarySignupsPerRhKey(0);
+          const counts = result?.counts instanceof Map ? result.counts : null;
+          if (counts) {
+            for (const k of linkedKeys) {
+              const c = Number(counts.get(k) || 0);
+              if (c > milestoneCount) milestoneCount = c;
+            }
+          }
+        } catch {
+          /* RH count is best-effort here; badge sync will catch up next cycle */
+        }
       }
+      const highestT = highestRaidMilestoneThresholdMet(milestoneCount);
+      if (highestT > 0) earned.add(`raids-with-guild-${highestT}`);
     } catch {}
 
     const categories = BADGE_CATALOG.map((cat) => ({
@@ -12253,15 +12406,43 @@ async function runSyncBadges() {
     console.warn("[sync:badges] raid attendance snapshot read failed:", error?.message || error);
   }
 
-  /* Full-history Raid Helper primary signup counts (same source as the
-     leaderboard "Events" column). Memoized inside countRaidHelper… so badge
-     sync does not refetch every event detail on every 15 min tick. */
+  /* Phase 9: WCL-confirmed appearances per canonical user, scoped to the
+     admin-curated Event Management selection. This is the new source of
+     truth for the 5/10/25/50/100 raid milestone badges. We retain the
+     full-history Raid Helper primary signup counts as a fallback for
+     deployments where `raid_appearances` is empty (first sync hasn't run
+     yet) so milestone badges keep working during transition. */
+  const cutoverOn = materializeRaidAppearancesEnabled();
+  /** @type {Map<number, number>} */
+  let wclEventsByUserId = new Map();
+  let wclMilestoneScope = "rh-signups";
+  if (cutoverOn) {
+    try {
+      const totalRows = raidAppearancesDistinctReportCount();
+      if (totalRows > 0) {
+        const codes = Array.from(
+          new Set(
+            (gargulLootState?.selectedReportCodes || [])
+              .map((x) => String(x || "").trim())
+              .filter(Boolean)
+          )
+        );
+        wclEventsByUserId = raidAppearancesCountsByUser(codes.length ? { reportCodes: codes } : {});
+        wclMilestoneScope = codes.length ? "raid_appearances:selected" : "raid_appearances:all";
+      }
+    } catch (error) {
+      console.warn("[sync:badges] raid_appearances lookup failed, falling back to RH signups:", error?.message || error);
+      wclEventsByUserId = new Map();
+    }
+  }
   let rhSignupCountsByKey = new Map();
-  try {
-    const result = await countRaidHelperPrimarySignupsPerRhKey(0);
-    rhSignupCountsByKey = result?.counts instanceof Map ? result.counts : new Map();
-  } catch (error) {
-    console.warn("[sync:badges] RH signup count load failed:", error?.message || error);
+  if (wclMilestoneScope === "rh-signups") {
+    try {
+      const result = await countRaidHelperPrimarySignupsPerRhKey(0);
+      rhSignupCountsByKey = result?.counts instanceof Map ? result.counts : new Map();
+    } catch (error) {
+      console.warn("[sync:badges] RH signup count load failed:", error?.message || error);
+    }
   }
 
   let rowsChanged = 0;
@@ -12295,27 +12476,33 @@ async function runSyncBadges() {
     }
 
     const raidStats = raidsByUserId.get(user.id);
-    let rhSignupsForUser = 0;
-    for (const k of linkedKeys) {
-      const c = Number(rhSignupCountsByKey.get(k) || 0);
-      if (c > rhSignupsForUser) rhSignupsForUser = c;
+    let milestoneCount = 0;
+    let milestoneSource = wclMilestoneScope;
+    if (wclMilestoneScope !== "rh-signups") {
+      milestoneCount = Number(wclEventsByUserId.get(user.id) || 0);
     }
-    const milestoneCount = rhSignupsForUser;
-    if (milestoneCount > 0) {
-      for (const t of RAID_MILESTONE_THRESHOLDS) {
-        if (milestoneCount >= t) {
-          const bid = `raids-with-guild-${t}`;
-          earned.add(bid);
-          evidenceById.set(bid, {
-            type: "raid-milestone",
-            threshold: t,
-            raidsAttendedWindow: raidStats?.raidsAttended || 0,
-            raidsConsideredWindow: raidStats?.raidsConsidered || 0,
-            rhPastEventCount: rhSignupsForUser,
-            windowLabel: raidStats?.windowLabel || null,
-          });
-        }
+    if (milestoneSource === "rh-signups") {
+      let rhSignupsForUser = 0;
+      for (const k of linkedKeys) {
+        const c = Number(rhSignupCountsByKey.get(k) || 0);
+        if (c > rhSignupsForUser) rhSignupsForUser = c;
       }
+      milestoneCount = rhSignupsForUser;
+    }
+    const highestMilestoneT = highestRaidMilestoneThresholdMet(milestoneCount);
+    if (highestMilestoneT > 0) {
+      const bid = `raids-with-guild-${highestMilestoneT}`;
+      earned.add(bid);
+      evidenceById.set(bid, {
+        type: "raid-milestone",
+        threshold: highestMilestoneT,
+        source: milestoneSource,
+        raidsAttendedWindow: raidStats?.raidsAttended || 0,
+        raidsConsideredWindow: raidStats?.raidsConsidered || 0,
+        wclEventCount: milestoneSource !== "rh-signups" ? milestoneCount : null,
+        rhPastEventCount: milestoneSource === "rh-signups" ? milestoneCount : null,
+        windowLabel: raidStats?.windowLabel || null,
+      });
     }
 
     const rows = [];
@@ -12510,6 +12697,43 @@ async function runSyncAttendance() {
         rows,
       });
       totalRowsChanged += result?.rows || 0;
+
+      // ---------- raid_appearances (per-(user, report) lifetime log) -------
+      // We keep one row per canonical user × WCL report code. The leaderboard
+      // "Events" KPI and the 5/10/25/50/100 raid milestone badges count
+      // distinct rows where `report_code` is in the admin-curated
+      // `gargulLootState.selectedReportCodes` set. Updates are scoped to the
+      // report codes we just gathered so older rows (admin selections
+      // outside the current window) are preserved across syncs.
+      try {
+        const appearanceEntries = [];
+        const seenCodes = new Set();
+        raidSnapshots.forEach((raid) => {
+          const reportCode = String(raid?.reportCode || "").trim();
+          if (!reportCode) return;
+          seenCodes.add(reportCode);
+          const startedAtSec = Math.floor(Number(raid?.startTime || 0) / 1000) || null;
+          const attendeesLower = raid?.attendeesLower instanceof Set ? raid.attendeesLower : new Set();
+          for (const lower of attendeesLower) {
+            const display = displayMap.get(lower) || lower;
+            if (!display) continue;
+            appearanceEntries.push({
+              characterName: display,
+              reportCode,
+              reportStartedAt: startedAtSec,
+            });
+          }
+        });
+        if (seenCodes.size > 0) {
+          const appResult = raidAppearancesReplaceForReports({
+            reportCodes: [...seenCodes],
+            entries: appearanceEntries,
+          });
+          totalRowsChanged += appResult?.rows || 0;
+        }
+      } catch (error) {
+        console.warn("[sync:attendance] raid_appearances step failed:", error?.message || error);
+      }
     }
   } catch (error) {
     console.warn("[sync:attendance] raid_attendance step failed:", error?.message || error);

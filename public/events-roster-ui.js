@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507raidmilestones5";
+const IMAGE_ASSET_VERSION = "20260507milestone-highest1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1207,13 +1207,17 @@ function achievementBadgeIconUrlWithFallback(fileName) {
 }
 
 /**
- * Raid milestone badges: **only** the server-provided `rhPastEventCount`
- * (Raid Helper primary signups across all posted past events — the same
- * source as the leaderboard \"Events\" column). We intentionally do **not**
- * fall back to WCL-window `raidsAttended`, or someone with 2 Events but 5/6
- * WCL hits would incorrectly earn the 5-raid tile.
+ * Raid milestone badges: distinct WCL guild raid reports the player
+ * appeared in, scoped to the admin Event Management selection. We read
+ * `wclEventCount` first (the Phase 9 cutover field), and fall back to
+ * the legacy `rhPastEventCount` for older API payloads. We intentionally
+ * do **not** mix in the rolling-window WCL `raidsAttended`, or someone
+ * with 2 Events but 5 attendances in the rolling window would incorrectly
+ * earn the 5-raid tile.
  */
 function raidsWithGuildCountForPlayer(player) {
+  const fromWcl = Number(player?.wclEventCount);
+  if (Number.isFinite(fromWcl) && fromWcl >= 0) return Math.floor(fromWcl);
   const fromRh = Number(player?.rhPastEventCount || 0);
   if (Number.isFinite(fromRh) && fromRh >= 0) return Math.floor(fromRh);
   return 0;
@@ -1223,6 +1227,15 @@ function playerEarnedRaidsWithGuildMilestone(player, threshold) {
   const t = Math.floor(Number(threshold) || 0);
   if (t <= 0) return false;
   return raidsWithGuildCountForPlayer(player) >= t;
+}
+
+/** Highest raid-milestone tier (5/10/25/50/100) the player has reached, or 0. */
+function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
+  const c = raidsWithGuildCountForPlayer(player);
+  for (const tier of [100, 50, 25, 10, 5]) {
+    if (c >= tier) return tier;
+  }
+  return 0;
 }
 
 /** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
@@ -1245,37 +1258,37 @@ function rosterAchievementBadgesHtml(player) {
     {
       file: "raids-with-guild-100.png",
       title:
-        "100 raids with the guild — At least 100 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
+        "100 raids with the guild — Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management (your Events total on the leaderboard). Only your highest milestone badge is shown in this row.",
       alt: "100 raids with the guild",
-      ok: playerEarnedRaidsWithGuildMilestone(player, 100),
+      ok: highestEarnedRaidsWithGuildMilestoneThreshold(player) === 100,
     },
     {
       file: "raids-with-guild-50.png",
       title:
-        "50 raids with the guild — At least 50 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
+        "50 raids with the guild — Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management (your Events total on the leaderboard). Only your highest milestone badge is shown in this row.",
       alt: "50 raids with the guild",
-      ok: playerEarnedRaidsWithGuildMilestone(player, 50),
+      ok: highestEarnedRaidsWithGuildMilestoneThreshold(player) === 50,
     },
     {
       file: "raids-with-guild-25.png",
       title:
-        "25 raids with the guild — At least 25 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
+        "25 raids with the guild — Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management (your Events total on the leaderboard). Only your highest milestone badge is shown in this row.",
       alt: "25 raids with the guild",
-      ok: playerEarnedRaidsWithGuildMilestone(player, 25),
+      ok: highestEarnedRaidsWithGuildMilestoneThreshold(player) === 25,
     },
     {
       file: "raids-with-guild-10.png",
       title:
-        "10 raids with the guild — At least 10 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
+        "10 raids with the guild — Appeared in at least 10 distinct WCL guild raid reports flagged in admin Event Management (your Events total on the leaderboard). Only your highest milestone badge is shown in this row.",
       alt: "10 raids with the guild",
-      ok: playerEarnedRaidsWithGuildMilestone(player, 10),
+      ok: highestEarnedRaidsWithGuildMilestoneThreshold(player) === 10,
     },
     {
       file: "raids-with-guild-5.png",
       title:
-        "5 raids with the guild — At least 5 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
+        "5 raids with the guild — Appeared in at least 5 distinct WCL guild raid reports flagged in admin Event Management (your Events total on the leaderboard). Only your highest milestone badge is shown in this row.",
       alt: "5 raids with the guild",
-      ok: playerEarnedRaidsWithGuildMilestone(player, 5),
+      ok: highestEarnedRaidsWithGuildMilestoneThreshold(player) === 5,
     },
     {
       file: "most-deaths-last-6-raids.png",
@@ -1766,4 +1779,5 @@ window.plbEventsRoster = {
   playerEarnedFirstClearGruulBadge,
   playerEarnedFirstClearMagBadge,
   playerEarnedRaidsWithGuildMilestone,
+  highestEarnedRaidsWithGuildMilestoneThreshold,
 };

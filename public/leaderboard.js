@@ -415,7 +415,7 @@ function raiderKpisInlineHtml(p, recentCap, considered) {
   return `
     <div class="leaderboard-kpi-inline">
       <span class="leaderboard-kpi-inline-item" title="${attTip}"><b>Attendance:</b> ${escapeHtml(att)}</span>
-      <span class="leaderboard-kpi-inline-item"><b>Events:</b> ${escapeHtml(events)}</span>
+      <span class="leaderboard-kpi-inline-item" title="Distinct WCL guild raid reports this player appeared in (admin Event Management selection only). Drives the raid milestone badges. Attendance % above still uses the rolling last-${escapeHtml(String(recentCap || 6))}-raid window."><b>Events:</b> ${escapeHtml(events)}</span>
       <span class="leaderboard-kpi-inline-item"><b>Deaths:</b> ${escapeHtml(deaths)}</span>
       <span class="leaderboard-kpi-inline-item"><b>Peak parse:</b> ${peakCell}</span>
     </div>`;
@@ -675,7 +675,11 @@ async function fetchAndBuildLeaderboardRows(gid, reportLimit, opts = {}) {
       _peakParse: ps.value != null && Number.isFinite(Number(ps.value)) ? Number(ps.value) : null,
       _raidRank: plb.primaryGuildRankLabel(p),
       _roleBucket: plb.rosterBucketRoleName(p.roleName),
-      _pastRhEvents: Number(p.rhPastEventCount || 0),
+      _pastRhEvents: Number(
+        p.wclEventCount != null && Number.isFinite(Number(p.wclEventCount))
+          ? p.wclEventCount
+          : p.rhPastEventCount || 0
+      ),
       _sortName: plb.eventsRosterCharacterLabel(p).toLowerCase(),
       _lootItems: lootItemsForPlayer(p, allLootItems),
     };

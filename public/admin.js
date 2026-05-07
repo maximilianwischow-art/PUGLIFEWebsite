@@ -2465,6 +2465,30 @@ function renderAdminDatabaseReadiness(payload) {
   const banner = ready
     ? `<p class="subtle" style="color:#5b8a4a"><strong>Ready.</strong> Every materialised table is non-empty.</p>`
     : `<p class="subtle" style="color:#c44"><strong>Not ready.</strong> ${esc(payload.note || "")}</p>`;
+  const ra = payload.raidAppearances || null;
+  let raidAppearancesBlock = "";
+  if (ra && !ra.error) {
+    const cutover = ra.cutoverActive
+      ? `<span style="color:#5b8a4a"><strong>active</strong></span>`
+      : `<span style="color:#c44"><strong>inactive — falling back to Raid Helper signups</strong></span>`;
+    const scopeLabel =
+      ra.countsScope === "admin-event-management"
+        ? "admin Event Management selection"
+        : "all WCL reports we have";
+    raidAppearancesBlock = `
+      <div style="margin-top:14px">
+        <p class="subtle" style="margin:0 0 4px"><strong>Leaderboard "Events" cutover</strong> (raid_appearances → wclEventCount)</p>
+        <p class="subtle" style="margin:0">
+          Cutover is ${cutover}.
+          Counting <strong>${esc(String(ra.distinctReports || 0))}</strong> distinct WCL reports;
+          <strong>${esc(String(ra.selectedReportCodes || 0))}</strong> currently flagged in Event Management;
+          <strong>${esc(String(ra.usersWithCount || 0))}</strong> users have at least one appearance
+          (scope: ${esc(scopeLabel)}).
+        </p>
+      </div>`;
+  } else if (ra?.error) {
+    raidAppearancesBlock = `<p class="subtle" style="color:#c44;margin-top:10px">raid_appearances inspect failed: ${esc(String(ra.error))}</p>`;
+  }
   host.innerHTML = `
     <h4 class="section-title" style="margin-top:8px">Phase 8 cutover readiness</h4>
     ${banner}
@@ -2478,6 +2502,7 @@ function renderAdminDatabaseReadiness(payload) {
         <table class="admin-table"><tbody>${flagRows}</tbody></table>
       </div>
     </div>
+    ${raidAppearancesBlock}
   `;
 }
 

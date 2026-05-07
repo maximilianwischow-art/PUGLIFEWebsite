@@ -68,6 +68,7 @@ because dual-write writers haven't been removed yet.
 - `MATERIALIZE_ATTENDANCE` — Phase 5/6: `/attendance`, `/death-leaderboard`, `/first-clear-participants`, `/boss-times` read from materialised tables.
 - `MATERIALIZE_LOOT` — Phase 7: `/api/loot-history`, `/api/wcl/guild/:gid/loot-received`, and per-user loot endpoints read from `loot_awards`.
 - `MATERIALIZE_PHASE3` — Phase 3: `mvp_votes` / `dm_subscribers` / `role_alert_log` / `hof_notes` in-memory state hydrates from SQLite at boot (legacy JSON write-through retained for rollback).
+- `MATERIALIZE_RAID_APPEARANCES` — Phase 9: leaderboard "Events" KPI and 5/10/25/50/100 raid milestone badges read distinct WCL guild raid reports a user appeared in from `raid_appearances`. Scoped to the admin Event Management selection (`gargulLootState.selectedReportCodes`); when empty, falls back to "all known reports". When the table is empty (first deploy before any sync) the live Raid Helper signup count keeps serving so milestone badges don't drop to zero during transition.
 
 #### Backup + snapshot operations
 
@@ -81,7 +82,7 @@ The runner (`lib/sync/runner.mjs`) schedules five tasks at fixed intervals:
 | Task          | Interval | Writes                                                                  |
 | ------------- | -------- | ----------------------------------------------------------------------- |
 | `badges`      | 15 min   | `badge_state`                                                           |
-| `attendance`  | 10 min   | `raid_attendance`, `death_totals`, `first_clear_participants`, `best_time_roster` |
+| `attendance`  | 10 min   | `raid_attendance`, `raid_appearances`, `death_totals`, `first_clear_participants`, `best_time_roster` |
 | `parses`      | 15 min   | `parse_summary`                                                         |
 | `loot`        | 30 min   | `loot_awards`                                                           |
 
