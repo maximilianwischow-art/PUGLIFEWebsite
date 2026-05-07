@@ -300,6 +300,11 @@
       "kara-first-time-clear": plb.playerEarnedFirstClearKaraBadge,
       "gruul-first-time-clear": plb.playerEarnedFirstClearGruulBadge,
       "magtheridon-first-time-clear": plb.playerEarnedFirstClearMagBadge,
+      "raids-with-guild-5": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 5),
+      "raids-with-guild-10": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 10),
+      "raids-with-guild-25": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 25),
+      "raids-with-guild-50": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 50),
+      "raids-with-guild-100": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 100),
     };
 
     // Synthetic "player" — feeding the user's primary linked name as

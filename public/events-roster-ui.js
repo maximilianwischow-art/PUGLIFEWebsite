@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260505k";
+const IMAGE_ASSET_VERSION = "20260507raidmilestones1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1206,6 +1206,21 @@ function achievementBadgeIconUrlWithFallback(fileName) {
   return { src: svg, onerror: ` onerror="this.onerror=null;this.src='${png}'"` };
 }
 
+/** Full-window raid count for milestone badges (not capped at 6 like attendance-tier KPIs). */
+function raidsAttendedFullWindowForPlayer(player) {
+  const direct = Number(player?.raidsAttended);
+  if (Number.isFinite(direct) && direct >= 0) return Math.floor(direct);
+  const row = attendanceRowForRosterPlayerResolved(player);
+  if (row) return Math.max(0, Math.floor(Number(row.raidsAttended || 0)));
+  return 0;
+}
+
+function playerEarnedRaidsWithGuildMilestone(player, threshold) {
+  const t = Math.floor(Number(threshold) || 0);
+  if (t <= 0) return false;
+  return raidsAttendedFullWindowForPlayer(player) >= t;
+}
+
 /** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
 function rosterAchievementBadgesHtml(player) {
   const badges = [
@@ -1222,6 +1237,41 @@ function rosterAchievementBadgesHtml(player) {
         "MVP hall of fame — You won a raid MVP vote in a past round (listed on the Hall of Fame page).",
       alt: "MVP hall of fame",
       ok: playerEarnedHallOfFameMvpBadge(player),
+    },
+    {
+      file: "raids-with-guild-100.png",
+      title:
+        "100 raids with the guild — Attended at least 100 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+      alt: "100 raids with the guild",
+      ok: playerEarnedRaidsWithGuildMilestone(player, 100),
+    },
+    {
+      file: "raids-with-guild-50.png",
+      title:
+        "50 raids with the guild — Attended at least 50 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+      alt: "50 raids with the guild",
+      ok: playerEarnedRaidsWithGuildMilestone(player, 50),
+    },
+    {
+      file: "raids-with-guild-25.png",
+      title:
+        "25 raids with the guild — Attended at least 25 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+      alt: "25 raids with the guild",
+      ok: playerEarnedRaidsWithGuildMilestone(player, 25),
+    },
+    {
+      file: "raids-with-guild-10.png",
+      title:
+        "10 raids with the guild — Attended at least 10 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+      alt: "10 raids with the guild",
+      ok: playerEarnedRaidsWithGuildMilestone(player, 10),
+    },
+    {
+      file: "raids-with-guild-5.png",
+      title:
+        "5 raids with the guild — Attended at least 5 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+      alt: "5 raids with the guild",
+      ok: playerEarnedRaidsWithGuildMilestone(player, 5),
     },
     {
       file: "most-deaths-last-6-raids.png",
@@ -1711,4 +1761,5 @@ window.plbEventsRoster = {
   playerEarnedFirstClearKaraBadge,
   playerEarnedFirstClearGruulBadge,
   playerEarnedFirstClearMagBadge,
+  playerEarnedRaidsWithGuildMilestone,
 };

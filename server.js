@@ -5683,6 +5683,9 @@ function listLinkedWowCharactersForDiscordUserId(userId, displayName) {
   return out;
 }
 
+/** Raid-count milestones: same `raids_attended` window as the attendance leaderboard materialisation. */
+const RAID_MILESTONE_THRESHOLDS = [5, 10, 25, 50, 100];
+
 /**
  * Catalog of every badge surfaced anywhere on the site, grouped by category so
  * the profile page can render an "all badges" overview. Mirrors the artwork
@@ -5722,6 +5725,19 @@ const BADGE_CATALOG = [
       { id: "kara-first-time-clear", name: "Karazhan first clear", icon: "/images/achievements/kara-first-time-clear.png" },
       { id: "gruul-first-time-clear", name: "Gruul first clear", icon: "/images/achievements/gruul-first-time-clear.png" },
       { id: "magtheridon-first-time-clear", name: "Magtheridon first clear", icon: "/images/achievements/magtheridon-first-time-clear.png" },
+    ],
+  },
+  {
+    id: "raid-milestones",
+    label: "Raid milestones",
+    description:
+      "Raids attended in the same tracked Warcraft Logs window as the attendance leaderboard (recent guild 25-player reports we sync — not necessarily all-time history beyond that window).",
+    badges: [
+      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png" },
+      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png" },
+      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png" },
+      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png" },
+      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png" },
     ],
   },
 ];
@@ -6167,6 +6183,21 @@ app.get("/api/profile/me/badges", async (req, res) => {
     else if (guildRoleSlug === "veteran") earned.add("veteran");
     else if (guildRoleSlug === "grunt") earned.add("grunt");
     else earned.add("peon");
+
+    try {
+      const canonical = identityUserGetByDiscordId(userId);
+      if (canonical?.id) {
+        const fresh = raidAttendanceGetFreshestWindow();
+        if (fresh?.windowLabel) {
+          const attRows = raidAttendanceGetByWindow(fresh.windowLabel);
+          const mine = attRows.find((r) => Number(r.userId) === Number(canonical.id));
+          const n = Math.max(0, Math.floor(Number(mine?.raidsAttended) || 0));
+          for (const t of RAID_MILESTONE_THRESHOLDS) {
+            if (n >= t) earned.add(`raids-with-guild-${t}`);
+          }
+        }
+      }
+    } catch {}
 
     const categories = BADGE_CATALOG.map((cat) => ({
       ...cat,
@@ -12092,6 +12123,24 @@ async function runSyncBadges() {
     console.warn("[sync:badges] hall-of-fame load failed:", error?.message || error);
   }
 
+  let raidsByUserId = new Map();
+  try {
+    const fresh = raidAttendanceGetFreshestWindow();
+    if (fresh?.windowLabel) {
+      for (const row of raidAttendanceGetByWindow(fresh.windowLabel)) {
+        const uid = Number(row.userId);
+        if (!Number.isInteger(uid) || uid <= 0) continue;
+        raidsByUserId.set(uid, {
+          raidsAttended: Math.max(0, Math.floor(Number(row.raidsAttended) || 0)),
+          raidsConsidered: Math.max(0, Math.floor(Number(row.raidsConsidered) || 0)),
+          windowLabel: String(fresh.windowLabel),
+        });
+      }
+    }
+  } catch (error) {
+    console.warn("[sync:badges] raid attendance snapshot read failed:", error?.message || error);
+  }
+
   let rowsChanged = 0;
   const now = Date.now();
   for (const user of identityUserListAll()) {
@@ -12119,6 +12168,24 @@ async function runSyncBadges() {
       if (linkedKeys.size && [...linkedKeys].some((k) => keys.has(k))) {
         earned.add(badgeId);
         if (firstClearEvidence[badgeId]) evidenceById.set(badgeId, firstClearEvidence[badgeId]);
+      }
+    }
+
+    const raidStats = raidsByUserId.get(user.id);
+    if (raidStats) {
+      const n = raidStats.raidsAttended;
+      for (const t of RAID_MILESTONE_THRESHOLDS) {
+        if (n >= t) {
+          const bid = `raids-with-guild-${t}`;
+          earned.add(bid);
+          evidenceById.set(bid, {
+            type: "raid-milestone",
+            threshold: t,
+            raidsAttended: raidStats.raidsAttended,
+            raidsConsidered: raidStats.raidsConsidered,
+            windowLabel: raidStats.windowLabel,
+          });
+        }
       }
     }
 
