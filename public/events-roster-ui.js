@@ -393,6 +393,26 @@ function classOverrideSlugForPlayer(player) {
 }
 
 /** Same merge as server `englishCanonicalClassSlugForEventsIcons`: RH + Rio + optional Battle.net snapshot; plate dispute uses Rio. */
+/**
+ * Last-resort class slug from a Warcraft Logs spec icon URL.
+ * WCL Classic icons follow `…/icons/<class>-<spec>.jpg` — e.g. `mage-fire.jpg`,
+ * `warrior-fury.jpg`, `priest-shadow.jpg`. When RH / Raider.io / Bnet armory
+ * lookups all fail (cold cache on a fresh deploy), this still resolves a
+ * sensible class crest instead of falling back to the red `?` placeholder.
+ */
+function classSlugFromWclSpecIconUrl(urlRaw) {
+  const u = String(urlRaw || "").trim();
+  if (!u) return "";
+  // assets.rpglogs.com (and a few legacy WCL paths) serve spec icons as
+  // `<basename>/<class>-<spec>.<ext>` — match the final segment regardless of
+  // which folder it came from. Spell-icon URLs like `inv_misc_questionmark`
+  // intentionally fall through `canonicalWowClassSlug` and yield "".
+  const m = u.match(/([a-zA-Z]+)(?:-[a-zA-Z]+)?\.(?:jpg|jpeg|png|webp)(?:\?|$)/i);
+  if (!m) return "";
+  const candidate = String(m[1] || "").toLowerCase();
+  return canonicalWowClassSlug(candidate);
+}
+
 function effectiveRosterClassSlug(player) {
   const override = classOverrideSlugForPlayer(player);
   if (override) return override;
@@ -403,7 +423,15 @@ function effectiveRosterClassSlug(player) {
   if (plate.has(rh) && plate.has(rio) && rh !== rio) return rio;
   if (rh) return rh;
   if (rio) return rio;
-  return bnet || "";
+  if (bnet) return bnet;
+  // WCL Damage Done / Healing tables expose the player's class even when our
+  // RH / Rio / Bnet enrichment chain has not warmed up yet — prefer that over
+  // the inv_misc_questionmark.jpg placeholder.
+  const wclType = classSlugFromWclCombatType(player?.wclCombatSpecType);
+  if (wclType) return wclType;
+  const wclIcon = classSlugFromWclSpecIconUrl(player?.wclSpecIconUrl);
+  if (wclIcon) return wclIcon;
+  return "";
 }
 
 /** Resolves `warrior_protection` / `paladin_protection` etc.; tanks override wrong RH spec labels. */
@@ -505,6 +533,11 @@ function classSlugFromWclCombatType(typeRaw) {
   if (t === "assassination" || t === "combat" || t === "subtlety") return "rogue";
   if (t === "beastmastery" || t === "marksmanship" || t === "survival") return "hunter";
   if (t === "shadow" || t === "discipline") return "priest";
+  // WCL also returns the class display directly ("Mage", "Death Knight", etc.)
+  // depending on the report’s table columns — accept those so that callers
+  // can rely on this for class-fallback resolution, not just spec lookup.
+  const classCandidate = canonicalWowClassSlug(typeRaw);
+  if (classCandidate) return classCandidate;
   return "";
 }
 
@@ -1364,7 +1397,17 @@ function mergedClassDisplayLabel(player) {
   if (plate.has(rhSlug) && plate.has(rioSlug) && rhSlug !== rioSlug) return rio;
   if (rh) return rh;
   if (rio) return rio;
-  return bnet || "";
+  if (bnet) return bnet;
+  // Mirror effectiveRosterClassSlug: when the API didn't supply a class label
+  // (cold cache), fall back to whatever the WCL Damage Done / icon URL imply.
+  const wclTypeSlug = classSlugFromWclCombatType(player?.wclCombatSpecType);
+  const wclIconSlug = classSlugFromWclSpecIconUrl(player?.wclSpecIconUrl);
+  const fallbackSlug = wclTypeSlug || wclIconSlug || "";
+  if (fallbackSlug) {
+    const display = fallbackSlug.charAt(0).toUpperCase() + fallbackSlug.slice(1);
+    return fallbackSlug === "deathknight" ? "Death Knight" : display;
+  }
+  return "";
 }
 
 /** Hover text when Raid Helper and Raider.io disagree or supplement each other. */
