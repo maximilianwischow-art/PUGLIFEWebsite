@@ -73,6 +73,7 @@ import {
   raidAppearancesReplaceForReports,
   raidAppearancesCountsByUser,
   raidAppearancesDistinctReportCount,
+  raidAppearancesListReports,
   raidAppearancesRecent,
   parseSummaryReplaceAll,
   parseSummaryGetByUserId,
@@ -12112,6 +12113,28 @@ function buildLootHistoryFromMaterialised(guildId) {
       reportUploader: a.reportUploader || null,
     });
   }
+  // Supplement with WCL guild raids we know about from `raid_appearances`
+  // but that have no loot awards yet — without this the admin Event
+  // Management list shows only the handful of reports that already have
+  // imported loot, hiding the rest of the guild's raid history.
+  try {
+    const reports = raidAppearancesListReports({ limit: 500 });
+    for (const r of reports) {
+      const code = String(r?.reportCode || "");
+      if (!code || reportInfo.has(code)) continue;
+      reportInfo.set(code, {
+        reportCode: code,
+        reportTitle: null,
+        reportRaidName: null,
+        // Some old rows wrote seconds instead of ms; reportStartTimeMs
+        // normalises both into ms so the admin UI's date formatter works.
+        reportStartTime: reportStartTimeMs(Number(r?.reportStartedAt || 0)) || 0,
+        reportUploader: null,
+      });
+    }
+  } catch (error) {
+    console.warn("[loot-history] raid_appearances supplement failed:", error?.message || error);
+  }
   const allRaids = [...reportInfo.values()]
     .filter((raid) => !isTenPlayerTbcLootRow(raid))
     .sort((a, b) => Number(b.reportStartTime || 0) - Number(a.reportStartTime || 0));
@@ -12712,7 +12735,7 @@ async function runSyncAttendance() {
           const reportCode = String(raid?.reportCode || "").trim();
           if (!reportCode) return;
           seenCodes.add(reportCode);
-          const startedAtSec = Math.floor(Number(raid?.startTime || 0) / 1000) || null;
+          const startedAtMs = reportStartTimeMs(Number(raid?.startTime || 0)) || null;
           const attendeesLower = raid?.attendeesLower instanceof Set ? raid.attendeesLower : new Set();
           for (const lower of attendeesLower) {
             const display = displayMap.get(lower) || lower;
@@ -12720,7 +12743,7 @@ async function runSyncAttendance() {
             appearanceEntries.push({
               characterName: display,
               reportCode,
-              reportStartedAt: startedAtSec,
+              reportStartedAt: startedAtMs,
             });
           }
         });
