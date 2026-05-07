@@ -4945,6 +4945,20 @@ function listLinkedWowCharactersForDiscordUserId(userId, displayName) {
     out.push(name);
   };
 
+  // Profile main character is the user's explicit declaration of "this is me on
+  // the website". Treat it as the most authoritative name for badge matching:
+  // works even when their Account Assignment row uses a Discord nick as
+  // `raidHelperName` and has an empty `wclCharacterNames` (the common case).
+  if (id) {
+    try {
+      const profile = profileGetByUserId(id);
+      const main = String(profile?.mainCharacterName || "").trim();
+      if (main) push(main);
+    } catch {
+      /* profile DB optional */
+    }
+  }
+
   for (const link of links) {
     if (id && sanitizeDiscordUserId(link?.discordUserId) === id) {
       for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) push(cn);
@@ -5285,6 +5299,13 @@ app.get("/api/profile/me/badges", async (req, res) => {
   try {
     const userId = String(session.user.id);
     const displayName = String(session.user.globalName || session.user.username || "");
+    // Account Assignment store is loaded lazily; ensure it's hydrated so this
+    // endpoint behaves the same on a cold boot as on a warm one.
+    try {
+      await ensureRhWclLinksStore();
+    } catch {
+      /* fall through with whatever's in memory */
+    }
     const linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
     const linkedKeys = new Set(linkedCharacters.map((c) => normalizeRaidHelperDisplayKey(c)).filter(Boolean));
 
@@ -5359,10 +5380,21 @@ app.get("/api/profile/me/badges", async (req, res) => {
     return res.json({
       ok: true,
       categories,
-      // The client should also call `/api/wcl/guild/<id>/active-roster` on the
-      // profile page to lazily light up the leaderboard-only badges (iron
-      // attendance, peak ceiling, most deaths last 6, best-time participant).
-      lazyBadges: ["iron-attendance", "parsing-ceiling", "most-deaths-last-6-raids", "best-time-participant"],
+      // Names the badge UI should match against when running the leaderboard's
+      // client-side badge resolvers (iron attendance, parsing ceiling, most
+      // deaths last 6, best-time participant). Includes the profile's explicit
+      // main character + every linked WCL/Account-Assignment name.
+      linkedCharacters,
+      // Badge ids the client should resolve on top of the static catalog by
+      // re-running `playerEarnedXxxBadge` against the active-roster + WCL
+      // payloads the leaderboard already loads. Server cannot resolve these
+      // cheaply because the source data is large + stale-while-revalidate.
+      lazyBadges: [
+        "iron-attendance",
+        "parsing-ceiling",
+        "most-deaths-last-6-raids",
+        "best-time-participant",
+      ],
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load badges" });

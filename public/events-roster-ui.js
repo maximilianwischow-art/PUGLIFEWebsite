@@ -1680,4 +1680,15 @@ window.plbEventsRoster = {
   displaySpecNameForRoster,
   wowClassColor,
   effectiveRosterClassSlug,
+  // Badge resolvers — exposed so the profile page can light up the same
+  // achievement tiles the leaderboard does without re-implementing the logic.
+  // Caller must `await loadWclAttendanceForEvents()` first.
+  playerEarnedBestTimeParticipantBadge,
+  playerEarnedHallOfFameMvpBadge,
+  playerEarnedMostDeathsLastSixBadge,
+  playerEarnedIronAttendanceBadge,
+  playerEarnedParsingCeilingBadge,
+  playerEarnedFirstClearKaraBadge,
+  playerEarnedFirstClearGruulBadge,
+  playerEarnedFirstClearMagBadge,
 };

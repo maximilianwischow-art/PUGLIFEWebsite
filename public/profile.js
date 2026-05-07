@@ -235,6 +235,17 @@
         return;
       }
       els.badgesHost.innerHTML = categories.map(renderBadgeCategoryHtml).join("");
+
+      // Lazy second-pass: re-run the leaderboard's badge matchers against the
+      // user's linked WoW characters so iron-attendance / parsing-ceiling /
+      // most-deaths-last-6 / best-time-participant + the achievements scanned
+      // by name (HoF, first clears) all light up — even when the server-side
+      // resolver missed them (e.g. linked names not present on the Account
+      // Assignment row, cold WCL cache, etc.).
+      const linkedCharacters = Array.isArray(payload.linkedCharacters) ? payload.linkedCharacters : [];
+      resolveBadgesClientSide(linkedCharacters, categories).catch(() => {
+        /* leaderboard-only badges stay locked if WCL data is unavailable */
+      });
     } catch (error) {
       els.badgesHost.innerHTML = `<p class="subtle is-error">${escapeHtml(error?.message || "Failed to load badges")}</p>`;
     }
@@ -248,21 +259,99 @@
         const cls = b.earned ? "profile-badge-tile is-earned" : "profile-badge-tile is-locked";
         const desc = b.earned ? `${b.name} — earned` : `${b.name} — not yet earned`;
         return `
-          <div class="${cls}" title="${escapeHtml(desc)}">
+          <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" title="${escapeHtml(desc)}">
             <img src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
             <span class="profile-badge-name">${escapeHtml(b.name)}</span>
           </div>`;
       })
       .join("");
     return `
-      <section class="profile-badge-category">
+      <section class="profile-badge-category" data-category-id="${escapeHtml(cat.id || "")}">
         <header class="profile-badge-category-head">
           <h4 class="profile-badge-category-title">${escapeHtml(cat.label)}</h4>
-          <span class="profile-badge-category-meter">${earnedCount} / ${total}</span>
+          <span class="profile-badge-category-meter" data-meter-total="${total}">${earnedCount} / ${total}</span>
         </header>
         ${cat.description ? `<p class="subtle profile-badge-category-desc">${escapeHtml(cat.description)}</p>` : ""}
         <div class="profile-badge-grid">${items}</div>
       </section>`;
+  }
+
+  /**
+   * Run the leaderboard's badge matchers against the user's linked characters.
+   * Each `linkedCharacters` entry is treated as a possible identity for the
+   * user — we OR the results so any character hitting a matcher unlocks the
+   * badge. After resolution, swap tile classes from `is-locked` to `is-earned`
+   * and update each category's "x / total" meter.
+   */
+  async function resolveBadgesClientSide(linkedCharacters, serverCategories) {
+    const plb = window.plbEventsRoster;
+    if (!plb || typeof plb.loadWclAttendanceForEvents !== "function") return;
+    const names = (linkedCharacters || []).map((s) => String(s || "").trim()).filter(Boolean);
+    if (!names.length) return;
+
+    await plb.loadWclAttendanceForEvents();
+
+    const resolvers = {
+      "best-time-participant": plb.playerEarnedBestTimeParticipantBadge,
+      "hall-of-fame": plb.playerEarnedHallOfFameMvpBadge,
+      "most-deaths-last-6-raids": plb.playerEarnedMostDeathsLastSixBadge,
+      "iron-attendance": plb.playerEarnedIronAttendanceBadge,
+      "parsing-ceiling": plb.playerEarnedParsingCeilingBadge,
+      "kara-first-time-clear": plb.playerEarnedFirstClearKaraBadge,
+      "gruul-first-time-clear": plb.playerEarnedFirstClearGruulBadge,
+      "magtheridon-first-time-clear": plb.playerEarnedFirstClearMagBadge,
+    };
+
+    // Synthetic "player" — feeding the user's primary linked name as
+    // characterName + every linked name as wclCharacters covers both code
+    // paths in `attendanceLookupNameCandidates` / `playerMatchesAchievementNameSet`.
+    const synthPlayer = {
+      characterName: names[0],
+      name: names[0],
+      wclCharacters: names.slice(),
+    };
+
+    const earnedFromClient = new Set();
+    for (const [badgeId, fn] of Object.entries(resolvers)) {
+      if (typeof fn !== "function") continue;
+      try {
+        if (fn(synthPlayer)) earnedFromClient.add(badgeId);
+      } catch {
+        /* one bad matcher shouldn't kill the rest */
+      }
+    }
+
+    // Server-side resolution wins where it already says "earned"; client
+    // resolution is additive (it only ever upgrades a tile from locked → earned).
+    const serverEarnedIds = new Set();
+    for (const cat of serverCategories || []) {
+      for (const b of cat.badges || []) {
+        if (b?.earned && b?.id) serverEarnedIds.add(b.id);
+      }
+    }
+
+    if (!els.badgesHost) return;
+    const tiles = els.badgesHost.querySelectorAll("[data-badge-id]");
+    tiles.forEach((tile) => {
+      const id = tile.getAttribute("data-badge-id") || "";
+      const isEarnedNow = serverEarnedIds.has(id) || earnedFromClient.has(id);
+      if (!isEarnedNow) return;
+      if (tile.classList.contains("is-earned")) return;
+      tile.classList.remove("is-locked");
+      tile.classList.add("is-earned");
+      const img = tile.querySelector("img");
+      const name = img?.getAttribute("alt") || "";
+      tile.setAttribute("title", `${name} — earned`);
+    });
+
+    // Recount each category meter.
+    const categories = els.badgesHost.querySelectorAll(".profile-badge-category");
+    categories.forEach((cat) => {
+      const total = cat.querySelector(".profile-badge-category-meter")?.getAttribute("data-meter-total");
+      const earned = cat.querySelectorAll(".profile-badge-tile.is-earned").length;
+      const meter = cat.querySelector(".profile-badge-category-meter");
+      if (meter && total != null) meter.textContent = `${earned} / ${total}`;
+    });
   }
 
   function bindUI() {
