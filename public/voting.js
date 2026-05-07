@@ -412,12 +412,15 @@ function hofWinnerSpecPortraitHtml(row) {
   if (!plb || !p) {
     return `<img class="hof-winner-spec-portrait" src="${fallback}" alt="Winner spec portrait" width="118" height="118" loading="lazy" decoding="async" />`;
   }
+  /* Same priority order as the leaderboard: profile picture wins, then
+     spec/race portraits, then class crest. `rosterPortraitChain` puts
+     the uploaded picture first when one is cached for this player. */
   let chain = [];
-  if (typeof plb.specBadgePortraitChain === "function") {
-    chain = plb.specBadgePortraitChain(p) || [];
-  }
-  if ((!Array.isArray(chain) || !chain.length) && typeof plb.rosterPortraitChain === "function") {
+  if (typeof plb.rosterPortraitChain === "function") {
     chain = plb.rosterPortraitChain(p) || [];
+  }
+  if ((!Array.isArray(chain) || !chain.length) && typeof plb.specBadgePortraitChain === "function") {
+    chain = plb.specBadgePortraitChain(p) || [];
   }
   const urls = (Array.isArray(chain) ? chain : []).map((u) => String(u || "").trim()).filter(Boolean);
   const src = esc(urls[0] || classIconFallback || fallback);
