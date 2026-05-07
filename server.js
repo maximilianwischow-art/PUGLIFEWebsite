@@ -12089,29 +12089,34 @@ async function fetchGuildLootReceived(guildId, reportLimit) {
  * `runSyncLoot`. Used by `/api/loot-history` + `/api/wcl/guild/:gid/loot-received`
  * when MATERIALIZE_LOOT is on AND the table is non-empty.
  *
- * Returns `null` if the materialised table is empty so the caller can
- * fall back to the live `fetchGuildLootReceived` pipeline.
+ * Returns `null` only when both `loot_awards` and `raid_appearances` are
+ * empty (cold boot before any sync). When loot is empty but appearances
+ * exist, still returns a payload so the admin Event Management list can
+ * enumerate every WCL raid we have gathered.
  */
 function buildLootHistoryFromMaterialised(guildId) {
-  let awards;
+  let awards = [];
   try {
-    awards = lootAwardsGetAll({ limit: 5000 });
+    const rows = lootAwardsGetAll({ limit: 5000 });
+    awards = Array.isArray(rows) ? rows : [];
   } catch {
     return null;
   }
-  if (!Array.isArray(awards) || awards.length === 0) return null;
+  const hasLootRows = awards.length > 0;
 
   const reportInfo = new Map();
-  for (const a of awards) {
-    if (!a?.reportCode) continue;
-    if (reportInfo.has(a.reportCode)) continue;
-    reportInfo.set(a.reportCode, {
-      reportCode: a.reportCode,
-      reportTitle: a.reportTitle || null,
-      reportRaidName: a.reportRaidName || null,
-      reportStartTime: Number(a.awardedAt || 0),
-      reportUploader: a.reportUploader || null,
-    });
+  if (hasLootRows) {
+    for (const a of awards) {
+      if (!a?.reportCode) continue;
+      if (reportInfo.has(a.reportCode)) continue;
+      reportInfo.set(a.reportCode, {
+        reportCode: a.reportCode,
+        reportTitle: a.reportTitle || null,
+        reportRaidName: a.reportRaidName || null,
+        reportStartTime: Number(a.awardedAt || 0),
+        reportUploader: a.reportUploader || null,
+      });
+    }
   }
   // Supplement with WCL guild raids we know about from `raid_appearances`
   // but that have no loot awards yet — without this the admin Event
@@ -12135,22 +12140,26 @@ function buildLootHistoryFromMaterialised(guildId) {
   } catch (error) {
     console.warn("[loot-history] raid_appearances supplement failed:", error?.message || error);
   }
+  if (!reportInfo.size) return null;
+
   const allRaids = [...reportInfo.values()]
     .filter((raid) => !isTenPlayerTbcLootRow(raid))
     .sort((a, b) => Number(b.reportStartTime || 0) - Number(a.reportStartTime || 0));
 
-  const items = awards
-    .map((a) => ({
-      reportCode: a.reportCode || null,
-      reportTitle: a.reportTitle || null,
-      reportRaidName: a.reportRaidName || null,
-      reportStartTime: Number(a.awardedAt || 0),
-      itemId: a.itemId,
-      itemName: a.itemName || null,
-      recipient: a.characterName || null,
-      rawType: a.rawType || null,
-    }))
-    .filter((row) => !isTenPlayerTbcLootRow(row));
+  const items = hasLootRows
+    ? awards
+        .map((a) => ({
+          reportCode: a.reportCode || null,
+          reportTitle: a.reportTitle || null,
+          reportRaidName: a.reportRaidName || null,
+          reportStartTime: Number(a.awardedAt || 0),
+          itemId: a.itemId,
+          itemName: a.itemName || null,
+          recipient: a.characterName || null,
+          rawType: a.rawType || null,
+        }))
+        .filter((row) => !isTenPlayerTbcLootRow(row))
+    : [];
 
   const selectedSet = new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x)));
   const visibleRaids = selectedSet.size
