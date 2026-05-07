@@ -2385,8 +2385,12 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
   try {
     const raw = await readFile(hofEnrichedCachePath, "utf8");
     const parsed = JSON.parse(raw);
+    /* v2 = post-WCL-pivot; the player payload now always carries
+       `wclEventCount`, so older v1 caches must be ignored otherwise the
+       "Total raids" KPI silently falls back to the (much smaller)
+       last-window WCL attendance. */
     if (
-      parsed?.v === 1 &&
+      parsed?.v === 2 &&
       Number(parsed.guildId) === Number(guildId) &&
       Number(parsed.limit) === Number(limit) &&
       parsed.fingerprint === fingerprint &&
@@ -2411,7 +2415,7 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
 async function persistHallOfFameEnrichedCache(guildId, limit, fingerprint, hallOfFame) {
   const generatedAt = Date.now();
   const payload = {
-    v: 1,
+    v: 2,
     guildId: Number(guildId),
     limit: Number(limit),
     fingerprint,
