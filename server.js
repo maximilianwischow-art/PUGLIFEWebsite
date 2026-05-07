@@ -1477,6 +1477,30 @@ async function loadMergedRankingsBundleForHallOfFameUncached(raidCode) {
 /**
  * Shared builder for `GET /api/wcl/guild/:guildId/active-roster` and hall-of-fame roster matching.
  */
+function rhPrimarySignupTotalForRosterRow(rhSignupResult, attRow, stripped) {
+  const map = rhSignupResult?.counts instanceof Map ? rhSignupResult.counts : null;
+  if (!map || !map.size) return 0;
+  const wclChars = Array.isArray(attRow?.wclCharacters) ? attRow.wclCharacters : [];
+  const raw = [
+    stripped?.name,
+    attRow?.raidHelperName,
+    attRow?.name,
+    stripped?.characterName,
+    ...wclChars,
+  ];
+  const keys = new Set();
+  for (const x of raw) {
+    const k = normalizeRaidHelperDisplayKey(String(x || ""));
+    if (k) keys.add(k);
+  }
+  let max = 0;
+  for (const k of keys) {
+    const c = Number(map.get(k) || 0);
+    if (c > max) max = c;
+  }
+  return max;
+}
+
 async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top = 250, maxRhPastEvents = 0 } = {}) {
   const rhSignupCounts = await countRaidHelperPrimarySignupsPerRhKey(maxRhPastEvents);
   await ensureRhWclLinksStore();
@@ -1612,18 +1636,40 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
   const players = enriched.map((row, i) => {
     const att = pairs[i].attRow;
     const stripped = stripInternalRosterFields(row);
-    const rhKey = normalizeRaidHelperDisplayKey(String(stripped?.name || ""));
-    const rhPastEventCount = rhKey ? rhSignupCounts.counts.get(rhKey) || 0 : 0;
-    const discordUserId = rhKey ? discordIdByRhKey.get(rhKey) || null : null;
+    const rhPastEventCount = rhPrimarySignupTotalForRosterRow(rhSignupCounts, att, stripped);
+    const rhLookupKeys = [...new Set(
+      [
+        stripped?.name,
+        att?.raidHelperName,
+        att?.name,
+        stripped?.characterName,
+        ...(Array.isArray(att?.wclCharacters) ? att.wclCharacters : []),
+      ]
+        .map((x) => normalizeRaidHelperDisplayKey(String(x || "")))
+        .filter(Boolean)
+    )];
+    let discordUserId = null;
+    for (const k of rhLookupKeys) {
+      const id = discordIdByRhKey.get(k);
+      if (id) {
+        discordUserId = id;
+        break;
+      }
+    }
     let dbUserId = null;
     let mainCharacterName = null;
     if (materializeIdentityEnabled()) {
       try {
-        const canonical = discordUserId
-          ? identityUserGetByDiscordId(discordUserId)
-          : rhKey
-            ? identityUserGetByRaidHelperKey(rhKey)
-            : null;
+        let canonical = discordUserId ? identityUserGetByDiscordId(discordUserId) : null;
+        if (!canonical) {
+          for (const k of rhLookupKeys) {
+            const hit = identityUserGetByRaidHelperKey(k);
+            if (hit) {
+              canonical = hit;
+              break;
+            }
+          }
+        }
         if (canonical?.id) {
           dbUserId = canonical.id;
           if (canonical.mainCharacterId) {
@@ -5734,7 +5780,7 @@ const BADGE_CATALOG = [
     id: "raid-milestones",
     label: "Raid milestones",
     description:
-      "Primary signups across every posted past Raid Helper event (same total as the leaderboard \"Events\" column). Attendance % on the leaderboard still uses only the recent Warcraft Logs window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). Milestone badges use the larger of that window's attended count and this full Raid Helper total.",
+      "Primary signups across every posted past Raid Helper event (leaderboard \"Events\"). Attendance % still uses only the recent Warcraft Logs window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). Milestone badges use **only** this Raid Helper total — not WCL window attendance — so a 5-badge never appears when Events shows fewer than five.",
     badges: [
       { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png" },
       { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png" },
@@ -6122,8 +6168,16 @@ app.get("/api/profile/me/badges", async (req, res) => {
     }
 
     const linkedKeys = new Set(linkedCharacters.map((c) => normalizeRaidHelperDisplayKey(c)).filter(Boolean));
-
-    // The leaderboard / Hall of Fame badge logic lives client-side, but we can
+    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+    const myRow = links.find((l) => sanitizeDiscordUserId(l?.discordUserId) === userId) || null;
+    if (myRow?.raidHelperName) {
+      const rk = normalizeRaidHelperDisplayKey(String(myRow.raidHelperName));
+      if (rk) linkedKeys.add(rk);
+    }
+    for (const cn of Array.isArray(myRow?.wclCharacterNames) ? myRow.wclCharacterNames : []) {
+      const ck = normalizeRaidHelperDisplayKey(String(cn || ""));
+      if (ck) linkedKeys.add(ck);
+    }
     // reproduce the *first-clear* and *MVP hall of fame* facts cheaply server-
     // side from existing stores. Other achievements (iron attendance, peak
     // ceiling, most deaths, best-time) require the rolling roster + WCL
@@ -6174,11 +6228,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       }
     } catch {}
 
-    // Guild rank: derive from Account Assignment.
-    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
-    const myRow = links.find(
-      (l) => sanitizeDiscordUserId(l?.discordUserId) === userId
-    ) || null;
+    // Guild rank: derive from Account Assignment (`myRow` loaded above for linkedKeys).
     const guildRoleSlug = String(myRow?.guildRole || "Peon").toLowerCase().replace(/\s+/g, "-");
     if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
     else if (guildRoleSlug === "raidlead") earned.add("raidlead");
@@ -6188,16 +6238,6 @@ app.get("/api/profile/me/badges", async (req, res) => {
     else earned.add("peon");
 
     try {
-      const canonical = identityUserGetByDiscordId(userId);
-      let raidsInWindow = 0;
-      if (canonical?.id) {
-        const fresh = raidAttendanceGetFreshestWindow();
-        if (fresh?.windowLabel) {
-          const attRows = raidAttendanceGetByWindow(fresh.windowLabel);
-          const mine = attRows.find((r) => Number(r.userId) === Number(canonical.id));
-          raidsInWindow = Math.max(0, Math.floor(Number(mine?.raidsAttended) || 0));
-        }
-      }
       let rhSignups = 0;
       try {
         const result = await countRaidHelperPrimarySignupsPerRhKey(0);
@@ -6211,7 +6251,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       } catch {
         /* RH count is best-effort here; badge sync will catch up next cycle */
       }
-      const milestoneCount = Math.max(raidsInWindow, rhSignups);
+      const milestoneCount = rhSignups;
       for (const t of RAID_MILESTONE_THRESHOLDS) {
         if (milestoneCount >= t) earned.add(`raids-with-guild-${t}`);
       }
@@ -9848,7 +9888,7 @@ async function countRaidHelperPrimarySignupsPerRhKey(maxPastEvents) {
   const raw = maxPastEvents == null ? NaN : Number(maxPastEvents);
   const scanAll = !Number.isFinite(raw) || raw <= 0;
   const cap = scanAll ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(raw));
-  const mode = scanAll ? "all" : `cap:${cap}`;
+  const mode = scanAll ? "all-v3" : `cap:${cap}`;
 
   const ttl = raidHelperSignupCountCacheTtlMs();
   const tNow = Date.now();
@@ -12255,18 +12295,12 @@ async function runSyncBadges() {
     }
 
     const raidStats = raidsByUserId.get(user.id);
-    /* Milestone count: max(window-attended, RH signups across the linked
-       names). RH signups can be higher than the WCL window because the
-       window is capped to the most recent ~6 synced reports. */
     let rhSignupsForUser = 0;
     for (const k of linkedKeys) {
       const c = Number(rhSignupCountsByKey.get(k) || 0);
       if (c > rhSignupsForUser) rhSignupsForUser = c;
     }
-    const milestoneCount = Math.max(
-      raidStats ? raidStats.raidsAttended : 0,
-      rhSignupsForUser
-    );
+    const milestoneCount = rhSignupsForUser;
     if (milestoneCount > 0) {
       for (const t of RAID_MILESTONE_THRESHOLDS) {
         if (milestoneCount >= t) {
@@ -12275,8 +12309,8 @@ async function runSyncBadges() {
           evidenceById.set(bid, {
             type: "raid-milestone",
             threshold: t,
-            raidsAttended: raidStats?.raidsAttended || 0,
-            raidsConsidered: raidStats?.raidsConsidered || 0,
+            raidsAttendedWindow: raidStats?.raidsAttended || 0,
+            raidsConsideredWindow: raidStats?.raidsConsidered || 0,
             rhPastEventCount: rhSignupsForUser,
             windowLabel: raidStats?.windowLabel || null,
           });

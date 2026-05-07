@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507raidmilestones4";
+const IMAGE_ASSET_VERSION = "20260507raidmilestones5";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1207,20 +1207,16 @@ function achievementBadgeIconUrlWithFallback(fileName) {
 }
 
 /**
- * Total raids for milestone badges: max of (a) WCL-window `raidsAttended` and
- * (b) `rhPastEventCount` — the leaderboard "Events" number, which counts
- * primary Raid Helper signups across **all** posted past events (not capped
- * to the last six WCL logs used for attendance %).
+ * Raid milestone badges: **only** the server-provided `rhPastEventCount`
+ * (Raid Helper primary signups across all posted past events — the same
+ * source as the leaderboard \"Events\" column). We intentionally do **not**
+ * fall back to WCL-window `raidsAttended`, or someone with 2 Events but 5/6
+ * WCL hits would incorrectly earn the 5-raid tile.
  */
 function raidsWithGuildCountForPlayer(player) {
-  const direct = Number(player?.raidsAttended);
-  const row = attendanceRowForRosterPlayerResolved(player);
-  const fromRow = row ? Number(row.raidsAttended || 0) : 0;
   const fromRh = Number(player?.rhPastEventCount || 0);
-  const candidates = [direct, fromRow, fromRh].map((n) =>
-    Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
-  );
-  return Math.max(0, ...candidates);
+  if (Number.isFinite(fromRh) && fromRh >= 0) return Math.floor(fromRh);
+  return 0;
 }
 
 function playerEarnedRaidsWithGuildMilestone(player, threshold) {
@@ -1249,35 +1245,35 @@ function rosterAchievementBadgesHtml(player) {
     {
       file: "raids-with-guild-100.png",
       title:
-        "100 raids with the guild — At least 100 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
+        "100 raids with the guild — At least 100 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
       alt: "100 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 100),
     },
     {
       file: "raids-with-guild-50.png",
       title:
-        "50 raids with the guild — At least 50 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
+        "50 raids with the guild — At least 50 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
       alt: "50 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 50),
     },
     {
       file: "raids-with-guild-25.png",
       title:
-        "25 raids with the guild — At least 25 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
+        "25 raids with the guild — At least 25 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
       alt: "25 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 25),
     },
     {
       file: "raids-with-guild-10.png",
       title:
-        "10 raids with the guild — At least 10 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
+        "10 raids with the guild — At least 10 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
       alt: "10 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 10),
     },
     {
       file: "raids-with-guild-5.png",
       title:
-        "5 raids with the guild — At least 5 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
+        "5 raids with the guild — At least 5 primary Raid Helper signups in all posted past events (your Events total on the leaderboard).",
       alt: "5 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 5),
     },
