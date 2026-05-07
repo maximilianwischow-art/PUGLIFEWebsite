@@ -5421,9 +5421,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-picture-drop { position: relative; width: 160px; height: 160px; border-radius: 16px; border: 2px dashed rgba(167, 139, 250, 0.45); background: rgba(20, 15, 34, 0.55); display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; overflow: hidden; transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease; }
 .profile-picture-drop:hover, .profile-picture-drop:focus-visible { border-color: rgba(167, 139, 250, 0.85); background: rgba(30, 22, 50, 0.7); outline: none; }
 .profile-picture-drop.is-drag-over { border-color: rgba(125, 211, 252, 0.95); background: rgba(20, 30, 50, 0.75); transform: scale(1.02); }
-.profile-picture-preview { width: 100%; height: 100%; object-fit: cover; display: none; }
+.profile-picture-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; display: none; z-index: 1; pointer-events: none; }
 .profile-picture-preview.is-loaded { display: block; }
-.profile-picture-placeholder { padding: 0.5rem 0.6rem; font-size: 0.85rem; color: rgba(225, 220, 245, 0.85); line-height: 1.3; }
+.profile-picture-placeholder { position: relative; z-index: 0; padding: 0.5rem 0.6rem; font-size: 0.85rem; color: rgba(225, 220, 245, 0.85); line-height: 1.3; }
 .profile-picture-actions { display: flex; flex-direction: column; justify-content: center; gap: 0.6rem; flex: 1 1 200px; min-width: 200px; }
 .profile-picture-status { margin: 0; font-size: 0.85rem; color: rgba(225, 220, 245, 0.8); min-height: 1.2em; }
 .profile-picture-status.is-error { color: #fca5a5; }

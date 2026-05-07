@@ -5515,14 +5515,24 @@ button.raid-cal-run.raid-cal-run--column:hover {
   background: rgba(20, 30, 50, 0.75);
   transform: scale(1.02);
 }
+/* Absolute fill: as a flex child, <img> keeps intrinsic min-size and stays
+   letterboxed; pinning to inset + object-fit makes any aspect ratio cover
+   the full drop tile. */
 .profile-picture-preview {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   display: none;
+  z-index: 1;
+  pointer-events: none;
 }
 .profile-picture-preview.is-loaded { display: block; }
 .profile-picture-placeholder {
+  position: relative;
+  z-index: 0;
   padding: 0.5rem 0.6rem;
   font-size: 0.85rem;
   color: rgba(225, 220, 245, 0.85);
