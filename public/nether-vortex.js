@@ -230,25 +230,29 @@ function demandRowMatchesFilter(row, q) {
 }
 
 /**
- * Renders the "Raider" cell — character link (when available) + optional
- * Discord name subtitle.
+ * Renders the "Raider" cell. Always shows the WoW character name from the
+ * Account Assignment table (`rh-wcl-character-links.json`). When a row has
+ * no character link yet we still need to show *something*, so we keep the
+ * Discord display name as a graceful fallback — but no Discord subtitle is
+ * rendered when a character is linked.
  */
 function buildDemandRaiderCell(row) {
   const discordName = String(row.displayName || "").trim();
-  const characterName = String(row.characterName || "").trim() || discordName || "Unknown";
+  const linkedCharacter = String(row.characterName || "").trim();
+  const hasLink = Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
+  const display = linkedCharacter || discordName || "Unknown";
   const url = String(row.characterProfileUrl || "").trim();
-  const resolvedDifferent =
-    discordName &&
-    characterName &&
-    discordName !== "Unknown" &&
-    characterName !== "Unknown" &&
-    discordName.toLowerCase() !== characterName.toLowerCase();
 
   const nameMarkup = url
-    ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(characterName)}</a>`
-    : esc(characterName);
-  const subtitle = resolvedDifferent ? `<span class="p2-demand-raider-sub">${esc(discordName)}</span>` : "";
-  return `<div class="p2-demand-raider-name">${nameMarkup}${subtitle}</div>`;
+    ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(display)}</a>`
+    : esc(display);
+  // When no Account Assignment exists, hint that this is a Discord username so
+  // the operator knows to add a mapping on /admin.html instead of treating it
+  // as a typo'd character. The hint is hidden the moment a link is saved.
+  const hint = !hasLink && discordName
+    ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row on /admin.html to show the WoW character.">unassigned</span>`
+    : "";
+  return `<div class="p2-demand-raider-name">${nameMarkup}${hint}</div>`;
 }
 
 /**
