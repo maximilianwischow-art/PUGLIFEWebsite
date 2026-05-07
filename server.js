@@ -43,6 +43,7 @@ import {
   userGetByDiscordId as identityUserGetByDiscordId,
   userGetById as identityUserGetById,
   userGetByRaidHelperKey as identityUserGetByRaidHelperKey,
+  userCount as identityUserCount,
   identityListLinkedCharacterNames,
   identityResolveProfilesByCharacterNames,
   identityResolveDiscordIdsByRhKey,
@@ -708,11 +709,10 @@ function eventsKpiCacheMaxStaleMs() {
 }
 
 function eventsKpiCacheKey({ guildId, maxPastEvents, wclLimit }) {
-  /* v3: roster footprint = max of RH distinct names, WCL distinct attendees
-     (from snapshots, scoped to admin selection when set), and
-     raid_appearances canonical user count. Bumped from v2 so old caches
-     containing the narrower count are not reused. */
-  return `events-kpi-v3:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
+  /* v4: roster footprint sources from the `users` SQLite table (canonical
+     raider database). Bumped from v3 so the previous "max of three
+     fallbacks" payloads are not reused. */
+  return `events-kpi-v4:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
 }
 
 const eventsKpiDiskCachePath = path.join(dataDir, "events-kpi-cache.json");
@@ -10808,11 +10808,11 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
     const uniqueKeys = new Set(keyLists.flat());
     const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = wclBundle;
 
-    /* WCL-based roster footprint = distinct attendees across the loaded
-       snapshots, scoped to admin Event Management when set. Counts ANY
-       character that appeared (linked or not), so it's broader than
-       `raid_appearances` (canonical users only) and more accurate than
-       Raid Helper signup names (which break down per event). */
+    /* Roster footprint = `users` table size — the canonical raider
+       database. Falls back to the broader of (Raid Helper distinct
+       primary signup names, WCL distinct attendees from snapshots,
+       raid_appearances distinct canonical users) when the SQLite probe
+       fails or the table is empty (first deploy before any sync). */
     const selectedReportCodesSet = new Set(
       (gargulLootState?.selectedReportCodes || [])
         .map((x) => String(x || "").trim())
@@ -10838,11 +10838,17 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
       }
     }
 
-    const uniqueRaiderCount = Math.max(
-      uniqueKeys.size,
-      wclDistinctAttendees.size,
-      raidAppearancesUserCount
-    );
+    let canonicalUserCount = 0;
+    try {
+      canonicalUserCount = identityUserCount();
+    } catch (err) {
+      console.warn("[events-kpi] identityUserCount failed:", err?.message || err);
+    }
+
+    const uniqueRaiderCount =
+      canonicalUserCount > 0
+        ? canonicalUserCount
+        : Math.max(uniqueKeys.size, wclDistinctAttendees.size, raidAppearancesUserCount);
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
       rhWclLinksState,
@@ -10885,6 +10891,8 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
     return {
       guildId,
       uniqueRaiderCount,
+      uniqueRaiderSource: canonicalUserCount > 0 ? "users-table" : "fallback",
+      canonicalUserCount,
       wclDistinctAttendeeCount: wclDistinctAttendees.size,
       raidAppearancesUserCount,
       raidHelperDistinctRaiderCount: uniqueKeys.size,
