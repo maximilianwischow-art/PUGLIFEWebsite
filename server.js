@@ -8698,6 +8698,20 @@ function wclRequiredRaidPlayersNormalized() {
     .filter(Boolean);
 }
 
+/**
+ * Minimum number of ranked characters that lets a report qualify as a guild
+ * raid even when none of the `WCL_REQUIRED_RAID_PLAYERS` ranked on it (e.g.
+ * Gernig was absent for the night). Default 8 so Karazhan 10-mans still pass;
+ * 25-man raids with 18+ ranked obviously do too. Set
+ * `WCL_GUILD_RAID_MIN_RANKED=999` to disable this fallback and revert to the
+ * strict "Gernig must be ranked" gate.
+ */
+function wclGuildRaidMinRankedFallback() {
+  const raw = Number(process.env.WCL_GUILD_RAID_MIN_RANKED);
+  if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  return 8;
+}
+
 function normalizedPlayerNamesFromReport(report) {
   const names = new Set();
   for (const c of report.rankedCharacters || []) {
@@ -8711,7 +8725,15 @@ function reportMatchesRequiredRaidPlayers(report) {
   const required = wclRequiredRaidPlayersNormalized();
   if (!required.length) return true;
   const names = normalizedPlayerNamesFromReport(report);
-  return required.every((req) => names.has(req));
+  if (required.every((req) => names.has(req))) return true;
+  /* Fallback: if none of the required players ranked on this report (e.g.
+     Gernig was absent), still accept it when the ranked roster looks
+     guild-sized. Without this fallback, a single raid leader's absence
+     would silently hide the latest log from MVP voting / Peak of the
+     Raid / Hall of Fame for hours after upload. */
+  const minRanked = wclGuildRaidMinRankedFallback();
+  if (minRanked > 0 && names.size >= minRanked) return true;
+  return false;
 }
 
 function filterReportsForRequiredRaidPlayers(reports) {
