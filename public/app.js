@@ -264,7 +264,6 @@ async function loadRaidPerfKpi() {
     });
     const data = await apiGetJson(`/api/raid-helper/events-kpi?${q}`, {
       credentials: "include",
-      skipCache: true,
     });
 
     const uniqueN = data.uniqueRaiderCount;

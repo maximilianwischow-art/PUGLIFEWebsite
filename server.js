@@ -560,24 +560,112 @@ function votingRoundCacheTtlMs() {
 
 function eventsKpiCacheTtlMs() {
   const n = Number(process.env.EVENTS_KPI_CACHE_MS);
-  if (Number.isFinite(n) && n >= 0) return Math.min(5 * 60_000, n);
-  return 60_000;
+  if (Number.isFinite(n) && n >= 0) return Math.min(60 * 60_000, n);
+  return 5 * 60_000;
+}
+
+function eventsKpiCacheMaxStaleMs() {
+  const n = Number(process.env.EVENTS_KPI_CACHE_MAX_STALE_MS);
+  if (Number.isFinite(n) && n >= 60_000) return Math.min(7 * 24 * 3600_000, n);
+  return 24 * 3600_000;
 }
 
 function eventsKpiCacheKey({ guildId, maxPastEvents, wclLimit }) {
   return `events-kpi-v1:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
 }
 
+const eventsKpiDiskCachePath = path.join(dataDir, "events-kpi-cache.json");
+let eventsKpiDiskCacheReady = null;
+let eventsKpiDiskWriteChain = Promise.resolve();
+/** Mirror of the persisted disk file — keeps writes O(1) without re-reading. */
+const eventsKpiDiskMirror = new Map();
+
+/**
+ * Hydrate {@link eventsKpiMicroCache} from `data/events-kpi-cache.json`. Runs once
+ * (lazy, idempotent) so the very first call after a Render cold start can answer
+ * from disk instead of hammering Raid Helper + WCL.
+ */
+async function ensureEventsKpiDiskCache() {
+  if (eventsKpiDiskCacheReady) return eventsKpiDiskCacheReady;
+  eventsKpiDiskCacheReady = (async () => {
+    try {
+      const raw = await readFile(eventsKpiDiskCachePath, "utf8");
+      const parsed = JSON.parse(raw);
+      const byKey = parsed && typeof parsed === "object" && parsed.byKey ? parsed.byKey : {};
+      for (const [key, entry] of Object.entries(byKey)) {
+        if (!entry || typeof entry !== "object") continue;
+        const at = Number(entry.at);
+        if (!Number.isFinite(at)) continue;
+        eventsKpiDiskMirror.set(key, { at, data: entry.data });
+        eventsKpiMicroCache.set(key, { at, data: entry.data });
+      }
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        console.warn("[events-kpi] disk cache load failed:", err?.message || err);
+      }
+    }
+  })();
+  return eventsKpiDiskCacheReady;
+}
+
+function persistEventsKpiDiskCache() {
+  eventsKpiDiskWriteChain = eventsKpiDiskWriteChain.catch(() => {}).then(async () => {
+    const byKey = {};
+    for (const [k, v] of eventsKpiDiskMirror.entries()) byKey[k] = v;
+    const tmp = `${eventsKpiDiskCachePath}.tmp`;
+    await writeFile(tmp, JSON.stringify({ byKey }, null, 2), "utf8");
+    await rename(tmp, eventsKpiDiskCachePath);
+  });
+  return eventsKpiDiskWriteChain;
+}
+
+/**
+ * Stale-while-revalidate KPI cache.
+ *
+ * - Fresh hit  (`age < ttl`)            → return cached, no work.
+ * - Stale-OK   (`ttl ≤ age < maxStale`) → return cached AND kick off background
+ *                                        refresh (the user sees instant data,
+ *                                        the next request gets fresh numbers).
+ * - Cold miss                           → compute synchronously, dedupe inflight.
+ */
 async function getEventsKpiCached(cacheKey, loader) {
+  await ensureEventsKpiDiskCache();
   const ttlMs = eventsKpiCacheTtlMs();
+  const maxStaleMs = eventsKpiCacheMaxStaleMs();
   const now = Date.now();
   const cached = eventsKpiMicroCache.get(cacheKey);
-  if (cached && now - Number(cached.at || 0) < ttlMs) return cached.data;
+  const age = cached ? now - Number(cached.at || 0) : Number.POSITIVE_INFINITY;
+
+  if (cached && age < ttlMs) return cached.data;
+
+  if (cached && age < maxStaleMs) {
+    if (!eventsKpiInflight.get(cacheKey)) {
+      const refresh = (async () => {
+        try {
+          const data = await loader();
+          const at = Date.now();
+          eventsKpiMicroCache.set(cacheKey, { at, data });
+          eventsKpiDiskMirror.set(cacheKey, { at, data });
+          persistEventsKpiDiskCache().catch(() => {});
+        } catch (err) {
+          console.warn("[events-kpi] background refresh failed:", err?.message || err);
+        } finally {
+          eventsKpiInflight.delete(cacheKey);
+        }
+      })();
+      eventsKpiInflight.set(cacheKey, refresh);
+    }
+    return cached.data;
+  }
+
   const running = eventsKpiInflight.get(cacheKey);
   if (running) return running;
   const task = (async () => {
     const data = await loader();
-    eventsKpiMicroCache.set(cacheKey, { at: Date.now(), data });
+    const at = Date.now();
+    eventsKpiMicroCache.set(cacheKey, { at, data });
+    eventsKpiDiskMirror.set(cacheKey, { at, data });
+    persistEventsKpiDiskCache().catch(() => {});
     return data;
   })().finally(() => {
     eventsKpiInflight.delete(cacheKey);
@@ -8578,11 +8666,15 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
       .slice(0, maxPastEvents);
 
     const rhKpiConc = Math.min(
-      16,
-      Math.max(1, Number(process.env.RAID_HELPER_FUTURE_EVENTS_CONCURRENCY || 6) || 6)
+      24,
+      Math.max(1, Number(process.env.RAID_HELPER_FUTURE_EVENTS_CONCURRENCY || 8) || 8)
     );
 
-    const [keyLists] = await Promise.all([
+    // Cold-call dominator: the WCL scan does **not** depend on the RH signups
+    // or the on-disk stores, so we run all three in parallel instead of
+    // letting WCL wait for the RH event fan-out to finish.
+    const reportLimit = wclLimit;
+    const [keyLists, , wclBundle] = await Promise.all([
       mapWithConcurrency(pastEvents, rhKpiConc, async (ev) => {
         const detail = await fetchRaidHelperEventDetail(ev.id);
         if (!detail) return [];
@@ -8599,16 +8691,11 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
         return keys;
       }),
       Promise.all([ensureRhWclLinksStore(), ensureGargulLootHistoryStore()]),
+      gatherAttendanceRaidSnapshots(guildId, reportLimit, { attendancePercentMetrics: true }),
     ]);
 
     const uniqueKeys = new Set(keyLists.flat());
-
-    const reportLimit = wclLimit;
-    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
-      guildId,
-      reportLimit,
-      { attendancePercentMetrics: true }
-    );
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = wclBundle;
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
       rhWclLinksState,
