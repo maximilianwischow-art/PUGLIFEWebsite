@@ -618,7 +618,7 @@ function wireSortHeaders() {
  */
 async function fetchAndBuildLeaderboardRows(gid, reportLimit, opts = {}) {
   const skipCache = !!opts.skipCache;
-  const rosterUrl = `/api/wcl/guild/${gid}/active-roster?limit=${reportLimit}&top=250&maxRhPastEvents=80`;
+  const rosterUrl = `/api/wcl/guild/${gid}/active-roster?limit=${reportLimit}&top=250&maxRhPastEvents=0`;
   const [rosterPayload, deathPayload, lootPayload] = await Promise.all([
     lbApiGetJson(rosterUrl, { credentials: "include", skipCache }),
     lbApiGetJson(`/api/wcl/guild/${gid}/death-leaderboard?limit=${reportLimit}&top=400`, { skipCache }),

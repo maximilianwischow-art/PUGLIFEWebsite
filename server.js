@@ -1477,7 +1477,7 @@ async function loadMergedRankingsBundleForHallOfFameUncached(raidCode) {
 /**
  * Shared builder for `GET /api/wcl/guild/:guildId/active-roster` and hall-of-fame roster matching.
  */
-async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top = 250, maxRhPastEvents = 80 } = {}) {
+async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top = 250, maxRhPastEvents = 0 } = {}) {
   const rhSignupCounts = await countRaidHelperPrimarySignupsPerRhKey(maxRhPastEvents);
   await ensureRhWclLinksStore();
   const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
@@ -1671,10 +1671,13 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
         "Peak parse columns: best single-boss percentile per raid log, then max across recent capped raids (tooltip = encounter + report + fight). Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) in any raid in the window.",
     },
     raidHelperEventScope: {
-      maxPastEvents: maxRhPastEvents,
+      maxPastEvents: maxRhPastEvents <= 0 ? null : maxRhPastEvents,
+      scanAllPastPostedEvents: maxRhPastEvents <= 0,
       pastEventsScanned: rhSignupCounts.pastEventsScanned,
       note:
-        "rhPastEventCount: primary signups in past Raid Helper events (scanned up to maxPastEvents, newest first).",
+        maxRhPastEvents <= 0
+          ? "rhPastEventCount: primary signups across every posted past Raid Helper event (all API pages; excludes Absence/Bench/Tentative/Late). Memoized server-side for a few minutes. Attendance % / iron badge still use only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6)."
+          : "rhPastEventCount: primary signups in past Raid Helper events (scanned up to maxPastEvents, newest first).",
     },
     players,
   };
@@ -1688,7 +1691,7 @@ async function enrichHallOfFameRows(guildId, rows) {
     const payload = await buildActiveRosterPlayersForGuild(guildId, {
       reportLimit: 40,
       top: 250,
-      maxRhPastEvents: 80,
+      maxRhPastEvents: 0,
     });
     players = payload.players || [];
   } catch {
@@ -4695,7 +4698,7 @@ app.post("/api/admin/public-snapshot/sync", async (req, res) => {
       `/api/wcl/guild/${guildId}/death-leaderboard?limit=40&top=400`,
       `/api/wcl/guild/${guildId}/attendance?limit=40&top=250`,
       `/api/wcl/guild/${guildId}/death-encounter-heatmap?limit=25`,
-      `/api/wcl/guild/${guildId}/active-roster?limit=40&top=250&maxRhPastEvents=80`,
+      `/api/wcl/guild/${guildId}/active-roster?limit=40&top=250&maxRhPastEvents=0`,
       `/api/wcl/guild/${guildId}/loot-received?limit=40`,
       `/api/wcl/guild/${guildId}/first-clear-participants?limit=150`,
       "/api/voting/hall-of-fame",
@@ -5731,7 +5734,7 @@ const BADGE_CATALOG = [
     id: "raid-milestones",
     label: "Raid milestones",
     description:
-      "Raids attended in the same tracked Warcraft Logs window as the attendance leaderboard (recent guild 25-player reports we sync — not necessarily all-time history beyond that window).",
+      "Primary signups across every posted past Raid Helper event (same total as the leaderboard \"Events\" column). Attendance % on the leaderboard still uses only the recent Warcraft Logs window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). Milestone badges use the larger of that window's attended count and this full Raid Helper total.",
     badges: [
       { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png" },
       { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png" },
@@ -6197,7 +6200,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       }
       let rhSignups = 0;
       try {
-        const result = await countRaidHelperPrimarySignupsPerRhKey(80);
+        const result = await countRaidHelperPrimarySignupsPerRhKey(0);
         const counts = result?.counts instanceof Map ? result.counts : null;
         if (counts) {
           for (const k of linkedKeys) {
@@ -9811,15 +9814,55 @@ async function fetchRaidHelperEventDetail(eventId) {
   return null;
 }
 
+/** Memo TTL for full-history Raid Helper signup scans (one detail fetch per past event). */
+function raidHelperSignupCountCacheTtlMs() {
+  const n = Number(process.env.RAID_HELPER_SIGNUP_COUNT_CACHE_TTL_MS);
+  if (Number.isFinite(n) && n >= 30_000) return Math.min(60 * 60_000, n);
+  return 10 * 60_000;
+}
+
+let raidHelperPrimarySignupCountCache = {
+  serverId: "",
+  mode: "",
+  /** @type {Map<string, number> | null} */
+  counts: null,
+  pastEventsScanned: 0,
+  at: 0,
+};
+
 /**
- * Count primary Raid Helper signups per normalized RH key across **past** posted events (same filters as events KPI).
+ * Count primary Raid Helper signups per normalized RH key across **past**
+ * posted events (same filters as the leaderboard "Events" KPI).
+ *
+ * @param maxPastEvents When `<= 0` or non-finite, scan **every** past posted
+ *   event returned by the Raid Helper API (all pages, newest first). When
+ *   `> 0`, cap to that many newest events. Results are memoized per-server for
+ *   {@link raidHelperSignupCountCacheTtlMs} to avoid refetching hundreds of
+ *   event payloads on every leaderboard poll.
  * @returns {Promise<{ counts: Map<string, number>, pastEventsScanned: number }>}
  */
 async function countRaidHelperPrimarySignupsPerRhKey(maxPastEvents) {
   const serverId = raidHelperDiscordGuildId() || "711838953430319115";
   const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
   const nowSec = Math.floor(Date.now() / 1000);
-  const cap = Math.min(150, Math.max(1, Math.floor(Number(maxPastEvents || 80))));
+  const raw = maxPastEvents == null ? NaN : Number(maxPastEvents);
+  const scanAll = !Number.isFinite(raw) || raw <= 0;
+  const cap = scanAll ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(raw));
+  const mode = scanAll ? "all" : `cap:${cap}`;
+
+  const ttl = raidHelperSignupCountCacheTtlMs();
+  const tNow = Date.now();
+  if (
+    raidHelperPrimarySignupCountCache.serverId === serverId &&
+    raidHelperPrimarySignupCountCache.mode === mode &&
+    raidHelperPrimarySignupCountCache.counts instanceof Map &&
+    tNow - raidHelperPrimarySignupCountCache.at < ttl
+  ) {
+    return {
+      counts: new Map(raidHelperPrimarySignupCountCache.counts),
+      pastEventsScanned: raidHelperPrimarySignupCountCache.pastEventsScanned,
+    };
+  }
 
   const allEvents = await fetchRaidHelperServerEvents(serverId);
   const pastEvents = allEvents
@@ -9829,7 +9872,7 @@ async function countRaidHelperPrimarySignupsPerRhKey(maxPastEvents) {
     }))
     .filter((e) => e.id && e.startTime > 0 && e.startTime <= nowSec)
     .sort((a, b) => b.startTime - a.startTime)
-    .slice(0, cap);
+    .slice(0, Number.isFinite(cap) && cap < Number.POSITIVE_INFINITY ? cap : undefined);
 
   /** @type {Map<string, number>} */
   const counts = new Map();
@@ -9847,7 +9890,15 @@ async function countRaidHelperPrimarySignupsPerRhKey(maxPastEvents) {
     }
   }
 
-  return { counts, pastEventsScanned: pastEvents.length };
+  const countsCopy = new Map(counts);
+  raidHelperPrimarySignupCountCache = {
+    serverId,
+    mode,
+    counts: countsCopy,
+    pastEventsScanned: pastEvents.length,
+    at: tNow,
+  };
+  return { counts: new Map(countsCopy), pastEventsScanned: pastEvents.length };
 }
 
 /**
@@ -11205,8 +11256,12 @@ app.get("/api/wcl/guild/:guildId/first-clear-participants", async (req, res) => 
 });
 
 /**
- * Active roster: players with ≥1 attendance hit in the same capped recent 25-player raids as `/attendance`,
- * enriched with Raider.io / WCL spec art like Events cards. Includes `guildRole` from Account Assignment store.
+ * Active roster: players with ≥1 attendance hit in the same capped recent
+ * 25-player raids as `/attendance` (WCL_ATTENDANCE_RECENT_RAIDS, default 6),
+ * enriched with Raider.io / WCL spec art like Events cards. Includes
+ * `guildRole` from Account Assignment store. `rhPastEventCount` defaults to a
+ * **full-history** Raid Helper primary-signup scan (`maxRhPastEvents=0`); pass
+ * a positive integer to cap how many newest past events are scanned (max 5000).
  */
 app.get("/api/wcl/guild/:guildId/active-roster", async (req, res) => {
   const guildId = Number(req.params.guildId);
@@ -11215,7 +11270,9 @@ app.get("/api/wcl/guild/:guildId/active-roster", async (req, res) => {
     Math.max(10, Number(req.query.limit || 40))
   );
   const top = Math.min(300, Math.max(80, Number(req.query.top || 220)));
-  const maxRhPastEvents = Math.min(150, Math.max(1, Math.floor(Number(req.query.maxRhPastEvents || 80))));
+  const rawRhCap = Math.floor(Number(req.query.maxRhPastEvents ?? 0));
+  const maxRhPastEvents =
+    !Number.isFinite(rawRhCap) || rawRhCap <= 0 ? 0 : Math.min(5000, Math.max(1, rawRhCap));
   if (!Number.isInteger(guildId) || guildId <= 0) {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
@@ -12156,13 +12213,12 @@ async function runSyncBadges() {
     console.warn("[sync:badges] raid attendance snapshot read failed:", error?.message || error);
   }
 
-  /* Pull the same Raid Helper signup counts the leaderboard's "Events" KPI
-     uses, so milestone badges align with what the user can already see in
-     the row. raidsAttended is window-capped (~6 reports); rhPastEventCount
-     covers the broader signup history scanned by the active-roster pipeline. */
+  /* Full-history Raid Helper primary signup counts (same source as the
+     leaderboard "Events" column). Memoized inside countRaidHelper… so badge
+     sync does not refetch every event detail on every 15 min tick. */
   let rhSignupCountsByKey = new Map();
   try {
-    const result = await countRaidHelperPrimarySignupsPerRhKey(80);
+    const result = await countRaidHelperPrimarySignupsPerRhKey(0);
     rhSignupCountsByKey = result?.counts instanceof Map ? result.counts : new Map();
   } catch (error) {
     console.warn("[sync:badges] RH signup count load failed:", error?.message || error);

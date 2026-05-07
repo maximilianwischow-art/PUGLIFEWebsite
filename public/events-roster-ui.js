@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507raidmilestones3";
+const IMAGE_ASSET_VERSION = "20260507raidmilestones4";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1207,13 +1207,10 @@ function achievementBadgeIconUrlWithFallback(fileName) {
 }
 
 /**
- * Total raids the user has been part of for milestone badges. We deliberately
- * use the bigger of (a) raidsAttended in the synced WCL window — which is
- * usually capped to the most recent ~6 reports — and (b) rhPastEventCount,
- * the Raid Helper signup count visible on the leaderboard's "Events" KPI. A
- * raider with 11 RH events but only 5 raids in the WCL window is the case
- * that motivated this: the leaderboard already shows "Events: 11", so the
- * 10-raid milestone should light up.
+ * Total raids for milestone badges: max of (a) WCL-window `raidsAttended` and
+ * (b) `rhPastEventCount` — the leaderboard "Events" number, which counts
+ * primary Raid Helper signups across **all** posted past events (not capped
+ * to the last six WCL logs used for attendance %).
  */
 function raidsWithGuildCountForPlayer(player) {
   const direct = Number(player?.raidsAttended);
@@ -1252,35 +1249,35 @@ function rosterAchievementBadgesHtml(player) {
     {
       file: "raids-with-guild-100.png",
       title:
-        "100 raids with the guild — Attended at least 100 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+        "100 raids with the guild — At least 100 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
       alt: "100 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 100),
     },
     {
       file: "raids-with-guild-50.png",
       title:
-        "50 raids with the guild — Attended at least 50 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+        "50 raids with the guild — At least 50 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
       alt: "50 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 50),
     },
     {
       file: "raids-with-guild-25.png",
       title:
-        "25 raids with the guild — Attended at least 25 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+        "25 raids with the guild — At least 25 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
       alt: "25 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 25),
     },
     {
       file: "raids-with-guild-10.png",
       title:
-        "10 raids with the guild — Attended at least 10 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+        "10 raids with the guild — At least 10 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
       alt: "10 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 10),
     },
     {
       file: "raids-with-guild-5.png",
       title:
-        "5 raids with the guild — Attended at least 5 raids in the current tracked Warcraft Logs window (same numerator as the attendance KPI on the leaderboard).",
+        "5 raids with the guild — At least 5 primary Raid Helper signups across all posted past events (same total as the leaderboard Events column), or that many raids in the recent WCL attendance window, whichever is higher.",
       alt: "5 raids with the guild",
       ok: playerEarnedRaidsWithGuildMilestone(player, 5),
     },
