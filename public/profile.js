@@ -221,6 +221,19 @@
 
   async function loadBadges() {
     if (!els.badgesHost) return;
+    /* Pre-warm the WCL fan-out (`/attendance`, `/boss-times`,
+       `/voting/hall-of-fame`, `/first-clear-participants`,
+       `/death-leaderboard`) in parallel with the badges fetch so the
+       Achievements row resolves as soon as the slowest of the two
+       finishes — instead of waiting until *after* the server response
+       renders before kicking it off (the previous serial behaviour). */
+    const plb = window.plbEventsRoster;
+    const wclWarmup =
+      plb && typeof plb.loadWclAttendanceForEvents === "function"
+        ? plb.loadWclAttendanceForEvents({ skipCache: true }).catch((error) => {
+            console.warn("[profile] WCL pre-warm failed:", error?.message || error);
+          })
+        : Promise.resolve();
     try {
       const res = await fetch("/api/profile/me/badges", { credentials: "include" });
       if (res.status === 401) {
@@ -234,7 +247,10 @@
         els.badgesHost.innerHTML = '<p class="subtle">No badges defined yet.</p>';
         return;
       }
-      els.badgesHost.innerHTML = categories.map(renderBadgeCategoryHtml).join("");
+      const lazyBadgeIds = Array.isArray(payload.lazyBadges) ? payload.lazyBadges : [];
+      els.badgesHost.innerHTML = categories
+        .map((cat) => renderBadgeCategoryHtml(cat, lazyBadgeIds))
+        .join("");
 
       // Lazy second-pass: re-run the leaderboard's badge matchers against the
       // user's linked WoW characters so iron-attendance / parsing-ceiling /
@@ -243,7 +259,7 @@
       // resolver missed them (e.g. linked names not present on the Account
       // Assignment row, cold WCL cache, etc.).
       const linkedCharacters = Array.isArray(payload.linkedCharacters) ? payload.linkedCharacters : [];
-      resolveBadgesClientSide(linkedCharacters, categories).catch(() => {
+      resolveBadgesClientSide(linkedCharacters, categories, wclWarmup).catch(() => {
         /* leaderboard-only badges stay locked if WCL data is unavailable */
       });
     } catch (error) {
@@ -251,7 +267,9 @@
     }
   }
 
-  function renderBadgeCategoryHtml(cat) {
+  function renderBadgeCategoryHtml(cat, lazyBadgeIds) {
+    const lazySet = new Set(Array.isArray(lazyBadgeIds) ? lazyBadgeIds : []);
+    const hasLazy = (cat.badges || []).some((b) => lazySet.has(b.id));
     const earnedCount = (cat.badges || []).filter((b) => b.earned).length;
     const total = (cat.badges || []).length;
     const items = (cat.badges || [])
@@ -267,13 +285,20 @@
           </div>`;
       })
       .join("");
+    const meterHtml = hasLazy
+      ? `<span class="profile-badge-resolving" title="Looking up Warcraft Logs…">resolving…</span>`
+      : `${earnedCount} / ${total}`;
+    const resolvingHint = hasLazy
+      ? `<p class="subtle profile-badge-resolving-hint">Looking up Warcraft Logs… achievements light up once your linked characters are matched.</p>`
+      : "";
     return `
-      <section class="profile-badge-category" data-category-id="${escapeHtml(cat.id || "")}">
+      <section class="profile-badge-category${hasLazy ? " is-resolving" : ""}" data-category-id="${escapeHtml(cat.id || "")}">
         <header class="profile-badge-category-head">
           <h4 class="profile-badge-category-title">${escapeHtml(cat.label)}</h4>
-          <span class="profile-badge-category-meter" data-meter-total="${total}">${earnedCount} / ${total}</span>
+          <span class="profile-badge-category-meter" data-meter-total="${total}">${meterHtml}</span>
         </header>
         ${cat.description ? `<p class="subtle profile-badge-category-desc">${escapeHtml(cat.description)}</p>` : ""}
+        ${resolvingHint}
         <div class="profile-badge-grid">${items}</div>
       </section>`;
   }
@@ -285,13 +310,26 @@
    * badge. After resolution, swap tile classes from `is-locked` to `is-earned`
    * and update each category's "x / total" meter.
    */
-  async function resolveBadgesClientSide(linkedCharacters, serverCategories) {
+  async function resolveBadgesClientSide(linkedCharacters, serverCategories, wclPrefetch) {
     const plb = window.plbEventsRoster;
     if (!plb || typeof plb.loadWclAttendanceForEvents !== "function") return;
     const names = (linkedCharacters || []).map((s) => String(s || "").trim()).filter(Boolean);
-    if (!names.length) return;
+    if (!names.length) {
+      // Even with no linked characters, drop the "resolving…" placeholders so
+      // the meter doesn't sit stuck on "resolving…" forever for a brand-new
+      // user without an Account Assignment row.
+      finalizeLazyBadgeCategoriesUI();
+      return;
+    }
 
-    await plb.loadWclAttendanceForEvents({ skipCache: true });
+    /* Prefer the prefetch promise kicked off by `loadBadges` so we don't fire
+       a second WCL fan-out. Fall back to a fresh load if the caller didn't
+       pre-warm (e.g. a future caller). */
+    if (wclPrefetch && typeof wclPrefetch.then === "function") {
+      await wclPrefetch;
+    } else {
+      await plb.loadWclAttendanceForEvents({ skipCache: true });
+    }
 
     const resolvers = {
       "best-time-participant": plb.playerEarnedBestTimeParticipantBadge,
@@ -370,13 +408,26 @@
       }
     });
 
-    // Recount each category meter.
+    finalizeLazyBadgeCategoriesUI();
+  }
+
+  /**
+   * Replace the "resolving…" indicator on lazy categories with the real
+   * `earned / total` count and remove the temporary hint text. Also recounts
+   * meters on every category so first-clear / milestone tiles stay in sync
+   * after client-side resolution.
+   */
+  function finalizeLazyBadgeCategoriesUI() {
+    if (!els.badgesHost) return;
     const categories = els.badgesHost.querySelectorAll(".profile-badge-category");
     categories.forEach((cat) => {
       const total = cat.querySelector(".profile-badge-category-meter")?.getAttribute("data-meter-total");
       const earned = cat.querySelectorAll(".profile-badge-tile.is-earned").length;
       const meter = cat.querySelector(".profile-badge-category-meter");
       if (meter && total != null) meter.textContent = `${earned} / ${total}`;
+      cat.classList.remove("is-resolving");
+      const hint = cat.querySelector(".profile-badge-resolving-hint");
+      if (hint) hint.remove();
     });
   }
 

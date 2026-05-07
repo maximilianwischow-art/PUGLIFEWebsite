@@ -5459,6 +5459,11 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-badge-tile.is-locked { opacity: 0.85; }
 .profile-badge-tile.is-earned { border-color: rgba(167, 139, 250, 0.55); box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18); }
 .profile-badge-name { font-size: 0.78rem; line-height: 1.2; color: rgba(225, 220, 245, 0.92); word-break: break-word; }
+.profile-badge-resolving { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.04em; color: rgba(225, 220, 245, 0.9); }
+.profile-badge-resolving::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(167, 139, 250, 0.45); border-top-color: rgba(225, 220, 245, 0.95); animation: profile-badge-resolving-spin 0.85s linear infinite; }
+.profile-badge-resolving-hint { margin: 0 0 0.6rem; font-size: 0.78rem; color: rgba(225, 220, 245, 0.65); }
+.profile-badge-category.is-resolving .profile-badge-tile.is-locked { opacity: 0.65; }
+@keyframes profile-badge-resolving-spin { to { transform: rotate(360deg); } }
 
 /* =============================================================================
  * Mobile polish (≤640px / phone viewports)
