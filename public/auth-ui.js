@@ -6,6 +6,37 @@ async function mountAuthHeaderWidget() {
   const loginHref = `/auth/discord/login?next=${encodeURIComponent(currentPath)}`;
   const nav = document.querySelector(".top-nav");
 
+  function ensurePhase2NavLink() {
+    if (!nav) return null;
+    let phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+    if (!phase2Link) {
+      phase2Link = document.createElement("a");
+      phase2Link.href = "/p2-preparation.html";
+      phase2Link.textContent = "Phase 2";
+      const adminLink = nav.querySelector('a[href="/admin.html"]');
+      if (adminLink) nav.insertBefore(phase2Link, adminLink);
+      else nav.appendChild(phase2Link);
+    }
+    phase2Link.classList.add("nav-auth-hidden");
+    return phase2Link;
+  }
+
+  function updatePhase2NavState(isAuthenticated) {
+    const phase2Link = ensurePhase2NavLink();
+    if (!phase2Link) return;
+    const onPhase2 =
+      currentPath === "/p2-preparation.html" || currentPath === "/nether-vortex.html";
+    if (onPhase2 && isAuthenticated) {
+      phase2Link.classList.add("nav-current");
+      phase2Link.setAttribute("aria-current", "page");
+    } else {
+      phase2Link.classList.remove("nav-current");
+      phase2Link.removeAttribute("aria-current");
+    }
+    if (isAuthenticated) phase2Link.classList.remove("nav-auth-hidden");
+    else phase2Link.classList.add("nav-auth-hidden");
+  }
+
   function ensureAdminNavLink() {
     if (!nav) return null;
     let adminLink = nav.querySelector('a[href="/admin.html"]');
@@ -35,6 +66,7 @@ async function mountAuthHeaderWidget() {
 
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
+    updatePhase2NavState(false);
     updateAdminNavState(false);
   };
 
@@ -75,6 +107,7 @@ async function mountAuthHeaderWidget() {
       }
       window.location.reload();
     });
+    updatePhase2NavState(true);
     updateAdminNavState(Boolean(payload?.isAdmin));
   } catch {
     renderLoggedOut();

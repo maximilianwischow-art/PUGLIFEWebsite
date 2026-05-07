@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="PUG Life Balance — recruit for TBC Classic 25-player raids on EU Thunderstrike. Schedule, needs, and how to apply."
+      content="PUG Life Balance — recruit for TBC Classic 25-player raids on EU Thunderstrike. Schedule, needs, and how to join."
     />
     <title>PUG LIFE BALANCE · Join Us</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -16,7 +16,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260506framework6" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260507joinclean1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-vivid">
@@ -31,7 +31,10 @@
             alt=""
             width="1024"
             height="409"
-            decoding="async" loading="eager" fetchpriority="high" sizes="(max-width: 960px) 100vw, 960px"
+            decoding="async"
+            loading="eager"
+            fetchpriority="high"
+            sizes="(max-width: 960px) 100vw, 960px"
           />
         </div>
         <p class="hero-sub">OG PUG Thunderstrike EU</p>
@@ -67,24 +70,28 @@
           <section class="card surface-highlight join-hero">
             <p class="join-hero-kicker">Recruitment Open</p>
             <h2 class="join-hero-title">Answer the Call</h2>
-            <p class="join-hero-lede">
-              PUG Life Balance is recruiting skilled, reliable raiders for TBC Classic progression on EU Thunderstrike — focused, chill vibes.
-            </p>
-            <div class="join-value-chips" role="list" aria-label="Recruitment highlights">
-              <span class="join-value-chip" role="listitem">Raid Day: Thursday</span>
-              <span class="join-value-chip" role="listitem">Server: Thunderstrike EU</span>
-              <span class="join-value-chip" role="listitem">Application: under 2 min</span>
-            </div>
-            <div class="join-cta-row">
-              <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Apply on Discord</a>
-              <a
-                class="join-discord-btn join-discord-btn--soft"
-                id="joinDmSubscribeBtn"
-                href="/auth/discord/login?next=%2Fjoin.html"
-                title="Subscribe to Discord DM for SignUps"
-                aria-label="Subscribe to Discord DM for SignUps"
-                ><span class="join-subscribe-btn-text">Subscribe</span><span class="join-subscribe-btn-status" aria-hidden="true">○</span></a
-              >
+            <div class="join-hero-body">
+              <p class="join-hero-lede">
+                We are looking for skilled, reliable raiders for <strong>TBC Classic</strong> on <strong>EU Thunderstrike</strong>.
+                Progression-focused runs with calm comms and a drama-light roster.
+              </p>
+              <div class="join-hero-actions">
+                <div class="join-value-chips" role="list" aria-label="Recruitment highlights">
+                  <span class="join-value-chip" role="listitem">Raid day: Thursday</span>
+                  <span class="join-value-chip" role="listitem">Server: Thunderstrike EU</span>
+                </div>
+                <div class="join-cta-row">
+                  <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join our Discord</a>
+                  <a
+                    class="join-discord-btn join-discord-btn--soft"
+                    id="joinDmSubscribeBtn"
+                    href="/auth/discord/login?next=%2Fjoin.html"
+                    title="Subscribe to Discord DM for SignUps"
+                    aria-label="Subscribe to Discord DM for SignUps"
+                    ><span class="join-subscribe-btn-text">Subscribe</span><span class="join-subscribe-btn-status" aria-hidden="true">○</span></a
+                  >
+                </div>
+              </div>
             </div>
           </section>
 
@@ -188,13 +195,13 @@
               </li>
             </ul>
             <div class="join-cta-row join-cta-row--footer">
-              <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Apply on Discord</a>
+              <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join our Discord</a>
             </div>
           </section>
         </section>
       </main>
 
-      <a class="join-mobile-cta" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Apply on Discord</a>
+      <a class="join-mobile-cta" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join our Discord</a>
 
       <div id="joinSubscribePopupBackdrop" class="join-subscribe-popup-backdrop" hidden></div>
       <section
@@ -205,9 +212,7 @@
         aria-labelledby="joinSubscribePopupTitle"
         hidden
       >
-        <button type="button" id="joinSubscribePopupClose" class="join-subscribe-popup-close" aria-label="Close popup">
-          ×
-        </button>
+        <button type="button" id="joinSubscribePopupClose" class="join-subscribe-popup-close" aria-label="Close popup">×</button>
         <div class="join-subscribe-popup-copy">
           <h2 id="joinSubscribePopupTitle" class="join-subscribe-popup-title">
             Thanks for Subscribing - you will receive a Discord DM once new Events go live
@@ -231,15 +236,7 @@
 
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/join.js?v=20260506joinv1"></script>
-    <script defer src="/auth-ui.js?v=20260506nav2"></script>
+    <script defer src="/auth-ui.js?v=20260506p2nav1"></script>
     <script defer src="/cookie-notice.js?v=20260428p"></script>
   </body>
 </html>
-
-
-
-
-
-
-
-

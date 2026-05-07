@@ -6,11 +6,21 @@ import compression from "compression";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { mergeRhWclGuess, normalizeRhWclGuildRole, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
 import { syncBadgePngsToSvgs, watchBadgePngsToSvgs } from "./lib/badge-png-svg-sync.mjs";
+import {
+  openItemNeedsDb,
+  nvUpsertCurrent,
+  nvGetAllCurrent,
+  nvGetHistory,
+  p2UpsertMaterial,
+  p2GetAllCurrent,
+  p2GetHistory,
+  getItemNeedsDbPath,
+} from "./lib/item-needs-db.mjs";
 
 dotenv.config({ override: true });
 
@@ -108,6 +118,17 @@ app.get("/admin.html", (req, res) => {
   return res.sendFile(path.join(publicDir, "admin.html"));
 });
 
+/** Browsers may still send `If-None-Match` after a prior ETag; Express then returns 304 with an empty body and the
+ * client reuses whatever document it had — which breaks HTML when inline `<style>` changes but the URL does not.
+ * Strip conditional headers for `.html` so static always sends a full 200 + body (Cache-Control is still no-store). */
+app.use((req, res, next) => {
+  if (req.method === "GET" && /\.html$/i.test(String(req.path || ""))) {
+    delete req.headers["if-none-match"];
+    delete req.headers["if-modified-since"];
+  }
+  next();
+});
+
 app.use(
   express.static(publicDir, {
     etag: true,
@@ -115,6 +136,15 @@ app.use(
     index: false,
     maxAge: isProd ? "1d" : 0,
     immutable: false,
+    setHeaders: (res, filePath) => {
+      // HTML pages must never get heuristic freshness in any browser/proxy — otherwise inline
+      // <style> + cache-busted script URLs go stale together when iterating on Phase 2 / NV.
+      if (/\.html$/i.test(filePath)) {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      }
+    },
   })
 );
 
@@ -261,7 +291,53 @@ const sessionTtlMs = 1000 * 60 * 60 * 24 * 7;
 const oauthStateTtlMs = 1000 * 60 * 10;
 const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString("hex");
 const authSessions = new Map();
-const oauthStates = new Map();
+
+/** Only allow relative redirect targets after Discord OAuth (open-redirect hardening). */
+function safeDiscordOAuthNext(raw) {
+  const s = String(raw || "").trim() || "/voting.html";
+  if (!s.startsWith("/") || s.startsWith("//")) return "/voting.html";
+  if (s.includes("\\") || /[\0\r\n]/.test(s)) return "/voting.html";
+  return s;
+}
+
+/**
+ * Stateless OAuth `state` (HMAC-signed) so login survives server restarts and single-process dev.
+ * Previously used an in-memory Map, which produced HTTP 400 after `node --watch` / redeploy.
+ */
+function encodeDiscordOAuthState(nextPath, ttlMs) {
+  const exp = Date.now() + ttlMs;
+  const next = safeDiscordOAuthNext(nextPath);
+  const payload = JSON.stringify({ exp, next });
+  const payloadB64 = Buffer.from(payload, "utf8").toString("base64url");
+  const sig = createHmac("sha256", authSessionSecret).update(payloadB64).digest("base64url");
+  return `${payloadB64}.${sig}`;
+}
+
+function decodeDiscordOAuthState(stateParam) {
+  const raw = String(stateParam || "").trim();
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const payloadB64 = raw.slice(0, dot);
+  const sig = raw.slice(dot + 1);
+  const expected = createHmac("sha256", authSessionSecret).update(payloadB64).digest("base64url");
+  try {
+    const a = Buffer.from(sig, "utf8");
+    const b = Buffer.from(expected, "utf8");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  } catch {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  const exp = Number(parsed?.exp);
+  const next = safeDiscordOAuthNext(parsed?.next);
+  if (!Number.isFinite(exp)) return null;
+  return { expiresAt: exp, next };
+}
 
 function discordAuthHelpHtml(title, lines) {
   const inner = lines.map((t) => `<p>${String(t)}</p>`).join("");
@@ -309,6 +385,20 @@ function pickWritableDataDir() {
   return defaultDataDir;
 }
 const dataDir = pickWritableDataDir();
+
+/**
+ * Open the SQLite-backed Item Need Submissions database. The DB is the source
+ * of truth for Nether Vortex needs and P2 raid material counts; the legacy
+ * JSON files (`nether-vortex-needs.json`, `p2-materials.json`) are migrated on
+ * first run and then kept as a write-through human-readable backup.
+ */
+try {
+  openItemNeedsDb(dataDir);
+  console.log(`[item-needs-db] ready at ${getItemNeedsDbPath()}`);
+} catch (error) {
+  console.warn("[item-needs-db] failed to open database:", error?.message || error);
+}
+
 const votingStorePath = path.join(dataDir, "mvp-votes.json");
 let votingStoreReady = null;
 let votingWriteChain = Promise.resolve();
@@ -663,9 +753,6 @@ function pruneAuthMaps() {
   const now = Date.now();
   for (const [k, v] of authSessions) {
     if (!v || v.expiresAt <= now) authSessions.delete(k);
-  }
-  for (const [k, v] of oauthStates) {
-    if (!v || v.expiresAt <= now) oauthStates.delete(k);
   }
 }
 
@@ -1535,6 +1622,9 @@ async function ensureP2MaterialsStore() {
   if (p2MaterialsReady) return p2MaterialsReady;
   p2MaterialsReady = (async () => {
     await mkdir(dataDir, { recursive: true });
+    // Seed in-memory state from the legacy JSON file first (so the DB migration
+    // and any pre-DB deployments still work). The SQLite database overrides
+    // these values below when present.
     try {
       const raw = await readFile(p2MaterialsPath, "utf8");
       const parsed = JSON.parse(raw);
@@ -1553,6 +1643,24 @@ async function ensureP2MaterialsStore() {
       };
       await persistP2Materials();
     }
+    // SQLite is authoritative once the DB is populated (post-migration). Pull
+    // the latest counts so reloads after a server restart see DB-backed values.
+    try {
+      const { currentById } = p2GetAllCurrent();
+      const merged = { ...p2MaterialsState.currentById };
+      let touched = false;
+      for (const [id, value] of Object.entries(currentById)) {
+        const v = Number(value);
+        if (!Number.isFinite(v) || v < 0) continue;
+        if (merged[id] !== v) {
+          merged[id] = v;
+          touched = true;
+        }
+      }
+      if (touched) p2MaterialsState = { currentById: merged };
+    } catch (error) {
+      console.warn("[item-needs-db] p2 hydrate failed:", error?.message || error);
+    }
   })();
   return p2MaterialsReady;
 }
@@ -1566,11 +1674,24 @@ function getP2MaterialsRows() {
   }));
 }
 
-async function setP2MaterialCurrent(materialId, currentValue) {
+async function setP2MaterialCurrent(materialId, currentValue, editor = null) {
   await ensureP2MaterialsStore();
   const exists = P2_MATERIALS.some((m) => m.id === materialId);
   if (!exists) throw new Error("Unknown material id");
   const safeValue = Math.max(0, Math.floor(Number(currentValue || 0)));
+
+  // SQLite write is synchronous and append-only (history row on every change).
+  try {
+    p2UpsertMaterial({
+      materialId,
+      currentValue: safeValue,
+      updatedAt: Date.now(),
+      userId: editor?.userId || null,
+      displayName: editor?.displayName || null,
+    });
+  } catch (error) {
+    console.warn("[item-needs-db] p2UpsertMaterial failed:", error?.message || error);
+  }
 
   p2MaterialsWriteChain = p2MaterialsWriteChain.then(async () => {
     p2MaterialsState.currentById[materialId] = safeValue;
@@ -2649,6 +2770,8 @@ async function ensureNetherVortexStore() {
   if (netherVortexReady) return netherVortexReady;
   netherVortexReady = (async () => {
     await mkdir(dataDir, { recursive: true });
+    // Load legacy JSON first (used as the migration source the very first time
+    // the SQLite DB is opened, and as a fallback if the DB is unavailable).
     try {
       const raw = await readFile(netherVortexNeedsPath, "utf8");
       const parsed = JSON.parse(raw);
@@ -2660,6 +2783,23 @@ async function ensureNetherVortexStore() {
       if (error?.code !== "ENOENT") throw error;
       netherVortexState = { entries: [] };
       await persistNetherVortexStore();
+    }
+    // Override from SQLite once it has rows. The DB is the source of truth.
+    try {
+      const dbRows = nvGetAllCurrent();
+      if (dbRows.length) {
+        netherVortexState = {
+          entries: dbRows.map((r) => ({
+            userId: r.userId,
+            displayName: r.displayName,
+            neededCount: Number(r.neededCount) || 0,
+            items: Array.isArray(r.items) ? r.items : [],
+            updatedAt: Number(r.updatedAt) || 0,
+          })),
+        };
+      }
+    } catch (error) {
+      console.warn("[item-needs-db] nv hydrate failed:", error?.message || error);
     }
   })();
   return netherVortexReady;
@@ -2929,10 +3069,9 @@ function netherVortexUnitsFromItems(items) {
   }, 0);
 }
 
-/** Total Nether Vortex for one guild member: explicit pool + each craft line. */
+/** Total Nether Vortex for one guild member: sum of craft lines only (pool field retired). */
 function netherVortexEntryTotal(row) {
-  const pool = Math.max(0, Number(row?.neededCount || 0));
-  return pool + netherVortexUnitsFromItems(row?.items);
+  return netherVortexUnitsFromItems(row?.items);
 }
 
 function sanitizeNetherVortexItems(items) {
@@ -2961,7 +3100,12 @@ function sanitizeNetherVortexItems(items) {
           }
         : null
     )
-    .filter((row) => row && row.itemName)
+    .filter((row) => {
+      if (!row) return false;
+      const name = String(row.itemName || "").trim();
+      const id = Number(row.itemID || 0);
+      return Boolean(name) || (Number.isFinite(id) && id > 0);
+    })
     .slice(0, 30);
 }
 
@@ -3202,9 +3346,13 @@ function enrichSanitizedNetherVortexItems(items, catalogMaps) {
     const vortexNeeded = cat
       ? Math.max(1, Math.min(20, Math.floor(Number(cat.vortexNeeded || 1))))
       : Math.max(1, Math.min(20, Math.floor(Number(row.vortexNeeded || 1))));
+    const itemName = String(row.itemName || "").trim() || (cat ? String(cat.itemName || "").trim() : "");
+    const profession = String(row.profession || "").trim() || (cat ? String(cat.profession || "").trim() : "");
     return {
       ...row,
       itemID: Number.isFinite(id) && id > 0 ? id : Number(row.itemID || 0),
+      itemName,
+      profession,
       vortexNeeded,
     };
   });
@@ -3357,7 +3505,11 @@ app.get("/voting.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "voting.html"));
 });
 
-app.get("/p2-preparation.html", (_req, res) => {
+app.get("/p2-preparation.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/p2-preparation.html")}`);
+  }
   res.sendFile(path.join(publicDir, "p2-preparation.html"));
 });
 
@@ -3365,7 +3517,11 @@ app.get("/loot-history.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "loot-history.html"));
 });
 
-app.get("/nether-vortex.html", (_req, res) => {
+app.get("/nether-vortex.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/nether-vortex.html")}`);
+  }
   res.sendFile(path.join(publicDir, "p2-preparation.html"));
 });
 
@@ -3390,9 +3546,8 @@ app.get("/auth/discord/login", (req, res) => {
       );
   }
   pruneAuthMaps();
-  const state = randomBytes(18).toString("hex");
   const next = String(req.query.next || "/voting.html");
-  oauthStates.set(state, { expiresAt: Date.now() + oauthStateTtlMs, next });
+  const state = encodeDiscordOAuthState(next, oauthStateTtlMs);
 
   const qs = new URLSearchParams({
     client_id: discordClientId,
@@ -3409,13 +3564,29 @@ app.get("/auth/discord/callback", async (req, res) => {
   try {
     const state = String(req.query.state || "");
     const code = String(req.query.code || "");
-    const stateRow = oauthStates.get(state);
-    oauthStates.delete(state);
+    const stateRow = decodeDiscordOAuthState(state);
     if (!stateRow || stateRow.expiresAt <= Date.now()) {
-      return res.status(400).send("Discord login state expired. Please try again.");
+      return res
+        .status(400)
+        .type("html")
+        .send(
+          discordAuthHelpHtml("Discord login — invalid or expired session", [
+            "<strong>This login attempt could not be verified.</strong>",
+            "Common causes: the link sat open too long (state expires after about 10 minutes), or <code>AUTH_SESSION_SECRET</code> changed between starting login and returning from Discord.",
+            "Go back to the site and click <strong>Log in with Discord</strong> again.",
+          ])
+        );
     }
     if (!code) {
-      return res.status(400).send("Missing Discord authorization code.");
+      return res
+        .status(400)
+        .type("html")
+        .send(
+          discordAuthHelpHtml("Discord login — missing code", [
+            "<strong>Discord did not return an authorization code.</strong>",
+            "Try logging in again from the site. If you denied access on Discord’s screen, approve the prompt or use the correct Discord account.",
+          ])
+        );
     }
 
     const tokenRes = await fetch(`${DISCORD_API_BASE}/oauth2/token`, {
@@ -4346,6 +4517,7 @@ app.put("/api/admin/join/current-needs", async (req, res) => {
 app.get("/api/nether-vortex/needs", async (req, res) => {
   try {
     await ensureNetherVortexStore();
+    await ensureRhWclLinksStore();
     const session = getSessionFromRequest(req);
     const userId = String(session?.user?.id || "").trim();
     let catalogMaps = { byId: new Map(), byNameLower: new Map() };
@@ -4355,14 +4527,23 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
       // Still return rows; per-line counts fall back to stored values.
     }
     const rows = [...(netherVortexState.entries || [])]
-      .map((row) => ({
-        userId: String(row.userId || ""),
-        displayName: String(row.displayName || "Unknown"),
-        neededCount: Math.max(0, Number(row.neededCount || 0)),
-        items: enrichSanitizedNetherVortexItems(sanitizeNetherVortexItems(row.items), catalogMaps),
-        updatedAt: Number(row.updatedAt || 0),
-      }))
+      .map((row) => {
+        const discordName = String(row.displayName || "Unknown");
+        const linked = resolveLinkedWowCharacterFromRhWcl(discordName);
+        const characterName = String(linked || discordName).trim() || discordName;
+        const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
+        return {
+          userId: String(row.userId || ""),
+          displayName: discordName,
+          characterName,
+          characterProfileUrl,
+          neededCount: 0,
+          items: enrichSanitizedNetherVortexItems(sanitizeNetherVortexItems(row.items), catalogMaps),
+          updatedAt: Number(row.updatedAt || 0),
+        };
+      })
       .filter((row) => row.userId)
+      .filter((row) => netherVortexEntryTotal(row) > 0)
       .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
     const myEntry = userId ? rows.find((row) => row.userId === userId) || null : null;
     const totalNeeded = rows.reduce((sum, row) => sum + netherVortexEntryTotal(row), 0);
@@ -4397,8 +4578,7 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
     if (!session?.user?.id) {
       return res.status(401).json({ ok: false, error: "Login required" });
     }
-    const neededCountRaw = Number(req.body?.neededCount);
-    const neededCount = Number.isFinite(neededCountRaw) ? Math.max(0, Math.floor(neededCountRaw)) : 0;
+    const neededCount = 0;
     let items = sanitizeNetherVortexItems(req.body?.items);
     try {
       const catalogMaps = await getNetherVortexCraftableCatalogMaps();
@@ -4407,13 +4587,29 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
       // Catalog unavailable — persist sanitized rows only.
     }
     await ensureNetherVortexStore();
+    const userId = String(session.user.id || "");
+    const displayName = String(session.user.globalName || session.user.username || "Unknown");
+    const updatedAt = Date.now();
+
+    // Source of truth: SQLite. Writes through to the legacy JSON for backup +
+    // any code still reading `netherVortexState`.
+    try {
+      nvUpsertCurrent({ userId, displayName, items, neededCount, updatedAt });
+    } catch (error) {
+      console.warn("[item-needs-db] nvUpsertCurrent failed:", error?.message || error);
+    }
+
     // Recover from a prior rejected persist so the queue does not stay broken forever.
     netherVortexWriteChain = netherVortexWriteChain.catch(() => {}).then(async () => {
-      const userId = String(session.user.id || "");
-      const displayName = String(session.user.globalName || session.user.username || "Unknown");
-      const nextEntry = { userId, displayName, neededCount, items, updatedAt: Date.now() };
       const prev = netherVortexState.entries || [];
       const idx = prev.findIndex((row) => String(row?.userId || "") === userId);
+      if (!items.length) {
+        if (idx >= 0) prev.splice(idx, 1);
+        netherVortexState.entries = prev;
+        await persistNetherVortexStore();
+        return;
+      }
+      const nextEntry = { userId, displayName, neededCount, items, updatedAt };
       if (idx >= 0) prev[idx] = nextEntry;
       else prev.push(nextEntry);
       netherVortexState.entries = prev;
@@ -4437,10 +4633,39 @@ app.put("/api/p2-preparation/materials/current", async (req, res) => {
     if (!materialId || !Number.isFinite(current) || current < 0) {
       return res.status(400).json({ ok: false, error: "id and non-negative current are required" });
     }
-    await setP2MaterialCurrent(materialId, current);
+    const editor = {
+      userId: String(session.user?.id || "") || null,
+      displayName:
+        String(session.user?.globalName || session.user?.username || "").trim() || null,
+    };
+    await setP2MaterialCurrent(materialId, current, editor);
     return res.json({ ok: true });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to update material" });
+  }
+});
+
+/**
+ * Admin-only audit feed for Item Need Submissions.
+ *
+ * `?kind=nv|p2` selects which feed to read; `nv` returns Nether Vortex
+ * submissions (latest 200 PUTs across all users with their items), `p2`
+ * returns every change to a P2 raid material count.
+ */
+app.get("/api/admin/item-needs/history", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const kind = String(req.query?.kind || "nv").toLowerCase();
+  const limit = Math.max(1, Math.min(2000, Number(req.query?.limit) || 200));
+  try {
+    if (kind === "p2") {
+      const materialId = req.query?.materialId ? String(req.query.materialId) : undefined;
+      return res.json({ ok: true, kind: "p2", rows: p2GetHistory({ limit, materialId }) });
+    }
+    const userId = req.query?.userId ? String(req.query.userId) : undefined;
+    return res.json({ ok: true, kind: "nv", rows: nvGetHistory({ limit, userId }) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to read history" });
   }
 });
 
@@ -6747,6 +6972,38 @@ function wowRealmSlugForLookup(realmRaw) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/** WoW character name from admin-maintained RH ↔ WCL roster (`rh-wcl-character-links.json`), matched on Discord display name. */
+function resolveLinkedWowCharacterFromRhWcl(discordDisplayName) {
+  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  const dnKey = normalizeRaidHelperDisplayKey(String(discordDisplayName || ""));
+  if (!dnKey) return null;
+
+  for (const link of links) {
+    const rhKey = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    if (rhKey && rhKey === dnKey) {
+      const wcl = Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames.filter(Boolean) : [];
+      const pick = String(wcl[0] || "").trim() || String(link?.raidHelperName || "").trim();
+      return pick || null;
+    }
+  }
+  for (const link of links) {
+    const wcl = Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : [];
+    for (const cn of wcl) {
+      const ck = normalizeRaidHelperDisplayKey(String(cn || ""));
+      if (ck && ck === dnKey) return String(cn).trim();
+    }
+  }
+  return null;
+}
+
+function raiderIoCharacterProfileWebUrl(characterName) {
+  const region = wowRosterRegion();
+  const realm = wowRealmSlugForLookup(defaultWowRealmForRoster());
+  const name = String(characterName || "").trim();
+  if (!realm || !name) return "";
+  return `https://raider.io/characters/${encodeURIComponent(region)}/${realm}/${encodeURIComponent(name)}`;
 }
 
 function raiderIoClassicApiBase() {

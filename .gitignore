@@ -4,3 +4,8 @@ npm-debug.log*
 .DS_Store
 data/cache/
 tmp_raid_assets/
+
+# Persistent SQLite databases (data lives on the deploy disk, not in git)
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
