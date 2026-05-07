@@ -2591,6 +2591,13 @@ function renderAdminDatabaseUsersTable(users) {
       const charNames = (u.characters || [])
         .map((c) => `${esc(c.characterName)}${c.isMain ? " ★" : ""}`)
         .join(", ");
+      const pictureCell = u.pictureFilename
+        ? `<span class="subtle" title="${esc(u.pictureFilename)}">✓</span>`
+        : `<span class="subtle">—</span>`;
+      const uploadDisabled = !u.discordUserId;
+      const uploadTitle = uploadDisabled
+        ? "User has no Discord ID; cannot store a profile picture."
+        : "Upload a profile picture for this user.";
       return `<tr data-admin-database-user-row="${u.id}">
         <td>${u.id}</td>
         <td>${esc(u.displayName || u.raidHelperName || "—")}</td>
@@ -2600,12 +2607,28 @@ function renderAdminDatabaseUsersTable(users) {
         <td>${esc(u.mainCharacterName || "—")}</td>
         <td>${u.characterCount}</td>
         <td title="${esc(charNames)}">${esc(charNames.length > 64 ? `${charNames.slice(0, 64)}…` : charNames)}</td>
+        <td>${pictureCell}</td>
         <td>${esc(fmtTs(u.lastSeenAt))}</td>
         <td>
           <button type="button" class="event-signup-btn event-signup-btn--softres"
             data-admin-database-user-detail="${u.id}">
             Details
           </button>
+          <button type="button" class="event-signup-btn event-signup-btn--softres"
+            data-admin-database-user-upload="${u.id}"
+            title="${esc(uploadTitle)}"
+            ${uploadDisabled ? "disabled" : ""}>
+            ${u.pictureFilename ? "Replace pic" : "Upload pic"}
+          </button>
+          ${
+            u.pictureFilename
+              ? `<button type="button" class="event-signup-btn event-signup-btn--softres"
+                  data-admin-database-user-clear-pic="${u.id}"
+                  title="Remove the saved profile picture for this user.">
+                  Clear pic
+                </button>`
+              : ""
+          }
         </td>
       </tr>`;
     })
@@ -2616,11 +2639,13 @@ function renderAdminDatabaseUsersTable(users) {
         <tr>
           <th>ID</th><th>Display</th><th>Discord ID</th><th>RH name</th>
           <th>Role</th><th>Main</th><th>#</th><th>Characters</th>
+          <th title="Whether a profile picture is stored for this user.">Pic</th>
           <th>Last seen</th><th></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
+    <input type="file" id="adminDatabasePictureFileInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
   `;
 }
 
@@ -2769,7 +2794,79 @@ async function loadAdminDatabasePanel({ silent = false } = {}) {
   }
 }
 
+async function adminUploadProfilePictureForUser(userId, file) {
+  if (!Number.isInteger(userId) || userId <= 0) return;
+  if (!file || !(file instanceof File)) return;
+  const mime = String(file.type || "").toLowerCase();
+  if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(mime)) {
+    status("Picture must be PNG, JPEG, WebP, or GIF.");
+    return;
+  }
+  const buf = await file.arrayBuffer();
+  status(`Uploading picture for user #${userId}…`);
+  try {
+    const res = await fetch(`/api/admin/database/users/${userId}/picture`, {
+      method: "PUT",
+      headers: { "Content-Type": mime },
+      credentials: "include",
+      body: buf,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || payload?.ok === false) {
+      throw new Error(payload?.error || `Upload failed (${res.status})`);
+    }
+    status(`Picture saved for user #${userId} (${payload?.discordUserId || "?"}).`);
+    await loadAdminDatabasePanel({ silent: true });
+  } catch (error) {
+    status(`Picture upload failed: ${error?.message || "Unknown error"}`);
+  }
+}
+
+async function adminClearProfilePictureForUser(userId) {
+  if (!Number.isInteger(userId) || userId <= 0) return;
+  if (!window.confirm(`Remove the saved profile picture for user #${userId}?`)) return;
+  status(`Clearing picture for user #${userId}…`);
+  try {
+    const res = await fetch(`/api/admin/database/users/${userId}/picture`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || payload?.ok === false) {
+      throw new Error(payload?.error || `Delete failed (${res.status})`);
+    }
+    status(`Picture removed for user #${userId}.`);
+    await loadAdminDatabasePanel({ silent: true });
+  } catch (error) {
+    status(`Picture clear failed: ${error?.message || "Unknown error"}`);
+  }
+}
+
 document.addEventListener("click", async (event) => {
+  const uploadBtn = event.target.closest("[data-admin-database-user-upload]");
+  if (uploadBtn) {
+    event.preventDefault();
+    const userId = Number(uploadBtn.getAttribute("data-admin-database-user-upload"));
+    if (!Number.isInteger(userId) || userId <= 0) return;
+    const input = document.getElementById("adminDatabasePictureFileInput");
+    if (!input) return;
+    input.value = "";
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      input.onchange = null;
+      if (!file) return;
+      await adminUploadProfilePictureForUser(userId, file);
+    };
+    input.click();
+    return;
+  }
+  const clearPicBtn = event.target.closest("[data-admin-database-user-clear-pic]");
+  if (clearPicBtn) {
+    event.preventDefault();
+    const userId = Number(clearPicBtn.getAttribute("data-admin-database-user-clear-pic"));
+    await adminClearProfilePictureForUser(userId);
+    return;
+  }
   const detailBtn = event.target.closest("[data-admin-database-user-detail]");
   if (detailBtn) {
     event.preventDefault();

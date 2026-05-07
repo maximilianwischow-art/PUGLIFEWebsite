@@ -5730,6 +5730,101 @@ app.get("/api/admin/database/users/:userId", async (req, res) => {
 });
 
 /* =============================================================================
+ * PUT    /api/admin/database/users/:userId/picture  — admin-side avatar upload
+ * DELETE /api/admin/database/users/:userId/picture  — admin-side avatar clear
+ *
+ * Same persistence path as `/api/profile/me/picture`, but lets an admin set
+ * a profile picture for any canonical user (e.g. older raiders who never
+ * uploaded one themselves). `userId` is the canonical SQLite users.id.
+ * ============================================================================= */
+app.put(
+  "/api/admin/database/users/:userId/picture",
+  express.raw({ type: () => true, limit: PROFILE_PICTURE_MAX_BYTES }),
+  async (req, res) => {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const dbUserId = Number(req.params.userId);
+    if (!Number.isInteger(dbUserId) || dbUserId <= 0) {
+      return res.status(400).json({ ok: false, error: "userId must be a positive integer" });
+    }
+    try {
+      const user = identityUserGetById(dbUserId);
+      if (!user) return res.status(404).json({ ok: false, error: "user not found" });
+      const targetDiscordId = String(user.discordUserId || "").trim();
+      if (!targetDiscordId) {
+        return res.status(409).json({
+          ok: false,
+          error: "user has no discord_user_id; profile pictures are keyed by Discord ID.",
+        });
+      }
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ ok: false, error: "Empty upload" });
+      }
+      if (req.body.length > PROFILE_PICTURE_MAX_BYTES) {
+        return res.status(413).json({ ok: false, error: "File too large (max 4 MB)" });
+      }
+      const declaredMime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      const sniffedMime = detectImageMimeFromBytes(req.body);
+      const finalMime = sniffedMime || (PROFILE_PICTURE_ALLOWED_MIME.has(declaredMime) ? declaredMime : null);
+      if (!finalMime || !PROFILE_PICTURE_ALLOWED_MIME.has(finalMime)) {
+        return res.status(415).json({ ok: false, error: "Only JPEG, PNG, WebP, or GIF images are allowed." });
+      }
+      const ext = PROFILE_PICTURE_ALLOWED_MIME.get(finalMime);
+      const filename = profilePictureFilenameFor(targetDiscordId, ext);
+      const displayName = String(user.displayName || user.raidHelperName || "");
+      const existing = profileGetByUserId(targetDiscordId);
+      if (existing?.pictureFilename && existing.pictureFilename !== filename) {
+        await safeUnlinkProfilePicture(existing.pictureFilename);
+      }
+      await writeFile(path.join(profilePicturesDir, filename), req.body);
+      const etag = createHash("sha256").update(req.body).digest("hex").slice(0, 16);
+      profileSetPicture({
+        userId: targetDiscordId,
+        displayName,
+        pictureFilename: filename,
+        pictureMime: finalMime,
+        pictureSizeBytes: req.body.length,
+        pictureEtag: etag,
+      });
+      return res.json({
+        ok: true,
+        userId: dbUserId,
+        discordUserId: targetDiscordId,
+        profile: publicProfileFromDb(targetDiscordId),
+      });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error?.message || "Failed to save picture" });
+    }
+  }
+);
+
+app.delete("/api/admin/database/users/:userId/picture", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const dbUserId = Number(req.params.userId);
+  if (!Number.isInteger(dbUserId) || dbUserId <= 0) {
+    return res.status(400).json({ ok: false, error: "userId must be a positive integer" });
+  }
+  try {
+    const user = identityUserGetById(dbUserId);
+    if (!user) return res.status(404).json({ ok: false, error: "user not found" });
+    const targetDiscordId = String(user.discordUserId || "").trim();
+    if (!targetDiscordId) {
+      return res.status(409).json({ ok: false, error: "user has no discord_user_id" });
+    }
+    const displayName = String(user.displayName || user.raidHelperName || "");
+    const existing = profileGetByUserId(targetDiscordId);
+    if (existing?.pictureFilename) {
+      await safeUnlinkProfilePicture(existing.pictureFilename);
+    }
+    profileSetPicture({ userId: targetDiscordId, displayName, pictureFilename: null });
+    return res.json({ ok: true, userId: dbUserId, discordUserId: targetDiscordId });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to remove picture" });
+  }
+});
+
+/* =============================================================================
  * GET  /api/admin/sync                — observability: every task's status
  * POST /api/admin/sync/:taskId        — trigger one task now (single-flight)
  *
