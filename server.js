@@ -73,6 +73,7 @@ import {
   raidAppearancesReplaceForReports,
   raidAppearancesCountsByUser,
   raidAppearancesDistinctReportCount,
+  raidAppearancesDistinctUserCount,
   raidAppearancesListReports,
   raidAppearancesRecent,
   parseSummaryReplaceAll,
@@ -707,7 +708,9 @@ function eventsKpiCacheMaxStaleMs() {
 }
 
 function eventsKpiCacheKey({ guildId, maxPastEvents, wclLimit }) {
-  return `events-kpi-v1:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
+  /* v2: roster footprint also considers WCL `raid_appearances` so the KPI
+     does not stay at 0 when Raid Helper signup scans fail or drift. */
+  return `events-kpi-v2:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
 }
 
 const eventsKpiDiskCachePath = path.join(dataDir, "events-kpi-cache.json");
@@ -10740,8 +10743,11 @@ app.get("/api/admin/raid-helper/comps/:compId", async (req, res) => {
 });
 
 /**
- * KPIs: unique primary raiders across scanned Raid Helper history; mean WCL attendance % for
- * Account Assignment **Core** guild role; total Gargul loot rows (guild loot history).
+ * KPIs: unique raiders (max of Raid Helper primary signup names across scanned
+ * history vs distinct canonical users in materialised `raid_appearances`,
+ * scoped like the leaderboard to admin Event Management when set); mean WCL
+ * attendance % for Account Assignment **Core** guild role; total Gargul
+ * loot rows (guild loot history).
  */
 app.get("/api/raid-helper/events-kpi", async (req, res) => {
   const guildId = Number(req.query.guildId || process.env.VOTING_GUILD_ID || 817080);
@@ -10798,6 +10804,28 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
     ]);
 
     const uniqueKeys = new Set(keyLists.flat());
+    let wclDistinctRaiderCount = 0;
+    if (materializeRaidAppearancesEnabled()) {
+      try {
+        const selectedReportCodesList = Array.from(
+          new Set(
+            (gargulLootState?.selectedReportCodes || [])
+              .map((x) => String(x || "").trim())
+              .filter(Boolean)
+          )
+        );
+        const totalReports = raidAppearancesDistinctReportCount();
+        if (totalReports > 0) {
+          wclDistinctRaiderCount = raidAppearancesDistinctUserCount(
+            selectedReportCodesList.length ? { reportCodes: selectedReportCodesList } : {}
+          );
+        }
+      } catch (err) {
+        console.warn("[events-kpi] raid_appearances distinct user count failed:", err?.message || err);
+      }
+    }
+    const uniqueRaiderCount = Math.max(uniqueKeys.size, wclDistinctRaiderCount);
+
     const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = wclBundle;
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
@@ -10840,7 +10868,9 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
 
     return {
       guildId,
-      uniqueRaiderCount: uniqueKeys.size,
+      uniqueRaiderCount,
+      wclDistinctRaiderCount,
+      raidHelperDistinctRaiderCount: uniqueKeys.size,
       pastEventsScanned: pastEvents.length,
       maxPastEvents,
       consideredRaids: linkedPayload.consideredRaids,

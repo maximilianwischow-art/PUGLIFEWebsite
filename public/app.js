@@ -274,9 +274,9 @@ async function loadRaidPerfKpi() {
 
     raidPerfKpiGrid.innerHTML = `
       <div class="raid-kpi-tile raid-kpi-tile--primary">
-        <span class="raid-kpi-label">Roster footprint</span>
+        <span class="raid-kpi-label" title="Distinct players with at least one Warcraft Logs appearance in guild raids (admin Event Management selection when set). Includes Raid Helper primary signup names when higher.">Roster footprint</span>
         <span class="raid-kpi-value">${escapeHtml(String(uniqueN ?? "—"))}</span>
-        <span class="raid-kpi-label">Unique raiders in past events</span>
+        <span class="raid-kpi-label" title="Warcraft Logs materialised appearances, scoped to official events when configured.">Unique raiders at guild raids</span>
       </div>
       <div class="raid-kpi-tile">
         <span class="raid-kpi-label">Attendance quality</span>
