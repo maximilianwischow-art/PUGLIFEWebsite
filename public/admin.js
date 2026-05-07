@@ -47,6 +47,7 @@ function rhWclGuildRoleSelectHtml(current) {
 
 const ADMIN_PANEL_IDS = [
   "rh-wcl",
+  "database",
   "wcl-events",
   "gargul-import",
   "loot-corrections",
@@ -2411,6 +2412,419 @@ document.addEventListener("click", async (event) => {
     saveBtn.disabled = false;
   }
 });
+
+/* =============================================================================
+ * Database panel
+ *
+ * Read-only browse of the canonical user database (`users` + `user_characters`)
+ * + materialised stat tables + sync worker status. Loaded lazily the first
+ * time the tab is opened and on the explicit Reload button.
+ * ============================================================================= */
+let adminDatabaseUsersState = [];
+let adminDatabaseLoaded = false;
+let adminDatabaseSearchValue = "";
+let adminDatabaseExpandedUserId = null;
+
+function fmtBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function fmtDuration(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n < 1000) return `${Math.round(n)} ms`;
+  if (n < 60_000) return `${(n / 1000).toFixed(1)} s`;
+  return `${(n / 60_000).toFixed(1)} min`;
+}
+
+function renderAdminDatabaseReadiness(payload) {
+  const host = document.getElementById("adminDatabaseReadiness");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Could not load readiness counts.</p>`;
+    return;
+  }
+  const counts = payload.counts || {};
+  const flags = payload.flags || {};
+  const ready = !!payload.ready;
+  const tableRows = Object.entries(counts)
+    .map(([name, value]) => {
+      const v = typeof value === "number" ? value : (value && value.error) || "error";
+      const cls = typeof value === "number" && value > 0 ? "" : ' style="color:#c44"';
+      return `<tr><td><code>${esc(name)}</code></td><td${cls}>${esc(String(v))}</td></tr>`;
+    })
+    .join("");
+  const flagRows = Object.entries(flags)
+    .map(([name, on]) => `<tr><td><code>${esc(name)}</code></td><td>${on ? "on" : "<strong style=\"color:#c44\">off</strong>"}</td></tr>`)
+    .join("");
+  const banner = ready
+    ? `<p class="subtle" style="color:#5b8a4a"><strong>Ready.</strong> Every materialised table is non-empty.</p>`
+    : `<p class="subtle" style="color:#c44"><strong>Not ready.</strong> ${esc(payload.note || "")}</p>`;
+  host.innerHTML = `
+    <h4 class="section-title" style="margin-top:8px">Phase 8 cutover readiness</h4>
+    ${banner}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div>
+        <p class="subtle" style="margin:0 0 4px"><strong>Materialised row counts</strong></p>
+        <table class="admin-table"><tbody>${tableRows}</tbody></table>
+      </div>
+      <div>
+        <p class="subtle" style="margin:0 0 4px"><strong>Materialise flags</strong></p>
+        <table class="admin-table"><tbody>${flagRows}</tbody></table>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminDatabaseSync(payload) {
+  const host = document.getElementById("adminDatabaseSync");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Could not load sync worker status.</p>`;
+    return;
+  }
+  const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+  if (!tasks.length) {
+    host.innerHTML = `<p class="subtle">No sync tasks registered.</p>`;
+    return;
+  }
+  const rows = tasks
+    .map((t) => {
+      const status = String(t.status || "idle");
+      const tone = status === "failed" ? "color:#c44" : status === "running" ? "color:#3a82c4" : "";
+      return `<tr>
+        <td><code>${esc(t.taskId || "")}</code></td>
+        <td style="${tone}">${esc(status)}</td>
+        <td>${esc(fmtTs(t.lastCompletedAt))}</td>
+        <td>${esc(fmtDuration(t.lastDurationMs))}</td>
+        <td>${esc(t.lastError || "")}</td>
+        <td>
+          <button type="button" class="event-signup-btn event-signup-btn--softres"
+            data-admin-database-sync-trigger="${esc(t.taskId || "")}">
+            Run now
+          </button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <h4 class="section-title" style="margin-top:8px">Background sync workers</h4>
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Task</th><th>Status</th><th>Last completed</th>
+          <th>Duration</th><th>Last error</th><th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderAdminDatabaseSummary(payload) {
+  const host = document.getElementById("adminDatabaseSummary");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Could not load users.</p>`;
+    return;
+  }
+  const total = Number(payload.total || 0);
+  const shown = Number(payload.shown || 0);
+  const linked = (payload.users || []).filter((u) => !!u.discordUserId).length;
+  const unlinked = shown - linked;
+  host.innerHTML = `
+    <p class="subtle">
+      <strong>${shown}</strong> of <strong>${total}</strong> users
+      (${linked} linked to a Discord id, ${unlinked} RH-only).
+    </p>
+  `;
+}
+
+function renderAdminDatabaseUsersTable(users) {
+  const host = document.getElementById("adminDatabaseTableHost");
+  if (!host) return;
+  if (!Array.isArray(users) || !users.length) {
+    host.innerHTML = `<p class="subtle">No users match the current filter.</p>`;
+    return;
+  }
+  const rows = users
+    .map((u) => {
+      const charNames = (u.characters || [])
+        .map((c) => `${esc(c.characterName)}${c.isMain ? " ★" : ""}`)
+        .join(", ");
+      return `<tr data-admin-database-user-row="${u.id}">
+        <td>${u.id}</td>
+        <td>${esc(u.displayName || u.raidHelperName || "—")}</td>
+        <td>${u.discordUserId ? `<code>${esc(u.discordUserId)}</code>` : `<span class="subtle">—</span>`}</td>
+        <td>${esc(u.raidHelperName || "")}</td>
+        <td>${esc(u.guildRole || "")}</td>
+        <td>${esc(u.mainCharacterName || "—")}</td>
+        <td>${u.characterCount}</td>
+        <td title="${esc(charNames)}">${esc(charNames.length > 64 ? `${charNames.slice(0, 64)}…` : charNames)}</td>
+        <td>${esc(fmtTs(u.lastSeenAt))}</td>
+        <td>
+          <button type="button" class="event-signup-btn event-signup-btn--softres"
+            data-admin-database-user-detail="${u.id}">
+            Details
+          </button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>ID</th><th>Display</th><th>Discord ID</th><th>RH name</th>
+          <th>Role</th><th>Main</th><th>#</th><th>Characters</th>
+          <th>Last seen</th><th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderAdminDatabaseDetail(payload, userId) {
+  const host = document.getElementById("adminDatabaseDetailHost");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.hidden = false;
+    host.innerHTML = `<p class="subtle">Could not load user detail.</p>`;
+    return;
+  }
+  const user = payload.user || {};
+  const characters = Array.isArray(payload.characters) ? payload.characters : [];
+  const m = payload.materialised || {};
+  const parses = Array.isArray(m.parses) ? m.parses : [];
+  const loot = Array.isArray(m.loot) ? m.loot : [];
+  const badges = Array.isArray(m.badges) ? m.badges : [];
+
+  const charRows = characters
+    .map(
+      (c) => `<tr>
+        <td>${c.id}</td>
+        <td>${esc(c.characterName)}${c.isMain ? " ★" : ""}</td>
+        <td>${esc(c.wowClass || "")}</td>
+        <td>${esc(c.wowSpec || "")}</td>
+        <td>${esc(c.realm || "")}</td>
+        <td>${esc(c.discoveredVia || "")}</td>
+        <td>${esc(fmtTs(c.firstSeenAt))}</td>
+        <td>${esc(fmtTs(c.lastSeenAt))}</td>
+      </tr>`
+    )
+    .join("");
+  const parseRows = parses
+    .map(
+      (p) => `<tr>
+        <td>${esc(p.bracket || "")}</td>
+        <td>${esc(p.characterName || "")}</td>
+        <td>${typeof p.bestValue === "number" ? p.bestValue.toFixed(1) : ""}</td>
+        <td>${esc(p.bestEncounter || "")}</td>
+        <td>${esc(p.bestMetric || "")}</td>
+        <td>${p.bestReportCode ? `<a href="https://www.warcraftlogs.com/reports/${esc(p.bestReportCode)}" target="_blank" rel="noopener noreferrer"><code>${esc(p.bestReportCode)}</code></a>` : ""}</td>
+      </tr>`
+    )
+    .join("");
+  const badgeRows = badges
+    .map(
+      (b) => `<tr>
+        <td><code>${esc(b.badgeId || "")}</code></td>
+        <td>${b.earned ? "✓" : "—"}</td>
+        <td>${esc(fmtTs(b.firstEarnedAt))}</td>
+        <td>${esc(fmtTs(b.lastVerifiedAt))}</td>
+      </tr>`
+    )
+    .join("");
+  const lootRows = loot
+    .slice(0, 50)
+    .map(
+      (l) => `<tr>
+        <td>${esc(fmtTs(l.awardedAt))}</td>
+        <td>${esc(l.characterName || "")}</td>
+        <td><a href="https://www.wowhead.com/tbc/item=${l.itemId}" target="_blank" rel="noopener noreferrer">item ${l.itemId}</a></td>
+        <td>${esc(l.source || "")}</td>
+        <td><code>${esc(l.sourceRef || "")}</code></td>
+      </tr>`
+    )
+    .join("");
+
+  host.hidden = false;
+  host.innerHTML = `
+    <h4 class="section-title" style="margin-top:8px">User #${user.id} — ${esc(user.displayName || user.raidHelperName || "")}</h4>
+    <p class="subtle">
+      Discord id: ${user.discordUserId ? `<code>${esc(user.discordUserId)}</code>` : "—"} ·
+      RH name: ${esc(user.raidHelperName || "—")} ·
+      Role: ${esc(user.guildRole || "—")} ·
+      Main char id: ${user.mainCharacterId ?? "—"} ·
+      Picture: ${user.pictureFilename ? `<code>${esc(user.pictureFilename)}</code>` : "—"} ·
+      First seen ${esc(fmtTs(user.firstSeenAt))} ·
+      Last seen ${esc(fmtTs(user.lastSeenAt))}
+    </p>
+    <h5 class="section-title">Linked characters (${characters.length})</h5>
+    <table class="admin-table">
+      <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Spec</th><th>Realm</th><th>Discovered</th><th>First seen</th><th>Last seen</th></tr></thead>
+      <tbody>${charRows || `<tr><td colspan="8" class="subtle">No characters linked.</td></tr>`}</tbody>
+    </table>
+    <h5 class="section-title">Parse summary (materialised)</h5>
+    <table class="admin-table">
+      <thead><tr><th>Bracket</th><th>Character</th><th>Best</th><th>Encounter</th><th>Metric</th><th>Report</th></tr></thead>
+      <tbody>${parseRows || `<tr><td colspan="6" class="subtle">No parse rows.</td></tr>`}</tbody>
+    </table>
+    <h5 class="section-title">Badges (materialised)</h5>
+    <table class="admin-table">
+      <thead><tr><th>Badge</th><th>Earned</th><th>First earned</th><th>Last verified</th></tr></thead>
+      <tbody>${badgeRows || `<tr><td colspan="4" class="subtle">No badge rows.</td></tr>`}</tbody>
+    </table>
+    <h5 class="section-title">Loot awards (latest 50)</h5>
+    <table class="admin-table">
+      <thead><tr><th>When</th><th>Character</th><th>Item</th><th>Source</th><th>Ref</th></tr></thead>
+      <tbody>${lootRows || `<tr><td colspan="5" class="subtle">No loot awards.</td></tr>`}</tbody>
+    </table>
+    <div class="admin-actions admin-actions--tight">
+      <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseDetailCloseBtn">
+        Close detail
+      </button>
+    </div>
+  `;
+  const closeBtn = document.getElementById("adminDatabaseDetailCloseBtn");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      host.hidden = true;
+      host.innerHTML = "";
+      adminDatabaseExpandedUserId = null;
+    });
+  }
+  void userId;
+}
+
+async function loadAdminDatabasePanel({ silent = false } = {}) {
+  const me = await getJson("/api/auth/me").catch(() => null);
+  if (!me?.authenticated || !me?.isAdmin) {
+    const host = document.getElementById("adminDatabaseTableHost");
+    if (host) host.innerHTML = `<p class="subtle">Admin access required.</p>`;
+    return;
+  }
+  if (!silent) {
+    const summary = document.getElementById("adminDatabaseSummary");
+    if (summary) summary.innerHTML = `<p class="subtle">Loading users…</p>`;
+    const tableHost = document.getElementById("adminDatabaseTableHost");
+    if (tableHost) tableHost.innerHTML = `<p class="subtle">Loading users…</p>`;
+  }
+  try {
+    const q = adminDatabaseSearchValue ? `?q=${encodeURIComponent(adminDatabaseSearchValue)}` : "";
+    const [readiness, sync, users] = await Promise.all([
+      getJson("/api/admin/cutover-readiness").catch((e) => ({ ok: false, error: e?.message })),
+      getJson("/api/admin/sync").catch((e) => ({ ok: false, error: e?.message })),
+      getJson(`/api/admin/database/users${q}`),
+    ]);
+    renderAdminDatabaseReadiness(readiness);
+    renderAdminDatabaseSync(sync);
+    renderAdminDatabaseSummary(users);
+    adminDatabaseUsersState = Array.isArray(users?.users) ? users.users : [];
+    renderAdminDatabaseUsersTable(adminDatabaseUsersState);
+    adminDatabaseLoaded = true;
+  } catch (error) {
+    const host = document.getElementById("adminDatabaseTableHost");
+    if (host) host.innerHTML = `<p class="subtle">Failed to load database: ${esc(error?.message || "")}</p>`;
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  const detailBtn = event.target.closest("[data-admin-database-user-detail]");
+  if (detailBtn) {
+    event.preventDefault();
+    const userId = Number(detailBtn.getAttribute("data-admin-database-user-detail"));
+    if (!Number.isInteger(userId) || userId <= 0) return;
+    adminDatabaseExpandedUserId = userId;
+    const host = document.getElementById("adminDatabaseDetailHost");
+    if (host) {
+      host.hidden = false;
+      host.innerHTML = `<p class="subtle">Loading user #${userId}…</p>`;
+    }
+    try {
+      const payload = await getJson(`/api/admin/database/users/${userId}`);
+      renderAdminDatabaseDetail(payload, userId);
+    } catch (error) {
+      if (host) host.innerHTML = `<p class="subtle">Failed to load user: ${esc(error?.message || "")}</p>`;
+    }
+    return;
+  }
+  const syncBtn = event.target.closest("[data-admin-database-sync-trigger]");
+  if (syncBtn) {
+    event.preventDefault();
+    const taskId = String(syncBtn.getAttribute("data-admin-database-sync-trigger") || "").trim();
+    if (!taskId) return;
+    syncBtn.disabled = true;
+    const orig = syncBtn.textContent;
+    syncBtn.textContent = "Running…";
+    try {
+      await getJson(`/api/admin/sync/${encodeURIComponent(taskId)}`, { method: "POST" });
+      status(`Sync task "${taskId}" triggered.`);
+      await loadAdminDatabasePanel({ silent: true });
+    } catch (error) {
+      status(`Sync trigger failed: ${error?.message || "Unknown error"}`);
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.textContent = orig || "Run now";
+    }
+  }
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const reloadBtn = document.getElementById("adminDatabaseReloadBtn");
+  if (reloadBtn) {
+    reloadBtn.addEventListener("click", async () => {
+      reloadBtn.disabled = true;
+      try {
+        await loadAdminDatabasePanel();
+      } finally {
+        reloadBtn.disabled = false;
+      }
+    });
+  }
+  const backupBtn = document.getElementById("adminDatabaseBackupBtn");
+  if (backupBtn) {
+    backupBtn.addEventListener("click", async () => {
+      backupBtn.disabled = true;
+      const orig = backupBtn.textContent;
+      backupBtn.textContent = "Backing up…";
+      try {
+        const r = await getJson("/api/admin/db/backup", { method: "POST" });
+        status(`Backup created: ${r.filename || ""} (${fmtBytes(r.sizeBytes)})`);
+      } catch (error) {
+        status(`Backup failed: ${error?.message || "Unknown error"}`);
+      } finally {
+        backupBtn.disabled = false;
+        backupBtn.textContent = orig || "Backup database (VACUUM INTO)";
+      }
+    });
+  }
+  const search = document.getElementById("adminDatabaseSearch");
+  if (search) {
+    let t = null;
+    search.addEventListener("input", () => {
+      adminDatabaseSearchValue = String(search.value || "").trim();
+      if (t) clearTimeout(t);
+      t = setTimeout(() => loadAdminDatabasePanel({ silent: true }), 250);
+    });
+  }
+});
+
+const __origShowAdminPanel = showAdminPanel;
+showAdminPanel = function (panelId, opts) {
+  __origShowAdminPanel(panelId, opts);
+  if (panelId === "database" && !adminDatabaseLoaded) {
+    loadAdminDatabasePanel().catch((error) => {
+      status(error?.message || "Failed to load database panel.");
+    });
+  }
+};
 
 loadAdminData().catch((error) => {
   status(error?.message || "Failed to load admin page.");

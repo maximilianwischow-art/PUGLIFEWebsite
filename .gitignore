@@ -15,3 +15,14 @@ data/discord-id-rh-name-cache.json
 
 # User-uploaded profile pictures live on the deploy disk, not in git.
 data/profile-pictures/
+
+# Admin-triggered SQLite point-in-time backups (data/backups/*.sqlite).
+# These live on the deploy disk so we always have a known-good fallback
+# right before each canonical-user-DB phase cutover. Never in git.
+data/backups/
+
+# Phase 8 cleanup: snapshots of the legacy per-user JSON stores taken
+# right before the canonical-user-DB cutover removes their dual-write
+# wrappers. Kept on the deploy disk for one release cycle as an emergency
+# rollback source, then deleted. Never in git.
+data/legacy-backups/

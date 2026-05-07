@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260507mobile1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260507leadersize2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -36,6 +36,7 @@
           <nav class="admin-submenu" aria-label="Admin tools">
             <div class="admin-submenu-inner">
               <button type="button" class="admin-submenu-btn" data-admin-nav="rh-wcl">Account Assignment</button>
+              <button type="button" class="admin-submenu-btn" data-admin-nav="database">Database</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="wcl-events">Event Management</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="gargul-import">Loot import (Gargul)</button>
               <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
@@ -102,6 +103,36 @@
           <div id="rhWclRaidSources" class="admin-grid-note subtle" hidden></div>
           <div id="rhWclUnmatchedHost" class="admin-rh-unmatched" hidden aria-live="polite"></div>
           <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
+        </section>
+
+        <section class="card admin-panel" data-admin-panel="database" id="admin-panel-database">
+          <h3 class="section-title">Canonical user database</h3>
+          <p class="subtle">
+            Read-only browse of the SQLite identity tables (<code>users</code> + <code>user_characters</code>),
+            the materialised stat tables, and the background sync workers that populate them. Every other
+            admin tool ultimately writes here — this view shows the canonical row for spot-checking.
+          </p>
+          <div id="adminDatabaseReadiness" class="admin-grid-note">Loading readiness…</div>
+          <div id="adminDatabaseSync" class="admin-grid-note">Loading sync workers…</div>
+          <div class="admin-actions admin-actions--tight">
+            <label class="subtle" for="adminDatabaseSearch">Filter users</label>
+            <input
+              id="adminDatabaseSearch"
+              class="admin-input"
+              type="search"
+              placeholder="Discord id, RH name, display name, role…"
+              autocomplete="off"
+            />
+            <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseReloadBtn">
+              Reload
+            </button>
+            <button type="button" class="event-signup-btn" id="adminDatabaseBackupBtn">
+              Backup database (VACUUM INTO)
+            </button>
+          </div>
+          <div id="adminDatabaseSummary" class="admin-grid-note">Loading users…</div>
+          <div id="adminDatabaseTableHost" class="admin-grid-note">Loading users…</div>
+          <div id="adminDatabaseDetailHost" class="admin-grid-note" hidden></div>
         </section>
 
         <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
@@ -239,7 +270,7 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/admin.js?v=20260507discordid1"></script>
+    <script defer src="/admin.js?v=20260507database1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

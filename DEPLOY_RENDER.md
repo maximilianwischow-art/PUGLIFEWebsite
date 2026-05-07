@@ -40,9 +40,14 @@ In Render dashboard -> service -> Environment, set:
 - `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (if voting login is enabled)
 - `PUBLIC_BASE_URL` (your Render service URL, e.g. `https://fallen-tacticians-api.onrender.com`)
 
-### Persistent voting/P2 storage (Starter+)
+### Persistent storage (Starter+)
 
-To keep `mvp-votes.json` and `p2-materials.json` across deploys/restarts:
+The canonical user database lives in **one SQLite file**, `data/item-needs.sqlite`, on
+the persistent disk. Everything else under `data/` is either a regenerable cache
+(`data/cache/`) or a legacy JSON store kept around as a rollback source for the
+canonical-user-DB cutover.
+
+To keep the SQLite DB across deploys/restarts:
 
 1. In Render service settings, add a **Persistent Disk** (Starter plan supports this).
 2. Set the mount path (recommended: `/var/data`).
@@ -50,6 +55,38 @@ To keep `mvp-votes.json` and `p2-materials.json` across deploys/restarts:
    - `DATA_DIR=/var/data`
 
 If you skip `DATA_DIR`, the app will still try to use `RENDER_DISK_MOUNT_PATH` automatically when present.
+
+#### Canonical-user-DB feature flags
+
+Each phase of the canonical-user-DB migration is gated by a per-feature env flag.
+All default to `1` (materialised path on). Flip to `0` for one deploy if SQL drift
+surfaces post-cutover; the legacy JSON / live-compute path is still reachable
+because dual-write writers haven't been removed yet.
+
+- `MATERIALIZE_IDENTITY` — Phase 2: name-resolution + profile-picture reads from `users` / `user_characters`.
+- `MATERIALIZE_BADGES` — Phase 4: `/api/profile/me/badges` reads from `badge_state`.
+- `MATERIALIZE_ATTENDANCE` — Phase 5/6: `/attendance`, `/death-leaderboard`, `/first-clear-participants`, `/boss-times` read from materialised tables.
+- `MATERIALIZE_LOOT` — Phase 7: `/api/loot-history`, `/api/wcl/guild/:gid/loot-received`, and per-user loot endpoints read from `loot_awards`.
+- `MATERIALIZE_PHASE3` — Phase 3: `mvp_votes` / `dm_subscribers` / `role_alert_log` / `hof_notes` in-memory state hydrates from SQLite at boot (legacy JSON write-through retained for rollback).
+
+#### Backup + snapshot operations
+
+- `POST /api/admin/db/backup` — atomic SQLite point-in-time copy via `VACUUM INTO`. Files land in `data/backups/<timestamp>.sqlite`.
+- `node scripts/snapshot-legacy-json.mjs` — copy every legacy per-user JSON store into `data/legacy-backups/<ISO>/` before any future deploy removes the dual-write wrappers.
+
+#### Sync workers
+
+The runner (`lib/sync/runner.mjs`) schedules five tasks at fixed intervals:
+
+| Task          | Interval | Writes                                                                  |
+| ------------- | -------- | ----------------------------------------------------------------------- |
+| `badges`      | 15 min   | `badge_state`                                                           |
+| `attendance`  | 10 min   | `raid_attendance`, `death_totals`, `first_clear_participants`, `best_time_roster` |
+| `parses`      | 15 min   | `parse_summary`                                                         |
+| `loot`        | 30 min   | `loot_awards`                                                           |
+
+Inspect status at `GET /api/admin/sync` and trigger a single task with
+`POST /api/admin/sync/:taskId` (admin auth).
 
 Notes:
 - `PORT` is handled by Render automatically; do not hardcode your local port in production logic.

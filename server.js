@@ -12,6 +12,15 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/pro
 import { mergeRhWclGuess, normalizeRhWclGuildRole, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
 import { syncBadgePngsToSvgs, watchBadgePngsToSvgs } from "./lib/badge-png-svg-sync.mjs";
 import {
+  registerSyncTask,
+  startSyncRunner,
+  runSyncTaskNow,
+  isSyncTaskRunning,
+  listSyncTasks,
+  syncRunnerSnapshot,
+} from "./lib/sync/runner.mjs";
+import { firstClearParticipantsByRaidFromReports as computeFirstClearParticipantsByRaid } from "./lib/compute/first-clears.mjs";
+import {
   openItemNeedsDb,
   nvUpsertCurrent,
   nvGetAllCurrent,
@@ -26,7 +35,108 @@ import {
   p2GetAllCurrent,
   p2GetHistory,
   getItemNeedsDbPath,
+  rhNameKey as identityRhNameKey,
+  userUpsert as identityUserUpsert,
+  characterUpsert as identityCharacterUpsert,
+  charactersGetByUserId as identityCharactersGetByUserId,
+  userListAll as identityUserListAll,
+  userGetByDiscordId as identityUserGetByDiscordId,
+  userGetById as identityUserGetById,
+  userGetByRaidHelperKey as identityUserGetByRaidHelperKey,
+  identityListLinkedCharacterNames,
+  identityResolveProfilesByCharacterNames,
+  identityResolveDiscordIdsByRhKey,
+  identityResolveCharacterByDiscordId,
+  identityResolveRaidHelperNameByDiscordId,
+  mvpVotesReplaceFromState,
+  mvpVotesGetAll,
+  dmSubscribersReplaceFromState,
+  dmSubscribersGetAll,
+  dmNotifiedEventIdsGetAll,
+  roleAlertLogReplaceFromState,
+  roleAlertLogGetAll,
+  hofNotesReplaceFromState,
+  hofNotesGetAll,
+  backupItemNeedsDb,
+  badgeStateReplaceForUser,
+  badgeStateGetByUserId,
+  resolveOwnerForCharacterName as identityResolveOwnerForCharacterName,
+  firstClearParticipantsReplace,
+  firstClearParticipantsGet,
+  deathTotalsReplaceForWindow,
+  deathTotalsGetByWindow,
+  bestTimeRosterReplace,
+  bestTimeRosterGet,
+  raidAttendanceReplaceForWindow,
+  raidAttendanceGetByWindow,
+  raidAttendanceGetFreshestWindow,
+  parseSummaryReplaceAll,
+  parseSummaryGetByUserId,
+  parseSummaryGetByMainCharacterIds,
+  lootAwardsReplaceAll,
+  lootAwardsGetAll,
+  lootAwardsListRaids,
+  lootAwardsGetByUserId,
+  lootAwardsGetByCharacterIds,
+  cutoverReadinessCounts,
 } from "./lib/item-needs-db.mjs";
+
+/**
+ * Phase 4 cutover flag. When set, `/api/profile/me/badges` reads from the
+ * `badge_state` table instead of recomputing from live WCL/voting stores
+ * on every request. Default ON — flip to `0` to fall back to the legacy
+ * resolver if drift is found post-cutover.
+ */
+function materializeBadgesEnabled() {
+  const v = String(process.env.MATERIALIZE_BADGES ?? "1").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+/**
+ * Phase 5 cutover flag. Default ON — once `syncAttendance` has written
+ * the four materialised tables at least once, the leaderboard / death-
+ * leaderboard / first-clear / boss-times endpoints serve from them
+ * instead of re-running the WCL scan on every hit.
+ */
+function materializeAttendanceEnabled() {
+  const v = String(process.env.MATERIALIZE_ATTENDANCE ?? "1").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+/**
+ * Phase 7 cutover flag. Default ON — once `syncLoot` has written the
+ * `loot_awards` table at least once, `/api/loot-history` and the per-
+ * player loot lookups serve from SQLite instead of refetching the WCL
+ * loot-events graph on every hit. Set `MATERIALIZE_LOOT=0` to fall
+ * back to the live `fetchGuildLootReceived` pipeline.
+ */
+function materializeLootEnabled() {
+  const v = String(process.env.MATERIALIZE_LOOT ?? "1").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+/**
+ * Phase 3 cutover flag. Default ON — once Phase 3 dual-write has been
+ * deployed, the four small stores (mvp_votes, dm_subscribers,
+ * role_alert_log, hof_notes) are hydrated from SQLite at boot. Set
+ * `MATERIALIZE_PHASE3=0` to fall back to JSON-only hydration.
+ */
+function materializePhase3Enabled() {
+  const v = String(process.env.MATERIALIZE_PHASE3 ?? "1").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
+
+/**
+ * Phase 2 cutover flag. Default ON — once Phase 1 dual-write has been
+ * deployed, the canonical `users` / `user_characters` tables hold the
+ * same data as the legacy JSON files. Set `MATERIALIZE_IDENTITY=0` to
+ * fall back to JSON-based reads for one deploy if SQL drift surfaces
+ * post-cutover.
+ */
+function materializeIdentityEnabled() {
+  const v = String(process.env.MATERIALIZE_IDENTITY ?? "1").trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "off" || v === "no");
+}
 
 dotenv.config({ override: true });
 
@@ -902,12 +1012,42 @@ async function persistVotingStore() {
   const json = JSON.stringify(votingStoreState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, votingStorePath);
+  try {
+    mvpVotesReplaceFromState(votingStoreState);
+  } catch (error) {
+    console.warn("[mvp-votes] dual-write failed:", error?.message || error);
+  }
 }
 
 async function ensureVotingStore() {
   if (votingStoreReady) return votingStoreReady;
   votingStoreReady = (async () => {
     await mkdir(dataDir, { recursive: true });
+    /* Phase 3 cutover: when SQLite has rows, hydrate from there.
+       JSON write-through still keeps the legacy file in sync as a rollback. */
+    if (materializePhase3Enabled()) {
+      try {
+        const sqlVotes = mvpVotesGetAll();
+        if (Array.isArray(sqlVotes) && sqlVotes.length > 0) {
+          votingStoreState = {
+            votes: sqlVotes
+              .map((vote) => ({
+                roundKey: String(vote?.roundKey || ""),
+                raidCode: String(vote?.raidCode || ""),
+                raidStartTime: Number(vote?.raidStartTime || 0),
+                userId: String(vote?.userId || ""),
+                candidateName: String(vote?.candidateName || ""),
+                createdAt: Number(vote?.createdAt || 0),
+                updatedAt: Number(vote?.updatedAt || 0),
+              }))
+              .filter((vote) => vote.roundKey && vote.userId && vote.candidateName),
+          };
+          return;
+        }
+      } catch (error) {
+        console.warn("[mvp-votes] SQLite hydrate failed, falling back to JSON:", error?.message || error);
+      }
+    }
     try {
       const raw = await readFile(votingStorePath, "utf8");
       const parsed = JSON.parse(raw);
@@ -1434,15 +1574,26 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
   // signup name and every WCL character name on the link, so a roster row
   // whose `name` is the WoW character (e.g. "Highbullet") still resolves to
   // a Discord ID even when the link's RH-name is the Discord nick instead.
-  const discordIdByRhKey = new Map();
-  for (const link of rhWclLinksState?.links || []) {
-    const id = sanitizeDiscordUserId(link?.discordUserId);
-    if (!id) continue;
-    const rhKey = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
-    if (rhKey && !discordIdByRhKey.has(rhKey)) discordIdByRhKey.set(rhKey, id);
-    for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) {
-      const cnKey = normalizeRaidHelperDisplayKey(String(cn || ""));
-      if (cnKey && !discordIdByRhKey.has(cnKey)) discordIdByRhKey.set(cnKey, id);
+  let discordIdByRhKey;
+  if (materializeIdentityEnabled()) {
+    try {
+      discordIdByRhKey = identityResolveDiscordIdsByRhKey();
+    } catch (error) {
+      console.warn("[identity-cutover] discordIdByRhKey fallback to JSON:", error?.message || error);
+      discordIdByRhKey = null;
+    }
+  }
+  if (!discordIdByRhKey) {
+    discordIdByRhKey = new Map();
+    for (const link of rhWclLinksState?.links || []) {
+      const id = sanitizeDiscordUserId(link?.discordUserId);
+      if (!id) continue;
+      const rhKey = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+      if (rhKey && !discordIdByRhKey.has(rhKey)) discordIdByRhKey.set(rhKey, id);
+      for (const cn of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) {
+        const cnKey = normalizeRaidHelperDisplayKey(String(cn || ""));
+        if (cnKey && !discordIdByRhKey.has(cnKey)) discordIdByRhKey.set(cnKey, id);
+      }
     }
   }
   // Augment with the live RH-signup scan cache so newly observed users still
@@ -1453,12 +1604,38 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
     if (id && key && !discordIdByRhKey.has(key)) discordIdByRhKey.set(key, id);
   }
 
+  // Phase 6: enrich each player row with the canonical user id / main
+  // character drawn from the SQL identity tables. Live attendance + parses
+  // still come from the gather pipeline; the canonical fields enable
+  // downstream consumers (profile picture by users.id, badge_state lookups)
+  // without needing a Discord OAuth login.
   const players = enriched.map((row, i) => {
     const att = pairs[i].attRow;
     const stripped = stripInternalRosterFields(row);
     const rhKey = normalizeRaidHelperDisplayKey(String(stripped?.name || ""));
     const rhPastEventCount = rhKey ? rhSignupCounts.counts.get(rhKey) || 0 : 0;
     const discordUserId = rhKey ? discordIdByRhKey.get(rhKey) || null : null;
+    let dbUserId = null;
+    let mainCharacterName = null;
+    if (materializeIdentityEnabled()) {
+      try {
+        const canonical = discordUserId
+          ? identityUserGetByDiscordId(discordUserId)
+          : rhKey
+            ? identityUserGetByRaidHelperKey(rhKey)
+            : null;
+        if (canonical?.id) {
+          dbUserId = canonical.id;
+          if (canonical.mainCharacterId) {
+            const characters = identityCharactersGetByUserId(canonical.id);
+            const main = characters.find((c) => c.id === canonical.mainCharacterId);
+            if (main) mainCharacterName = main.characterName;
+          }
+        }
+      } catch {
+        /* canonical lookup is non-essential; live data still serves */
+      }
+    }
     return {
       ...stripped,
       guildRole: normalizeRhWclGuildRole(att.guildRole),
@@ -1469,6 +1646,8 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       attendanceHistory: att.attendanceHistory,
       rhPastEventCount,
       discordUserId,
+      dbUserId,
+      mainCharacterName,
     };
   });
 
@@ -1893,12 +2072,47 @@ async function persistDiscordDmSubscribersStore() {
   const json = JSON.stringify(discordDmSubscribersState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, discordDmSubscribersPath);
+  try {
+    dmSubscribersReplaceFromState(discordDmSubscribersState);
+  } catch (error) {
+    console.warn("[dm-subs] dual-write failed:", error?.message || error);
+  }
 }
 
 async function ensureDiscordDmSubscribersStore() {
   if (discordDmSubscribersReady) return discordDmSubscribersReady;
   discordDmSubscribersReady = (async () => {
     await mkdir(dataDir, { recursive: true });
+    if (materializePhase3Enabled()) {
+      try {
+        const subRows = dmSubscribersGetAll();
+        const notifRows = dmNotifiedEventIdsGetAll();
+        if ((Array.isArray(subRows) && subRows.length > 0) || (Array.isArray(notifRows) && notifRows.length > 0)) {
+          const subscribersByUserId = {};
+          for (const r of subRows) {
+            const userId = String(r?.userId || "").trim();
+            if (!userId) continue;
+            subscribersByUserId[userId] = {
+              userId,
+              username: String(r?.username || ""),
+              globalName: String(r?.globalName || ""),
+              subscribed: !!r?.subscribed,
+              updatedAt: Number(r?.updatedAt || 0),
+            };
+          }
+          discordDmSubscribersState = sanitizeDiscordDmSubscribersState({
+            subscribersByUserId,
+            notifiedEventIds: notifRows.map((r) => String(r?.eventId || "")).filter(Boolean),
+          });
+          return;
+        }
+      } catch (error) {
+        console.warn(
+          "[dm-subscribers] SQLite hydrate failed, falling back to JSON:",
+          error?.message || error
+        );
+      }
+    }
     try {
       const raw = await readFile(discordDmSubscribersPath, "utf8");
       const parsed = JSON.parse(raw);
@@ -2089,12 +2303,41 @@ async function persistHofNotesStore() {
   const json = JSON.stringify(hofNotesState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, hofNotesPath);
+  try {
+    hofNotesReplaceFromState(hofNotesState);
+  } catch (error) {
+    console.warn("[hof-notes] dual-write failed:", error?.message || error);
+  }
 }
 
 async function ensureHofNotesStore() {
   if (hofNotesReady) return hofNotesReady;
   hofNotesReady = (async () => {
     await mkdir(dataDir, { recursive: true });
+    if (materializePhase3Enabled()) {
+      try {
+        const rows = hofNotesGetAll();
+        if (Array.isArray(rows) && rows.length > 0) {
+          const byWinnerRaidKey = {};
+          for (const r of rows) {
+            const key = String(r?.winnerRaidKey || "").trim();
+            if (!key) continue;
+            byWinnerRaidKey[key] = {
+              quote: String(r?.quote || ""),
+              updatedAt: Number(r?.updatedAt || 0),
+              updatedBy: String(r?.updatedBy || ""),
+            };
+          }
+          hofNotesState = sanitizeHofNotesState({ byWinnerRaidKey });
+          return;
+        }
+      } catch (error) {
+        console.warn(
+          "[hof-notes] SQLite hydrate failed, falling back to JSON:",
+          error?.message || error
+        );
+      }
+    }
     try {
       const raw = await readFile(hofNotesPath, "utf8");
       const parsed = JSON.parse(raw);
@@ -2113,12 +2356,40 @@ async function persistRoleAlertDmLogStore() {
   const json = JSON.stringify(roleAlertDmLogState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, roleAlertDmLogPath);
+  try {
+    roleAlertLogReplaceFromState(roleAlertDmLogState);
+  } catch (error) {
+    console.warn("[role-alert-log] dual-write failed:", error?.message || error);
+  }
 }
 
 async function ensureRoleAlertDmLogStore() {
   if (roleAlertDmLogReady) return roleAlertDmLogReady;
   roleAlertDmLogReady = (async () => {
     await mkdir(dataDir, { recursive: true });
+    if (materializePhase3Enabled()) {
+      try {
+        const rows = roleAlertLogGetAll();
+        if (Array.isArray(rows) && rows.length > 0) {
+          const byEventId = {};
+          for (const r of rows) {
+            const eventId = String(r?.eventId || "").trim();
+            const userId = String(r?.userId || "").trim();
+            const sentAt = Number(r?.sentAt || 0);
+            if (!eventId || !userId || !Number.isFinite(sentAt) || sentAt <= 0) continue;
+            if (!byEventId[eventId]) byEventId[eventId] = { byUserId: {} };
+            byEventId[eventId].byUserId[userId] = sentAt;
+          }
+          roleAlertDmLogState = sanitizeRoleAlertDmLogState({ byEventId });
+          return;
+        }
+      } catch (error) {
+        console.warn(
+          "[role-alert-log] SQLite hydrate failed, falling back to JSON:",
+          error?.message || error
+        );
+      }
+    }
     try {
       const raw = await readFile(roleAlertDmLogPath, "utf8");
       const parsed = JSON.parse(raw);
@@ -3017,6 +3288,51 @@ async function persistRhWclLinksStore() {
   const json = JSON.stringify(rhWclLinksState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, rhWclCharacterLinksPath);
+  // Dual-write to the canonical identity layer (Phase 1). Best-effort —
+  // never block or fail the JSON persist path on a SQLite hiccup. Reads
+  // still come from rhWclLinksState until Phase 2 cuts the reads over.
+  try {
+    dualWriteRhWclLinksToIdentityDb(rhWclLinksState?.links || []);
+  } catch (error) {
+    console.warn("[identity-dualwrite] rh-wcl-links mirror failed:", error?.message || error);
+  }
+}
+
+/**
+ * Mirror the in-memory rh-wcl-character-links rows into the canonical
+ * `users` + `user_characters` tables. One transaction per call. Safe to
+ * invoke after every successful JSON persist; the upsert helpers are
+ * idempotent.
+ */
+function dualWriteRhWclLinksToIdentityDb(links) {
+  if (!Array.isArray(links) || links.length === 0) return;
+  const now = Date.now();
+  for (const link of links) {
+    const raidHelperName = String(link?.raidHelperName || "").trim();
+    if (!raidHelperName) continue;
+    const discordUserId = sanitizeDiscordUserId(link?.discordUserId);
+    const guildRole = link?.guildRole ? String(link.guildRole).trim() : null;
+    const wclCharacterNames = Array.isArray(link?.wclCharacterNames)
+      ? link.wclCharacterNames.map((n) => String(n || "").trim()).filter(Boolean)
+      : [];
+    const user = identityUserUpsert({
+      discordUserId: discordUserId || null,
+      raidHelperName,
+      displayName: raidHelperName,
+      guildRole,
+      source: "dualwrite:rh-wcl-links",
+      updatedAt: now,
+    });
+    for (const characterName of wclCharacterNames) {
+      identityCharacterUpsert({
+        userId: user.id,
+        characterName,
+        discoveredVia: "wcl-roster",
+        source: "dualwrite:rh-wcl-links",
+        updatedAt: now,
+      });
+    }
+  }
 }
 
 /** Canonical character roster rows (sorted: unassigned first). Single source with attendance + public `/api/wcl/guild/.../characters`. */
@@ -4878,6 +5194,386 @@ app.post("/api/admin/discord-rh-name-cache/refresh", async (req, res) => {
 });
 
 /* =============================================================================
+ * Identity diff — admin spot-check that the new canonical `users` /
+ * `user_characters` tables are in sync with the legacy JSON sources during
+ * Phase 1 of the canonical-user database migration. Reports rows missing
+ * from each side, plus per-row drift on Discord id, RH name, and guild role.
+ *
+ * Read-only; never mutates either side. Designed for low call frequency
+ * (admin clicks "diff", not polled).
+ * ============================================================================= */
+app.get("/api/admin/identity-diff", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureRhWclLinksStore();
+    await ensureDiscordIdToRhNameCacheLoaded();
+
+    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+    const byUserId = discordIdToRhNameState?.byUserId || {};
+
+    /** Map JSON link rows into a compact, comparable shape keyed by RH key. */
+    const jsonLinksByKey = new Map();
+    for (const link of links) {
+      const rhName = String(link?.raidHelperName || "").trim();
+      if (!rhName) continue;
+      const key = identityRhNameKey(rhName);
+      if (!key) continue;
+      jsonLinksByKey.set(key, {
+        raidHelperName: rhName,
+        raidHelperNameKey: key,
+        discordUserId: sanitizeDiscordUserId(link?.discordUserId) || null,
+        guildRole: link?.guildRole ? String(link.guildRole).trim() : null,
+        wclCharacterNames: Array.isArray(link?.wclCharacterNames)
+          ? link.wclCharacterNames.map((n) => String(n || "").trim()).filter(Boolean)
+          : [],
+      });
+    }
+
+    /** Map cache rows into a compact, comparable shape keyed by Discord id. */
+    const cacheByDiscordId = new Map();
+    for (const [discordUserId, entry] of Object.entries(byUserId)) {
+      const id = sanitizeDiscordUserId(discordUserId);
+      if (!id) continue;
+      cacheByDiscordId.set(id, {
+        discordUserId: id,
+        rhName: entry?.rhName ? String(entry.rhName).trim() : "",
+        rhNameKey: entry?.rhName ? identityRhNameKey(entry.rhName) : "",
+      });
+    }
+
+    const dbUsers = identityUserListAll();
+    const dbUsersByDiscordId = new Map();
+    const dbUsersByRhKey = new Map();
+    for (const u of dbUsers) {
+      if (u.discordUserId) dbUsersByDiscordId.set(u.discordUserId, u);
+      if (u.raidHelperNameKey) dbUsersByRhKey.set(u.raidHelperNameKey, u);
+    }
+
+    const missingFromDb = []; // JSON has it, SQLite doesn't
+    const missingFromJson = []; // SQLite has it, JSON doesn't
+    const drift = []; // both sides have it but fields disagree
+
+    for (const [rhKey, jl] of jsonLinksByKey) {
+      let dbUser = jl.discordUserId ? dbUsersByDiscordId.get(jl.discordUserId) : null;
+      if (!dbUser) dbUser = dbUsersByRhKey.get(rhKey) || null;
+      if (!dbUser) {
+        missingFromDb.push({ source: "rh-wcl-links", ...jl });
+        continue;
+      }
+      const dbCharacterNames = identityCharactersGetByUserId(dbUser.id).map((c) => c.characterName);
+      const driftFields = {};
+      if ((jl.discordUserId || null) !== (dbUser.discordUserId || null)) {
+        driftFields.discordUserId = { json: jl.discordUserId, db: dbUser.discordUserId };
+      }
+      if ((jl.raidHelperName || null) !== (dbUser.raidHelperName || null)) {
+        driftFields.raidHelperName = { json: jl.raidHelperName, db: dbUser.raidHelperName };
+      }
+      if ((jl.guildRole || null) !== (dbUser.guildRole || null)) {
+        driftFields.guildRole = { json: jl.guildRole, db: dbUser.guildRole };
+      }
+      const missingChars = jl.wclCharacterNames.filter((n) => {
+        const k = identityRhNameKey(n);
+        return k && !dbCharacterNames.some((c) => identityRhNameKey(c) === k);
+      });
+      if (missingChars.length) driftFields.missingCharacters = missingChars;
+      if (Object.keys(driftFields).length) {
+        drift.push({
+          source: "rh-wcl-links",
+          rhKey,
+          dbUserId: dbUser.id,
+          json: jl,
+          db: { ...dbUser, characterNames: dbCharacterNames },
+          fields: driftFields,
+        });
+      }
+    }
+
+    for (const [discordId, cacheRow] of cacheByDiscordId) {
+      const dbUser = dbUsersByDiscordId.get(discordId);
+      if (!dbUser) {
+        missingFromDb.push({ source: "discord-id-cache", ...cacheRow });
+        continue;
+      }
+      const driftFields = {};
+      if ((cacheRow.rhName || null) !== (dbUser.raidHelperName || null)) {
+        driftFields.raidHelperName = { json: cacheRow.rhName, db: dbUser.raidHelperName };
+      }
+      if (Object.keys(driftFields).length) {
+        drift.push({
+          source: "discord-id-cache",
+          discordUserId: discordId,
+          dbUserId: dbUser.id,
+          json: cacheRow,
+          db: dbUser,
+          fields: driftFields,
+        });
+      }
+    }
+
+    for (const u of dbUsers) {
+      const matchedByLink = u.raidHelperNameKey && jsonLinksByKey.has(u.raidHelperNameKey);
+      const matchedByCache = u.discordUserId && cacheByDiscordId.has(u.discordUserId);
+      if (!matchedByLink && !matchedByCache) {
+        missingFromJson.push({
+          dbUserId: u.id,
+          discordUserId: u.discordUserId,
+          raidHelperName: u.raidHelperName,
+          displayName: u.displayName,
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      counts: {
+        jsonRhLinks: jsonLinksByKey.size,
+        jsonDiscordCache: cacheByDiscordId.size,
+        dbUsers: dbUsers.length,
+        missingFromDb: missingFromDb.length,
+        missingFromJson: missingFromJson.length,
+        drift: drift.length,
+      },
+      // Cap each list to keep the response sane for the admin UI even if
+      // something has gone catastrophically wrong with the sync.
+      missingFromDb: missingFromDb.slice(0, 200),
+      missingFromJson: missingFromJson.slice(0, 200),
+      drift: drift.slice(0, 200),
+    });
+  } catch (error) {
+    console.error("[identity-diff] failed:", error?.stack || error);
+    return res.status(500).json({ ok: false, error: error?.message || "identity-diff failed" });
+  }
+});
+
+/* =============================================================================
+ * POST /api/admin/db/backup
+ *
+ * Take a point-in-time copy of `data/item-needs.sqlite` to
+ * `data/backups/item-needs-<timestamp>.sqlite` using SQLite's `VACUUM INTO`.
+ * Atomic, low-overhead — the DB is fully usable while the copy runs.
+ * Run before each Phase cuts over so we always have a known-good fallback.
+ * ============================================================================= */
+app.post("/api/admin/db/backup", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    const backupsDir = path.join(dataDir, "backups");
+    await mkdir(backupsDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const targetPath = path.join(backupsDir, `item-needs-${stamp}.sqlite`);
+    const result = backupItemNeedsDb(targetPath);
+    return res.json({
+      ok: true,
+      targetPath: result.targetPath,
+      sizeBytes: result.sizeBytes,
+      filename: path.basename(result.targetPath),
+      createdAt: Date.now(),
+    });
+  } catch (error) {
+    console.error("[db-backup] failed:", error?.stack || error);
+    return res.status(500).json({ ok: false, error: error?.message || "backup failed" });
+  }
+});
+
+/* =============================================================================
+ * GET /api/admin/cutover-readiness
+ *
+ * Phase 8 safety gate. Reports a row count per materialised table. A `0`
+ * for any table backing a cutover read path means the corresponding sync
+ * worker has not produced rows yet, so legacy fallback is still serving
+ * production traffic — it is NOT safe to remove dual-write JSON writers
+ * for that store. The admin UI surfaces this so the cleanup phase only
+ * runs once every count is non-zero.
+ * ============================================================================= */
+app.get("/api/admin/cutover-readiness", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    const counts = cutoverReadinessCounts();
+    const flags = {
+      MATERIALIZE_IDENTITY: materializeIdentityEnabled(),
+      MATERIALIZE_BADGES: materializeBadgesEnabled(),
+      MATERIALIZE_ATTENDANCE: materializeAttendanceEnabled(),
+      MATERIALIZE_LOOT: materializeLootEnabled(),
+      MATERIALIZE_PHASE3: materializePhase3Enabled(),
+    };
+    const ready = Object.values(counts).every(
+      (v) => typeof v === "number" && v > 0
+    );
+    return res.json({
+      ok: true,
+      ready,
+      counts,
+      flags,
+      checkedAt: Date.now(),
+      note: ready
+        ? "Every materialised table is non-empty. Safe to proceed with Phase 8 cleanup once a snapshot of legacy JSON has been taken."
+        : "At least one materialised table is empty. Trigger the matching sync task before removing dual-write writers.",
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "readiness check failed" });
+  }
+});
+
+/* =============================================================================
+ * GET /api/admin/database/users
+ * GET /api/admin/database/users/:userId
+ *
+ * Browseable view of the canonical user database. Backs the "Database"
+ * sub-nav tab on the admin page. Returns each canonical `users` row
+ * with its linked `user_characters`, plus per-user materialised counts
+ * (parses, badges, loot, attendance) so an admin can spot-check that
+ * the sync workers populated the right rows for the right user.
+ * ============================================================================= */
+app.get("/api/admin/database/users", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    const search = String(req.query.q || "").trim().toLowerCase();
+    const users = identityUserListAll();
+    const filtered = !search
+      ? users
+      : users.filter((u) => {
+          const haystack = [
+            u.discordUserId,
+            u.raidHelperName,
+            u.displayName,
+            u.guildRole,
+          ]
+            .map((x) => String(x || "").toLowerCase())
+            .join(" ");
+          return haystack.includes(search);
+        });
+    const enriched = filtered.map((u) => {
+      const characters = identityCharactersGetByUserId(u.id);
+      const mainCharacter = characters.find((c) => c.id === u.mainCharacterId) || null;
+      return {
+        id: u.id,
+        discordUserId: u.discordUserId || null,
+        raidHelperName: u.raidHelperName || null,
+        displayName: u.displayName || null,
+        guildRole: u.guildRole || null,
+        mainCharacterId: u.mainCharacterId || null,
+        mainCharacterName: mainCharacter?.characterName || null,
+        pictureFilename: u.pictureFilename || null,
+        pictureUpdatedAt: u.pictureUpdatedAt || null,
+        firstSeenAt: u.firstSeenAt || null,
+        lastSeenAt: u.lastSeenAt || null,
+        isAuthenticated: !!u.isAuthenticated,
+        characterCount: characters.length,
+        characters: characters.map((c) => ({
+          id: c.id,
+          characterName: c.characterName,
+          wowClass: c.wowClass || null,
+          wowSpec: c.wowSpec || null,
+          realm: c.realm || null,
+          isMain: !!c.isMain,
+          discoveredVia: c.discoveredVia || null,
+          firstSeenAt: c.firstSeenAt || null,
+          lastSeenAt: c.lastSeenAt || null,
+        })),
+      };
+    });
+    return res.json({
+      ok: true,
+      total: users.length,
+      shown: enriched.length,
+      users: enriched,
+      checkedAt: Date.now(),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "database load failed" });
+  }
+});
+
+app.get("/api/admin/database/users/:userId", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ ok: false, error: "userId must be a positive integer" });
+  }
+  try {
+    const user = identityUserGetById(userId);
+    if (!user) return res.status(404).json({ ok: false, error: "user not found" });
+    const characters = identityCharactersGetByUserId(user.id);
+    const characterIds = characters.map((c) => c.id);
+    let parses = [];
+    let loot = [];
+    let badges = [];
+    try {
+      parses = parseSummaryGetByUserId(user.id);
+    } catch {
+      parses = [];
+    }
+    try {
+      loot = lootAwardsGetByUserId(user.id);
+    } catch {
+      loot = [];
+    }
+    try {
+      badges = badgeStateGetByUserId(user.id);
+    } catch {
+      badges = [];
+    }
+    return res.json({
+      ok: true,
+      user,
+      characters,
+      characterIds,
+      materialised: {
+        parses,
+        loot,
+        badges,
+      },
+      checkedAt: Date.now(),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "database load failed" });
+  }
+});
+
+/* =============================================================================
+ * GET  /api/admin/sync                — observability: every task's status
+ * POST /api/admin/sync/:taskId        — trigger one task now (single-flight)
+ *
+ * The sync framework lives in `lib/sync/runner.mjs`. Tasks are registered
+ * once at startup and re-run on a fixed cadence; this endpoint is for the
+ * admin UI to surface lag, errors, and manual reruns. Response shape is
+ * stable across phase rollouts.
+ * ============================================================================= */
+app.get("/api/admin/sync", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    return res.json({ ok: true, tasks: syncRunnerSnapshot() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "sync snapshot failed" });
+  }
+});
+
+app.post("/api/admin/sync/:taskId", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const taskId = String(req.params?.taskId || "").trim();
+  if (!taskId) return res.status(400).json({ ok: false, error: "taskId required" });
+  const known = listSyncTasks().some((t) => t.id === taskId);
+  if (!known) return res.status(404).json({ ok: false, error: `unknown task '${taskId}'` });
+  try {
+    const force = String(req.query?.force || "").trim() === "1";
+    if (!force && isSyncTaskRunning(taskId)) {
+      return res.json({ ok: true, skipped: true, reason: "already running" });
+    }
+    const result = await runSyncTaskNow(taskId, { force });
+    return res.json({ ok: true, taskId, ...result });
+  } catch (error) {
+    console.error(`[admin-sync] '${taskId}' failed:`, error?.stack || error);
+    return res.status(500).json({ ok: false, error: error?.message || "sync run failed" });
+  }
+});
+
+/* =============================================================================
  * Profiles — per-Discord-user profile picture, main-character pick, badge view.
  * Storage:
  *   - Metadata: SQLite `user_profiles` / `user_profile_history` tables.
@@ -4933,6 +5629,14 @@ async function safeUnlinkProfilePicture(filename) {
  */
 function listLinkedWowCharactersForDiscordUserId(userId, displayName) {
   const id = sanitizeDiscordUserId(userId);
+  if (materializeIdentityEnabled()) {
+    try {
+      const fromDb = identityListLinkedCharacterNames({ discordUserId: id, displayName });
+      if (Array.isArray(fromDb)) return fromDb;
+    } catch (error) {
+      console.warn("[identity-cutover] listLinkedWowCharactersForDiscordUserId fallback:", error?.message || error);
+    }
+  }
   const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
   const out = [];
   const seen = new Set();
@@ -5161,26 +5865,67 @@ app.delete("/api/profile/me/picture", async (req, res) => {
 });
 
 /**
- * GET /api/profile/picture/:userId — serve the stored picture bytes.
- * Public (no auth) so leaderboard / Hall of Fame can render avatars without
- * requiring viewers to be logged in. ETag-based for efficient revalidation.
+ * Send the picture bytes for one resolved profile metadata row. Shared
+ * helper for both the Discord-id-keyed and canonical-id-keyed endpoints.
  */
-app.get("/api/profile/picture/:userId", async (req, res) => {
-  const userId = sanitizeDiscordUserId(req.params.userId);
-  if (!userId) return res.status(400).end();
-  const profile = profileGetByUserId(userId);
-  if (!profile?.pictureFilename) return res.status(404).end();
-  const filePath = path.join(profilePicturesDir, profile.pictureFilename);
+function sendProfilePictureFromMeta(res, meta) {
+  if (!meta?.pictureFilename) return res.status(404).end();
+  const filePath = path.join(profilePicturesDir, meta.pictureFilename);
   // Aggressive caching keyed on the etag (URLs include `?v=<etag>`), so a new
   // upload changes the URL and side-steps any cached response.
   res.setHeader("Cache-Control", "public, max-age=86400, immutable");
-  res.setHeader("Content-Type", profile.pictureMime || "application/octet-stream");
-  if (profile.pictureEtag) res.setHeader("ETag", `"${profile.pictureEtag}"`);
+  res.setHeader("Content-Type", meta.pictureMime || "application/octet-stream");
+  if (meta.pictureEtag) res.setHeader("ETag", `"${meta.pictureEtag}"`);
   return res.sendFile(filePath, (err) => {
     if (err) {
       if (!res.headersSent) res.status(404).end();
     }
   });
+}
+
+/**
+ * GET /api/profile/picture/:userId — serve the stored picture bytes.
+ * Public (no auth) so leaderboard / Hall of Fame can render avatars without
+ * requiring viewers to be logged in. ETag-based for efficient revalidation.
+ *
+ * Resolution order:
+ *   1. Canonical `users.picture_filename` keyed by `discord_user_id`
+ *      (canonical post-Phase-2 source).
+ *   2. Legacy `user_profiles.picture_filename` keyed by Discord id (kept
+ *      while dual-write is still in effect).
+ */
+app.get("/api/profile/picture/:userId", async (req, res) => {
+  const userId = sanitizeDiscordUserId(req.params.userId);
+  if (!userId) return res.status(400).end();
+  if (materializeIdentityEnabled()) {
+    try {
+      const canonical = identityUserGetByDiscordId(userId);
+      if (canonical?.pictureFilename) return sendProfilePictureFromMeta(res, canonical);
+    } catch (error) {
+      console.warn("[identity-cutover] picture-by-discord-id canonical lookup failed:", error?.message || error);
+    }
+  }
+  const profile = profileGetByUserId(userId);
+  return sendProfilePictureFromMeta(res, profile);
+});
+
+/**
+ * GET /api/profile/picture/by-user/:dbUserId — canonical-id keyed picture
+ * lookup. Used by `/api/profiles/by-character-names` when a raider has an
+ * uploaded picture but no Discord login yet (so we can't use the legacy
+ * `/api/profile/picture/<discord-id>` route). Public, ETag-cached.
+ */
+app.get("/api/profile/picture/by-user/:dbUserId", async (req, res) => {
+  const dbUserId = Number(req.params.dbUserId);
+  if (!Number.isInteger(dbUserId) || dbUserId <= 0) return res.status(400).end();
+  try {
+    const canonical = identityUserGetById(dbUserId);
+    if (!canonical?.pictureFilename) return res.status(404).end();
+    return sendProfilePictureFromMeta(res, canonical);
+  } catch (error) {
+    console.warn("[identity-cutover] picture-by-user lookup failed:", error?.message || error);
+    return res.status(500).end();
+  }
 });
 
 /**
@@ -5203,6 +5948,15 @@ app.get("/api/profiles/by-character-names", async (req, res) => {
       .filter(Boolean)
       .slice(0, 200);
     if (!namesIn.length) return res.json({ ok: true, profiles: {} });
+
+    if (materializeIdentityEnabled()) {
+      try {
+        const profiles = identityResolveProfilesByCharacterNames(namesIn);
+        return res.json({ ok: true, profiles });
+      } catch (error) {
+        console.warn("[identity-cutover] /api/profiles/by-character-names fallback:", error?.message || error);
+      }
+    }
 
     const wantedKeys = new Map();
     for (const name of namesIn) {
@@ -5307,6 +6061,47 @@ app.get("/api/profile/me/badges", async (req, res) => {
       /* fall through with whatever's in memory */
     }
     const linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
+
+    // Phase 4 cutover: prefer materialised badge_state. Falls back to live
+    // computation when the SQLite row is missing (cold boot before first
+    // syncBadges run) or the env flag is off.
+    if (materializeBadgesEnabled()) {
+      try {
+        const canonical = identityUserGetByDiscordId(userId);
+        if (canonical?.id) {
+          const states = badgeStateGetByUserId(canonical.id);
+          if (states.length) {
+            const stateById = new Map(states.map((s) => [s.badgeId, s]));
+            const categories = BADGE_CATALOG.map((cat) => ({
+              ...cat,
+              badges: cat.badges.map((b) => {
+                const st = stateById.get(b.id);
+                return {
+                  ...b,
+                  earned: !!st?.earned,
+                  firstEarnedAt: st?.firstEarnedAt || null,
+                };
+              }),
+            }));
+            return res.json({
+              ok: true,
+              source: "materialized",
+              categories,
+              linkedCharacters,
+              lazyBadges: [
+                "iron-attendance",
+                "parsing-ceiling",
+                "most-deaths-last-6-raids",
+                "best-time-participant",
+              ],
+            });
+          }
+        }
+      } catch (error) {
+        console.warn("[badges] materialised read failed, falling back:", error?.message || error);
+      }
+    }
+
     const linkedKeys = new Set(linkedCharacters.map((c) => normalizeRaidHelperDisplayKey(c)).filter(Boolean));
 
     // The leaderboard / Hall of Fame badge logic lives client-side, but we can
@@ -7715,6 +8510,14 @@ function wowRealmSlugForLookup(realmRaw) {
 function resolveLinkedWowCharacterByDiscordUserId(discordUserId) {
   const id = sanitizeDiscordUserId(discordUserId);
   if (!id) return null;
+  if (materializeIdentityEnabled()) {
+    try {
+      const fromDb = identityResolveCharacterByDiscordId(id);
+      if (fromDb !== null && fromDb !== undefined) return fromDb || null;
+    } catch (error) {
+      console.warn("[identity-cutover] resolveLinkedWowCharacterByDiscordUserId fallback:", error?.message || error);
+    }
+  }
   const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
   for (const link of links) {
     const linkId = sanitizeDiscordUserId(link?.discordUserId);
@@ -7810,6 +8613,35 @@ async function persistDiscordIdToRhNameCache() {
   const tmp = `${discordIdToRhNameCachePath}.tmp`;
   await writeFile(tmp, JSON.stringify(discordIdToRhNameState, null, 2), "utf8");
   await rename(tmp, discordIdToRhNameCachePath);
+  try {
+    dualWriteDiscordIdRhNameCacheToIdentityDb(discordIdToRhNameState?.byUserId || {});
+  } catch (error) {
+    console.warn("[identity-dualwrite] discord-id-cache mirror failed:", error?.message || error);
+  }
+}
+
+/**
+ * Mirror the Discord-id -> last-seen-RH-name cache into `users` rows. We
+ * never write characters from this source — it's purely a Discord <-> RH
+ * name signal — but we do refresh `raid_helper_name` and create rows for
+ * Discord ids we haven't seen anywhere else yet.
+ */
+function dualWriteDiscordIdRhNameCacheToIdentityDb(byUserId) {
+  if (!byUserId || typeof byUserId !== "object") return;
+  const now = Date.now();
+  for (const [discordUserId, entry] of Object.entries(byUserId)) {
+    const id = sanitizeDiscordUserId(discordUserId);
+    if (!id) continue;
+    const rhName = entry?.rhName ? String(entry.rhName).trim() : "";
+    if (!rhName) continue;
+    identityUserUpsert({
+      discordUserId: id,
+      raidHelperName: rhName,
+      displayName: rhName,
+      source: "dualwrite:discord-id-cache",
+      updatedAt: now,
+    });
+  }
 }
 
 /**
@@ -7927,6 +8759,24 @@ async function refreshDiscordIdToRhNameCache() {
 async function resolveRaidHelperNameByDiscordUserId(userId) {
   const id = String(userId || "").trim();
   if (!id) return "";
+  if (materializeIdentityEnabled()) {
+    try {
+      const fromDb = identityResolveRaidHelperNameByDiscordId(id);
+      if (fromDb) {
+        // Still trigger an async cache refresh in the background so future
+        // dual-writes carry the freshest RH name from Raid Helper events.
+        const cacheAge = Date.now() - Number(discordIdToRhNameState?.updatedAt || 0);
+        const stale =
+          cacheAge > DISCORD_RH_NAME_CACHE_TTL_MS || !discordIdToRhNameState?.updatedAt;
+        if (stale && !discordIdToRhNameRefreshInflight) {
+          refreshDiscordIdToRhNameCache().catch(() => {});
+        }
+        return fromDb;
+      }
+    } catch (error) {
+      console.warn("[identity-cutover] resolveRaidHelperNameByDiscordUserId fallback:", error?.message || error);
+    }
+  }
   await ensureDiscordIdToRhNameCacheLoaded();
   const hit = discordIdToRhNameState?.byUserId?.[id];
   const cacheAge = Date.now() - Number(discordIdToRhNameState?.updatedAt || 0);
@@ -8849,46 +9699,19 @@ function buildRecentRaidCalendarEntries(reports) {
 }
 
 /** First guild full-clear per raid (based on available filtered WCL reports), with ranked-character participants. */
+/**
+ * Live-endpoint shim that delegates to the pure extraction in
+ * `lib/compute/first-clears.mjs`. Kept for compatibility with existing
+ * call sites; sync workers import the pure function directly so a slow
+ * module-graph import doesn't impact request latency.
+ */
 function firstClearParticipantsByRaidFromReports(reports, raidNames) {
-  const targets = Array.isArray(raidNames) && raidNames.length ? raidNames : Object.keys(TRACKED_RAIDS);
-  const targetSet = new Set(targets.filter((r) => Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, r)));
-  const out = {};
-  for (const raidName of targetSet) out[raidName] = null;
-  const remaining = () => Object.values(out).some((v) => !v);
-
-  const rows = [...(reports || [])].sort(
-    (a, b) => reportStartTimeMs(a?.startTime) - reportStartTimeMs(b?.startTime)
-  );
-  for (const report of rows) {
-    if (!remaining()) break;
-    const fights = Array.isArray(report?.fights) ? report.fights : [];
-    if (!fights.length) continue;
-    for (const raidName of targetSet) {
-      if (out[raidName]) continue;
-      const raidFights = fights.filter((fight) => resolvedTrackedRaidForFight(fight, report) === raidName);
-      if (!raidFights.length) continue;
-      const bosses = TRACKED_RAIDS[raidName] || [];
-      const kills = new Set(
-        raidFights
-          .filter((fight) => Boolean(fight?.kill))
-          .map((fight) => String(fight?.name || "").trim())
-          .filter(Boolean)
-      );
-      const isFullClear = bosses.length > 0 && bosses.every((boss) => kills.has(String(boss || "").trim()));
-      if (!isFullClear) continue;
-      const participants = Array.isArray(report?.rankedCharacters)
-        ? report.rankedCharacters
-            .map((c) => String(c?.name || "").trim())
-            .filter(Boolean)
-        : [];
-      out[raidName] = {
-        reportCode: String(report?.code || ""),
-        startTime: Number(report?.startTime || 0),
-        participants,
-      };
-    }
-  }
-  return out;
+  return computeFirstClearParticipantsByRaid(reports, {
+    trackedRaids: TRACKED_RAIDS,
+    resolveRaidForFight: resolvedTrackedRaidForFight,
+    getStartTimeMs: reportStartTimeMs,
+    raidNames,
+  });
 }
 
 async function fetchRaidHelperServerEvents(serverId) {
@@ -9978,6 +10801,35 @@ app.get("/api/wcl/guild/:guildId/death-leaderboard", async (req, res) => {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
 
+  if (materializeAttendanceEnabled()) {
+    try {
+      const rows = deathTotalsGetByWindow("last-rolling-window");
+      if (rows.length) {
+        const topParam = req.query.top;
+        const top =
+          topParam === undefined || topParam === ""
+            ? 5
+            : Math.min(500, Math.max(1, Math.floor(Number(topParam) || 5)));
+        const leaderboard = rows
+          .map((r) => ({
+            name: r.mainCharacterName || r.displayName || `User #${r.userId}`,
+            deaths: Number(r.deaths || 0),
+            userId: r.userId,
+            discordUserId: r.discordUserId || null,
+          }))
+          .slice(0, top);
+        return res.json({
+          guildId,
+          source: "materialized",
+          scannedReports: null,
+          leaderboard,
+        });
+      }
+    } catch (error) {
+      console.warn("[death-leaderboard] materialised read failed:", error?.message || error);
+    }
+  }
+
   try {
     const reports = await getFilteredGuildReportsForGuild(guildId, limit);
     const totals = new Map();
@@ -10067,6 +10919,135 @@ app.get("/api/wcl/guild/:guildId/characters", async (req, res) => {
   }
 });
 
+/**
+ * Build the same payload shape `/api/wcl/guild/:gid/attendance` returns,
+ * but sourced from `users` × `user_characters` × `raid_attendance` ×
+ * `parse_summary`. Returns `null` if the materialised tables don't have
+ * enough data yet so the caller can fall back to the live pipeline.
+ */
+function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
+  let attendanceWindow = [];
+  try {
+    const freshest = raidAttendanceGetFreshestWindow();
+    if (!freshest) return null;
+    attendanceWindow = raidAttendanceGetByWindow(freshest.windowLabel);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(attendanceWindow) || !attendanceWindow.length) return null;
+
+  const users = identityUserListAll();
+  if (!Array.isArray(users) || !users.length) return null;
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const charactersByUserId = new Map();
+  const allCharacterIds = [];
+  for (const u of users) {
+    const chars = identityCharactersGetByUserId(u.id);
+    charactersByUserId.set(u.id, chars);
+    for (const c of chars) allCharacterIds.push(c.id);
+  }
+  const parseRowsByCharacterId = new Map();
+  if (allCharacterIds.length) {
+    const parseRows = parseSummaryGetByMainCharacterIds(allCharacterIds);
+    for (const r of parseRows) {
+      const arr = parseRowsByCharacterId.get(r.characterId) || [];
+      arr.push(r);
+      parseRowsByCharacterId.set(r.characterId, arr);
+    }
+  }
+
+  /* Aggregate per-user parse summaries by collapsing each character's rows
+     into the user's tank/heal/dps best. We keep the bracket's best across
+     all of the user's characters (mirror of the live `parseSummaries`). */
+  function bestParseRowForUserBracket(userId, bracket) {
+    const chars = charactersByUserId.get(userId) || [];
+    let best = null;
+    for (const c of chars) {
+      const rows = parseRowsByCharacterId.get(c.id) || [];
+      for (const r of rows) {
+        if (r.bracket !== bracket) continue;
+        if (!best || Number(r.bestValue || 0) > Number(best.bestValue || 0)) best = r;
+      }
+    }
+    return best;
+  }
+
+  const consideredRaids = Number(attendanceWindow[0]?.attendanceHistory?.length || 0);
+  const leaderboard = [];
+  for (const att of attendanceWindow) {
+    const u = usersById.get(att.userId);
+    if (!u) continue;
+    const chars = charactersByUserId.get(u.id) || [];
+    const wclCharacters = chars.map((c) => c.characterName).sort((a, b) => a.localeCompare(b));
+    const tank = bestParseRowForUserBracket(u.id, "tank");
+    const heal = bestParseRowForUserBracket(u.id, "heal");
+    const dps = bestParseRowForUserBracket(u.id, "dps");
+    const parseSummaries = {
+      bestTank: tank?.bestValue || 0,
+      bestTankEncounter: tank?.bestEncounter || null,
+      bestTankReportCode: tank?.bestReportCode || null,
+      bestTankFightId: tank?.bestFightId || null,
+      bestTankEncounterTop: !!(tank && tank.encounterTopInBracket),
+      bestHeal: heal?.bestValue || 0,
+      bestHealEncounter: heal?.bestEncounter || null,
+      bestHealReportCode: heal?.bestReportCode || null,
+      bestHealFightId: heal?.bestFightId || null,
+      bestHealEncounterTop: !!(heal && heal.encounterTopInBracket),
+      bestDps: dps?.bestValue || 0,
+      bestDpsEncounter: dps?.bestEncounter || null,
+      bestDpsReportCode: dps?.bestReportCode || null,
+      bestDpsFightId: dps?.bestFightId || null,
+      bestDpsEncounterTop: !!(dps && dps.encounterTopInBracket),
+      encounterTopTank: !!(tank && tank.encounterTopInBracket),
+      encounterTopHeal: !!(heal && heal.encounterTopInBracket),
+      encounterTopDps: !!(dps && dps.encounterTopInBracket),
+    };
+    leaderboard.push({
+      name: u.displayName || u.raidHelperName || "",
+      raidHelperName: u.raidHelperName || u.displayName || "",
+      wclCharacters,
+      raidsAttended: Number(att.raidsAttended || 0),
+      attendanceRate: consideredRaids > 0 ? (Number(att.raidsAttended || 0) / consideredRaids) * 100 : 0,
+      attendanceHistory: Array.isArray(att.attendanceHistory) ? att.attendanceHistory : [],
+      parseSummaries,
+      guildRole: normalizeRhWclGuildRole(u.guildRole),
+      dbUserId: u.id,
+      discordUserId: u.discordUserId || null,
+    });
+  }
+
+  leaderboard.sort(
+    (a, b) =>
+      b.raidsAttended - a.raidsAttended ||
+      b.attendanceRate - a.attendanceRate ||
+      String(a.raidHelperName || "").localeCompare(String(b.raidHelperName || ""))
+  );
+
+  const trimmed = leaderboard.slice(0, top);
+  const parseCeilingMax = computeParseCeilingMaxFromLeaderboard(trimmed);
+  return {
+    guildId,
+    consideredRaids,
+    raids: [],
+    leaderboard: trimmed,
+    parseCeilingMax,
+    parseRankingReports: 0,
+    attendanceLinking: true,
+    rhWclLinkCount: users.length,
+    attendanceScope: {
+      only25PlayerRaids: true,
+      excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
+      recentRaidCap: wclAttendanceRecentRaidCount(),
+    },
+    parseScope: {
+      sameRaidsAsAttendance: true,
+      metricNote:
+        "Peak parse columns: best single-boss percentile per raid log, then max across recent capped raids (tooltip = encounter + report + fight). Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) in any raid in the window.",
+    },
+    source: "materialised",
+  };
+}
+
 app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
   const guildId = Number(req.params.guildId);
   const reportLimit = Math.min(
@@ -10077,6 +11058,15 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
   const top = Math.min(200, Math.max(5, Number(req.query.top || 25)));
   if (!Number.isInteger(guildId) || guildId <= 0) {
     return res.status(400).json({ error: "guildId must be a positive integer" });
+  }
+
+  if (materializeAttendanceEnabled() && String(req.query.refresh || "") !== "1") {
+    try {
+      const fast = buildAttendancePayloadFromMaterialised(guildId, { top });
+      if (fast) return res.json(fast);
+    } catch (error) {
+      console.warn("[attendance] materialised read failed:", error?.message || error);
+    }
   }
 
   try {
@@ -10135,6 +11125,26 @@ app.get("/api/wcl/guild/:guildId/first-clear-participants", async (req, res) => 
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
   const raidNames = ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"];
+
+  if (materializeAttendanceEnabled()) {
+    try {
+      const grouped = firstClearParticipantsGet({ raidNames });
+      const haveAny = raidNames.some((r) => grouped[r]?.participants?.length);
+      if (haveAny) {
+        const firstClears = {};
+        for (const raidName of raidNames) firstClears[raidName] = grouped[raidName] || null;
+        return res.json({
+          guildId,
+          source: "materialized",
+          reportsScanned: null,
+          firstClears,
+        });
+      }
+    } catch (error) {
+      console.warn("[first-clear-participants] materialised read failed:", error?.message || error);
+    }
+  }
+
   try {
     const reports = await getFilteredGuildReportsForGuild(guildId, limit);
     const firstClears = firstClearParticipantsByRaidFromReports(reports, raidNames);
@@ -10776,6 +11786,76 @@ async function fetchGuildLootReceived(guildId, reportLimit) {
   };
 }
 
+/**
+ * Build the same payload shape `fetchGuildLootReceived` returns, but
+ * sourced from the materialised `loot_awards` table populated by
+ * `runSyncLoot`. Used by `/api/loot-history` + `/api/wcl/guild/:gid/loot-received`
+ * when MATERIALIZE_LOOT is on AND the table is non-empty.
+ *
+ * Returns `null` if the materialised table is empty so the caller can
+ * fall back to the live `fetchGuildLootReceived` pipeline.
+ */
+function buildLootHistoryFromMaterialised(guildId) {
+  let awards;
+  try {
+    awards = lootAwardsGetAll({ limit: 5000 });
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(awards) || awards.length === 0) return null;
+
+  const reportInfo = new Map();
+  for (const a of awards) {
+    if (!a?.reportCode) continue;
+    if (reportInfo.has(a.reportCode)) continue;
+    reportInfo.set(a.reportCode, {
+      reportCode: a.reportCode,
+      reportTitle: a.reportTitle || null,
+      reportRaidName: a.reportRaidName || null,
+      reportStartTime: Number(a.awardedAt || 0),
+      reportUploader: a.reportUploader || null,
+    });
+  }
+  const allRaids = [...reportInfo.values()]
+    .filter((raid) => !isTenPlayerTbcLootRow(raid))
+    .sort((a, b) => Number(b.reportStartTime || 0) - Number(a.reportStartTime || 0));
+
+  const items = awards
+    .map((a) => ({
+      reportCode: a.reportCode || null,
+      reportTitle: a.reportTitle || null,
+      reportRaidName: a.reportRaidName || null,
+      reportStartTime: Number(a.awardedAt || 0),
+      itemId: a.itemId,
+      itemName: a.itemName || null,
+      recipient: a.characterName || null,
+      rawType: a.rawType || null,
+    }))
+    .filter((row) => !isTenPlayerTbcLootRow(row));
+
+  const selectedSet = new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x)));
+  const visibleRaids = selectedSet.size
+    ? allRaids.filter((raid) => selectedSet.has(String(raid.reportCode)))
+    : allRaids;
+  const visibleItems = selectedSet.size
+    ? items.filter((item) => selectedSet.has(String(item?.reportCode || "")))
+    : items;
+
+  return {
+    guildId,
+    reportsChecked: allRaids.length,
+    selectedReportCodes: [...selectedSet],
+    raids: visibleRaids,
+    allRaids,
+    items: visibleItems,
+    note:
+      visibleItems.length === 0
+        ? "No loot receipt events were returned by Warcraft Logs, and no Gargul import data is stored yet."
+        : null,
+    source: "materialised",
+  };
+}
+
 app.get("/api/wcl/guild/:guildId/loot-received", async (req, res) => {
   const guildId = Number(req.params.guildId);
   const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
@@ -10784,6 +11864,10 @@ app.get("/api/wcl/guild/:guildId/loot-received", async (req, res) => {
     return res.status(400).json({ error: "guildId must be a positive integer" });
   }
   try {
+    if (!forceRefresh && materializeLootEnabled()) {
+      const fast = buildLootHistoryFromMaterialised(guildId);
+      if (fast) return res.json(fast);
+    }
     const key = lootHistoryCacheKey(guildId, reportLimit);
     const loader = () => fetchGuildLootReceived(guildId, reportLimit);
     const payload = forceRefresh
@@ -10793,9 +11877,53 @@ app.get("/api/wcl/guild/:guildId/loot-received", async (req, res) => {
           maxStaleMs: lootHistoryMaxStaleMs(),
           loader,
         });
-    return res.json(payload);
+    return res.json({ ...payload, source: "live" });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
+  }
+});
+
+/**
+ * Phase 7 cutover: per-user loot pulled from the materialised `loot_awards`
+ * table. Returns the canonical user's awarded items (across all linked
+ * characters) so the profile page can render a recent-loot list without
+ * re-running the WCL loot-events graph.
+ */
+app.get("/api/profile/loot/me", async (req, res) => {
+  if (!materializeLootEnabled()) {
+    return res.json({ ok: true, source: "disabled", awards: [] });
+  }
+  try {
+    const userId = req.session?.user?.id;
+    const discordUserId = sanitizeDiscordUserId(userId);
+    if (!discordUserId) return res.status(401).json({ ok: false, error: "Not signed in" });
+    const canonical = identityUserGetByDiscordId(discordUserId);
+    if (!canonical?.id) return res.json({ ok: true, source: "materialised", awards: [] });
+    const awards = lootAwardsGetByUserId(canonical.id);
+    return res.json({ ok: true, source: "materialised", dbUserId: canonical.id, awards });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load loot" });
+  }
+});
+
+/**
+ * Phase 7 cutover: per-canonical-user loot for the leaderboard expand
+ * sub-row. Avoids the leaderboard having to filter the full
+ * `/api/wcl/guild/:gid/loot-received` payload client-side for every row.
+ */
+app.get("/api/leaderboard/player/:dbUserId/loot", async (req, res) => {
+  if (!materializeLootEnabled()) {
+    return res.status(404).json({ ok: false, error: "Materialised loot disabled" });
+  }
+  const dbUserId = Number(req.params.dbUserId);
+  if (!Number.isInteger(dbUserId) || dbUserId <= 0) {
+    return res.status(400).json({ ok: false, error: "dbUserId must be a positive integer" });
+  }
+  try {
+    const awards = lootAwardsGetByUserId(dbUserId);
+    return res.json({ ok: true, source: "materialised", dbUserId, awards });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load loot" });
   }
 });
 
@@ -10803,6 +11931,10 @@ app.get("/api/loot-history", async (req, res) => {
   const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
   const forceRefresh = String(req.query.refresh || "") === "1";
   try {
+    if (!forceRefresh && materializeLootEnabled()) {
+      const fast = buildLootHistoryFromMaterialised(votingGuildId);
+      if (fast) return res.json(fast);
+    }
     const key = lootHistoryCacheKey(votingGuildId, reportLimit);
     const loader = () => fetchGuildLootReceived(votingGuildId, reportLimit);
     const payload = forceRefresh
@@ -10812,7 +11944,7 @@ app.get("/api/loot-history", async (req, res) => {
           maxStaleMs: lootHistoryMaxStaleMs(),
           loader,
         });
-    return res.json(payload);
+    return res.json({ ...payload, source: "live" });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
   }
@@ -10892,6 +12024,486 @@ app.post("/api/wcl/mvp", async (req, res) => {
     return res.status(500).json({ error: error.message || "Unknown server error" });
   }
 });
+
+/* =============================================================================
+ * Sync workers — register tasks and start the runner.
+ *
+ * Each task is registered via `registerSyncTask` and the runner schedules
+ * them at fixed intervals with single-flight semantics. Tasks read from the
+ * existing disk caches + materialised tables and write to dedicated tables
+ * (`badge_state`, `raid_attendance`, etc.). HTTP endpoints read from the
+ * tables and never call the WCL / Raid Helper APIs themselves.
+ * ============================================================================= */
+
+/** Recompute server-side resolvable badge state for every known user. */
+async function runSyncBadges() {
+  const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
+  const reports =
+    Number.isInteger(guildId) && guildId > 0
+      ? await getFilteredGuildReportsForGuild(
+          guildId,
+          Math.min(wclMaxGuildReportsLimit(), Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80)))
+        ).catch((error) => {
+          console.warn("[sync:badges] reports fetch failed, using empty set:", error?.message || error);
+          return [];
+        })
+      : [];
+
+  const firstClears = computeFirstClearParticipantsByRaid(reports, {
+    trackedRaids: TRACKED_RAIDS,
+    resolveRaidForFight: resolvedTrackedRaidForFight,
+    getStartTimeMs: reportStartTimeMs,
+    raidNames: ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"],
+  });
+
+  const firstClearKeySets = {
+    "kara-first-time-clear": new Set(
+      (firstClears?.["Karazhan"]?.participants || [])
+        .map((n) => normalizeRaidHelperDisplayKey(String(n || "")))
+        .filter(Boolean)
+    ),
+    "gruul-first-time-clear": new Set(
+      (firstClears?.["Gruul's Lair"]?.participants || [])
+        .map((n) => normalizeRaidHelperDisplayKey(String(n || "")))
+        .filter(Boolean)
+    ),
+    "magtheridon-first-time-clear": new Set(
+      (firstClears?.["Magtheridon's Lair"]?.participants || [])
+        .map((n) => normalizeRaidHelperDisplayKey(String(n || "")))
+        .filter(Boolean)
+    ),
+  };
+  const firstClearEvidence = {
+    "kara-first-time-clear": firstClears?.["Karazhan"] || null,
+    "gruul-first-time-clear": firstClears?.["Gruul's Lair"] || null,
+    "magtheridon-first-time-clear": firstClears?.["Magtheridon's Lair"] || null,
+  };
+
+  let hofWinnerKeys = new Set();
+  try {
+    await ensureVotingStore();
+    for (const round of votingHallOfFame("", 200)) {
+      const win = String(round?.winnerName || "").trim();
+      if (!win) continue;
+      const k = normalizeRaidHelperDisplayKey(win);
+      if (k) hofWinnerKeys.add(k);
+    }
+  } catch (error) {
+    console.warn("[sync:badges] hall-of-fame load failed:", error?.message || error);
+  }
+
+  let rowsChanged = 0;
+  const now = Date.now();
+  for (const user of identityUserListAll()) {
+    const linkedNames = identityListLinkedCharacterNames({
+      discordUserId: user.discordUserId,
+      displayName: user.displayName,
+    });
+    const linkedKeys = new Set(linkedNames.map((c) => normalizeRaidHelperDisplayKey(c)).filter(Boolean));
+
+    const earned = new Set();
+    const evidenceById = new Map();
+
+    const guildRoleSlug = String(user.guildRole || "Peon").toLowerCase().replace(/\s+/g, "-");
+    if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
+    else if (guildRoleSlug === "raidlead") earned.add("raidlead");
+    else if (guildRoleSlug === "core") earned.add("core");
+    else if (guildRoleSlug === "veteran") earned.add("veteran");
+    else if (guildRoleSlug === "grunt") earned.add("grunt");
+    else earned.add("peon");
+
+    if (linkedKeys.size && [...linkedKeys].some((k) => hofWinnerKeys.has(k))) earned.add("hall-of-fame");
+
+    for (const badgeId of Object.keys(firstClearKeySets)) {
+      const keys = firstClearKeySets[badgeId];
+      if (linkedKeys.size && [...linkedKeys].some((k) => keys.has(k))) {
+        earned.add(badgeId);
+        if (firstClearEvidence[badgeId]) evidenceById.set(badgeId, firstClearEvidence[badgeId]);
+      }
+    }
+
+    const rows = [];
+    for (const cat of BADGE_CATALOG) {
+      for (const b of cat.badges) {
+        rows.push({
+          badgeId: b.id,
+          earned: earned.has(b.id) ? 1 : 0,
+          evidence: evidenceById.get(b.id) || null,
+        });
+      }
+    }
+    badgeStateReplaceForUser({ userId: user.id, rows, when: now });
+    rowsChanged += rows.length;
+  }
+  return { rowsChanged };
+}
+
+registerSyncTask({
+  id: "badges",
+  intervalMs: 15 * 60_000,
+  description: "Recompute server-side resolvable badges for every user.",
+  run: runSyncBadges,
+});
+
+/**
+ * Walk the rolling window of guild reports and materialise attendance,
+ * deaths, first-clears, and best-time roster into their respective
+ * tables. The endpoints under `/api/wcl/guild/:gid/...` then read from
+ * SQLite instead of re-running this scan on every request.
+ */
+async function runSyncAttendance() {
+  const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return { rowsChanged: 0 };
+  }
+
+  const reportLimit = Math.min(
+    wclMaxGuildReportsLimit(),
+    Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80))
+  );
+  const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit).catch((error) => {
+    console.warn("[sync:attendance] reports fetch failed:", error?.message || error);
+    return [];
+  });
+
+  let totalRowsChanged = 0;
+
+  // ---------- first_clear_participants -------------------------------------
+  try {
+    const raidNames = ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"];
+    const firstClears = computeFirstClearParticipantsByRaid(reports, {
+      trackedRaids: TRACKED_RAIDS,
+      resolveRaidForFight: resolvedTrackedRaidForFight,
+      getStartTimeMs: reportStartTimeMs,
+      raidNames,
+    });
+    const result = firstClearParticipantsReplace({ raidEntries: firstClears, raidNames });
+    totalRowsChanged += result?.rows || 0;
+  } catch (error) {
+    console.warn("[sync:attendance] first-clears step failed:", error?.message || error);
+  }
+
+  // ---------- best_time_roster --------------------------------------------
+  try {
+    const bestByEncounter = new Map();
+    for (const report of reports) {
+      const fights = Array.isArray(report?.fights) ? report.fights : [];
+      const rankedNames = Array.isArray(report?.rankedCharacters)
+        ? report.rankedCharacters.map((c) => String(c?.name || "").trim()).filter(Boolean)
+        : [];
+      for (const fight of fights) {
+        const raidName = resolvedTrackedRaidForFight(fight, report);
+        if (!raidName || !TRACKED_RAIDS[raidName]) continue;
+        if (!fight?.kill) continue;
+        const encounterId = Number(fight?.encounterID || 0);
+        if (!Number.isInteger(encounterId) || encounterId <= 0) continue;
+        const durationMs = Number(fight?.endTime || 0) - Number(fight?.startTime || 0);
+        if (!Number.isFinite(durationMs) || durationMs <= 0) continue;
+        const prev = bestByEncounter.get(encounterId);
+        if (!prev || durationMs < prev.durationMs) {
+          bestByEncounter.set(encounterId, {
+            encounterId,
+            encounterName: String(fight?.name || ""),
+            durationMs,
+            reportCode: String(report?.code || ""),
+            fightId: Number(fight?.id || 0),
+            participants: rankedNames,
+          });
+        }
+      }
+    }
+    const entries = [];
+    for (const best of bestByEncounter.values()) {
+      for (const characterName of best.participants) {
+        entries.push({
+          encounterId: best.encounterId,
+          encounterName: best.encounterName,
+          characterName,
+          reportCode: best.reportCode,
+          fightId: best.fightId,
+          durationMs: best.durationMs,
+        });
+      }
+    }
+    const result = bestTimeRosterReplace({ entries });
+    totalRowsChanged += result?.rows || 0;
+  } catch (error) {
+    console.warn("[sync:attendance] best-time step failed:", error?.message || error);
+  }
+
+  // ---------- death_totals (rolling window) -------------------------------
+  // Mirrors /death-leaderboard logic, but writes per-user rows so multiple
+  // alts collapse into one canonical user.
+  try {
+    const totals = new Map();
+    const detailCap = wclPerReportDetailCap();
+    let detailFetches = 0;
+    for (const report of reports) {
+      const fightIds = (report.fights || [])
+        .filter((fight) => {
+          const zoneName = fight?.gameZone?.name || "";
+          return (
+            Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
+            Number(fight?.encounterID || 0) > 0
+          );
+        })
+        .map((fight) => Number(fight.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (!fightIds.length) continue;
+      if (detailFetches >= detailCap) break;
+      detailFetches += 1;
+      const deathQuery = `
+        query ReportDeaths($code: String!, $fightIds: [Int!]) {
+          reportData {
+            report(code: $code) {
+              deaths: table(dataType: Deaths, fightIDs: $fightIds)
+            }
+          }
+        }
+      `;
+      for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
+        const data = await queryWcl(deathQuery, { code: report.code, fightIds: chunk });
+        const table = parseWclTable(data?.reportData?.report?.deaths);
+        for (const entry of table?.entries || []) {
+          const playerName = String(entry?.name || "").trim();
+          if (!playerName) continue;
+          const deaths = deathCountFromEntry(entry);
+          if (deaths <= 0) continue;
+          totals.set(playerName, (totals.get(playerName) || 0) + deaths);
+        }
+      }
+    }
+    const rowsArr = [...totals.entries()].map(([characterName, deaths]) => ({ characterName, deaths }));
+    const result = deathTotalsReplaceForWindow({ windowLabel: "last-rolling-window", rows: rowsArr });
+    totalRowsChanged += result?.rows || 0;
+  } catch (error) {
+    console.warn("[sync:attendance] death-totals step failed:", error?.message || error);
+  }
+
+  // ---------- raid_attendance (per-user rolling window) -------------------
+  try {
+    const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
+      attendancePercentMetrics: false,
+    });
+    const totalRaids = raidSnapshots.length;
+    if (totalRaids > 0) {
+      const displayMap = wclDisplayByLower instanceof Map ? wclDisplayByLower : new Map();
+      const presenceByName = new Map();
+      raidSnapshots.forEach((raid, idx) => {
+        const attendeesLower = raid?.attendeesLower instanceof Set ? raid.attendeesLower : new Set();
+        for (const lower of attendeesLower) {
+          const display = displayMap.get(lower) || lower;
+          const key = normalizeRaidHelperDisplayKey(display) || lower;
+          if (!presenceByName.has(key)) {
+            presenceByName.set(key, {
+              characterName: display,
+              attendanceHistory: new Array(totalRaids).fill(0),
+            });
+          }
+          presenceByName.get(key).attendanceHistory[idx] = 1;
+        }
+      });
+      const rows = [...presenceByName.values()].map((row) => ({
+        characterName: row.characterName,
+        raidsAttended: row.attendanceHistory.reduce((acc, n) => acc + (n ? 1 : 0), 0),
+        raidsConsidered: totalRaids,
+        attendanceHistory: row.attendanceHistory,
+      }));
+      const result = raidAttendanceReplaceForWindow({
+        windowLabel: `last-${totalRaids}-25man`,
+        rows,
+      });
+      totalRowsChanged += result?.rows || 0;
+    }
+  } catch (error) {
+    console.warn("[sync:attendance] raid_attendance step failed:", error?.message || error);
+  }
+
+  return { rowsChanged: totalRowsChanged };
+}
+
+registerSyncTask({
+  id: "attendance",
+  intervalMs: 10 * 60_000,
+  description: "Materialise raid attendance, deaths, first-clears, best-time.",
+  run: runSyncAttendance,
+});
+
+/**
+ * Materialise per-character parse summaries (best percentile per bracket)
+ * by re-running the same gather + leaderboard pipeline the live
+ * `/api/wcl/guild/.../attendance` endpoint already uses, then writing
+ * one `parse_summary` row per user x bracket attached to their main
+ * character (or first linked character when no main is set).
+ */
+async function runSyncParses() {
+  const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return { rowsChanged: 0 };
+  }
+  const reportLimit = Math.min(
+    wclMaxGuildReportsLimit(),
+    Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80))
+  );
+
+  let leaderboard = [];
+  try {
+    await ensureRhWclLinksStore();
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+      guildId,
+      reportLimit,
+      { attendancePercentMetrics: true }
+    );
+    const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
+      raidSnapshots,
+      rhWclLinksState,
+      Math.min(500, raidSnapshots.length ? 200 : 50),
+      wclDisplayByLower,
+      raidRankingPayloads
+    );
+    leaderboard = Array.isArray(linkedPayload?.leaderboard) ? linkedPayload.leaderboard : [];
+  } catch (error) {
+    console.warn("[sync:parses] gather/build pipeline failed:", error?.message || error);
+    return { rowsChanged: 0 };
+  }
+
+  const entries = [];
+  const seenCharacterIds = new Set();
+
+  for (const row of leaderboard) {
+    const rhKey = normalizeRaidHelperDisplayKey(String(row?.raidHelperName || row?.name || ""));
+    if (!rhKey) continue;
+    const user = identityUserGetByRaidHelperKey(rhKey);
+    if (!user) continue;
+    const characters = identityCharactersGetByUserId(user.id);
+    if (!characters.length) continue;
+    const mainCharacter = characters.find((c) => c.isMain) || characters[0];
+
+    const ps = row?.parseSummaries;
+    if (!ps || typeof ps !== "object") continue;
+
+    const writeRow = (bracket, best, encounterField, reportCodeField, fightIdField) => {
+      const bestValue = Number.isFinite(Number(best)) ? Number(best) : null;
+      if (bestValue == null || bestValue <= 0) return;
+      const cid = mainCharacter.id;
+      if (seenCharacterIds.has(`${cid}:${bracket}`)) return;
+      seenCharacterIds.add(`${cid}:${bracket}`);
+      entries.push({
+        characterId: cid,
+        bracket,
+        bestValue,
+        bestEncounter: ps[encounterField] || null,
+        bestReportCode: ps[reportCodeField] || null,
+        bestFightId: ps[fightIdField] != null ? Number(ps[fightIdField]) : null,
+        bestMetric: bracket === "heal" ? "hps" : "dps",
+        bestAt: null,
+        raidsInBracket: 0,
+        encounterTopInBracket: ps[`${bracket}EncounterTop`] ? 1 : 0,
+      });
+    };
+
+    writeRow("tank", ps.bestTank, "bestTankEncounter", "bestTankReportCode", "bestTankFightId");
+    writeRow("heal", ps.bestHeal, "bestHealEncounter", "bestHealReportCode", "bestHealFightId");
+    writeRow("dps", ps.bestDps, "bestDpsEncounter", "bestDpsReportCode", "bestDpsFightId");
+  }
+
+  const result = parseSummaryReplaceAll({ entries });
+  return { rowsChanged: result?.rows || 0 };
+}
+
+registerSyncTask({
+  id: "parses",
+  intervalMs: 15 * 60_000,
+  description: "Materialise per-character parse summaries (tank/heal/dps).",
+  run: runSyncParses,
+});
+
+/**
+ * Materialise loot awards by reusing the existing `fetchGuildLootReceived`
+ * pipeline (which already merges WCL loot events with the gargul history
+ * import). Each item is resolved to a canonical user / character via the
+ * identity tables; orphans still get a row with `character_name` set.
+ */
+async function runSyncLoot() {
+  const guildId = Number(votingGuildId);
+  if (!Number.isInteger(guildId) || guildId <= 0) return { rowsChanged: 0 };
+  const reportLimit = Math.min(40, Math.max(15, Number(wclAttendanceRecentRaidCount?.() || 30)));
+
+  let payload;
+  try {
+    payload = await fetchGuildLootReceived(guildId, reportLimit);
+  } catch (error) {
+    console.warn("[sync:loot] fetchGuildLootReceived failed:", error?.message || error);
+    return { rowsChanged: 0 };
+  }
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  if (!items.length) {
+    lootAwardsReplaceAll({ entries: [] });
+    return { rowsChanged: 0 };
+  }
+
+  /** Map of reportCode → uploader name pulled from the raids list, since
+   *  the per-item rows from `fetchGuildLootReceived` don't carry it. */
+  const uploaderByReportCode = new Map();
+  for (const raid of payload?.allRaids || payload?.raids || []) {
+    const code = String(raid?.reportCode || "");
+    if (!code) continue;
+    if (raid?.reportUploader && !uploaderByReportCode.has(code)) {
+      uploaderByReportCode.set(code, String(raid.reportUploader));
+    }
+  }
+
+  const entries = [];
+  for (const item of items) {
+    const itemId = Number(item?.itemId);
+    if (!Number.isInteger(itemId) || itemId <= 0) continue;
+    const characterName = String(item?.recipient || "").trim();
+    if (!characterName) continue;
+    const reportCode = item?.reportCode ? String(item.reportCode) : null;
+    const fightId = item?.fightId != null ? Number(item.fightId) : null;
+    const source = String(item?.source || (item?.fromGargul ? "gargul" : "wcl")).trim().toLowerCase();
+    const sourceRef = source === "gargul"
+      ? (item?.gargulRowId ? `gargul:${item.gargulRowId}` : `gargul:${reportCode || ""}#${fightId || ""}`)
+      : `${reportCode || ""}#${fightId != null ? fightId : ""}`;
+    const awardedAt = Number.isFinite(Number(item?.reportStartTime))
+      ? Math.floor(Number(item.reportStartTime))
+      : Date.now();
+
+    let owner = null;
+    try {
+      owner = identityResolveOwnerForCharacterName(characterName);
+    } catch {
+      owner = null;
+    }
+    entries.push({
+      userId: owner?.userId || null,
+      characterId: owner?.characterId || null,
+      characterName,
+      itemId,
+      itemName: item?.itemName || null,
+      awardedAt,
+      source: source || "wcl",
+      sourceRef,
+      reportCode,
+      reportTitle: item?.reportTitle || null,
+      reportRaidName: item?.reportRaidName || null,
+      reportUploader: reportCode ? uploaderByReportCode.get(reportCode) || null : null,
+      rawType: item?.rawType || null,
+    });
+  }
+
+  const result = lootAwardsReplaceAll({ entries });
+  return { rowsChanged: result?.rows || 0 };
+}
+
+registerSyncTask({
+  id: "loot",
+  intervalMs: 30 * 60_000,
+  description: "Materialise loot awards (WCL + gargul) and resolve canonical owners.",
+  run: runSyncLoot,
+});
+
+startSyncRunner();
 
 app.listen(port, () => {
   console.log(`Fallen Tacticians API running on http://localhost:${port}`);
