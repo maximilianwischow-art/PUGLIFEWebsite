@@ -5903,6 +5903,49 @@ function highestRaidMilestoneThresholdMet(count) {
   return 0;
 }
 
+/** Every `raids-with-guild-*` badge id earned for a WCL/RH milestone total `count`. */
+function raidMilestoneBadgeIdsForCount(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  const ids = [];
+  for (const t of RAID_MILESTONE_THRESHOLDS) {
+    if (n >= t) ids.push(`raids-with-guild-${t}`);
+  }
+  return ids;
+}
+
+/**
+ * Infer how many distinct guild raids count toward milestones from legacy
+ * `badge_state` rows that only stored the single highest tier (pre multi-tier
+ * sync). Newer rows include `wclEventCount` / `rhPastEventCount` on evidence.
+ */
+function inferRaidMilestoneEventCountFromBadgeStates(stateById) {
+  if (!(stateById instanceof Map)) return 0;
+  let max = 0;
+  for (const t of [...RAID_MILESTONE_THRESHOLDS].sort((a, b) => b - a)) {
+    const bid = `raids-with-guild-${t}`;
+    const st = stateById.get(bid);
+    const earned = st?.earned === 1 || st?.earned === true || st?.earned === "1";
+    if (!earned) continue;
+    let ev = null;
+    const raw = st?.evidenceJson;
+    if (typeof raw === "string" && raw.trim()) {
+      try {
+        ev = JSON.parse(raw);
+      } catch {
+        ev = null;
+      }
+    } else if (raw && typeof raw === "object") {
+      ev = raw;
+    }
+    const wc = Number(ev?.wclEventCount);
+    const rh = Number(ev?.rhPastEventCount);
+    if (Number.isFinite(wc) && wc >= t) max = Math.max(max, wc);
+    else if (Number.isFinite(rh) && rh >= t) max = Math.max(max, rh);
+    else max = Math.max(max, t);
+  }
+  return max;
+}
+
 /**
  * Catalog of every badge surfaced anywhere on the site, grouped by category so
  * the profile page can render an "all badges" overview. Mirrors the artwork
@@ -5948,7 +5991,7 @@ const BADGE_CATALOG = [
     id: "raid-milestones",
     label: "Raid milestones",
     description:
-      "Distinct guild raid reports a player appeared in on Warcraft Logs, scoped to the admin Event Management selection (only WCL events explicitly marked as guild raids count). Attendance % still uses only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). Only the **highest** milestone tier reached is awarded and shown (e.g. at 12 events you earn the 10-raid badge, not 5 and 10 together).",
+      "Distinct guild raid reports a player appeared in on Warcraft Logs, scoped to the admin Event Management selection (only WCL events explicitly marked as guild raids count). Attendance % still uses only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). On this profile view, **every** milestone tier you have reached is shown (e.g. at 12 events you see both the 5- and 10-raid badges). Compact roster rows elsewhere may still show only the highest milestone icon.",
     badges: [
       { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png" },
       { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png" },
@@ -6305,14 +6348,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
           const states = badgeStateGetByUserId(canonical.id);
           if (states.length) {
             const stateById = new Map(states.map((s) => [s.badgeId, s]));
-            let highestRaidMilestoneFromDb = 0;
-            for (const t of [...RAID_MILESTONE_THRESHOLDS].sort((a, b) => b - a)) {
-              const bid = `raids-with-guild-${t}`;
-              if (stateById.get(bid)?.earned) {
-                highestRaidMilestoneFromDb = t;
-                break;
-              }
-            }
+            const milestoneInferredCount = inferRaidMilestoneEventCountFromBadgeStates(stateById);
             const categories = BADGE_CATALOG.map((cat) => ({
               ...cat,
               badges: cat.badges.map((b) => {
@@ -6321,9 +6357,9 @@ app.get("/api/profile/me/badges", async (req, res) => {
                 if (String(b.id || "").startsWith("raids-with-guild-")) {
                   const tier = Number(String(b.id).replace("raids-with-guild-", ""));
                   earned =
-                    highestRaidMilestoneFromDb > 0 &&
                     Number.isFinite(tier) &&
-                    tier === highestRaidMilestoneFromDb;
+                    tier > 0 &&
+                    (milestoneInferredCount >= tier || !!st?.earned);
                 }
                 return {
                   ...b,
@@ -6466,8 +6502,9 @@ app.get("/api/profile/me/badges", async (req, res) => {
           /* RH count is best-effort here; badge sync will catch up next cycle */
         }
       }
-      const highestT = highestRaidMilestoneThresholdMet(milestoneCount);
-      if (highestT > 0) earned.add(`raids-with-guild-${highestT}`);
+      for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) {
+        earned.add(bid);
+      }
     } catch {}
 
     const categories = BADGE_CATALOG.map((cat) => ({
@@ -11296,6 +11333,21 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
     charactersByUserId.set(u.id, chars);
     for (const c of chars) allCharacterIds.push(c.id);
   }
+
+  /** Same scope as leaderboard "Events" / milestone badges — for profile + client badge resolution. */
+  let wclEventByUserId = new Map();
+  if (materializeRaidAppearancesEnabled()) {
+    try {
+      if (raidAppearancesDistinctReportCount() > 0) {
+        const codes = Array.from(
+          new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+        );
+        wclEventByUserId = raidAppearancesCountsByUser(codes.length ? { reportCodes: codes } : {});
+      }
+    } catch {
+      wclEventByUserId = new Map();
+    }
+  }
   const parseRowsByCharacterId = new Map();
   if (allCharacterIds.length) {
     const parseRows = parseSummaryGetByMainCharacterIds(allCharacterIds);
@@ -11356,6 +11408,7 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
       name: u.displayName || u.raidHelperName || "",
       raidHelperName: u.raidHelperName || u.displayName || "",
       wclCharacters,
+      wclEventCount: Number(wclEventByUserId.get(u.id) || 0),
       raidsAttended: Number(att.raidsAttended || 0),
       attendanceRate: consideredRaids > 0 ? (Number(att.raidsAttended || 0) / consideredRaids) * 100 : 0,
       attendanceHistory: Array.isArray(att.attendanceHistory) ? att.attendanceHistory : [],
@@ -12581,18 +12634,23 @@ async function runSyncBadges() {
       milestoneCount = rhSignupsForUser;
     }
     const highestMilestoneT = highestRaidMilestoneThresholdMet(milestoneCount);
-    if (highestMilestoneT > 0) {
-      const bid = `raids-with-guild-${highestMilestoneT}`;
+    const baseMilestoneEvidence = {
+      type: "raid-milestone",
+      source: milestoneSource,
+      raidsAttendedWindow: raidStats?.raidsAttended || 0,
+      raidsConsideredWindow: raidStats?.raidsConsidered || 0,
+      wclEventCount: milestoneSource !== "rh-signups" ? milestoneCount : null,
+      rhPastEventCount: milestoneSource === "rh-signups" ? milestoneCount : null,
+      windowLabel: raidStats?.windowLabel || null,
+    };
+    for (const t of RAID_MILESTONE_THRESHOLDS) {
+      if (milestoneCount < t) continue;
+      const bid = `raids-with-guild-${t}`;
       earned.add(bid);
       evidenceById.set(bid, {
-        type: "raid-milestone",
-        threshold: highestMilestoneT,
-        source: milestoneSource,
-        raidsAttendedWindow: raidStats?.raidsAttended || 0,
-        raidsConsideredWindow: raidStats?.raidsConsidered || 0,
-        wclEventCount: milestoneSource !== "rh-signups" ? milestoneCount : null,
-        rhPastEventCount: milestoneSource === "rh-signups" ? milestoneCount : null,
-        windowLabel: raidStats?.windowLabel || null,
+        ...baseMilestoneEvidence,
+        threshold: t,
+        highestTierReached: highestMilestoneT || null,
       });
     }
 

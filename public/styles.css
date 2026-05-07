@@ -5680,12 +5680,24 @@ button.raid-cal-run.raid-cal-run--column:hover {
   text-align: center;
   transition: border-color 0.15s ease, transform 0.05s ease;
 }
-.profile-badge-tile img {
-  width: 56px;
-  height: 56px;
-  object-fit: contain;
+.profile-badge-tile-icon {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.profile-badge-tile.is-locked img { filter: grayscale(1) brightness(0.45); opacity: 0.7; }
+.profile-badge-tile-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.profile-badge-tile.is-locked .profile-badge-tile-icon img {
+  filter: grayscale(1) brightness(0.45);
+  opacity: 0.7;
+}
 .profile-badge-tile.is-locked { opacity: 0.85; }
 .profile-badge-tile.is-earned {
   border-color: rgba(167, 139, 250, 0.55);
@@ -5759,7 +5771,7 @@ html {
     gap: 0.55rem;
   }
   .profile-badge-tile { padding: 0.55rem 0.4rem; }
-  .profile-badge-tile img { width: 48px; height: 48px; }
+  .profile-badge-tile-icon { width: 56px; height: 56px; }
   .profile-badge-name { font-size: 0.74rem; }
 
   /* Phase 2 demand search box: keep the input full width above the table

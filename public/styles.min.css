@@ -5453,8 +5453,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-badge-category-desc { margin: 0 0 0.75rem; }
 .profile-badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 0.7rem; }
 .profile-badge-tile { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0.7rem 0.5rem; border-radius: 12px; background: rgba(20, 15, 34, 0.55); border: 1px solid rgba(167, 139, 250, 0.18); text-align: center; transition: border-color 0.15s ease, transform 0.05s ease; }
-.profile-badge-tile img { width: 56px; height: 56px; object-fit: contain; }
-.profile-badge-tile.is-locked img { filter: grayscale(1) brightness(0.45); opacity: 0.7; }
+.profile-badge-tile-icon { width: 72px; height: 72px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.profile-badge-tile-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.profile-badge-tile.is-locked .profile-badge-tile-icon img { filter: grayscale(1) brightness(0.45); opacity: 0.7; }
 .profile-badge-tile.is-locked { opacity: 0.85; }
 .profile-badge-tile.is-earned { border-color: rgba(167, 139, 250, 0.55); box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18); }
 .profile-badge-name { font-size: 0.78rem; line-height: 1.2; color: rgba(225, 220, 245, 0.92); word-break: break-word; }
@@ -5473,7 +5474,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .profile-picture-drop { width: 140px; height: 140px; }
   .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 0.55rem; }
   .profile-badge-tile { padding: 0.55rem 0.4rem; }
-  .profile-badge-tile img { width: 48px; height: 48px; }
+  .profile-badge-tile-icon { width: 56px; height: 56px; }
   .profile-badge-name { font-size: 0.74rem; }
   .p2-demand .flex.items-center.gap-2 { width: 100%; }
   .p2-demand .flex.items-center.gap-2 input { width: 100%; max-width: none; }

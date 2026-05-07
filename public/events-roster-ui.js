@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507milestone-highest1";
+const IMAGE_ASSET_VERSION = "20260507profile-milestones-all1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1780,4 +1780,5 @@ window.plbEventsRoster = {
   playerEarnedFirstClearMagBadge,
   playerEarnedRaidsWithGuildMilestone,
   highestEarnedRaidsWithGuildMilestoneThreshold,
+  attendanceRowForRosterPlayerResolved,
 };

@@ -260,7 +260,9 @@
         const desc = b.earned ? `${b.name} — earned` : `${b.name} — not yet earned`;
         return `
           <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" title="${escapeHtml(desc)}">
-            <img src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
+            <div class="profile-badge-tile-icon" aria-hidden="true">
+              <img src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
+            </div>
             <span class="profile-badge-name">${escapeHtml(b.name)}</span>
           </div>`;
       })
@@ -300,11 +302,11 @@
       "kara-first-time-clear": plb.playerEarnedFirstClearKaraBadge,
       "gruul-first-time-clear": plb.playerEarnedFirstClearGruulBadge,
       "magtheridon-first-time-clear": plb.playerEarnedFirstClearMagBadge,
-      "raids-with-guild-5": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 5,
-      "raids-with-guild-10": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 10,
-      "raids-with-guild-25": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 25,
-      "raids-with-guild-50": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 50,
-      "raids-with-guild-100": (p) => plb.highestEarnedRaidsWithGuildMilestoneThreshold(p) === 100,
+      "raids-with-guild-5": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 5),
+      "raids-with-guild-10": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 10),
+      "raids-with-guild-25": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 25),
+      "raids-with-guild-50": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 50),
+      "raids-with-guild-100": (p) => plb.playerEarnedRaidsWithGuildMilestone(p, 100),
     };
 
     // Synthetic "player" — feeding the user's primary linked name as
@@ -315,12 +317,21 @@
       name: names[0],
       wclCharacters: names.slice(),
     };
+    const attRow =
+      typeof plb.attendanceRowForRosterPlayerResolved === "function"
+        ? plb.attendanceRowForRosterPlayerResolved(synthPlayer)
+        : null;
+    const synthPlayerMerged = {
+      ...synthPlayer,
+      wclEventCount: attRow?.wclEventCount,
+      rhPastEventCount: attRow?.rhPastEventCount,
+    };
 
     const earnedFromClient = new Set();
     for (const [badgeId, fn] of Object.entries(resolvers)) {
       if (typeof fn !== "function") continue;
       try {
-        if (fn(synthPlayer)) earnedFromClient.add(badgeId);
+        if (fn(synthPlayerMerged)) earnedFromClient.add(badgeId);
       } catch {
         /* one bad matcher shouldn't kill the rest */
       }
@@ -335,16 +346,6 @@
       }
     }
 
-    const milestonePrefix = "raids-with-guild-";
-    let highestRaidMilestone = 0;
-    if (plb && typeof plb.highestEarnedRaidsWithGuildMilestoneThreshold === "function") {
-      try {
-        highestRaidMilestone = plb.highestEarnedRaidsWithGuildMilestoneThreshold(synthPlayer);
-      } catch {
-        highestRaidMilestone = 0;
-      }
-    }
-
     if (!els.badgesHost) return;
     const tiles = els.badgesHost.querySelectorAll("[data-badge-id]");
     tiles.forEach((tile) => {
@@ -352,11 +353,7 @@
       const img = tile.querySelector("img");
       const badgeName = img?.getAttribute("alt") || id;
 
-      let isEarnedNow = serverEarnedIds.has(id) || earnedFromClient.has(id);
-      if (id.startsWith(milestonePrefix)) {
-        const tier = Number(id.slice(milestonePrefix.length));
-        isEarnedNow = highestRaidMilestone > 0 && tier === highestRaidMilestone && Number.isFinite(tier);
-      }
+      const isEarnedNow = serverEarnedIds.has(id) || earnedFromClient.has(id);
 
       if (isEarnedNow) {
         if (tile.classList.contains("is-earned")) return;
@@ -366,7 +363,7 @@
         return;
       }
 
-      if (id.startsWith(milestonePrefix) && tile.classList.contains("is-earned")) {
+      if (tile.classList.contains("is-earned")) {
         tile.classList.remove("is-earned");
         tile.classList.add("is-locked");
         tile.setAttribute("title", `${badgeName} — not yet earned`);
