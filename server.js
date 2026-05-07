@@ -708,9 +708,11 @@ function eventsKpiCacheMaxStaleMs() {
 }
 
 function eventsKpiCacheKey({ guildId, maxPastEvents, wclLimit }) {
-  /* v2: roster footprint also considers WCL `raid_appearances` so the KPI
-     does not stay at 0 when Raid Helper signup scans fail or drift. */
-  return `events-kpi-v2:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
+  /* v3: roster footprint = max of RH distinct names, WCL distinct attendees
+     (from snapshots, scoped to admin selection when set), and
+     raid_appearances canonical user count. Bumped from v2 so old caches
+     containing the narrower count are not reused. */
+  return `events-kpi-v3:${Number(guildId)}:${Number(maxPastEvents)}:${Number(wclLimit)}`;
 }
 
 const eventsKpiDiskCachePath = path.join(dataDir, "events-kpi-cache.json");
@@ -10804,29 +10806,43 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
     ]);
 
     const uniqueKeys = new Set(keyLists.flat());
-    let wclDistinctRaiderCount = 0;
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = wclBundle;
+
+    /* WCL-based roster footprint = distinct attendees across the loaded
+       snapshots, scoped to admin Event Management when set. Counts ANY
+       character that appeared (linked or not), so it's broader than
+       `raid_appearances` (canonical users only) and more accurate than
+       Raid Helper signup names (which break down per event). */
+    const selectedReportCodesSet = new Set(
+      (gargulLootState?.selectedReportCodes || [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    );
+    const wclDistinctAttendees = new Set();
+    for (const snap of raidSnapshots) {
+      if (selectedReportCodesSet.size && !selectedReportCodesSet.has(String(snap.reportCode || ""))) continue;
+      for (const name of snap.attendeesLower) wclDistinctAttendees.add(name);
+    }
+
+    let raidAppearancesUserCount = 0;
     if (materializeRaidAppearancesEnabled()) {
       try {
-        const selectedReportCodesList = Array.from(
-          new Set(
-            (gargulLootState?.selectedReportCodes || [])
-              .map((x) => String(x || "").trim())
-              .filter(Boolean)
-          )
-        );
         const totalReports = raidAppearancesDistinctReportCount();
         if (totalReports > 0) {
-          wclDistinctRaiderCount = raidAppearancesDistinctUserCount(
-            selectedReportCodesList.length ? { reportCodes: selectedReportCodesList } : {}
+          raidAppearancesUserCount = raidAppearancesDistinctUserCount(
+            selectedReportCodesSet.size ? { reportCodes: [...selectedReportCodesSet] } : {}
           );
         }
       } catch (err) {
         console.warn("[events-kpi] raid_appearances distinct user count failed:", err?.message || err);
       }
     }
-    const uniqueRaiderCount = Math.max(uniqueKeys.size, wclDistinctRaiderCount);
 
-    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = wclBundle;
+    const uniqueRaiderCount = Math.max(
+      uniqueKeys.size,
+      wclDistinctAttendees.size,
+      raidAppearancesUserCount
+    );
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
       rhWclLinksState,
@@ -10869,8 +10885,12 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
     return {
       guildId,
       uniqueRaiderCount,
-      wclDistinctRaiderCount,
+      wclDistinctAttendeeCount: wclDistinctAttendees.size,
+      raidAppearancesUserCount,
       raidHelperDistinctRaiderCount: uniqueKeys.size,
+      raidHelperEventsCovered: pastEvents.length,
+      wclReportsCovered: raidSnapshots.length,
+      wclReportsScopedToAdminSelection: selectedReportCodesSet.size > 0,
       pastEventsScanned: pastEvents.length,
       maxPastEvents,
       consideredRaids: linkedPayload.consideredRaids,
