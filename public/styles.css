@@ -5463,27 +5463,137 @@ button.raid-cal-run.raid-cal-run--column:hover {
  * Profile page (/profile.html)
  * ============================================================================= */
 .profile-page { padding-bottom: 3rem; }
-.profile-hero { margin-top: 1.25rem; }
-.profile-hero-lede { max-width: 64ch; }
 .profile-locked-card { margin-top: 1rem; }
-.profile-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+.profile-shell {
+  display: flex;
+  flex-direction: column;
   gap: 1.25rem;
   margin-top: 1.25rem;
 }
-@media (min-width: 880px) {
-  .profile-grid {
-    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-    grid-template-areas:
-      "picture main"
-      "badges  badges";
-  }
-  .profile-picture-card { grid-area: picture; }
-  .profile-main-card { grid-area: main; }
-  .profile-badges-card { grid-area: badges; }
+.profile-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 .profile-card-lede { max-width: 60ch; margin-bottom: 0.9rem; }
+
+/* Sub-navigation (Overview / Settings) */
+.profile-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem;
+  border-radius: 14px;
+  background: rgba(15, 11, 28, 0.55);
+  border: 1px solid rgba(167, 139, 250, 0.18);
+}
+.profile-subnav-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgba(225, 220, 245, 0.72);
+  font-family: "Bebas Neue", "Nunito", sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  padding: 0.55rem 1.1rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.profile-subnav-btn:hover { color: #ddd6fe; background: rgba(167, 139, 250, 0.1); }
+.profile-subnav-btn.is-active {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.55), rgba(99, 102, 241, 0.45));
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.45);
+}
+
+/* Overview hero card: portrait + key stats */
+.profile-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: center;
+}
+@media (min-width: 720px) {
+  .profile-hero-grid {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}
+.profile-hero-portrait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  text-align: center;
+}
+.profile-hero-portrait-frame {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(20, 15, 34, 0.7);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2) inset;
+}
+.profile-hero-portrait-frame.is-empty::after {
+  content: "No picture";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(225, 220, 245, 0.55);
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+}
+.profile-hero-portrait-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.profile-hero-portrait-frame.is-empty img { display: none; }
+.profile-hero-name {
+  margin: 0;
+  font-family: "Bebas Neue", sans-serif;
+  letter-spacing: 0.06em;
+  font-size: 1.6rem;
+  color: #ddd6fe;
+}
+.profile-hero-meta { margin: 0; font-size: 0.8rem; color: rgba(225, 220, 245, 0.7); }
+
+.profile-key-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+@media (min-width: 880px) {
+  .profile-key-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.profile-stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding: 0.95rem 1rem;
+  border-radius: 14px;
+  background: rgba(20, 15, 34, 0.6);
+  border: 1px solid rgba(167, 139, 250, 0.18);
+}
+.profile-stat-label {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: rgba(225, 220, 245, 0.7);
+}
+.profile-stat-value {
+  font-family: "Nunito", sans-serif;
+  font-weight: 800;
+  font-size: 1.55rem;
+  color: #ede9fe;
+  line-height: 1.1;
+}
 
 /* Picture upload tile */
 .profile-picture-wrap {

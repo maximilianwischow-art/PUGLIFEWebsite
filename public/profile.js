@@ -28,7 +28,17 @@
     mainSaveBtn: document.getElementById("profileMainSaveBtn"),
     mainHint: document.getElementById("profileMainHint"),
     badgesHost: document.getElementById("profileBadgesCategories"),
+    heroPortraitFrame: document.getElementById("profileHeroPortraitFrame"),
+    heroPicture: document.getElementById("profileHeroPicture"),
+    heroName: document.getElementById("profileHeroName"),
+    heroMeta: document.getElementById("profileHeroMeta"),
+    keyStatsHost: document.getElementById("profileKeyStats"),
+    subnavButtons: document.querySelectorAll("[data-profile-tab]"),
+    tabPanels: document.querySelectorAll("[data-profile-panel]"),
   };
+
+  /** Cached active-roster fetch promise so badge resolution + key stats share one network call. */
+  let activeRosterPromise = null;
 
   /** Local cache of the last saved main character so the Save button knows when to disable. */
   let savedMainCharacterName = null;
@@ -86,6 +96,35 @@
       els.placeholder.hidden = false;
       els.removeBtn.hidden = true;
     }
+    /* Mirror the picture state on the Overview hero portrait. */
+    if (els.heroPicture) {
+      if (url) {
+        els.heroPicture.src = url;
+        els.heroPicture.alt = "Your profile picture";
+        els.heroPortraitFrame?.classList.add("has-picture");
+        els.heroPortraitFrame?.classList.remove("is-empty");
+      } else {
+        els.heroPicture.removeAttribute("src");
+        els.heroPicture.alt = "";
+        els.heroPortraitFrame?.classList.remove("has-picture");
+        els.heroPortraitFrame?.classList.add("is-empty");
+      }
+    }
+  }
+
+  function applyHeroIdentity(profile, linkedCharacters) {
+    if (!els.heroName) return;
+    const main = String(profile?.mainCharacterName || "").trim();
+    const display = String(profile?.displayName || "").trim();
+    const linked = Array.isArray(linkedCharacters) ? linkedCharacters.filter(Boolean) : [];
+    const primary = main || linked[0] || display || "—";
+    els.heroName.textContent = primary;
+    if (els.heroMeta) {
+      const extras = [];
+      if (display && display !== primary) extras.push(display);
+      if (linked.length > 1) extras.push(`${linked.length} linked characters`);
+      els.heroMeta.textContent = extras.join(" · ");
+    }
   }
 
   function applyMainCharacterToUI(linkedCharacters, currentMain) {
@@ -105,16 +144,32 @@
     els.mainSaveBtn.disabled = true;
     if (!linkedCharacters || !linkedCharacters.length) {
       els.mainHint.textContent =
-        "No Warcraft Logs character is linked to your Discord ID yet. Ask an admin to add a row on the Account Assignment table.";
+        "No character linked. Ask an admin to add a row on the Account Assignment table.";
       els.mainSelect.disabled = true;
       els.mainSaveBtn.disabled = true;
     } else {
-      els.mainHint.textContent =
-        linkedCharacters.length === 1
-          ? "Only one character is linked — selecting it as your main is optional."
-          : "Pick which of your linked characters represents you across the site.";
+      els.mainHint.textContent = "";
       els.mainSelect.disabled = false;
     }
+  }
+
+  function bindSubnav() {
+    if (!els.subnavButtons || !els.subnavButtons.length) return;
+    els.subnavButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = btn.getAttribute("data-profile-tab") || "";
+        if (!target) return;
+        els.subnavButtons.forEach((b) => {
+          const active = b.getAttribute("data-profile-tab") === target;
+          b.classList.toggle("is-active", active);
+          b.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        els.tabPanels.forEach((panel) => {
+          const match = panel.getAttribute("data-profile-panel") === target;
+          panel.hidden = !match;
+        });
+      });
+    });
   }
 
   async function loadProfile() {
@@ -129,12 +184,147 @@
       if (!payload?.ok) throw new Error(payload?.error || "Failed to load profile");
       showAuthedState();
       lastProfile = payload.profile || null;
+      const linkedCharacters = payload.linkedCharacters || [];
       applyPictureToUI(payload.profile);
-      applyMainCharacterToUI(payload.linkedCharacters || [], payload?.profile?.mainCharacterName || null);
+      applyHeroIdentity(payload.profile, linkedCharacters);
+      applyMainCharacterToUI(linkedCharacters, payload?.profile?.mainCharacterName || null);
+      hydrateKeyStats(payload.profile, linkedCharacters).catch((error) => {
+        console.warn("[profile] key stats hydrate failed:", error?.message || error);
+      });
       setStatus(els.pictureStatus, "");
     } catch (error) {
       setStatus(els.pictureStatus, error?.message || "Failed to load profile", "error");
     }
+  }
+
+  /**
+   * Pull the user's row out of /active-roster so we can render Events,
+   * Attendance %, Peak parse, and Guild rank tiles. The same payload feeds
+   * Leaderboard, so this is essentially free (session-cached on hover).
+   */
+  function fetchActiveRosterOnce() {
+    if (activeRosterPromise) return activeRosterPromise;
+    const guildId = window.plbEventsRoster?.EVENTS_WCL_GUILD_ID || 817080;
+    activeRosterPromise = fetch(
+      `/api/wcl/guild/${guildId}/active-roster?limit=40&top=250&maxRhPastEvents=0`,
+      { credentials: "include" },
+    )
+      .then((res) => (res.ok ? res.json() : { players: [] }))
+      .catch(() => ({ players: [] }));
+    return activeRosterPromise;
+  }
+
+  function findRosterRowForLinkedNames(rosterPayload, linkedCharacters, mainCharacterName) {
+    const players = Array.isArray(rosterPayload?.players) ? rosterPayload.players : [];
+    if (!players.length) return null;
+    const plb = window.plbEventsRoster;
+    const norm = (s) =>
+      typeof plb?.rosterNameKey === "function"
+        ? plb.rosterNameKey(s)
+        : String(s || "").trim().toLowerCase();
+    const wanted = new Set();
+    if (mainCharacterName) wanted.add(norm(mainCharacterName));
+    for (const cn of linkedCharacters || []) wanted.add(norm(cn));
+    if (!wanted.size) return null;
+    /* Prefer a player whose primary name matches the user's main character;
+       fall back to any linked character match. */
+    let fallback = null;
+    for (const p of players) {
+      const candidates = [
+        norm(p?.characterName),
+        norm(p?.name),
+        ...(Array.isArray(p?.wclCharacters) ? p.wclCharacters.map(norm) : []),
+      ].filter(Boolean);
+      if (mainCharacterName && candidates.includes(norm(mainCharacterName))) return p;
+      if (!fallback && candidates.some((c) => wanted.has(c))) fallback = p;
+    }
+    return fallback;
+  }
+
+  function pickPeakParseFromPlayer(player) {
+    const ps = player?.parseSummaries;
+    if (!ps || typeof ps !== "object") return { value: null, bracket: null };
+    const role = String(player?.roleName || "").trim().toLowerCase();
+    let bracket = "dps";
+    if (role === "tank" || role === "tanks") bracket = "tank";
+    else if (role === "healer" || role === "healers") bracket = "heal";
+    let value = null;
+    if (bracket === "heal") value = Number(ps.bestHeal || 0) || Number(ps.bestDps || 0) || null;
+    else if (bracket === "tank") value = Number(ps.bestTank || 0) || Number(ps.bestDps || 0) || null;
+    else value = Number(ps.bestDps || 0) || null;
+    /* If the bracket-specific best is 0, fall back to whichever metric is highest. */
+    if (!value) {
+      const candidates = [Number(ps.bestDps || 0), Number(ps.bestHeal || 0), Number(ps.bestTank || 0)].filter(
+        (n) => Number.isFinite(n) && n > 0,
+      );
+      value = candidates.length ? Math.max(...candidates) : null;
+      if (value && !role) bracket = null;
+    }
+    return { value, bracket };
+  }
+
+  function setStatTile(name, text, title) {
+    const node = els.keyStatsHost?.querySelector(`[data-stat="${name}"]`);
+    if (!node) return;
+    node.textContent = String(text ?? "—");
+    if (title) {
+      const card = node.closest(".profile-stat-card");
+      if (card) card.setAttribute("title", title);
+    }
+  }
+
+  async function hydrateKeyStats(profile, linkedCharacters) {
+    if (!els.keyStatsHost) return;
+    const rosterPayload = await fetchActiveRosterOnce();
+    const player = findRosterRowForLinkedNames(
+      rosterPayload,
+      linkedCharacters,
+      profile?.mainCharacterName,
+    );
+    const recentCap = Number(rosterPayload?.attendanceScope?.recentRaidCap || 6);
+
+    if (!player) {
+      setStatTile("events", "—", "No Warcraft Logs row matched your linked characters yet.");
+      setStatTile("attendance", "—");
+      setStatTile("peak-parse", "—");
+      setStatTile(
+        "guild-rank",
+        "—",
+        "Guild rank is set on the Account Assignment table — ask an admin to map your Discord ID.",
+      );
+      return;
+    }
+
+    const events = Number(player.wclEventCount ?? player.rhPastEventCount ?? 0);
+    setStatTile(
+      "events",
+      events > 0 ? events.toString() : "0",
+      "Distinct guild raid reports on Warcraft Logs (admin-curated event scope).",
+    );
+
+    const attendance = Number(player.attendanceRate);
+    setStatTile(
+      "attendance",
+      Number.isFinite(attendance) && attendance > 0 ? `${Math.round(attendance)}%` : "—",
+      `Last ${recentCap} 25-player raids: ${Number(player.raidsAttended || 0)}/${recentCap}.`,
+    );
+
+    const { value: peakValue, bracket } = pickPeakParseFromPlayer(player);
+    const bracketLabel = bracket === "heal" ? "HPS" : bracket === "tank" ? "Tank DPS" : "DPS";
+    setStatTile(
+      "peak-parse",
+      peakValue != null ? `${Math.round(peakValue)}%` : "—",
+      peakValue != null
+        ? `Best single-boss percentile across the tracked window (${bracketLabel}).`
+        : "No WCL parse in the tracked window yet.",
+    );
+
+    const rank = String(player.guildRole || "").trim() || "Peon";
+    setStatTile(
+      "guild-rank",
+      rank,
+      "Set on the Account Assignment table — ask an admin to update your row.",
+    );
   }
 
   async function uploadPictureBlob(blob) {
@@ -482,6 +672,7 @@
 
   async function init() {
     bindUI();
+    bindSubnav();
     const authed = await fetchAuthState();
     if (!authed) {
       showLockedState();
