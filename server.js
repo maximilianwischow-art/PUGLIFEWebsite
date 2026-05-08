@@ -11880,11 +11880,24 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
 
   try {
     const reports = await getFilteredGuildReportsForGuild(guildId, limit);
+    const selectedReportCodes = Array.from(
+      new Set(
+        (gargulLootState?.selectedReportCodes || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
+    // Keep dashboard raid stats aligned with leaderboard/Event Management:
+    // when the admin curated events, only those report codes are considered.
+    const scopedReports = selectedSet
+      ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
+      : reports;
 
     const raidSummary = Object.entries(TRACKED_RAIDS).map(([raidName, bosses]) => {
       const bestByBoss = new Map();
       let bestClear = null;
-      for (const report of reports) {
+      for (const report of scopedReports) {
         const raidBossKills = (report.fights || []).filter(
           (fight) =>
             resolvedTrackedRaidForFight(fight, report) === raidName &&
@@ -11958,7 +11971,7 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
             .filter(Boolean);
 
     /** Only reports that achieved the fastest tracked full clear per raid (tiles above). */
-    const reportByCode = new Map((reports || []).map((r) => [r.code, r]));
+    const reportByCode = new Map((scopedReports || []).map((r) => [r.code, r]));
     const pbClearReportCodes = [];
     const pbClearCodesSet = new Set();
     for (const raid of raidSummary) {
@@ -11988,11 +12001,13 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
       limit,
       raidSummary,
       rosterInfo: {
+        source: selectedSet ? "event_management" : "rolling_recent",
+        selectedReportCodes,
         requiredRaidPlayers: requiredRaidPlayersList,
         recentRankedRoster,
         rankedRosterCount: rankedNameSet.size,
         pbClearReportCodes,
-        reportsScanned: reports.length,
+        reportsScanned: scopedReports.length,
         calendarTimeZone: wclCalendarTimeZone(),
         raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
       },
@@ -12014,11 +12029,24 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
 
   try {
     const reports = await getFilteredGuildReportsForGuild(guildId, limit);
-    const entries = buildRecentRaidCalendarEntries(reports);
+    const selectedReportCodes = Array.from(
+      new Set(
+        (gargulLootState?.selectedReportCodes || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
+    const scopedReports = selectedSet
+      ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
+      : reports;
+    const entries = buildRecentRaidCalendarEntries(scopedReports);
     return res.json({
       guildId,
       limit,
       count: entries.length,
+      source: selectedSet ? "event_management" : "rolling_recent",
+      selectedReportCodes,
       calendarTimeZone: wclCalendarTimeZone(),
       raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
       requiredRaidPlayers: process.env.WCL_REQUIRED_RAID_PLAYERS ?? "Gernig",
