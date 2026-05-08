@@ -7394,15 +7394,13 @@ app.post("/api/admin/rh-wcl-links/guess", async (req, res) => {
     let wclCharacterNames = [];
     let recentWarcraftLogsReports = [];
     try {
-      const { wclDisplayByLower, recentWclReports } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
-        maxDetailedReports: wclReportsToDetail,
-      });
-      wclCharacterNames = [...wclDisplayByLower.values()];
-      recentWarcraftLogsReports = Array.isArray(recentWclReports) ? recentWclReports : [];
+      const wcl = await collectWclCharacterNamesForAccountAssignment(guildId, reportLimit, wclReportsToDetail);
+      wclCharacterNames = Array.isArray(wcl?.wclCharacterNames) ? wcl.wclCharacterNames : [];
+      recentWarcraftLogsReports = Array.isArray(wcl?.recentWarcraftLogsReports) ? wcl.recentWarcraftLogsReports : [];
     } catch (error) {
       return res.status(502).json({
         ok: false,
-        error: `Warcraft Logs attendance snapshot failed: ${String(error?.message || error).slice(0, 220)}`,
+        error: `Warcraft Logs character scan failed: ${String(error?.message || error).slice(0, 220)}`,
       });
     }
 
@@ -10913,6 +10911,67 @@ async function collectRaidHelperSignupDisplayNames(serverId, maxEvents = 6) {
   };
 }
 
+/**
+ * Recent WCL character names for Account Assignment matching.
+ *
+ * Primary source: `report.rankedCharacters` from recent filtered guild reports.
+ * Fallback: existing attendance snapshot parsing (legacy behavior).
+ *
+ * This avoids missing fresh character names when the newest logs are outside
+ * the attendance-focused raid subset.
+ */
+async function collectWclCharacterNamesForAccountAssignment(guildId, reportLimit, maxDetailedReports) {
+  const byLower = new Map();
+  const recentWarcraftLogsReports = [];
+  const limit = Math.max(5, Number(reportLimit || 40));
+  const detailCap = Math.max(1, Number(maxDetailedReports || 6));
+
+  try {
+    const reports = await getFilteredGuildReportsForGuild(guildId, limit);
+    const ordered = [...reports].sort((a, b) => Number(b?.startTime || 0) - Number(a?.startTime || 0));
+    for (const report of ordered.slice(0, limit)) {
+      const code = String(report?.code || "").trim();
+      const startTime = Number(report?.startTime || 0);
+      if (code) recentWarcraftLogsReports.push({ reportCode: code, startTime });
+      const ranked = Array.isArray(report?.rankedCharacters) ? report.rankedCharacters : [];
+      for (const rc of ranked) {
+        const name = String(rc?.name || "").trim();
+        if (!name) continue;
+        const low = name.toLowerCase();
+        if (!byLower.has(low)) byLower.set(low, name);
+      }
+    }
+  } catch (error) {
+    console.warn("[account-assignment:wcl] ranked-character scan failed:", error?.message || error);
+  }
+
+  if (byLower.size === 0) {
+    try {
+      const { wclDisplayByLower, recentWclReports } = await gatherAttendanceRaidSnapshots(guildId, limit, {
+        maxDetailedReports: detailCap,
+      });
+      for (const [low, display] of wclDisplayByLower.entries()) {
+        if (!byLower.has(low)) byLower.set(low, display);
+      }
+      if (recentWarcraftLogsReports.length === 0 && Array.isArray(recentWclReports)) {
+        for (const r of recentWclReports) {
+          recentWarcraftLogsReports.push({
+            reportCode: String(r?.reportCode || ""),
+            startTime: Number(r?.startTime || 0),
+          });
+        }
+      }
+    } catch (error) {
+      console.warn("[account-assignment:wcl] attendance fallback failed:", error?.message || error);
+    }
+  }
+
+  return {
+    wclCharacterNames: [...byLower.values()],
+    recentWarcraftLogsReports,
+  };
+}
+
 async function raidHelperRequest(pathname, { method = "GET", body } = {}) {
   const apiKey = process.env.RAID_HELPER_API_KEY;
   if (!apiKey) throw new Error("Missing RAID_HELPER_API_KEY in .env");
@@ -13965,12 +14024,10 @@ async function runSyncAccountAssignment() {
 
   let wclCharacterNames = [];
   try {
-    const { wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
-      maxDetailedReports: wclReportsToDetail,
-    });
-    wclCharacterNames = [...wclDisplayByLower.values()];
+    const wcl = await collectWclCharacterNamesForAccountAssignment(guildId, reportLimit, wclReportsToDetail);
+    wclCharacterNames = Array.isArray(wcl?.wclCharacterNames) ? wcl.wclCharacterNames : [];
   } catch (error) {
-    console.warn("[sync:account-assignment] WCL attendance fetch failed:", error?.message || error);
+    console.warn("[sync:account-assignment] WCL character scan failed:", error?.message || error);
   }
 
   if (!raidHelperNames.length || !wclCharacterNames.length) {
