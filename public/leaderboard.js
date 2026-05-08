@@ -36,7 +36,7 @@ let leaderboardLootItemMetaMap = new Map();
  * from `/api/leaderboard` (single SQLite-only call). Previous v3 entries
  * still carry the legacy multi-fetch shape and must be discarded.
  */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v5";
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v6";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
 /** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
 const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;
@@ -375,7 +375,7 @@ function attendancePercentTooltip(player, recentRaidCap, consideredRaids) {
   const cap = Number(recentRaidCap) || 6;
   const win = Number(consideredRaids) || 0;
   const att = Number(player?.raidsAttended || 0);
-  return `Attendance % uses only the last ${cap} tracked 25-player Warcraft Logs raids (Karazhan and Zul'Aman excluded from that window). You attended ${att} of ${win} raid(s) in that window.`;
+  return `Attendance % uses the last ${cap} raids the admin curated in Event Management — the same set that drives the Events count and the Peon/Grunt/Veteran rank pill. You attended ${att} of ${win} raid(s) in that window.`;
 }
 
 function fallbackSpecKeyFromClassAndRole(player) {
@@ -439,7 +439,7 @@ function raiderKpisInlineHtml(p, recentCap, considered) {
   return `
     <div class="leaderboard-kpi-inline">
       <span class="leaderboard-kpi-inline-item" title="${attTip}"><b>Attendance:</b> ${escapeHtml(att)}</span>
-      <span class="leaderboard-kpi-inline-item" title="Distinct WCL guild raid reports this player appeared in (admin Event Management selection only). Drives the raid milestone badges. Attendance % above still uses the rolling last-${escapeHtml(String(recentCap || 6))}-raid window."><b>Events:</b> ${escapeHtml(events)}</span>
+      <span class="leaderboard-kpi-inline-item" title="Distinct WCL guild raid reports this player appeared in (admin Event Management selection only). Drives the raid milestone badges and the Peon/Grunt/Veteran rank pill — both numbers count the same raids."><b>Events:</b> ${escapeHtml(events)}</span>
       <span class="leaderboard-kpi-inline-item"><b>Deaths:</b> ${escapeHtml(deaths)}</span>
       <span class="leaderboard-kpi-inline-item"><b>Peak parse:</b> ${peakCell}</span>
     </div>`;

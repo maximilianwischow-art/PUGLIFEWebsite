@@ -91,6 +91,7 @@ import {
   raidAttendanceGetFreshestWindow,
   raidAppearancesReplaceForReports,
   raidAppearancesCountsByUser,
+  raidAppearancesAttendanceWindowByUser,
   raidAppearancesDistinctReportCount,
   raidAppearancesDistinctUserCount,
   raidAppearancesUserIdsInDateRange,
@@ -1734,12 +1735,43 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
     }
   );
 
+  // Align the rank-pill / attendance signals with the "Events" column.
+  // `wclEventCount` (raid_appearances) is already scoped to admin-curated
+  // Event Management reports (`gargulLootState.selectedReportCodes`), so we
+  // restrict the per-raid attendance window to the same set. Without this
+  // filter, `raidsAttended` / `attendanceHistory` count every recent tracked
+  // WCL report regardless of curation, which produced the "Events: 1 but
+  // Grunt badge" mismatch (admin curated 1 report, rolling-6 saw 2).
+  // Fallback: if curation has no overlap with the recent window (e.g. every
+  // selected code is older than the gather slice), keep the original
+  // snapshots so we don't silently zero out every raider's attendance.
+  const selectedCurationSet =
+    selectedReportCodesList.length > 0 ? new Set(selectedReportCodesList) : null;
+  let attendanceSnapshots = raidSnapshots;
+  let attendanceRankingPayloads = raidRankingPayloads;
+  let attendanceScopeSource = "rolling_recent";
+  if (selectedCurationSet) {
+    const filteredSnapshots = raidSnapshots.filter((snap) =>
+      selectedCurationSet.has(String(snap?.reportCode || ""))
+    );
+    if (filteredSnapshots.length > 0) {
+      const filteredRankings = raidRankingPayloads.filter((row) =>
+        selectedCurationSet.has(String(row?.reportCode || ""))
+      );
+      attendanceSnapshots = filteredSnapshots;
+      attendanceRankingPayloads = filteredRankings;
+      attendanceScopeSource = "event_management";
+    } else {
+      attendanceScopeSource = "event_management_no_overlap";
+    }
+  }
+
   const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
-    raidSnapshots,
+    attendanceSnapshots,
     rhWclLinksState,
     top,
     wclDisplayByLower,
-    raidRankingPayloads
+    attendanceRankingPayloads
   );
 
   const activeRows = linkedPayload.leaderboard.filter((r) => Number(r?.raidsAttended || 0) > 0);
@@ -1945,16 +1977,25 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
     guildId,
     consideredRaids: linkedPayload.consideredRaids,
     activeCount: players.length,
-    raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
+    raids: attendanceSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
     attendanceScope: {
       only25PlayerRaids: true,
       excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
       recentRaidCap: wclAttendanceRecentRaidCount(),
+      source: attendanceScopeSource,
+      selectedReportCodes: selectedReportCodesList,
+      consideredReportCodes: attendanceSnapshots.map((raid) => String(raid?.reportCode || "")).filter(Boolean),
+      note:
+        attendanceScopeSource === "event_management"
+          ? "raidsAttended / attendanceHistory / attendanceRate are scoped to admin-curated reports (`gargulLootState.selectedReportCodes`) — the same set that drives the leaderboard `wclEventCount` (Events) column and the Peon/Grunt/Veteran rank pill."
+          : attendanceScopeSource === "event_management_no_overlap"
+          ? "Admin Event Management selection has no overlap with the recent WCL report window; falling back to the rolling last-N tracked reports so the rank pill still renders."
+          : "No Event Management selection saved yet — using the rolling last-N tracked WCL reports.",
     },
     parseScope: {
       sameRaidsAsAttendance: true,
       metricNote:
-        "Peak parse columns: best single-boss percentile per raid log, then max across recent capped raids (tooltip = encounter + report + fight). Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) in any raid in the window.",
+        "Peak parse columns: best single-boss percentile per curated raid log, then max across the same Event Management set used by `raidsAttended` / `wclEventCount`. Parsing badge: tied for best percentile among linked raiders on that boss for your bracket (tank / healer / DPS) within that set.",
     },
     raidHelperEventScope: {
       maxPastEvents: maxRhPastEvents <= 0 ? null : maxRhPastEvents,
@@ -1968,7 +2009,7 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       selectedReportCodes: selectedReportCodesList,
       reportCodesCounted: wclAppearanceReportCount,
       note:
-        "wclEventCount: distinct WCL guild raid reports each canonical user appeared in, scoped to `gargulLootState.selectedReportCodes` (admin Event Management). Falls back to the Raid Helper signup count for one release if `raid_appearances` is empty.",
+        "wclEventCount: distinct WCL guild raid reports each canonical user appeared in, scoped to `gargulLootState.selectedReportCodes` (admin Event Management). The rank pill (Peon/Grunt/Veteran) is now driven from the same set so the column and the badge always agree. Falls back to the Raid Helper signup count for one release if `raid_appearances` is empty.",
     },
     players,
   };
@@ -11643,12 +11684,27 @@ app.get("/api/raid-helper/events-kpi", async (req, res) => {
       canonicalUserCount > 0
         ? canonicalUserCount
         : Math.max(uniqueKeys.size, wclDistinctAttendees.size, raidAppearancesUserCount);
+    // Mirror the leaderboard payload: rank-pill / attendance signals must
+    // come from the same admin-curated report set as `wclEventCount`.
+    let kpiAttendanceSnapshots = raidSnapshots;
+    let kpiAttendanceRankingPayloads = raidRankingPayloads;
+    if (selectedReportCodesSet.size > 0) {
+      const kpiFilteredSnapshots = raidSnapshots.filter((snap) =>
+        selectedReportCodesSet.has(String(snap?.reportCode || ""))
+      );
+      if (kpiFilteredSnapshots.length > 0) {
+        kpiAttendanceSnapshots = kpiFilteredSnapshots;
+        kpiAttendanceRankingPayloads = raidRankingPayloads.filter((row) =>
+          selectedReportCodesSet.has(String(row?.reportCode || ""))
+        );
+      }
+    }
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
-      raidSnapshots,
+      kpiAttendanceSnapshots,
       rhWclLinksState,
       300,
       wclDisplayByLower,
-      raidRankingPayloads
+      kpiAttendanceRankingPayloads
     );
 
     let coreAttendanceSum = 0;
@@ -12230,16 +12286,46 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
 
   /** Same scope as leaderboard "Events" / milestone badges — for profile + client badge resolution. */
   let wclEventByUserId = new Map();
+  // Curation-aware attendance window — drives `raidsAttended` /
+  // `attendanceHistory` / `attendanceRate` for the rank pill so the
+  // Peon/Grunt/Veteran badge always agrees with the `wclEventCount`
+  // ("Events") column. Both signals now come from `raid_appearances`
+  // scoped to `gargulLootState.selectedReportCodes`. Falls back to the
+  // pre-computed `raid_attendance` rolling window when:
+  //   - no admin curation has been saved yet, or
+  //   - `raid_appearances` is empty / probe failed (first deploy).
+  /** @type {Map<number, { raidsAttended: number, raidsConsidered: number, attendanceHistory: number[] }> | null} */
+  let curationAttendanceByUserId = null;
+  let curationAttendanceConsidered = 0;
+  let curationOrderedReportCodes = [];
+  let curationAttendanceActive = false;
+  const selectedCuratedCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
   if (materializeRaidAppearancesEnabled()) {
     try {
       if (raidAppearancesDistinctReportCount() > 0) {
-        const codes = Array.from(
-          new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+        wclEventByUserId = raidAppearancesCountsByUser(
+          selectedCuratedCodes.length ? { reportCodes: selectedCuratedCodes } : {}
         );
-        wclEventByUserId = raidAppearancesCountsByUser(codes.length ? { reportCodes: codes } : {});
+        if (selectedCuratedCodes.length) {
+          const window = raidAppearancesAttendanceWindowByUser({
+            reportCodes: selectedCuratedCodes,
+            recentLimit: wclAttendanceRecentRaidCount(),
+          });
+          if (window?.orderedReportCodes?.length) {
+            curationAttendanceByUserId = window.perUser;
+            curationOrderedReportCodes = window.orderedReportCodes;
+            curationAttendanceConsidered = window.orderedReportCodes.length;
+            curationAttendanceActive = true;
+          }
+        }
       }
     } catch {
       wclEventByUserId = new Map();
+      curationAttendanceByUserId = null;
+      curationAttendanceConsidered = 0;
+      curationAttendanceActive = false;
     }
   }
   const parseRowsByCharacterId = new Map();
@@ -12268,10 +12354,28 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
     return best;
   }
 
-  const consideredRaids = Number(attendanceWindow[0]?.attendanceHistory?.length || 0);
-  const leaderboard = [];
+  const rollingConsideredRaids = Number(attendanceWindow[0]?.attendanceHistory?.length || 0);
+  const consideredRaids = curationAttendanceActive
+    ? curationAttendanceConsidered
+    : rollingConsideredRaids;
+  // Union of users that should appear in the leaderboard — any user with a
+  // rolling-window row OR a curated appearance. Without the union, raiders
+  // who only show up in the curated set (e.g. a brand-new attendee who
+  // missed the rolling window) would be dropped.
+  const candidateUserIds = new Set();
   for (const att of attendanceWindow) {
-    const u = usersById.get(att.userId);
+    if (Number.isInteger(att?.userId) && att.userId > 0) candidateUserIds.add(att.userId);
+  }
+  if (curationAttendanceActive && curationAttendanceByUserId) {
+    for (const uid of curationAttendanceByUserId.keys()) candidateUserIds.add(uid);
+  }
+  const attendanceByUserId = new Map();
+  for (const att of attendanceWindow) {
+    if (Number.isInteger(att?.userId) && att.userId > 0) attendanceByUserId.set(att.userId, att);
+  }
+  const leaderboard = [];
+  for (const userId of candidateUserIds) {
+    const u = usersById.get(userId);
     if (!u) continue;
     const chars = charactersByUserId.get(u.id) || [];
     const wclCharacters = chars.map((c) => c.characterName).sort((a, b) => a.localeCompare(b));
@@ -12298,14 +12402,35 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
       encounterTopHeal: !!(heal && heal.encounterTopInBracket),
       encounterTopDps: !!(dps && dps.encounterTopInBracket),
     };
+    let raidsAttended = 0;
+    let attendanceHistory = [];
+    if (curationAttendanceActive) {
+      const curated = curationAttendanceByUserId?.get(u.id);
+      if (curated) {
+        raidsAttended = Number(curated.raidsAttended || 0);
+        attendanceHistory = Array.isArray(curated.attendanceHistory)
+          ? curated.attendanceHistory
+          : new Array(consideredRaids).fill(0);
+      } else {
+        attendanceHistory = new Array(consideredRaids).fill(0);
+      }
+    } else {
+      const att = attendanceByUserId.get(u.id);
+      if (att) {
+        raidsAttended = Number(att.raidsAttended || 0);
+        attendanceHistory = Array.isArray(att.attendanceHistory) ? att.attendanceHistory : [];
+      }
+    }
+    const attendanceRate =
+      consideredRaids > 0 ? (raidsAttended / consideredRaids) * 100 : 0;
     leaderboard.push({
       name: u.displayName || u.raidHelperName || "",
       raidHelperName: u.raidHelperName || u.displayName || "",
       wclCharacters,
       wclEventCount: Number(wclEventByUserId.get(u.id) || 0),
-      raidsAttended: Number(att.raidsAttended || 0),
-      attendanceRate: consideredRaids > 0 ? (Number(att.raidsAttended || 0) / consideredRaids) * 100 : 0,
-      attendanceHistory: Array.isArray(att.attendanceHistory) ? att.attendanceHistory : [],
+      raidsAttended,
+      attendanceRate,
+      attendanceHistory,
       parseSummaries,
       guildRole: normalizeRhWclGuildRole(u.guildRole),
       dbUserId: u.id,
@@ -12324,7 +12449,9 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
   return {
     guildId,
     consideredRaids,
-    raids: [],
+    raids: curationAttendanceActive
+      ? curationOrderedReportCodes.map((reportCode) => ({ reportCode, startTime: 0 }))
+      : [],
     leaderboard: trimmed,
     parseCeilingMax,
     parseRankingReports: 0,
@@ -12334,6 +12461,14 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
       only25PlayerRaids: true,
       excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
       recentRaidCap: wclAttendanceRecentRaidCount(),
+      source: curationAttendanceActive ? "event_management" : "rolling_recent",
+      selectedReportCodes: selectedCuratedCodes,
+      consideredReportCodes: curationAttendanceActive
+        ? curationOrderedReportCodes
+        : [],
+      note: curationAttendanceActive
+        ? "raidsAttended / attendanceHistory / attendanceRate are scoped to admin-curated reports (`gargulLootState.selectedReportCodes`) — the same set that drives the leaderboard `wclEventCount` (Events) column and the Peon/Grunt/Veteran rank pill."
+        : "No Event Management selection saved yet — using the rolling last-N tracked WCL reports from the materialised raid_attendance window.",
     },
     parseScope: {
       sameRaidsAsAttendance: true,
@@ -12375,12 +12510,40 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
       }
     );
 
+    // Mirror the bundle path: the rank-pill / attendance signals must
+    // come from the same admin-curated set as `wclEventCount`.
+    const liveSelectedReportCodes = Array.from(
+      new Set(
+        (gargulLootState?.selectedReportCodes || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    let liveAttendanceSnapshots = raidSnapshots;
+    let liveAttendanceRankings = raidRankingPayloads;
+    let liveAttendanceScopeSource = "rolling_recent";
+    if (liveSelectedReportCodes.length > 0) {
+      const allowed = new Set(liveSelectedReportCodes);
+      const filteredSnapshots = raidSnapshots.filter((snap) =>
+        allowed.has(String(snap?.reportCode || ""))
+      );
+      if (filteredSnapshots.length > 0) {
+        liveAttendanceSnapshots = filteredSnapshots;
+        liveAttendanceRankings = raidRankingPayloads.filter((row) =>
+          allowed.has(String(row?.reportCode || ""))
+        );
+        liveAttendanceScopeSource = "event_management";
+      } else {
+        liveAttendanceScopeSource = "event_management_no_overlap";
+      }
+    }
+
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
-      raidSnapshots,
+      liveAttendanceSnapshots,
       rhWclLinksState,
       top,
       wclDisplayByLower,
-      raidRankingPayloads
+      liveAttendanceRankings
     );
 
     const parseCeilingMax = computeParseCeilingMaxFromLeaderboard(linkedPayload.leaderboard);
@@ -12388,16 +12551,21 @@ app.get("/api/wcl/guild/:guildId/attendance", async (req, res) => {
     return res.json({
       guildId,
       consideredRaids: linkedPayload.consideredRaids,
-      raids: raidSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
+      raids: liveAttendanceSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
       leaderboard: linkedPayload.leaderboard,
       parseCeilingMax,
-      parseRankingReports: raidRankingPayloads.length,
+      parseRankingReports: liveAttendanceRankings.length,
       attendanceLinking: true,
       rhWclLinkCount: rhWclLinksState.links?.length || 0,
       attendanceScope: {
         only25PlayerRaids: true,
         excludedRaids: [...WCL_ATTENDANCE_EXCLUDED_RAIDS],
         recentRaidCap: wclAttendanceRecentRaidCount(),
+        source: liveAttendanceScopeSource,
+        selectedReportCodes: liveSelectedReportCodes,
+        consideredReportCodes: liveAttendanceSnapshots
+          .map((snap) => String(snap?.reportCode || ""))
+          .filter(Boolean),
       },
       parseScope: {
         sameRaidsAsAttendance: true,

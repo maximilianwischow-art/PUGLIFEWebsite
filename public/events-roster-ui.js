@@ -1238,10 +1238,10 @@ function achievementBadgeIconUrlWithFallback(fileName) {
  * Raid milestone badges: distinct WCL guild raid reports the player
  * appeared in, scoped to the admin Event Management selection. We read
  * `wclEventCount` first (the Phase 9 cutover field), and fall back to
- * the legacy `rhPastEventCount` for older API payloads. We intentionally
- * do **not** mix in the rolling-window WCL `raidsAttended`, or someone
- * with 2 Events but 5 attendances in the rolling window would incorrectly
- * earn the 5-raid tile.
+ * the legacy `rhPastEventCount` for older API payloads. The same
+ * curated set now also drives `raidsAttended` and the rank pill, so the
+ * Events tile, the Peon/Grunt/Veteran badge, and the Attendance % all
+ * count the same raids.
  */
 function raidsWithGuildCountForPlayer(player) {
   const fromWcl = Number(player?.wclEventCount);
@@ -1584,7 +1584,7 @@ function displayGuildRoleLabel(roleLabel) {
   return String(roleLabel || "").trim() === "Puglead" ? "PUG Lead" : String(roleLabel || "").trim();
 }
 
-/** Raids attended in the same capped window as KPI / % (typically last 6 tracked 25-player raids). */
+/** Raids attended in the same capped window as KPI / % (last 6 admin-curated Event Management raids when curation is set, else rolling last-6 tracked 25-player raids). */
 function attendanceRaidsCountForPlayer(player) {
   const direct = Number(player?.raidsAttended);
   if (Number.isFinite(direct) && direct >= 0) return Math.min(6, Math.floor(direct));
@@ -1593,7 +1593,7 @@ function attendanceRaidsCountForPlayer(player) {
   return 0;
 }
 
-/** 1 raid → Peon, 2–4 → Grunt, 5–6 → Veteran (within the attendance window). */
+/** ≤1 raid → Peon, 2–4 → Grunt, 5–6 → Veteran (within the same Event Management window that drives `wclEventCount`). */
 function attendanceTierGuildRoleFromRaids(raidsRaw) {
   const r = Math.max(0, Math.min(6, Math.floor(Number(raidsRaw) || 0)));
   if (r <= 1) return "Peon";
@@ -1637,7 +1637,7 @@ function rosterAttendanceCompanionBadgeHtml(player) {
   const tier = attendanceTierGuildRole(player);
   const raids = attendanceRaidsCountForPlayer(player);
   const cap = Math.max(1, attendanceConsideredRaids || 6);
-  const title = `Attendance rank (last ${cap} tracked 25-player raids): ${tier} · ${raids}/${cap} raids`;
+  const title = `Attendance rank (last ${cap} Event Management raids): ${tier} · ${raids}/${cap} raids`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(tier));
   const alt = escapeHtml(`Attendance rank: ${tier}`);
   return `<span class="raider-badge-slot raider-badge-slot--guild-role raider-badge-slot--attendance-companion" title="${escapeHtml(title)}"><img class="raider-badge-role-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" /></span>`;
