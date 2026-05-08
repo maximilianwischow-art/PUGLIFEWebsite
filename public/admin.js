@@ -45,20 +45,27 @@ function rhWclGuildRoleSelectHtml(current) {
   ).join("")}</select>`;
 }
 
-const ADMIN_PANEL_IDS = [
-  "rh-wcl",
-  "database",
-  "wcl-events",
-  "gargul-import",
-  "loot-corrections",
-  "p2-materials",
-  "join-needs",
-  "data-sync",
-  "analytics",
-  "hof-notes",
-  "role-alerts",
-  "custom-dm",
+const ADMIN_GROUPS = [
+  { id: "people", label: "People", tools: ["rh-wcl", "database", "hof-notes"] },
+  { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
+  { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
+  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm"] },
+  { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "analytics"] },
 ];
+
+const ADMIN_PANEL_IDS = ADMIN_GROUPS.flatMap((g) => g.tools);
+
+/** Hashes that used to point to a now-merged panel; redirected on hashchange + initial load. */
+const ADMIN_PANEL_HASH_ALIASES = {
+  "data-sync": "sync-center",
+};
+
+const SYNC_CENTER_TAB_IDS = ["workers", "snapshot", "readiness", "backup"];
+const SYNC_CENTER_DEFAULT_TAB = "workers";
+
+function adminGroupForToolId(toolId) {
+  return ADMIN_GROUPS.find((g) => g.tools.includes(toolId)) || null;
+}
 
 let customDmCandidatesState = [];
 let customDmSelectedUserIds = new Set();
@@ -67,9 +74,18 @@ let customDmRoleTargets = new Set(["Tanks", "Healers", "Melee", "Ranged"]);
 
 function parseAdminHash() {
   const raw = (location.hash || "").replace(/^#/, "").trim();
-  if (!raw) return null;
-  const normalized = raw.startsWith("admin-") ? raw.slice(6) : raw;
-  return ADMIN_PANEL_IDS.includes(normalized) ? normalized : null;
+  if (!raw) return { panelId: null, subTab: null };
+  const stripped = raw.startsWith("admin-") ? raw.slice(6) : raw;
+  const [panelRaw, subRaw] = stripped.split(":");
+  const aliased = ADMIN_PANEL_HASH_ALIASES[panelRaw] || panelRaw;
+  const panelId = ADMIN_PANEL_IDS.includes(aliased) ? aliased : null;
+  if (!panelId) return { panelId: null, subTab: null };
+  let subTab = null;
+  if (panelId === "sync-center") {
+    subTab = SYNC_CENTER_TAB_IDS.includes(subRaw) ? subRaw : null;
+    if (!subTab && panelRaw === "data-sync") subTab = "snapshot";
+  }
+  return { panelId, subTab };
 }
 
 function showAdminPanel(panelId, opts = {}) {
@@ -86,8 +102,21 @@ function showAdminPanel(panelId, opts = {}) {
     if (on) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
   });
+  const group = adminGroupForToolId(panelId);
+  document.querySelectorAll("[data-admin-group]").forEach((el) => {
+    const id = el.getAttribute("data-admin-group");
+    el.classList.toggle("is-admin-group-active", !!group && id === group.id);
+  });
+  const currentLabelHost = document.querySelector("[data-admin-sidebar-current]");
+  if (currentLabelHost) {
+    const activeBtn = document.querySelector(`[data-admin-nav="${panelId}"]`);
+    currentLabelHost.textContent = activeBtn ? activeBtn.textContent.trim() : "Admin sections";
+  }
+  closeAdminSidebarDrawer();
+  if (panelId === "sync-center") showSyncCenterSubTab(opts.subTab || SYNC_CENTER_DEFAULT_TAB, { replaceHash });
   if (replaceHash) {
-    const next = `#admin-${panelId}`;
+    const sub = panelId === "sync-center" && opts.subTab ? `:${opts.subTab}` : "";
+    const next = `#admin-${panelId}${sub}`;
     if (location.hash !== next) history.replaceState(null, "", `${location.pathname}${location.search}${next}`);
   }
   try {
@@ -97,20 +126,57 @@ function showAdminPanel(panelId, opts = {}) {
   }
 }
 
-function initialAdminPanelId() {
+function showSyncCenterSubTab(subTabId, opts = {}) {
+  const id = SYNC_CENTER_TAB_IDS.includes(subTabId) ? subTabId : SYNC_CENTER_DEFAULT_TAB;
+  document.querySelectorAll("[data-sync-tab-panel]").forEach((el) => {
+    const on = el.getAttribute("data-sync-tab-panel") === id;
+    if (on) el.removeAttribute("hidden");
+    else el.setAttribute("hidden", "");
+  });
+  document.querySelectorAll("[data-sync-tab]").forEach((btn) => {
+    const on = btn.getAttribute("data-sync-tab") === id;
+    btn.classList.toggle("is-admin-submenu-active", on);
+    if (on) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+  if (opts.replaceHash !== false) {
+    const next = `#admin-sync-center:${id}`;
+    if (location.hash !== next) history.replaceState(null, "", `${location.pathname}${location.search}${next}`);
+  }
+}
+
+function initialAdminPanelInfo() {
   const fromHash = parseAdminHash();
-  if (fromHash) return fromHash;
+  if (fromHash.panelId) return fromHash;
   try {
     const s = sessionStorage.getItem("adminPanel");
-    if (s && ADMIN_PANEL_IDS.includes(s)) return s;
+    if (s && ADMIN_PANEL_IDS.includes(s)) return { panelId: s, subTab: null };
   } catch (_) {
     /* ignore */
   }
-  return "rh-wcl";
+  return { panelId: "rh-wcl", subTab: null };
+}
+
+function closeAdminSidebarDrawer() {
+  const toggle = document.querySelector(".admin-sidebar-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+  const sidebar = document.querySelector(".admin-sidebar");
+  if (sidebar) sidebar.classList.remove("is-admin-sidebar-open");
+}
+
+function initAdminSidebarDrawer() {
+  const toggle = document.querySelector(".admin-sidebar-toggle");
+  const sidebar = document.querySelector(".admin-sidebar");
+  if (!toggle || !sidebar) return;
+  toggle.addEventListener("click", () => {
+    const open = sidebar.classList.toggle("is-admin-sidebar-open");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
 }
 
 function initAdminSubmenu() {
-  showAdminPanel(initialAdminPanelId(), { replaceHash: false });
+  const initial = initialAdminPanelInfo();
+  showAdminPanel(initial.panelId, { replaceHash: false, subTab: initial.subTab });
 
   document.querySelectorAll("[data-admin-nav]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -119,10 +185,19 @@ function initAdminSubmenu() {
     });
   });
 
-  window.addEventListener("hashchange", () => {
-    const id = parseAdminHash();
-    if (id) showAdminPanel(id, { replaceHash: false });
+  document.querySelectorAll("[data-sync-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-sync-tab");
+      if (id) showSyncCenterSubTab(id);
+    });
   });
+
+  window.addEventListener("hashchange", () => {
+    const info = parseAdminHash();
+    if (info.panelId) showAdminPanel(info.panelId, { replaceHash: false, subTab: info.subTab });
+  });
+
+  initAdminSidebarDrawer();
 }
 
 initAdminSubmenu();
@@ -480,6 +555,37 @@ function readLootEditorEntries() {
   });
 }
 
+/** Mirror of `isHighConfidenceSource` from `lib/rh-wcl-guess.mjs` — keep in sync. */
+function rhWclSourceIsHighConfidence(kind, score) {
+  const k = String(kind || "").trim();
+  if (!k) return false;
+  if (k.endsWith("_orphan")) return false;
+  if (k === "manual" || k === "manual:proposal") return true;
+  if (k === "exact" || k === "guess_prefix" || k === "guess_prefix_rev") return true;
+  if (typeof score === "number" && Number.isFinite(score) && score >= 85) return true;
+  return false;
+}
+
+/** Status chip for one Account Assignment row: Verified / Auto-matched / Needs review / Empty. */
+function rhWclRowStatusChipHtml(row) {
+  const names = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames.filter(Boolean) : [];
+  const src = Array.isArray(row?.wclSources) ? row.wclSources : [];
+  const conf = Array.isArray(row?.wclGuessConfidence) ? row.wclGuessConfidence : [];
+  if (row?.verifiedAt) {
+    const t = new Date(row.verifiedAt);
+    const tt = Number.isNaN(t.getTime()) ? row.verifiedAt : t.toLocaleDateString();
+    return `<span class="admin-rh-status-chip admin-rh-status-verified" title="Verified ${esc(String(row.verifiedAt))}">Verified · ${esc(tt)}</span>`;
+  }
+  if (!names.length) {
+    return `<span class="admin-rh-status-chip admin-rh-status-empty">No WCL char</span>`;
+  }
+  const allHigh = names.every((_, i) => rhWclSourceIsHighConfidence(src[i], conf[i]));
+  if (allHigh) {
+    return `<span class="admin-rh-status-chip admin-rh-status-auto" title="All matches high-confidence; click Verify to lock.">Auto-matched</span>`;
+  }
+  return `<span class="admin-rh-status-chip admin-rh-status-review" title="At least one heuristic guess on this row — review and verify.">Needs review</span>`;
+}
+
 function rhWclMatchChipsHtml(row) {
   const names = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : [];
   const src = Array.isArray(row?.wclSources) ? row.wclSources : [];
@@ -513,6 +619,109 @@ function updateRhWclLinksChrome(list) {
   const hint = document.getElementById("rhWclEmptyHint");
   if (hint) {
     hint.hidden = dataCount > 0;
+  }
+}
+
+function rhWclProposalKindLabel(kind, score) {
+  const k = String(kind || "").trim();
+  const sc = typeof score === "number" && Number.isFinite(score) ? `${Math.round(score)}%` : "—";
+  if (k === "exact") return `Exact (${sc})`;
+  if (k.endsWith("_orphan")) return `Best-effort (${sc})`;
+  if (k.startsWith("guess_")) return `${k.replace(/^guess_/, "").replace(/_/g, " ")} (${sc})`;
+  if (k === "manual" || k === "manual:proposal") return `Manual`;
+  return `${k} (${sc})`;
+}
+
+function renderRhWclTodo(payload) {
+  const host = document.getElementById("rhWclTodoHost");
+  if (!host) return;
+  const proposals = Array.isArray(payload?.proposals) ? payload.proposals : [];
+  const missing = Array.isArray(payload?.missing?.raidHelperRowsWithoutWcl)
+    ? payload.missing.raidHelperRowsWithoutWcl
+    : [];
+  const generatedAt = payload?.generatedAt ? new Date(payload.generatedAt) : null;
+  const lastEl = document.getElementById("rhWclLastSync");
+  if (lastEl) {
+    lastEl.textContent =
+      generatedAt && !Number.isNaN(generatedAt.getTime())
+        ? `Last sync: ${generatedAt.toLocaleString()}`
+        : "Last sync: never";
+  }
+
+  const proposalsRows = proposals
+    .map((p) => {
+      const wcl = String(p?.wclCharacterName || "");
+      const rh = String(p?.suggestedRaidHelperName || "");
+      const sc = typeof p?.score === "number" ? Math.round(p.score) : null;
+      return `<tr data-rh-wcl-proposal-row>
+        <td><strong>${esc(wcl)}</strong></td>
+        <td>${esc(rh)}</td>
+        <td>${sc != null ? `${sc}%` : "—"}</td>
+        <td>${esc(rhWclProposalKindLabel(p?.kind, p?.score))}</td>
+        <td class="admin-rh-todo-actions">
+          <button type="button" class="event-signup-btn" data-rh-wcl-proposal-accept data-wcl="${esc(wcl)}" data-rh="${esc(rh)}" title="Append this WCL name onto the suggested Raid Helper row">Accept</button>
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-proposal-accept-verify data-wcl="${esc(wcl)}" data-rh="${esc(rh)}" title="Accept and immediately verify the row">Accept &amp; verify</button>
+          <button type="button" class="event-signup-btn admin-btn-danger" data-rh-wcl-proposal-reject data-wcl="${esc(wcl)}" title="Drop this proposal; remembered for 30 days so the next sync skips it">Reject</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  const missingRows = missing
+    .map((m) => {
+      const rh = String(m?.raidHelperName || "");
+      const role = String(m?.guildRole || "Peon");
+      return `<tr><td><strong>${esc(rh)}</strong></td><td>${esc(role)}</td></tr>`;
+    })
+    .join("");
+
+  host.innerHTML = `
+    <details class="admin-rh-todo-block" data-rh-wcl-todo-block="proposals" ${proposals.length ? "open" : ""}>
+      <summary>Pending proposals (${proposals.length})</summary>
+      ${
+        proposals.length
+          ? `<div class="admin-table-wrap">
+              <table class="admin-table admin-rh-todo-table">
+                <thead>
+                  <tr>
+                    <th>WCL log name</th>
+                    <th>Suggested RH name</th>
+                    <th>Score</th>
+                    <th>Kind</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>${proposalsRows}</tbody>
+              </table>
+            </div>`
+          : `<p class="subtle">No low-confidence guesses awaiting review.</p>`
+      }
+    </details>
+    <details class="admin-rh-todo-block" data-rh-wcl-todo-block="missing" ${missing.length ? "open" : ""}>
+      <summary>Missing data (${missing.length})</summary>
+      ${
+        missing.length
+          ? `<div class="admin-table-wrap">
+              <table class="admin-table admin-rh-todo-table">
+                <thead><tr><th>Raid Helper name</th><th>Guild role</th></tr></thead>
+                <tbody>${missingRows}</tbody>
+              </table>
+            </div>`
+          : `<p class="subtle">Every saved Raid Helper row has at least one WCL character.</p>`
+      }
+    </details>
+  `;
+}
+
+async function loadRhWclTodo() {
+  const host = document.getElementById("rhWclTodoHost");
+  if (host && !host.dataset.rhWclTodoLoaded) host.innerHTML = `<p class="subtle">Loading to-do…</p>`;
+  try {
+    const payload = await getJson("/api/admin/rh-wcl-links/proposals");
+    renderRhWclTodo(payload);
+    if (host) host.dataset.rhWclTodoLoaded = "1";
+  } catch (error) {
+    if (host) host.innerHTML = `<p class="subtle">Failed to load to-do: ${esc(error?.message || "")}</p>`;
   }
 }
 
@@ -553,7 +762,7 @@ function renderRhWclLinksTable(rows) {
                 ? `<span class="admin-rh-src-chip ${idSource === "rh-scan" ? "admin-rh-src-guess" : "admin-rh-src-manual"}" title="${esc(idSource || "manual")}">${idSource === "rh-scan" ? "Auto (RH scan)" : "Manual"}</span>`
                 : `<span class="subtle">unset</span>`;
               return `
-            <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}" data-rh-wcl-stored-id="${esc(discordId)}"${metaAttr}>
+            <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}" data-rh-wcl-stored-id="${esc(discordId)}" data-rh-wcl-stored-verified-at="${esc(String(row.verifiedAt || ""))}"${metaAttr}>
               <td class="admin-rh-discord-cell">
                 <input
                   class="admin-input"
@@ -586,9 +795,17 @@ function renderRhWclLinksTable(rows) {
                   </button>
                 </div>
               </td>
-              <td class="admin-rh-src-cell">${rhWclMatchChipsHtml(row)}</td>
+              <td class="admin-rh-src-cell">
+                <div class="admin-rh-status-line">${rhWclRowStatusChipHtml(row)}</div>
+                <div class="admin-rh-match-chips">${rhWclMatchChipsHtml(row)}</div>
+              </td>
               <td class="admin-rh-actions-cell">
                 <button type="button" class="event-signup-btn" data-rh-wcl-save title="Save this row to disk">Save row</button>
+                ${
+                  row.verifiedAt
+                    ? `<button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-unverify="${esc(storedRh)}" title="Clear verified flag — heuristic merges may edit this row again">Unverify</button>`
+                    : `<button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-verify="${esc(storedRh)}" title="Lock this row from background heuristic edits">Verify</button>`
+                }
                 <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-remove="${idx}">Remove</button>
               </td>
             </tr>`;
@@ -730,6 +947,8 @@ function readRhWclLinkRowFromTr(tr) {
     row.wclSources = wclSources;
     if (wclGuessConfidence.some((x) => typeof x === "number")) row.wclGuessConfidence = wclGuessConfidence;
   }
+  const storedVerifiedAt = String(tr.getAttribute("data-rh-wcl-stored-verified-at") || "").trim();
+  if (storedVerifiedAt) row.verifiedAt = storedVerifiedAt;
   return row;
 }
 
@@ -1642,6 +1861,7 @@ async function loadAdminData() {
   }
   renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
+  loadRhWclTodo().catch(() => {});
 }
 
 async function importJsonFromTextarea() {
@@ -1759,6 +1979,31 @@ document.getElementById("rhWclAddRowBtn")?.addEventListener("click", () => {
   const links = readRhWclLinksFromTable();
   links.push({ raidHelperName: "", wclCharacterNames: [], guildRole: "Peon" });
   renderRhWclLinksTable(links);
+});
+
+document.getElementById("rhWclRefreshBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("rhWclRefreshBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Refresh now", loading: "Syncing…", success: "Done", failure: "Failed" },
+      async () => {
+        const result = await getJson("/api/admin/sync/account-assignment", { method: "POST" });
+        const refreshed = await getJson("/api/admin/rh-wcl-links");
+        renderRhWclLinksTable(Array.isArray(refreshed?.links) ? refreshed.links : []);
+        await loadRhWclTodo();
+        const summary = result?.summary || result?.result || {};
+        const auto = summary.autoApplied ?? "?";
+        const proposals = summary.proposals ?? "?";
+        const verified = summary.verifiedSkipped ?? 0;
+        status(
+          `Account Assignment synced: ${auto} row(s) on disk, ${proposals} proposal(s) waiting, ${verified} verified row(s) hard-locked.`
+        );
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Refresh failed");
+  }
 });
 
 document.getElementById("rhWclGuessBtn")?.addEventListener("click", async () => {
@@ -1935,6 +2180,73 @@ document.addEventListener("click", async (event) => {
       status(error?.message || "Save row failed");
     } finally {
       saveBtn.disabled = false;
+    }
+    return;
+  }
+
+  const verifyBtn = event.target.closest("[data-rh-wcl-verify], [data-rh-wcl-unverify]");
+  if (verifyBtn) {
+    const unverify = verifyBtn.hasAttribute("data-rh-wcl-unverify");
+    const rh = verifyBtn.getAttribute(unverify ? "data-rh-wcl-unverify" : "data-rh-wcl-verify");
+    if (!rh) return;
+    verifyBtn.disabled = true;
+    try {
+      const out = await getJson("/api/admin/rh-wcl-links/row/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raidHelperName: rh, unverify }),
+      });
+      renderRhWclLinksTable(Array.isArray(out?.links) ? out.links : []);
+      status(unverify ? `Unverified “${rh}”.` : `Verified “${rh}”.`);
+    } catch (error) {
+      status(error?.message || (unverify ? "Unverify failed" : "Verify failed"));
+    } finally {
+      verifyBtn.disabled = false;
+    }
+    return;
+  }
+
+  const acceptBtn = event.target.closest("[data-rh-wcl-proposal-accept], [data-rh-wcl-proposal-accept-verify]");
+  if (acceptBtn) {
+    const verify = acceptBtn.hasAttribute("data-rh-wcl-proposal-accept-verify");
+    const wcl = acceptBtn.getAttribute("data-wcl");
+    const rh = acceptBtn.getAttribute("data-rh");
+    if (!wcl || !rh) return;
+    acceptBtn.disabled = true;
+    try {
+      const out = await getJson("/api/admin/rh-wcl-links/proposals/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wclCharacterName: wcl, raidHelperName: rh, verify }),
+      });
+      renderRhWclLinksTable(Array.isArray(out?.links) ? out.links : []);
+      await loadRhWclTodo();
+      status(`Accepted “${wcl}” → ${rh}${verify ? " (verified)" : ""}.`);
+    } catch (error) {
+      status(error?.message || "Accept failed");
+    } finally {
+      acceptBtn.disabled = false;
+    }
+    return;
+  }
+
+  const rejectBtn = event.target.closest("[data-rh-wcl-proposal-reject]");
+  if (rejectBtn) {
+    const wcl = rejectBtn.getAttribute("data-wcl");
+    if (!wcl) return;
+    rejectBtn.disabled = true;
+    try {
+      await getJson("/api/admin/rh-wcl-links/proposals/reject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wclCharacterName: wcl }),
+      });
+      await loadRhWclTodo();
+      status(`Rejected “${wcl}”. Will not be re-suggested for 30 days.`);
+    } catch (error) {
+      status(error?.message || "Reject failed");
+    } finally {
+      rejectBtn.disabled = false;
     }
     return;
   }
@@ -2985,7 +3297,7 @@ document.addEventListener("DOMContentLoaded", () => {
 const __origShowAdminPanel = showAdminPanel;
 showAdminPanel = function (panelId, opts) {
   __origShowAdminPanel(panelId, opts);
-  if (panelId === "database" && !adminDatabaseLoaded) {
+  if ((panelId === "database" || panelId === "sync-center") && !adminDatabaseLoaded) {
     loadAdminDatabasePanel().catch((error) => {
       status(error?.message || "Failed to load database panel.");
     });
@@ -2995,3 +3307,13 @@ showAdminPanel = function (panelId, opts) {
 loadAdminData().catch((error) => {
   status(error?.message || "Failed to load admin page.");
 });
+
+(function kickInitialDatabaseLoadIfActive() {
+  const activePanel = document.querySelector(".admin-panel.is-admin-panel-active");
+  const id = activePanel?.getAttribute("data-admin-panel");
+  if ((id === "database" || id === "sync-center") && !adminDatabaseLoaded) {
+    loadAdminDatabasePanel().catch((error) => {
+      status(error?.message || "Failed to load database panel.");
+    });
+  }
+})();

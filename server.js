@@ -9,7 +9,13 @@ import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { mergeRhWclGuess, normalizeRhWclGuildRole, sortRhWclLinkRows } from "./lib/rh-wcl-guess.mjs";
+import {
+  isHighConfidenceSource,
+  mergeRhWclGuess,
+  normalizeRhWclGuildRole,
+  sortRhWclLinkRows,
+  splitMergeByConfidence,
+} from "./lib/rh-wcl-guess.mjs";
 import { syncBadgePngsToSvgs, watchBadgePngsToSvgs } from "./lib/badge-png-svg-sync.mjs";
 import {
   registerSyncTask,
@@ -570,6 +576,10 @@ const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
 const analyticsStorePath = path.join(dataDir, "site-analytics.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
 const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
+/** Low-confidence proposals from `runSyncAccountAssignment` awaiting human Accept/Reject in the Account Assignment to-do panel. */
+const rhWclProposalsPath = path.join(dataDir, "rh-wcl-pending-proposals.json");
+/** Rejected proposals are remembered for 30 days so a subsequent sync doesn't re-suggest the same WCL name immediately after the admin dismissed it. */
+const RH_WCL_PROPOSAL_REJECTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const apiCacheDir = path.join(dataDir, "cache");
 const apiResponseCache = new Map();
 const apiResponseInflight = new Map();
@@ -601,6 +611,10 @@ let rhWclLinksReady = null;
 /** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
 let rhWclLinksWriteChain = Promise.resolve();
+let rhWclProposalsReady = null;
+/** In-memory mirror of {@link rhWclProposalsPath}; written by `runSyncAccountAssignment`, read by `/api/admin/rh-wcl-links/proposals`. */
+let rhWclProposalsState = { generatedAt: null, proposals: [], rejected: [] };
+let rhWclProposalsWriteChain = Promise.resolve();
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
   { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
@@ -3596,6 +3610,77 @@ async function persistRhWclLinksStore() {
   }
 }
 
+function sanitizeProposalEntry(p) {
+  if (!p || typeof p !== "object") return null;
+  const wclCharacterName = String(p.wclCharacterName || "").trim().slice(0, 64);
+  if (!wclCharacterName) return null;
+  const suggestedRaidHelperName = String(p.suggestedRaidHelperName || "").trim().slice(0, 96);
+  const score = typeof p.score === "number" && Number.isFinite(p.score) ? Math.max(0, Math.min(100, Math.round(p.score))) : null;
+  const kind = String(p.kind || "guess").trim().slice(0, 40) || "guess";
+  return { wclCharacterName, suggestedRaidHelperName, score, kind };
+}
+
+function sanitizeRejectedEntry(r, now) {
+  if (!r || typeof r !== "object") return null;
+  const wclCharacterName = String(r.wclCharacterName || "").trim().slice(0, 64);
+  if (!wclCharacterName) return null;
+  const untilRaw = r.until;
+  const until =
+    typeof untilRaw === "number" && Number.isFinite(untilRaw)
+      ? untilRaw
+      : typeof untilRaw === "string" && !Number.isNaN(Date.parse(untilRaw))
+        ? Date.parse(untilRaw)
+        : now + RH_WCL_PROPOSAL_REJECTION_TTL_MS;
+  if (until <= now) return null;
+  return { wclCharacterName, until };
+}
+
+async function ensureRhWclProposalsStore() {
+  if (rhWclProposalsReady) return rhWclProposalsReady;
+  rhWclProposalsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    const now = Date.now();
+    try {
+      const raw = await readFile(rhWclProposalsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const proposals = Array.isArray(parsed?.proposals)
+        ? parsed.proposals.map(sanitizeProposalEntry).filter(Boolean)
+        : [];
+      const rejected = Array.isArray(parsed?.rejected)
+        ? parsed.rejected.map((r) => sanitizeRejectedEntry(r, now)).filter(Boolean)
+        : [];
+      rhWclProposalsState = {
+        generatedAt: typeof parsed?.generatedAt === "string" ? parsed.generatedAt : null,
+        proposals,
+        rejected,
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      rhWclProposalsState = { generatedAt: null, proposals: [], rejected: [] };
+    }
+  })();
+  return rhWclProposalsReady;
+}
+
+async function persistRhWclProposalsStore() {
+  const tmpPath = `${rhWclProposalsPath}.tmp`;
+  const json = JSON.stringify(rhWclProposalsState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, rhWclProposalsPath);
+}
+
+/** Drop expired rejection entries; mutates and returns the in-memory state. */
+function pruneExpiredRhWclRejections() {
+  const now = Date.now();
+  const before = (rhWclProposalsState.rejected || []).length;
+  rhWclProposalsState.rejected = (rhWclProposalsState.rejected || []).filter((r) => r.until > now);
+  return before - rhWclProposalsState.rejected.length;
+}
+
+function rhWclRejectedNameSet() {
+  return new Set((rhWclProposalsState.rejected || []).map((r) => String(r.wclCharacterName || "").toLowerCase()));
+}
+
 /**
  * Mirror the in-memory rh-wcl-character-links rows into the canonical
  * `users` + `user_characters` tables. One transaction per call. Safe to
@@ -3694,6 +3779,15 @@ function sanitizeRhWclLinksPayload(rawLinks) {
     if (discordUserId && discordIdSource) out.discordUserIdSource = discordIdSource;
     if (wclSources.length) out.wclSources = wclSources;
     if (wclGuessConfidence.some((x) => typeof x === "number")) out.wclGuessConfidence = wclGuessConfidence;
+    // ISO-8601 timestamp set when an admin clicks "Verify" — hard-locks the row
+    // against background heuristic rewrites in `runSyncAccountAssignment`.
+    const verifiedAtRaw = row?.verifiedAt;
+    if (verifiedAtRaw != null && verifiedAtRaw !== "") {
+      const verifiedAt = String(verifiedAtRaw).trim().slice(0, 40);
+      if (verifiedAt && !Number.isNaN(Date.parse(verifiedAt))) {
+        out.verifiedAt = verifiedAt;
+      }
+    }
     links.push(out);
   }
   return { links };
@@ -7067,6 +7161,208 @@ app.put("/api/admin/rh-wcl-links/row", async (req, res) => {
     return res.json({ ok: true, links: sortRhWclLinkRows(rhWclLinksState.links || []) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save row" });
+  }
+});
+
+/**
+ * Mark a roster row as `verifiedAt` (or clear it via `unverify: true`). A
+ * verified row is hard-locked: `runSyncAccountAssignment` will replay its
+ * stored bytes verbatim instead of letting heuristic re-tagging touch it.
+ */
+app.post("/api/admin/rh-wcl-links/row/verify", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclLinksStore();
+
+    const rhRaw = String(req.body?.raidHelperName || "").trim();
+    if (!rhRaw) return res.status(400).json({ ok: false, error: "raidHelperName is required" });
+    const targetKey = normalizeRaidHelperDisplayKey(rhRaw);
+    if (!targetKey) return res.status(400).json({ ok: false, error: "raidHelperName normalised to empty key" });
+    const unverify = Boolean(req.body?.unverify);
+
+    const links = Array.isArray(rhWclLinksState?.links) ? [...rhWclLinksState.links] : [];
+    const idx = links.findIndex((r) => normalizeRaidHelperDisplayKey(String(r?.raidHelperName || "")) === targetKey);
+    if (idx === -1) return res.status(404).json({ ok: false, error: "Row not found" });
+
+    const next = { ...links[idx] };
+    if (unverify) {
+      delete next.verifiedAt;
+    } else {
+      next.verifiedAt = new Date().toISOString();
+    }
+    links[idx] = next;
+
+    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+      rhWclLinksState = { links: sortRhWclLinkRows(links) };
+      await persistRhWclLinksStore();
+    });
+    await rhWclLinksWriteChain;
+
+    return res.json({ ok: true, row: next, links: sortRhWclLinkRows(rhWclLinksState.links || []) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update verification" });
+  }
+});
+
+/** List pending heuristic proposals + missing-data hints for the to-do panel. */
+app.get("/api/admin/rh-wcl-links/proposals", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclLinksStore();
+    await ensureRhWclProposalsStore();
+    pruneExpiredRhWclRejections();
+
+    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+    const proposalNamesLower = new Set(
+      (rhWclProposalsState.proposals || []).map((p) => String(p.wclCharacterName || "").toLowerCase())
+    );
+
+    const missingRhRows = links
+      .filter((r) => {
+        const rh = String(r?.raidHelperName || "").trim();
+        if (!rh) return false;
+        const wcl = Array.isArray(r?.wclCharacterNames) ? r.wclCharacterNames.filter(Boolean) : [];
+        return wcl.length === 0;
+      })
+      .map((r) => ({ raidHelperName: r.raidHelperName, guildRole: r.guildRole || "Peon" }))
+      .slice(0, 200);
+
+    return res.json({
+      ok: true,
+      generatedAt: rhWclProposalsState.generatedAt || null,
+      proposals: rhWclProposalsState.proposals || [],
+      rejectedCount: (rhWclProposalsState.rejected || []).length,
+      missing: {
+        raidHelperRowsWithoutWcl: missingRhRows,
+        // Unmatched WCL log names (no proposal, no row) are inferred from the
+        // last sync run via stats — but we don't store them long-term. The
+        // admin can run "Refresh now" to repopulate proposals if needed.
+      },
+      proposalsCount: (rhWclProposalsState.proposals || []).length,
+      rejectionTtlMs: RH_WCL_PROPOSAL_REJECTION_TTL_MS,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load proposals" });
+  }
+});
+
+/**
+ * Accept a single proposal: append the WCL character name onto the named row
+ * and drop the proposal from the queue. Body: `{ wclCharacterName, raidHelperName, verify?: boolean }`.
+ * If `verify` is true, also stamp `verifiedAt` so the worker won't touch the row again.
+ */
+app.post("/api/admin/rh-wcl-links/proposals/accept", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclLinksStore();
+    await ensureRhWclProposalsStore();
+
+    const wclName = String(req.body?.wclCharacterName || "").trim();
+    const rh = String(req.body?.raidHelperName || "").trim();
+    if (!wclName || !rh) {
+      return res.status(400).json({ ok: false, error: "wclCharacterName and raidHelperName are required" });
+    }
+    const verify = Boolean(req.body?.verify);
+    const targetKey = normalizeRaidHelperDisplayKey(rh);
+    if (!targetKey) return res.status(400).json({ ok: false, error: "raidHelperName normalised to empty key" });
+
+    const links = Array.isArray(rhWclLinksState?.links) ? [...rhWclLinksState.links] : [];
+    let idx = links.findIndex((r) => normalizeRaidHelperDisplayKey(String(r?.raidHelperName || "")) === targetKey);
+    if (idx === -1) {
+      // Row may not exist yet (rare but possible if the RH name was never
+      // saved). Create it on the fly so accepting always succeeds.
+      links.push({ raidHelperName: rh, wclCharacterNames: [], wclSources: [], wclGuessConfidence: [], guildRole: "Peon" });
+      idx = links.length - 1;
+    }
+    const row = { ...links[idx] };
+    const names = Array.isArray(row.wclCharacterNames) ? [...row.wclCharacterNames] : [];
+    const sources = Array.isArray(row.wclSources) ? [...row.wclSources] : [];
+    const confs = Array.isArray(row.wclGuessConfidence) ? [...row.wclGuessConfidence] : [];
+
+    const wclLow = wclName.toLowerCase();
+    const already = names.some((n) => String(n || "").toLowerCase() === wclLow);
+    if (!already) {
+      names.push(wclName);
+      sources.push("manual:proposal");
+      confs.push(null);
+    }
+    row.wclCharacterNames = names;
+    row.wclSources = sources;
+    row.wclGuessConfidence = confs;
+    if (verify) row.verifiedAt = new Date().toISOString();
+    links[idx] = row;
+
+    const remainingProposals = (rhWclProposalsState.proposals || []).filter(
+      (p) => String(p.wclCharacterName || "").toLowerCase() !== wclLow
+    );
+
+    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+      rhWclLinksState = { links: sortRhWclLinkRows(links) };
+      await persistRhWclLinksStore();
+    });
+    rhWclProposalsWriteChain = rhWclProposalsWriteChain.then(async () => {
+      rhWclProposalsState = {
+        ...rhWclProposalsState,
+        proposals: remainingProposals,
+      };
+      await persistRhWclProposalsStore();
+    });
+    await Promise.all([rhWclLinksWriteChain, rhWclProposalsWriteChain]);
+
+    return res.json({
+      ok: true,
+      links: sortRhWclLinkRows(rhWclLinksState.links || []),
+      proposals: rhWclProposalsState.proposals || [],
+      accepted: { wclCharacterName: wclName, raidHelperName: rh, verified: verify, alreadyPresent: already },
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to accept proposal" });
+  }
+});
+
+/**
+ * Reject a single proposal: drop it from the queue and remember the WCL name
+ * in the rejected set for `RH_WCL_PROPOSAL_REJECTION_TTL_MS` so the next sync
+ * doesn't re-suggest it immediately.
+ */
+app.post("/api/admin/rh-wcl-links/proposals/reject", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclProposalsStore();
+
+    const wclName = String(req.body?.wclCharacterName || "").trim();
+    if (!wclName) return res.status(400).json({ ok: false, error: "wclCharacterName is required" });
+    const wclLow = wclName.toLowerCase();
+
+    const remainingProposals = (rhWclProposalsState.proposals || []).filter(
+      (p) => String(p.wclCharacterName || "").toLowerCase() !== wclLow
+    );
+    const now = Date.now();
+    const rejected = (rhWclProposalsState.rejected || []).filter((r) => r.until > now && String(r.wclCharacterName || "").toLowerCase() !== wclLow);
+    rejected.push({ wclCharacterName: wclName, until: now + RH_WCL_PROPOSAL_REJECTION_TTL_MS });
+
+    rhWclProposalsWriteChain = rhWclProposalsWriteChain.then(async () => {
+      rhWclProposalsState = {
+        ...rhWclProposalsState,
+        proposals: remainingProposals,
+        rejected,
+      };
+      await persistRhWclProposalsStore();
+    });
+    await rhWclProposalsWriteChain;
+
+    return res.json({
+      ok: true,
+      proposals: rhWclProposalsState.proposals || [],
+      rejected: rhWclProposalsState.rejected || [],
+      rejectedUntilMs: now + RH_WCL_PROPOSAL_REJECTION_TTL_MS,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to reject proposal" });
   }
 });
 
@@ -13615,6 +13911,146 @@ registerSyncTask({
   intervalMs: 10 * 60_000,
   description: "Materialise raid attendance, deaths, first-clears, best-time.",
   run: runSyncAttendance,
+});
+
+/**
+ * Account Assignment auto-merge: pulls Raid Helper signup names + recent
+ * Warcraft Logs character names (same data sources as the legacy
+ * `/api/admin/rh-wcl-links/guess` button) and merges them into the
+ * persistent roster (`rh-wcl-character-links.json`).
+ *
+ *   - Rows with `verifiedAt` set are hard-locked: the worker re-overwrites
+ *     them with whatever was last persisted, so any heuristic regression
+ *     cannot edit a row the admin has explicitly confirmed.
+ *   - High-confidence new matches (manual / exact / prefix / score >= 85)
+ *     are written straight into the row.
+ *   - Low-confidence new matches (fuzzy / orphan / score < 85) are routed
+ *     to `rh-wcl-pending-proposals.json` for one-click Accept/Reject in the
+ *     admin UI to-do panel.
+ *
+ * This worker exists so admins no longer have to click
+ * "Load log names" -> "Run heuristic merge" -> "Save all rows" — the
+ * Sync Center keeps the roster fresh, the to-do panel surfaces only the
+ * cases that need a human decision.
+ */
+async function runSyncAccountAssignment() {
+  const guildId = Number(votingGuildId);
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return { skipped: "missing-guild-id" };
+  }
+
+  const wclReportsToDetail = rhWclLinkWclReportDetailCount();
+  const reportLimit = Math.min(wclMaxGuildReportsLimit(), wclReportsToDetail + 24);
+
+  await ensureRhWclLinksStore();
+  await ensureRhWclProposalsStore();
+  pruneExpiredRhWclRejections();
+
+  let raidHelperNames = [];
+  let raidHelperSource = "none";
+  const serverId = raidHelperDiscordGuildId();
+  const raidHelperApiKey = String(process.env.RAID_HELPER_API_KEY || "").trim();
+  if (serverId && raidHelperApiKey) {
+    try {
+      const collected = await collectRaidHelperSignupDisplayNames(serverId, rhWclLinkRaidHelperEventScanCount());
+      raidHelperNames = Array.isArray(collected?.names) ? collected.names : [];
+      raidHelperSource = raidHelperNames.length ? "raid_helper_api" : "raid_helper_api_empty";
+    } catch (error) {
+      console.warn("[sync:account-assignment] Raid Helper fetch failed:", error?.message || error);
+      raidHelperSource = "raid_helper_api_error";
+    }
+  } else {
+    raidHelperSource = !raidHelperApiKey ? "missing_raid_helper_api_key" : "missing_raid_helper_server_id";
+  }
+
+  let wclCharacterNames = [];
+  try {
+    const { wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
+      maxDetailedReports: wclReportsToDetail,
+    });
+    wclCharacterNames = [...wclDisplayByLower.values()];
+  } catch (error) {
+    console.warn("[sync:account-assignment] WCL attendance fetch failed:", error?.message || error);
+  }
+
+  if (!raidHelperNames.length || !wclCharacterNames.length) {
+    return {
+      skipped: "no-input",
+      raidHelperSource,
+      raidHelperSignupCount: raidHelperNames.length,
+      wclNameCount: wclCharacterNames.length,
+    };
+  }
+
+  const existingLinks = Array.isArray(rhWclLinksState?.links)
+    ? rhWclLinksState.links.map((r) => ({ ...r }))
+    : [];
+  const verifiedRowsByKey = new Map();
+  for (const r of existingLinks) {
+    if (!r?.verifiedAt) continue;
+    const k = normalizeRaidHelperDisplayKey(String(r.raidHelperName || ""));
+    if (k) verifiedRowsByKey.set(k, r);
+  }
+
+  const merged = mergeRhWclGuess(existingLinks, raidHelperNames, wclCharacterNames, {
+    minScore: 72,
+    orphanMinScore: rhWclOrphanGuessMinScore(),
+    keepEmptyRaidHelperRows: true,
+  });
+
+  const rejectedSet = rhWclRejectedNameSet();
+  const split = splitMergeByConfidence(merged, existingLinks, { rejectedWclNames: rejectedSet });
+
+  // Hard-respect verifiedAt: replace any auto-applied row whose RH key matches
+  // a verified row with the verified copy verbatim. The merge already could
+  // not steal WCL names locked on a verified row (lockedWcl set covers it),
+  // but the auto-apply pass above could still rearrange ordering / re-tag
+  // sources — overwriting wholesale keeps verified rows byte-stable.
+  const finalLinks = split.autoApplyLinks.map((row) => {
+    const k = normalizeRaidHelperDisplayKey(String(row.raidHelperName || ""));
+    const verified = k ? verifiedRowsByKey.get(k) : null;
+    return verified ? { ...verified } : row;
+  });
+
+  rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+    rhWclLinksState = { links: sortRhWclLinkRows(finalLinks) };
+    await persistRhWclLinksStore();
+  });
+  await rhWclLinksWriteChain;
+
+  rhWclProposalsWriteChain = rhWclProposalsWriteChain.then(async () => {
+    rhWclProposalsState = {
+      generatedAt: new Date().toISOString(),
+      proposals: split.pendingProposals,
+      rejected: rhWclProposalsState.rejected || [],
+    };
+    await persistRhWclProposalsStore();
+  });
+  await rhWclProposalsWriteChain;
+
+  const stats = merged.stats || {};
+  const summary = {
+    rowsChanged: 0,
+    autoApplied: split.autoApplyLinks.length,
+    proposals: split.pendingProposals.length,
+    verifiedSkipped: verifiedRowsByKey.size,
+    raidHelperSignupCount: raidHelperNames.length,
+    wclNameCount: wclCharacterNames.length,
+    raidHelperSource,
+    unmatchedWclCount: stats.unmatchedWclCount || 0,
+  };
+  console.log(
+    `[sync:account-assignment] auto=${summary.autoApplied} proposals=${summary.proposals} verifiedLocked=${summary.verifiedSkipped} rh=${summary.raidHelperSignupCount} wcl=${summary.wclNameCount} unmatched=${summary.unmatchedWclCount}`
+  );
+  return summary;
+}
+
+registerSyncTask({
+  id: "account-assignment",
+  intervalMs: 60 * 60_000,
+  description:
+    "Auto-merge Raid Helper signups with recent WCL log characters; high-confidence to roster, low-confidence to to-do proposals.",
+  run: runSyncAccountAssignment,
 });
 
 /**

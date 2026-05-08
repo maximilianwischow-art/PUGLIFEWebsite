@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260507leadersize2" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260508accassign1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -33,226 +33,270 @@
         <section class="card surface-highlight admin-intro-card">
           <h2 class="section-title">Admin Panel</h2>
           <p id="adminStatus" class="subtle">Checking permissions...</p>
-          <nav class="admin-submenu" aria-label="Admin tools">
-            <div class="admin-submenu-inner">
-              <button type="button" class="admin-submenu-btn" data-admin-nav="rh-wcl">Account Assignment</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="database">Database</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="wcl-events">Event Management</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="gargul-import">Loot import (Gargul)</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="loot-corrections">Loot corrections</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="p2-materials">P2 materials</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="join-needs">Current needs</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="data-sync">Data sync</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="analytics">Analytics</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="role-alerts">Raid Roster Management</button>
-              <button type="button" class="admin-submenu-btn" data-admin-nav="custom-dm">Custom messages</button>
-            </div>
-          </nav>
         </section>
 
-        <section class="card admin-panel is-admin-panel-active" data-admin-panel="rh-wcl" id="admin-panel-rh-wcl">
-          <h3 class="section-title">Account Assignment</h3>
-          <details class="admin-details subtle">
-            <summary class="admin-details-summary">How this roster works</summary>
-            <p>
-              Primary character database on disk: <code>rh-wcl-character-links.json</code> — same data as
-              <code>GET /api/wcl/guild/:guildId/characters</code>.
-              <strong>Attendance %</strong> uses the latest <code>WCL_ATTENDANCE_RECENT_RAIDS</code> logs (default 6), <strong>25-player raids only</strong> (Karazhan and Zul'Aman excluded); Events roster badges read that same leaderboard. Heuristic merge still scans broader logs via <code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>.
-              For Raider.io class/spec on the Events roster, the server tries character names in order: <strong>first Warcraft Logs name</strong> (mapped main), then Raid Helper’s parsed character field, then the signup display name (realm stripped). The first name that returns a profile wins; <code>rioProfileLookupName</code> on the API reflects that hit.
-              With Battle.net credentials set, it also reads <strong>Battle.net character profile</strong> for English class (and sometimes active spec) when Raid Helper’s class column is wrong or Raider.io misses.
-              <strong>Column 1 is only Raid Helper signup names</strong> (not log names). Column 2 = Warcraft Logs names (main + alts), comma-separated, or use <strong>Add alt</strong> under that row to append one log name and save when the Raid Helper name is filled. If the log name matches the signup, column 2 can stay empty.
-            </p>
-            <p>
-              <strong>Heuristic merge</strong> uses <strong>only Raid Helper signup names</strong> for column 1 (recent posted events; env <code>RH_WCL_LINK_RAID_HELPER_EVENTS</code>) and Warcraft Logs characters from recent reports (<code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>). There is no “log names only” fallback — if Raid Helper returns no signups, fix API keys / events. Loose matches may appear as <em>Best-effort</em>. Review chips, then <strong>Save all rows</strong>.
-            </p>
-          </details>
-          <div class="admin-rh-toolbar">
-            <div class="admin-actions admin-actions--tight admin-rh-toolbar-actions">
-              <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclAddRowBtn" title="Append an empty row">
-                Add row
-              </button>
-              <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclGuessBtn" title="Merge RH signups with recent log characters (preview — save after)">
-                Run heuristic merge
-              </button>
-              <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclLoadLogNamesBtn" title="Fetch character names from Warcraft Logs (reference textarea)">
-                Load log names
-              </button>
-              <button type="button" class="event-signup-btn" id="rhWclSaveLinksBtn" title="Write the whole table to disk">
-                Save all rows
-              </button>
-            </div>
-            <div class="admin-rh-toolbar-aside">
-              <span id="rhWclRowCount" class="admin-rh-count subtle" aria-live="polite">—</span>
-              <button type="button" class="event-signup-btn admin-btn-danger" id="rhWclDeleteAllBtn" title="Remove every mapping from the server">
-                Delete all…
-              </button>
-            </div>
-          </div>
-          <p id="rhWclEmptyHint" class="admin-rh-empty-hint subtle" hidden>
-            <strong>No mappings yet.</strong> Run <em>heuristic merge</em> to fill from Raid Helper + logs (then save), or use <em>Add row</em>. Use <em>Load log names</em> to copy spellings into the reference box below.
-          </p>
-          <label class="subtle" for="rhWclRecentNamesText">Reference: names seen in recent tracked raids (copy exact spellings)</label>
-          <textarea
-            id="rhWclRecentNamesText"
-            class="admin-textarea"
-            rows="5"
-            readonly
-            placeholder="Click “Load names from recent logs” (uses extra Warcraft Logs API calls)."
-          ></textarea>
-          <div id="rhWclRaidSources" class="admin-grid-note subtle" hidden></div>
-          <div id="rhWclUnmatchedHost" class="admin-rh-unmatched" hidden aria-live="polite"></div>
-          <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="database" id="admin-panel-database">
-          <h3 class="section-title">Canonical user database</h3>
-          <p class="subtle">
-            Read-only browse of the SQLite identity tables (<code>users</code> + <code>user_characters</code>),
-            the materialised stat tables, and the background sync workers that populate them. Every other
-            admin tool ultimately writes here — this view shows the canonical row for spot-checking.
-          </p>
-          <div id="adminDatabaseReadiness" class="admin-grid-note">Loading readiness…</div>
-          <div id="adminDatabaseSync" class="admin-grid-note">Loading sync workers…</div>
-          <div class="admin-actions admin-actions--tight">
-            <label class="subtle" for="adminDatabaseSearch">Filter users</label>
-            <input
-              id="adminDatabaseSearch"
-              class="admin-input"
-              type="search"
-              placeholder="Discord id, RH name, display name, role…"
-              autocomplete="off"
-            />
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseReloadBtn">
-              Reload
+        <div class="admin-shell">
+          <aside class="admin-sidebar" aria-label="Admin sections">
+            <button type="button" class="admin-sidebar-toggle" aria-expanded="false" aria-controls="adminSidebarNav">
+              <span class="admin-sidebar-toggle-label" data-admin-sidebar-current>Admin sections</span>
+              <span class="admin-sidebar-toggle-caret" aria-hidden="true">▾</span>
             </button>
-            <button type="button" class="event-signup-btn" id="adminDatabaseBackupBtn">
-              Backup database (VACUUM INTO)
-            </button>
+            <nav class="admin-sidebar-nav" id="adminSidebarNav">
+              <div class="admin-sidebar-group" data-admin-group="people">
+                <div class="admin-sidebar-group-label">People</div>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="rh-wcl">Account Assignment</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="database">Database</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
+              </div>
+              <div class="admin-sidebar-group" data-admin-group="roster">
+                <div class="admin-sidebar-group-label">Roster &amp; Loot</div>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="wcl-events">Event Management</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="gargul-import">Loot Import (Gargul)</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="loot-corrections">Loot Corrections</button>
+              </div>
+              <div class="admin-sidebar-group" data-admin-group="content">
+                <div class="admin-sidebar-group-label">Content</div>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="p2-materials">P2 Materials</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="join-needs">Current Needs</button>
+              </div>
+              <div class="admin-sidebar-group" data-admin-group="comms">
+                <div class="admin-sidebar-group-label">Comms</div>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="role-alerts">Raid Roster Management</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="custom-dm">Custom Discord Messages</button>
+              </div>
+              <div class="admin-sidebar-group" data-admin-group="data-ops">
+                <div class="admin-sidebar-group-label">Data &amp; Ops</div>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="sync-center">Sync Center</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="analytics">Analytics</button>
+              </div>
+            </nav>
+          </aside>
+
+          <div class="admin-content">
+            <section class="card admin-panel is-admin-panel-active" data-admin-panel="rh-wcl" id="admin-panel-rh-wcl">
+              <h3 class="section-title">Account Assignment</h3>
+              <details class="admin-details subtle">
+                <summary class="admin-details-summary">How this roster works</summary>
+                <p>
+                  Primary character database on disk: <code>rh-wcl-character-links.json</code> — same data as
+                  <code>GET /api/wcl/guild/:guildId/characters</code>.
+                  <strong>Attendance %</strong> uses the latest <code>WCL_ATTENDANCE_RECENT_RAIDS</code> logs (default 6), <strong>25-player raids only</strong> (Karazhan and Zul'Aman excluded); Events roster badges read that same leaderboard. Heuristic merge still scans broader logs via <code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>.
+                  For Raider.io class/spec on the Events roster, the server tries character names in order: <strong>first Warcraft Logs name</strong> (mapped main), then Raid Helper’s parsed character field, then the signup display name (realm stripped). The first name that returns a profile wins; <code>rioProfileLookupName</code> on the API reflects that hit.
+                  With Battle.net credentials set, it also reads <strong>Battle.net character profile</strong> for English class (and sometimes active spec) when Raid Helper’s class column is wrong or Raider.io misses.
+                  <strong>Column 1 is only Raid Helper signup names</strong> (not log names). Column 2 = Warcraft Logs names (main + alts), comma-separated, or use <strong>Add alt</strong> under that row to append one log name and save when the Raid Helper name is filled. If the log name matches the signup, column 2 can stay empty.
+                </p>
+                <p>
+                  <strong>Heuristic merge</strong> uses <strong>only Raid Helper signup names</strong> for column 1 (recent posted events; env <code>RH_WCL_LINK_RAID_HELPER_EVENTS</code>) and Warcraft Logs characters from recent reports (<code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>). There is no “log names only” fallback — if Raid Helper returns no signups, fix API keys / events. Loose matches may appear as <em>Best-effort</em>. Review chips, then <strong>Save all rows</strong>.
+                </p>
+              </details>
+              <div class="admin-rh-toolbar">
+                <div class="admin-actions admin-actions--tight admin-rh-toolbar-actions">
+                  <button type="button" class="event-signup-btn" id="rhWclRefreshBtn" title="Run the Account Assignment sync now (pull RH signups + WCL log names, auto-save high-confidence matches, send low-confidence guesses to the to-do panel below)">
+                    Refresh now
+                  </button>
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclAddRowBtn" title="Append an empty row">
+                    Add row
+                  </button>
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclSaveLinksBtn" title="Write the whole table to disk">
+                    Save all rows
+                  </button>
+                </div>
+                <div class="admin-rh-toolbar-aside">
+                  <span id="rhWclRowCount" class="admin-rh-count subtle" aria-live="polite">—</span>
+                  <span id="rhWclLastSync" class="admin-rh-count subtle" aria-live="polite"></span>
+                  <button type="button" class="event-signup-btn admin-btn-danger" id="rhWclDeleteAllBtn" title="Remove every mapping from the server">
+                    Delete all…
+                  </button>
+                </div>
+              </div>
+              <p id="rhWclEmptyHint" class="admin-rh-empty-hint subtle" hidden>
+                <strong>No mappings yet.</strong> Click <em>Refresh now</em> to auto-fill from Raid Helper signups and recent Warcraft Logs reports, or use <em>Add row</em> to enter one manually.
+              </p>
+              <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
+              <div id="rhWclTodoHost" class="admin-rh-todo">Loading to-do…</div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="database" id="admin-panel-database">
+              <h3 class="section-title">Canonical user database</h3>
+              <p class="subtle">
+                Read-only browse of the SQLite identity tables (<code>users</code> + <code>user_characters</code>).
+                Every other admin tool ultimately writes here — this view shows the canonical row for spot-checking.
+                Background workers, public snapshot, cutover readiness, and database backup now live in
+                <strong>Data &amp; Ops → Sync Center</strong>.
+              </p>
+              <div class="admin-actions admin-actions--tight">
+                <label class="subtle" for="adminDatabaseSearch">Filter users</label>
+                <input
+                  id="adminDatabaseSearch"
+                  class="admin-input"
+                  type="search"
+                  placeholder="Discord id, RH name, display name, role…"
+                  autocomplete="off"
+                />
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseReloadBtn">
+                  Reload
+                </button>
+              </div>
+              <div id="adminDatabaseSummary" class="admin-grid-note">Loading users…</div>
+              <div id="adminDatabaseTableHost" class="admin-grid-note">Loading users…</div>
+              <div id="adminDatabaseDetailHost" class="admin-grid-note" hidden></div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
+              <h3 class="section-title">Event Management</h3>
+              <p class="subtle">Select which raid events feed guild loot data (Leaderboard expand / APIs) for all users.</p>
+              <div id="eventSelectionList" class="admin-grid-note">Loading events...</div>
+              <div class="admin-actions">
+                <button type="button" class="event-signup-btn" id="saveEventSelectionBtn">Save Event Selection</button>
+              </div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="gargul-import" id="admin-panel-gargul-import">
+              <h3 class="section-title">Loot Import (Gargul JSON)</h3>
+              <p class="subtle">
+                Paste exported Gargul loot JSON array, then import into persistent storage (optionally mapped to a selected
+                Warcraft Log event).
+              </p>
+              <label class="subtle" for="gargulTargetReport">Target WCL Event (optional but recommended)</label>
+              <select id="gargulTargetReport" class="admin-input"></select>
+              <textarea id="gargulJsonInput" class="admin-textarea" placeholder='[{"awardedTo":"Player","itemID":12345,"itemLink":"[Item]","timestamp":1772747076}]'></textarea>
+              <div class="admin-actions">
+                <button type="button" class="event-signup-btn" id="gargulImportBtn">Import JSON</button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="gargulReloadBtn">Reload Entries</button>
+              </div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="loot-corrections" id="admin-panel-loot-corrections">
+              <h3 class="section-title">Loot Corrections</h3>
+              <p class="subtle">Edit recipient/item/timestamp fields directly, then save all entries.</p>
+              <div id="gargulEditor" class="admin-grid-note">Loading entries...</div>
+              <div class="admin-actions">
+                <button type="button" class="event-signup-btn" id="gargulSaveBtn">Save Corrections</button>
+              </div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="p2-materials" id="admin-panel-p2-materials">
+              <h3 class="section-title">P2 Material Quantities</h3>
+              <p class="subtle">Adjust current quantities for P2 tracker from one admin view.</p>
+              <div id="adminP2Table" class="admin-grid-note">Loading material tracker...</div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="join-needs" id="admin-panel-join-needs">
+              <h3 class="section-title">Current Needs</h3>
+              <p class="subtle">Manage class/spec priorities shown on the Join page.</p>
+              <div id="adminJoinNeedsTable" class="admin-grid-note">Loading current needs...</div>
+              <div class="admin-actions">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="joinNeedsAddRowBtn">Add row</button>
+                <button type="button" class="event-signup-btn" id="joinNeedsSaveBtn">Save Current Needs</button>
+              </div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="sync-center" id="admin-panel-sync-center">
+              <h3 class="section-title">Sync Center</h3>
+              <p class="subtle">
+                One stop for everything that keeps the public site in sync with live data: background workers,
+                the public snapshot served to anonymous visitors, cutover readiness counts, and on-demand database backup.
+              </p>
+              <nav class="admin-submenu admin-submenu--inline" aria-label="Sync Center sections">
+                <div class="admin-submenu-inner">
+                  <button type="button" class="admin-submenu-btn" data-sync-tab="workers">Workers</button>
+                  <button type="button" class="admin-submenu-btn" data-sync-tab="snapshot">Public snapshot</button>
+                  <button type="button" class="admin-submenu-btn" data-sync-tab="readiness">Cutover readiness</button>
+                  <button type="button" class="admin-submenu-btn" data-sync-tab="backup">Database backup</button>
+                </div>
+              </nav>
+
+              <div class="admin-sync-tab" data-sync-tab-panel="workers">
+                <div id="adminDatabaseSync" class="admin-grid-note">Loading sync workers…</div>
+              </div>
+
+              <div class="admin-sync-tab" data-sync-tab-panel="snapshot" hidden>
+                <p class="subtle">
+                  Public pages use the synced snapshot for faster load times. Admin tools continue to pull live API data.
+                </p>
+                <div id="publicSnapshotStatus" class="admin-grid-note">Loading snapshot status...</div>
+                <div class="admin-actions">
+                  <button type="button" class="event-signup-btn" id="publicSnapshotSyncBtn">Sync data now</button>
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="publicSnapshotReloadBtn">
+                    Reload status
+                  </button>
+                </div>
+              </div>
+
+              <div class="admin-sync-tab" data-sync-tab-panel="readiness" hidden>
+                <div id="adminDatabaseReadiness" class="admin-grid-note">Loading readiness…</div>
+              </div>
+
+              <div class="admin-sync-tab" data-sync-tab-panel="backup" hidden>
+                <p class="subtle">
+                  Snapshot the SQLite database to a timestamped file on the server. Use before risky operations or
+                  before deploying schema changes.
+                </p>
+                <div class="admin-actions">
+                  <button type="button" class="event-signup-btn" id="adminDatabaseBackupBtn">
+                    Backup database (VACUUM INTO)
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="analytics" id="admin-panel-analytics">
+              <h3 class="section-title">Website Analytics</h3>
+              <p class="subtle">Traffic totals, top visited subpages, and DM subscribers list.</p>
+              <div id="adminAnalyticsSummary" class="admin-grid-note">Loading analytics...</div>
+              <div class="admin-actions admin-actions--tight">
+                <label class="subtle" for="adminAnalyticsDays">Range (days)</label>
+                <input id="adminAnalyticsDays" class="admin-input" type="number" min="1" max="365" value="30" style="max-width: 110px" />
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminAnalyticsReloadBtn">
+                  Reload analytics
+                </button>
+              </div>
+              <div id="adminAnalyticsTopPages" class="admin-grid-note">Loading top pages...</div>
+              <div id="adminAnalyticsDaily" class="admin-grid-note">Loading daily trend...</div>
+              <h4 class="section-title" style="margin-top: 14px">Subscribers</h4>
+              <div id="adminSubscribersSummary" class="admin-grid-note">Loading subscribers...</div>
+              <div id="adminSubscribersTable" class="admin-grid-note">Loading subscribers list...</div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="hof-notes" id="admin-panel-hof-notes">
+              <h3 class="section-title">Hall of Fame Quotes</h3>
+              <p class="subtle">Edit per-winner quote text shown in The Eternal Hall cards.</p>
+              <div class="admin-actions admin-actions--tight">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminHofNotesReloadBtn">
+                  Reload winners
+                </button>
+              </div>
+              <div id="adminHofNotesTable" class="admin-grid-note">Loading Hall of Fame winners...</div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
+              <h3 class="section-title">Raid Roster Management</h3>
+              <p class="subtle">
+                Select an event, auto-detect blocker placeholders, review missing roles, then DM matching subscribed members.
+              </p>
+              <label class="subtle" for="roleAlertsEventSelect">Raid event</label>
+              <select id="roleAlertsEventSelect" class="admin-input"></select>
+              <div class="admin-actions admin-actions--tight">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsReloadBtn">Reload events</button>
+                <button type="button" class="event-signup-btn" id="roleAlertsAnalyzeBtn">Analyze event</button>
+              </div>
+              <div id="roleAlertsHost" class="admin-grid-note">Choose an event, then click Analyze event.</div>
+            </section>
+
+            <section class="card admin-panel" data-admin-panel="custom-dm" id="admin-panel-custom-dm">
+              <h3 class="section-title">Custom Discord Messages</h3>
+              <p class="subtle">Send a custom Discord bot DM by raid role and/or selected individual players.</p>
+              <label class="subtle" for="customDmMessageInput">Message</label>
+              <textarea
+                id="customDmMessageInput"
+                class="admin-textarea"
+                rows="6"
+                placeholder="Write your DM text here..."
+              ></textarea>
+              <div id="customDmHost" class="admin-grid-note">Loading DM candidates...</div>
+            </section>
           </div>
-          <div id="adminDatabaseSummary" class="admin-grid-note">Loading users…</div>
-          <div id="adminDatabaseTableHost" class="admin-grid-note">Loading users…</div>
-          <div id="adminDatabaseDetailHost" class="admin-grid-note" hidden></div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
-          <h3 class="section-title">Event Management</h3>
-          <p class="subtle">Select which raid events feed guild loot data (Leaderboard expand / APIs) for all users.</p>
-          <div id="eventSelectionList" class="admin-grid-note">Loading events...</div>
-          <div class="admin-actions">
-            <button type="button" class="event-signup-btn" id="saveEventSelectionBtn">Save Event Selection</button>
-          </div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="gargul-import" id="admin-panel-gargul-import">
-          <h3 class="section-title">Loot Import (Gargul JSON)</h3>
-          <p class="subtle">
-            Paste exported Gargul loot JSON array, then import into persistent storage (optionally mapped to a selected
-            Warcraft Log event).
-          </p>
-          <label class="subtle" for="gargulTargetReport">Target WCL Event (optional but recommended)</label>
-          <select id="gargulTargetReport" class="admin-input"></select>
-          <textarea id="gargulJsonInput" class="admin-textarea" placeholder='[{"awardedTo":"Player","itemID":12345,"itemLink":"[Item]","timestamp":1772747076}]'></textarea>
-          <div class="admin-actions">
-            <button type="button" class="event-signup-btn" id="gargulImportBtn">Import JSON</button>
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="gargulReloadBtn">Reload Entries</button>
-          </div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="loot-corrections" id="admin-panel-loot-corrections">
-          <h3 class="section-title">Loot Corrections</h3>
-          <p class="subtle">Edit recipient/item/timestamp fields directly, then save all entries.</p>
-          <div id="gargulEditor" class="admin-grid-note">Loading entries...</div>
-          <div class="admin-actions">
-            <button type="button" class="event-signup-btn" id="gargulSaveBtn">Save Corrections</button>
-          </div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="p2-materials" id="admin-panel-p2-materials">
-          <h3 class="section-title">P2 Material Quantities</h3>
-          <p class="subtle">Adjust current quantities for P2 tracker from one admin view.</p>
-          <div id="adminP2Table" class="admin-grid-note">Loading material tracker...</div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="join-needs" id="admin-panel-join-needs">
-          <h3 class="section-title">Current Needs</h3>
-          <p class="subtle">Manage class/spec priorities shown on the Join page.</p>
-          <div id="adminJoinNeedsTable" class="admin-grid-note">Loading current needs...</div>
-          <div class="admin-actions">
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="joinNeedsAddRowBtn">Add row</button>
-            <button type="button" class="event-signup-btn" id="joinNeedsSaveBtn">Save Current Needs</button>
-          </div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="data-sync" id="admin-panel-data-sync">
-          <h3 class="section-title">Public Data Sync</h3>
-          <p class="subtle">
-            Public pages use the synced snapshot for faster load times. Admin tools continue to pull live API data.
-          </p>
-          <div id="publicSnapshotStatus" class="admin-grid-note">Loading snapshot status...</div>
-          <div class="admin-actions">
-            <button type="button" class="event-signup-btn" id="publicSnapshotSyncBtn">Sync data now</button>
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="publicSnapshotReloadBtn">
-              Reload status
-            </button>
-          </div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="analytics" id="admin-panel-analytics">
-          <h3 class="section-title">Website Analytics</h3>
-          <p class="subtle">Traffic totals, top visited subpages, and DM subscribers list.</p>
-          <div id="adminAnalyticsSummary" class="admin-grid-note">Loading analytics...</div>
-          <div class="admin-actions admin-actions--tight">
-            <label class="subtle" for="adminAnalyticsDays">Range (days)</label>
-            <input id="adminAnalyticsDays" class="admin-input" type="number" min="1" max="365" value="30" style="max-width: 110px" />
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminAnalyticsReloadBtn">
-              Reload analytics
-            </button>
-          </div>
-          <div id="adminAnalyticsTopPages" class="admin-grid-note">Loading top pages...</div>
-          <div id="adminAnalyticsDaily" class="admin-grid-note">Loading daily trend...</div>
-          <h4 class="section-title" style="margin-top: 14px">Subscribers</h4>
-          <div id="adminSubscribersSummary" class="admin-grid-note">Loading subscribers...</div>
-          <div id="adminSubscribersTable" class="admin-grid-note">Loading subscribers list...</div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="hof-notes" id="admin-panel-hof-notes">
-          <h3 class="section-title">Hall of Fame Quotes</h3>
-          <p class="subtle">Edit per-winner quote text shown in The Eternal Hall cards.</p>
-          <div class="admin-actions admin-actions--tight">
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminHofNotesReloadBtn">
-              Reload winners
-            </button>
-          </div>
-          <div id="adminHofNotesTable" class="admin-grid-note">Loading Hall of Fame winners...</div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
-          <h3 class="section-title">Raid Roster Management</h3>
-          <p class="subtle">
-            Select an event, auto-detect blocker placeholders, review missing roles, then DM matching subscribed members.
-          </p>
-          <label class="subtle" for="roleAlertsEventSelect">Raid event</label>
-          <select id="roleAlertsEventSelect" class="admin-input"></select>
-          <div class="admin-actions admin-actions--tight">
-            <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsReloadBtn">Reload events</button>
-            <button type="button" class="event-signup-btn" id="roleAlertsAnalyzeBtn">Analyze event</button>
-          </div>
-          <div id="roleAlertsHost" class="admin-grid-note">Choose an event, then click Analyze event.</div>
-        </section>
-
-        <section class="card admin-panel" data-admin-panel="custom-dm" id="admin-panel-custom-dm">
-          <h3 class="section-title">Custom Discord Messages</h3>
-          <p class="subtle">Send a custom Discord bot DM by raid role and/or selected individual players.</p>
-          <label class="subtle" for="customDmMessageInput">Message</label>
-          <textarea
-            id="customDmMessageInput"
-            class="admin-textarea"
-            rows="6"
-            placeholder="Write your DM text here..."
-          ></textarea>
-          <div id="customDmHost" class="admin-grid-note">Loading DM candidates...</div>
-        </section>
+        </div>
       </main>
 
       <footer class="footer">
@@ -270,15 +314,8 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/admin.js?v=20260507admin-pic1"></script>
+    <script defer src="/admin.js?v=20260508accassign1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
 </html>
-
-
-
-
-
-
-
