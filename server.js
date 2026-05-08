@@ -331,6 +331,53 @@ app.use("/api", async (req, res, next) => {
   }
 });
 
+app.use((req, res, next) => {
+  const requestPath = String(req.path || "");
+  if (!requestPath.startsWith("/api/admin/sync")) return next();
+  const startedAt = Date.now();
+  // #region agent log
+  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+    body: JSON.stringify({
+      sessionId: "59406e",
+      runId: "sync-route-debug",
+      hypothesisId: "H1",
+      location: "server.js:sync-route-middleware-entry",
+      message: "Incoming sync route request",
+      data: {
+        method: String(req.method || ""),
+        path: requestPath,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+  res.on("finish", () => {
+    // #region agent log
+    fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+      body: JSON.stringify({
+        sessionId: "59406e",
+        runId: "sync-route-debug",
+        hypothesisId: "H4",
+        location: "server.js:sync-route-middleware-finish",
+        message: "Sync route response finished",
+        data: {
+          method: String(req.method || ""),
+          path: requestPath,
+          statusCode: Number(res.statusCode || 0),
+          durationMs: Date.now() - startedAt,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  });
+  return next();
+});
+
 const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
 const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
@@ -2194,10 +2241,49 @@ function p2EditorDebug(session) {
 function requireAdminSession(req, res) {
   const session = getSessionFromRequest(req);
   if (!session?.user?.id) {
+    if (String(req.path || "").startsWith("/api/admin/sync")) {
+      // #region agent log
+      fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+        body: JSON.stringify({
+          sessionId: "59406e",
+          runId: "sync-route-debug",
+          hypothesisId: "H2",
+          location: "server.js:requireAdminSession-login-required",
+          message: "Sync route rejected: login required",
+          data: {
+            path: String(req.path || ""),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    }
     res.status(401).json({ ok: false, error: "Login required" });
     return null;
   }
   if (!isP2Editor(session)) {
+    if (String(req.path || "").startsWith("/api/admin/sync")) {
+      // #region agent log
+      fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+        body: JSON.stringify({
+          sessionId: "59406e",
+          runId: "sync-route-debug",
+          hypothesisId: "H3",
+          location: "server.js:requireAdminSession-admin-required",
+          message: "Sync route rejected: admin required",
+          data: {
+            path: String(req.path || ""),
+            userId: String(session?.user?.id || ""),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    }
     res.status(403).json({ ok: false, error: "Admin access required" });
     return null;
   }
@@ -5996,6 +6082,18 @@ app.get("/api/admin/sync", async (req, res) => {
   }
 });
 
+// Backward-compatible alias for older admin tooling/docs that still call
+// `/api/admin/sync/status`.
+app.get("/api/admin/sync/status", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    return res.json({ ok: true, tasks: syncRunnerSnapshot() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "sync snapshot failed" });
+  }
+});
+
 app.post("/api/admin/sync/:taskId", async (req, res) => {
   const session = requireAdminSession(req, res);
   if (!session) return;
@@ -6414,6 +6512,111 @@ app.get("/api/profile/me", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load profile" });
+  }
+});
+
+/**
+ * GET /api/admin/debug/attendance-presence
+ * Runtime diagnostic to explain why a raider is missing from leaderboard.
+ * Query:
+ *   - names=comma,separated,names (default: Omanbrekka,Vagly,Vagnarul)
+ */
+app.get("/api/admin/debug/attendance-presence", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
+    if (!Number.isInteger(guildId) || guildId <= 0) {
+      return res.status(400).json({ ok: false, error: "guildId missing/invalid" });
+    }
+    const inputNamesRaw = String(req.query?.names || "Omanbrekka,Vagly,Vagnarul");
+    const names = Array.from(
+      new Set(
+        inputNamesRaw
+          .split(",")
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const namesLower = new Set(names.map((n) => String(n || "").toLowerCase()));
+    const reportLimit = Math.min(
+      wclMaxGuildReportsLimit(),
+      Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80))
+    );
+    const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit).catch(() => []);
+    const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
+      attendancePercentMetrics: false,
+    });
+    const freshest = raidAttendanceGetFreshestWindow();
+    const attendanceWindow = freshest ? raidAttendanceGetByWindow(freshest.windowLabel) : [];
+    const materialized = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
+    const leaderboard = Array.isArray(materialized?.leaderboard) ? materialized.leaderboard : [];
+    const displayMap = wclDisplayByLower instanceof Map ? wclDisplayByLower : new Map();
+
+    const byName = names.map((name) => {
+      const lower = String(name || "").toLowerCase();
+      const inReportsRanked = reports.some((report) =>
+        Array.isArray(report?.rankedCharacters) &&
+        report.rankedCharacters.some((c) => String(c?.name || "").toLowerCase() === lower)
+      );
+      const inRaidSnapshots = raidSnapshots.some(
+        (raid) => raid?.attendeesLower instanceof Set && raid.attendeesLower.has(lower)
+      );
+      const inRaidSnapshotsByDisplay = raidSnapshots.some((raid) => {
+        if (!(raid?.attendeesLower instanceof Set)) return false;
+        for (const attendeeLower of raid.attendeesLower) {
+          const display = String(displayMap.get(attendeeLower) || attendeeLower || "").toLowerCase();
+          if (display === lower) return true;
+        }
+        return false;
+      });
+      const inAttendanceWindowCharacter = attendanceWindow.some(
+        (row) => String(row?.characterName || "").toLowerCase() === lower
+      );
+      const inLeaderboardName = leaderboard.some((p) => String(p?.name || "").toLowerCase() === lower);
+      const inLeaderboardRhName = leaderboard.some(
+        (p) => String(p?.raidHelperName || "").toLowerCase() === lower
+      );
+      const inLeaderboardWclCharacter = leaderboard.some(
+        (p) =>
+          Array.isArray(p?.wclCharacters) &&
+          p.wclCharacters.some((c) => String(c || "").toLowerCase() === lower)
+      );
+      return {
+        name,
+        inReportsRanked,
+        inRaidSnapshots,
+        inRaidSnapshotsByDisplay,
+        inAttendanceWindowCharacter,
+        inLeaderboardName,
+        inLeaderboardRhName,
+        inLeaderboardWclCharacter,
+      };
+    });
+
+    const reportCodesWithAnyTarget = reports
+      .filter((report) =>
+        Array.isArray(report?.rankedCharacters) &&
+        report.rankedCharacters.some((c) => namesLower.has(String(c?.name || "").toLowerCase()))
+      )
+      .slice(0, 25)
+      .map((report) => String(report?.code || "").trim())
+      .filter(Boolean);
+
+    return res.json({
+      ok: true,
+      guildId,
+      reportLimit,
+      reportsCount: reports.length,
+      raidSnapshotsCount: raidSnapshots.length,
+      attendanceWindowLabel: freshest?.windowLabel || null,
+      attendanceWindowCount: Array.isArray(attendanceWindow) ? attendanceWindow.length : 0,
+      leaderboardCount: leaderboard.length,
+      byName,
+      reportCodesWithAnyTarget,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "attendance presence debug failed" });
   }
 });
 
@@ -12302,6 +12505,31 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
       b.attendanceRate - a.attendanceRate ||
       String(a.raidHelperName || "").localeCompare(String(b.raidHelperName || ""))
   );
+  // #region agent log
+  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+    body: JSON.stringify({
+      sessionId: "59406e",
+      runId: "attendance-visibility-debug",
+      hypothesisId: "H9",
+      location: "server.js:buildAttendancePayloadFromMaterialised:leaderboard",
+      message: "Materialized leaderboard built from attendance window",
+      data: {
+        attendanceWindowCount: attendanceWindow.length,
+        usersCount: users.length,
+        leaderboardCount: leaderboard.length,
+        hasPlayerOmanbrekka: leaderboard.some((p) => String(p?.name || "").toLowerCase() === "omanbrekka"),
+        hasPlayerVagly: leaderboard.some((p) => String(p?.name || "").toLowerCase() === "vagly"),
+        hasCharacterVagnarul: leaderboard.some((p) =>
+          Array.isArray(p?.wclCharacters) &&
+          p.wclCharacters.some((c) => String(c || "").toLowerCase() === "vagnarul")
+        ),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
 
   const trimmed = leaderboard.slice(0, top);
   const parseCeilingMax = computeParseCeilingMaxFromLeaderboard(trimmed);
@@ -13973,6 +14201,34 @@ async function runSyncAttendance() {
     const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
       attendancePercentMetrics: false,
     });
+    // #region agent log
+    fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+      body: JSON.stringify({
+        sessionId: "59406e",
+        runId: "attendance-visibility-debug",
+        hypothesisId: "H6",
+        location: "server.js:runSyncAttendance:raidSnapshots",
+        message: "Attendance snapshots gathered",
+        data: {
+          guildId,
+          reportLimit,
+          raidSnapshotsCount: Array.isArray(raidSnapshots) ? raidSnapshots.length : 0,
+          hasOmanbrekka: Array.isArray(raidSnapshots)
+            ? raidSnapshots.some((raid) => raid?.attendeesLower instanceof Set && raid.attendeesLower.has("omanbrekka"))
+            : false,
+          hasVagly: Array.isArray(raidSnapshots)
+            ? raidSnapshots.some((raid) => raid?.attendeesLower instanceof Set && raid.attendeesLower.has("vagly"))
+            : false,
+          hasVagnarul: Array.isArray(raidSnapshots)
+            ? raidSnapshots.some((raid) => raid?.attendeesLower instanceof Set && raid.attendeesLower.has("vagnarul"))
+            : false,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     const totalRaids = raidSnapshots.length;
     if (totalRaids > 0) {
       const displayMap = wclDisplayByLower instanceof Map ? wclDisplayByLower : new Map();
@@ -13997,10 +14253,49 @@ async function runSyncAttendance() {
         raidsConsidered: totalRaids,
         attendanceHistory: row.attendanceHistory,
       }));
+      // #region agent log
+      fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+        body: JSON.stringify({
+          sessionId: "59406e",
+          runId: "attendance-visibility-debug",
+          hypothesisId: "H7",
+          location: "server.js:runSyncAttendance:presenceRows",
+          message: "Attendance presence rows built",
+          data: {
+            totalRaids,
+            presenceRowsCount: Array.isArray(rows) ? rows.length : 0,
+            hasPresenceOmanbrekka: rows.some((r) => String(r?.characterName || "").toLowerCase() === "omanbrekka"),
+            hasPresenceVagly: rows.some((r) => String(r?.characterName || "").toLowerCase() === "vagly"),
+            hasPresenceVagnarul: rows.some((r) => String(r?.characterName || "").toLowerCase() === "vagnarul"),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       const result = raidAttendanceReplaceForWindow({
         windowLabel: `last-${totalRaids}-25man`,
         rows,
       });
+      // #region agent log
+      fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+        body: JSON.stringify({
+          sessionId: "59406e",
+          runId: "attendance-visibility-debug",
+          hypothesisId: "H8",
+          location: "server.js:runSyncAttendance:raidAttendanceReplaceForWindow",
+          message: "Attendance rows materialized",
+          data: {
+            windowLabel: `last-${totalRaids}-25man`,
+            rowsChanged: Number(result?.rows || 0),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       totalRowsChanged += result?.rows || 0;
 
       // ---------- raid_appearances (per-(user, report) lifetime log) -------
