@@ -499,6 +499,29 @@ function renderLeaderboardTable() {
   const ROLE_ORDER = plb.ROLE_ORDER;
   const escapeHtml = plb.escapeHtml;
   sortRowsInPlace(leaderboardRows, sortState.key, sortState.dir, ROLE_ORDER);
+  // #region agent log
+  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+    body: JSON.stringify({
+      sessionId: "59406e",
+      runId: "leaderboard-client-verify",
+      hypothesisId: "H11",
+      location: "public/leaderboard.js:renderLeaderboardTable",
+      message: "Leaderboard rows rendered",
+      data: {
+        rowsCount: Array.isArray(leaderboardRows) ? leaderboardRows.length : 0,
+        hasOmanbrekka: Array.isArray(leaderboardRows)
+          ? leaderboardRows.some((p) => String(p?.name || "").toLowerCase() === "omanbrekka")
+          : false,
+        hasVagly: Array.isArray(leaderboardRows)
+          ? leaderboardRows.some((p) => String(p?.name || "").toLowerCase() === "vagly")
+          : false,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
 
   const recentCap = leaderboardRows[0]?._recentRaidCap ?? 6;
   const considered = leaderboardRows[0]?._consideredRaids ?? 0;
@@ -694,6 +717,28 @@ async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
     : `/api/leaderboard?guildId=${encodeURIComponent(gid)}`;
   const bundle = await lbApiGetJson(bundleUrl, { credentials: "include", skipCache });
   const players = Array.isArray(bundle?.players) ? bundle.players : [];
+  // #region agent log
+  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+    body: JSON.stringify({
+      sessionId: "59406e",
+      runId: "leaderboard-client-verify",
+      hypothesisId: "H10",
+      location: "public/leaderboard.js:fetchAndBuildLeaderboardRows",
+      message: "Leaderboard bundle fetched",
+      data: {
+        guildId: Number(gid || 0),
+        skipCache,
+        bundleUrl,
+        playersCount: players.length,
+        hasOmanbrekka: players.some((p) => String(p?.name || "").toLowerCase() === "omanbrekka"),
+        hasVagly: players.some((p) => String(p?.name || "").toLowerCase() === "vagly"),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
   const consideredRaids = Number(bundle?.consideredRaids || 0);
   const recentRaidCap = Number(bundle?.attendanceScope?.recentRaidCap || 6);
 
