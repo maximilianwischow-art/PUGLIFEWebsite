@@ -20,6 +20,12 @@ import {
   syncRunnerSnapshot,
 } from "./lib/sync/runner.mjs";
 import { firstClearParticipantsByRaidFromReports as computeFirstClearParticipantsByRaid } from "./lib/compute/first-clears.mjs";
+import { createCharacterSpecResolver } from "./lib/compute/character-specs.mjs";
+import {
+  buildLatestCombatTypeMap,
+  combatTypeSamplesFromTable,
+} from "./lib/compute/wcl-combat-types.mjs";
+import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
   nvUpsertCurrent,
@@ -39,10 +45,12 @@ import {
   userUpsert as identityUserUpsert,
   characterUpsert as identityCharacterUpsert,
   charactersGetByUserId as identityCharactersGetByUserId,
+  charactersListAll as identityCharactersListAll,
   userListAll as identityUserListAll,
   userGetByDiscordId as identityUserGetByDiscordId,
   userGetById as identityUserGetById,
   userGetByRaidHelperKey as identityUserGetByRaidHelperKey,
+  userGetByCharacterName as identityUserGetByCharacterName,
   userCount as identityUserCount,
   identityListLinkedCharacterNames,
   identityResolveProfilesByCharacterNames,
@@ -51,6 +59,10 @@ import {
   identityResolveRaidHelperNameByDiscordId,
   mvpVotesReplaceFromState,
   mvpVotesGetAll,
+  mvpAwardsReplaceAll,
+  mvpAwardsCountsByUser,
+  mvpAwardsGetByUserId,
+  mvpAwardsGetAll,
   dmSubscribersReplaceFromState,
   dmSubscribersGetAll,
   dmNotifiedEventIdsGetAll,
@@ -1081,6 +1093,12 @@ async function persistVotingStore() {
   } catch (error) {
     console.warn("[mvp-votes] dual-write failed:", error?.message || error);
   }
+  // Refresh `mvp_awards` so the leaderboard's HoF MVP badge stays in sync
+  // without ever calling the live HoF pipeline. Best-effort; failures are
+  // logged inside the helper and never break the JSON write path.
+  recomputeMvpAwardsFromVotes("").catch((error) => {
+    console.warn("[mvp-awards] persist hook failed:", error?.message || error);
+  });
 }
 
 async function ensureVotingStore() {
@@ -1272,6 +1290,70 @@ function votingHallOfFame(currentRoundKey, limit = 8) {
     })
     .sort((a, b) => Number(b.raidStartTime || 0) - Number(a.raidStartTime || 0))
     .slice(0, limit);
+}
+
+/**
+ * Resolve a HoF winner display name to a canonical user id using the
+ * identity tables. We try the WoW character index first (since votes
+ * usually carry the in-game character name), then fall back to the
+ * Raid Helper signup key, then the case-folded raw name. Returns `null`
+ * when no row matches — the leaderboard simply skips that award row.
+ */
+function resolveCanonicalUserIdForHallOfFameWinner(winnerName) {
+  const raw = String(winnerName || "").trim();
+  if (!raw) return null;
+  try {
+    const byChar = identityUserGetByCharacterName(raw);
+    if (byChar?.id) return Number(byChar.id);
+  } catch {
+    /* identity layer optional */
+  }
+  try {
+    const rhKey = identityRhNameKey(raw);
+    if (rhKey) {
+      const byRh = identityUserGetByRaidHelperKey(rhKey);
+      if (byRh?.id) return Number(byRh.id);
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Recompute the `mvp_awards` SQLite table from the current voting store
+ * snapshot. One row per *closed* round (open round excluded), holding
+ * the winner's canonical `user_id` when we can resolve it. The
+ * leaderboard's "MVP hall of fame" achievement badge resolves from the
+ * resulting `mvp_awards` row count, which lets us drop the live
+ * `/api/voting/hall-of-fame` call from the leaderboard hot path.
+ *
+ * Idempotent — safe to call from `persistVotingStore()` after every
+ * vote and once at boot. Errors are swallowed because materialisation
+ * is best-effort; the legacy badge resolver still works as a fallback.
+ */
+async function recomputeMvpAwardsFromVotes(currentRoundKey = "") {
+  try {
+    const rounds = votingHallOfFame(String(currentRoundKey || ""), 1000);
+    const awards = rounds
+      .map((round) => {
+        const winnerName = String(round?.winnerName || "").trim();
+        if (!winnerName || winnerName === "Unknown") return null;
+        const userId = resolveCanonicalUserIdForHallOfFameWinner(winnerName);
+        return {
+          roundKey: String(round.roundKey || ""),
+          userId,
+          characterName: winnerName,
+          raidCode: round.raidCode || null,
+          raidStartTime: Number(round.raidStartTime || 0) || null,
+          winnerVotes: Number(round.winnerVotes || 0),
+        };
+      })
+      .filter(Boolean);
+    mvpAwardsReplaceAll({ awards });
+  } catch (error) {
+    console.warn("[mvp-awards] recompute failed:", error?.message || error);
+  }
 }
 
 function buildMockHallOfFameRows(limit = 8) {
@@ -3422,27 +3504,47 @@ async function ensurePublicDataSnapshotStore() {
   return publicDataSnapshotReady;
 }
 
+/**
+ * Compose the original (mounted) path for a request so the snapshot
+ * middleware can match against `/api/...` patterns even though Express
+ * strips the mount prefix from `req.path` inside `app.use("/api", ...)`.
+ * Falls back to `req.path` for safety when a caller invokes these
+ * helpers outside the mounted middleware.
+ */
+function snapshotOriginalPath(req) {
+  const base = String(req?.baseUrl || "");
+  const rest = String(req?.path || "");
+  if (base) return `${base}${rest}`;
+  // `req.originalUrl` includes the query string; strip it.
+  const original = String(req?.originalUrl || rest);
+  const qIdx = original.indexOf("?");
+  return qIdx >= 0 ? original.slice(0, qIdx) : original;
+}
+
 function publicSnapshotKeyFromRequest(req) {
   const params = new URLSearchParams(req.query || {});
   params.delete("live");
   params.delete("snapshot_refresh");
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
-  return query ? `${req.path}?${query}` : req.path;
+  const path = snapshotOriginalPath(req);
+  return query ? `${path}?${query}` : path;
 }
 
 function shouldUsePublicSnapshot(req) {
   if (req.method !== "GET") return false;
   if (String(req.query?.live || "") === "1") return false;
   if (String(req.query?.snapshot_refresh || "") === "1") return false;
-  if (req.path.startsWith("/api/admin/")) return false;
-  if (req.path.startsWith("/api/auth/")) return false;
-  if (req.path === "/api/health") return false;
-  if (req.path === "/api/raid-helper/future-events") return true;
-  if (req.path === "/api/raid-helper/events-kpi") return true;
-  if (req.path === "/api/voting/hall-of-fame") return true;
+  const fullPath = snapshotOriginalPath(req);
+  if (fullPath.startsWith("/api/admin/")) return false;
+  if (fullPath.startsWith("/api/auth/")) return false;
+  if (fullPath === "/api/health") return false;
+  if (fullPath === "/api/raid-helper/future-events") return true;
+  if (fullPath === "/api/raid-helper/events-kpi") return true;
+  if (fullPath === "/api/voting/hall-of-fame") return true;
+  if (fullPath === "/api/leaderboard") return true;
   return /^\/api\/wcl\/guild\/\d+\/(boss-times|recent-raids-calendar|latest-raid-mvp|death-leaderboard|attendance|death-encounter-heatmap|active-roster|loot-received|first-clear-participants)$/.test(
-    req.path
+    fullPath
   );
 }
 
@@ -12705,6 +12807,261 @@ app.get("/api/leaderboard/player/:dbUserId/loot", async (req, res) => {
   }
 });
 
+/**
+ * Per-canonical-user loot count, restricted to the admin Event
+ * Management curated report set (so the leaderboard `_lootCount` hint
+ * matches what `/api/leaderboard/player/:id/loot` would actually
+ * surface in the expand panel — minus the report-code filter today,
+ * which the loot endpoint also doesn't apply yet, so totals match).
+ */
+function lootCountByUserMapFromMaterialised() {
+  /** @type {Map<number, number>} */
+  const out = new Map();
+  try {
+    const all = lootAwardsGetAll({ limit: 20000 });
+    for (const row of all) {
+      const uid = Number(row?.userId);
+      if (!Number.isInteger(uid) || uid <= 0) continue;
+      out.set(uid, (out.get(uid) || 0) + 1);
+    }
+  } catch {
+    /* materialised loot is optional; bundle returns 0 counts */
+  }
+  return out;
+}
+
+/**
+ * SQLite-only leaderboard bundle. Returns every leaderboard row plus the
+ * achievement / KPI fields the client needs in one payload, sourced
+ * exclusively from the materialised tables (`raid_attendance`,
+ * `parse_summary`, `death_totals`, `raid_appearances`, `mvp_awards`,
+ * identity tables, `loot_awards`). Never calls Warcraft Logs / Discord /
+ * Raid Helper, so cold latency stays in the low-ms range.
+ *
+ * Returns `null` when the materialised attendance window is empty
+ * (no sync has ever run on this DB) so the caller can surface a
+ * "data warming up" hint instead of an empty grid.
+ */
+function buildLeaderboardBundlePayload(guildId) {
+  const base = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
+  if (!base || !Array.isArray(base.leaderboard) || !base.leaderboard.length) return null;
+
+  const users = identityUserListAll();
+  if (!Array.isArray(users) || !users.length) return null;
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const charactersByUserId = new Map();
+  for (const u of users) {
+    try {
+      charactersByUserId.set(u.id, identityCharactersGetByUserId(u.id) || []);
+    } catch {
+      charactersByUserId.set(u.id, []);
+    }
+  }
+
+  // Death totals for the same rolling window the materialised attendance
+  // payload covers. Synced by `runSyncAttendance` under `last-rolling-window`.
+  let deathByUserId = new Map();
+  try {
+    const rows = deathTotalsGetByWindow("last-rolling-window") || [];
+    for (const r of rows) {
+      const uid = Number(r?.userId);
+      if (!Number.isInteger(uid) || uid <= 0) continue;
+      deathByUserId.set(uid, Number(r?.deaths || 0));
+    }
+  } catch {
+    deathByUserId = new Map();
+  }
+
+  // MVP awards (replaces the live `/api/voting/hall-of-fame` lookup).
+  let mvpAwardCountByUserId = new Map();
+  try {
+    mvpAwardCountByUserId = mvpAwardsCountsByUser();
+  } catch {
+    mvpAwardCountByUserId = new Map();
+  }
+
+  // Loot count hint for the lazy expand panel.
+  const lootCountByUserId = lootCountByUserMapFromMaterialised();
+
+  // Specific-raid attendance awards (e.g. "AOE Cleave"). Already SQLite-only.
+  /** @type {Map<number, string[]>} */
+  const specificEventBadgesByUserId = new Map();
+  try {
+    const awards = resolveSpecificRaidAttendanceAwards();
+    for (const [badgeId, userIds] of awards.entries()) {
+      for (const uid of userIds) {
+        const list = specificEventBadgesByUserId.get(uid) || [];
+        list.push(badgeId);
+        specificEventBadgesByUserId.set(uid, list);
+      }
+    }
+  } catch {
+    /* badges optional */
+  }
+
+  // First-clear participants — keyed by character name (legacy contract).
+  // We surface raw flags per row so the client can render the same icons
+  // it currently does after `loadWclAttendanceForEvents()` populates its
+  // `firstClearXxxNameKeys` sets.
+  /** @type {Map<string, true>} */
+  const firstClearKaraNames = new Map();
+  /** @type {Map<string, true>} */
+  const firstClearGruulNames = new Map();
+  /** @type {Map<string, true>} */
+  const firstClearMagNames = new Map();
+  try {
+    const grouped = firstClearParticipantsGet({
+      raidNames: ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"],
+    });
+    for (const n of grouped?.["Karazhan"]?.participants || []) {
+      firstClearKaraNames.set(String(n || "").trim().toLowerCase(), true);
+    }
+    for (const n of grouped?.["Gruul's Lair"]?.participants || []) {
+      firstClearGruulNames.set(String(n || "").trim().toLowerCase(), true);
+    }
+    for (const n of grouped?.["Magtheridon's Lair"]?.participants || []) {
+      firstClearMagNames.set(String(n || "").trim().toLowerCase(), true);
+    }
+  } catch {
+    /* first clears optional */
+  }
+
+  // Best-time roster — flatten to a name-set the client matches against.
+  /** @type {Set<string>} */
+  const bestTimeNames = new Set();
+  try {
+    for (const row of bestTimeRosterGet({}) || []) {
+      const cn = String(row?.characterName || "").trim().toLowerCase();
+      if (cn) bestTimeNames.add(cn);
+    }
+  } catch {
+    /* best-time optional */
+  }
+
+  // Top-deaths-in-rolling-window: same logic the live HoF feed used for
+  // the "Most deaths last 6" badge — set of names tied at the highest count.
+  /** @type {Set<string>} */
+  const mostDeathsNames = new Set();
+  try {
+    const rows = deathTotalsGetByWindow("last-rolling-window") || [];
+    let max = 0;
+    for (const r of rows) {
+      const n = Number(r?.deaths || 0);
+      if (Number.isFinite(n) && n > max) max = n;
+    }
+    if (max > 0) {
+      for (const r of rows) {
+        const n = Number(r?.deaths || 0);
+        if (n !== max) continue;
+        const cn = String(r?.mainCharacterName || r?.displayName || "").trim().toLowerCase();
+        if (cn) mostDeathsNames.add(cn);
+      }
+    }
+  } catch {
+    /* deaths optional */
+  }
+
+  /* Decorate every base row with class/spec from `user_characters`,
+     mvpAwardCount, lootCount, specificEventBadges, mainCharacterName,
+     and pre-resolved badge flags for first-clears / best-time / most-deaths. */
+  const players = [];
+  for (const row of base.leaderboard) {
+    const u = usersById.get(row.dbUserId);
+    if (!u) continue;
+    const chars = charactersByUserId.get(u.id) || [];
+    const main = chars.find((c) => c.isMain) || chars[0] || null;
+    const className = String(main?.wowClass || "").trim();
+    const specName = String(main?.wowSpec || "").trim();
+    const mainCharacterName = main?.characterName || row.name || row.raidHelperName || "";
+    const lootCount = Number(lootCountByUserId.get(u.id) || 0);
+    const mvpAwardCount = Number(mvpAwardCountByUserId.get(u.id) || 0);
+    const specificEventBadges = specificEventBadgesByUserId.get(u.id) || [];
+
+    /* Pre-resolve achievement flags using the same lower-cased name keys
+       the client matches against today (mirrors `playerMatchesAchievementNameSet`).
+       Saves the client from running another network round-trip when the
+       legacy `loadWclAttendanceForEvents()` fan-out is dropped. */
+    const nameKey = String(mainCharacterName || "").trim().toLowerCase();
+    const earnedBestTime = nameKey && bestTimeNames.has(nameKey);
+    const earnedMostDeaths = nameKey && mostDeathsNames.has(nameKey);
+    const earnedFirstKara = nameKey && firstClearKaraNames.has(nameKey);
+    const earnedFirstGruul = nameKey && firstClearGruulNames.has(nameKey);
+    const earnedFirstMag = nameKey && firstClearMagNames.has(nameKey);
+
+    players.push({
+      ...row,
+      className,
+      blizzardClassName: className,
+      raiderIoClassName: className,
+      raidHelperClassName: className,
+      specName,
+      raidHelperSpecName: specName,
+      raiderIoSpecName: specName,
+      roleName: "Ranged",
+      realm: defaultWowRealmForRoster(),
+      mainCharacterName,
+      characterName: mainCharacterName,
+      rhPastEventCount: Number(row.wclEventCount || 0),
+      legacyRhSignupCount: 0,
+      mvpAwardCount,
+      lootCount,
+      specificEventBadges,
+      preResolvedBadges: {
+        bestTimeParticipant: !!earnedBestTime,
+        mostDeathsLastSix: !!earnedMostDeaths,
+        firstClearKara: !!earnedFirstKara,
+        firstClearGruul: !!earnedFirstGruul,
+        firstClearMag: !!earnedFirstMag,
+        hallOfFameMvp: mvpAwardCount > 0,
+      },
+    });
+  }
+
+  return {
+    ok: true,
+    guildId,
+    consideredRaids: base.consideredRaids,
+    activeCount: players.length,
+    attendanceScope: base.attendanceScope,
+    parseScope: base.parseScope,
+    parseCeilingMax: base.parseCeilingMax,
+    materializedAt: Date.now(),
+    source: "leaderboard-bundle-v1",
+    players,
+  };
+}
+
+/**
+ * SQLite-only bundle endpoint. Replaces the leaderboard's prior fan-out
+ * (`/active-roster` + `/death-leaderboard` + `/loot-received` +
+ * `/voting/hall-of-fame` + chunked `/wow-classic/items`) with a single
+ * call. Cold P95 target: < 800ms TTFB.
+ */
+app.get("/api/leaderboard", (req, res) => {
+  const requestedGuildId = Number(req.query.guildId);
+  const guildId =
+    Number.isInteger(requestedGuildId) && requestedGuildId > 0 ? requestedGuildId : votingGuildId;
+  try {
+    const payload = buildLeaderboardBundlePayload(guildId);
+    if (!payload) {
+      return res.json({
+        ok: true,
+        guildId,
+        consideredRaids: 0,
+        activeCount: 0,
+        materializedAt: 0,
+        source: "leaderboard-bundle-empty",
+        players: [],
+        note: "Materialised tables are empty — sync workers may not have produced data yet.",
+      });
+    }
+    res.setHeader("Cache-Control", "private, max-age=30");
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to build leaderboard" });
+  }
+});
+
 app.get("/api/loot-history", async (req, res) => {
   const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
   const forceRefresh = String(req.query.refresh || "") === "1";
@@ -13261,6 +13618,263 @@ registerSyncTask({
 });
 
 /**
+ * Resolve `wow_spec` for every row in `user_characters` using two
+ * already-fetched signals:
+ *   1. WCL combat type from `damageDone` / `healing` table entries
+ *      (the `entry.type` field carries the spec verbatim — e.g.
+ *      "Arms", "Holy", "Protection"). This is the high-confidence
+ *      primary signal because it reflects what the player actually
+ *      played in-fight.
+ *   2. Raid Helper signup `specName` for alts/inactives who never
+ *      log a fight but do sign up — Tier 2 fallback.
+ *
+ * This worker exists because Battle.net `active_spec` is null on TBC
+ * Anniversary characters and Raider.IO classic does not index those
+ * realms (`runSyncCharacterSpecs` reliably fills `wow_class` only).
+ *
+ * Runs hourly between `attendance` and `parses` in the sync runner so
+ * it benefits from a freshly populated WCL report cache.
+ */
+function characterSpecsGuildReportCap() {
+  const n = Number(process.env.CHARACTER_SPECS_GUILD_REPORT_CAP);
+  if (Number.isFinite(n) && n > 0) return Math.min(40, Math.floor(n));
+  return 10;
+}
+
+function characterSpecsRhEventCap() {
+  const n = Number(process.env.CHARACTER_SPECS_RH_EVENT_CAP);
+  if (Number.isFinite(n) && n > 0) return Math.min(120, Math.floor(n));
+  return 30;
+}
+
+function characterSpecsRhThrottleMs() {
+  const n = Number(process.env.CHARACTER_SPECS_RH_THROTTLE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(2_000, Math.floor(n));
+  return 100;
+}
+
+const CHARACTER_SPECS_GUILD_QUERY = `
+  query CharacterSpecsGuildSpec($code: String!, $fightIds: [Int!]) {
+    reportData {
+      report(code: $code) {
+        damageDone: table(dataType: DamageDone, fightIDs: $fightIds)
+        healing: table(dataType: Healing, fightIDs: $fightIds)
+      }
+    }
+  }
+`;
+
+async function collectWclCombatTypeSamplesForGuild(guildId, reportCap) {
+  const samples = [];
+  if (!Number.isInteger(guildId) || guildId <= 0) return samples;
+  let reports = [];
+  try {
+    reports = await getFilteredGuildReportsForGuild(
+      guildId,
+      Math.min(wclMaxGuildReportsLimit(), reportCap)
+    );
+  } catch (error) {
+    console.warn(
+      "[sync:character-specs-from-guild] reports fetch failed:",
+      error?.message || error
+    );
+    return samples;
+  }
+  /** Most-recent reports first so latestStartTime tiebreakers stay stable. */
+  const ordered = [...reports].sort(
+    (a, b) => Number(b?.startTime || 0) - Number(a?.startTime || 0)
+  );
+  const slice = ordered.slice(0, reportCap);
+  for (const report of slice) {
+    const fightIds = (report?.fights || [])
+      .filter((fight) => {
+        const zoneName = fight?.gameZone?.name || "";
+        return (
+          Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
+          Number(fight?.encounterID || 0) > 0
+        );
+      })
+      .map((fight) => Number(fight.id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    if (!fightIds.length) continue;
+    const reportStartedAt = reportStartTimeMs(report?.startTime) || 0;
+    for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
+      let data;
+      try {
+        data = await queryWcl(CHARACTER_SPECS_GUILD_QUERY, {
+          code: report.code,
+          fightIds: chunk,
+        });
+      } catch (error) {
+        console.warn(
+          `[sync:character-specs-from-guild] tables fetch failed for ${report.code}:`,
+          error?.message || error
+        );
+        continue;
+      }
+      const dmgTable = parseWclTable(data?.reportData?.report?.damageDone);
+      const healTable = parseWclTable(data?.reportData?.report?.healing);
+      samples.push(
+        ...combatTypeSamplesFromTable(dmgTable, report.code, reportStartedAt, "dps"),
+        ...combatTypeSamplesFromTable(healTable, report.code, reportStartedAt, "healers")
+      );
+    }
+  }
+  return samples;
+}
+
+async function collectRecentRaidHelperEventsForSpecs(eventCap, throttleMs) {
+  const serverId = raidHelperDiscordGuildId();
+  if (!serverId) return [];
+  let allEvents = [];
+  try {
+    allEvents = await fetchRaidHelperServerEvents(serverId);
+  } catch (error) {
+    console.warn(
+      "[sync:character-specs-from-guild] RH server events fetch failed:",
+      error?.message || error
+    );
+    return [];
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  const past = (Array.isArray(allEvents) ? allEvents : [])
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((e) => e.id && e.startTime > 0 && e.startTime <= nowSec)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, eventCap);
+
+  const out = [];
+  for (let i = 0; i < past.length; i += 1) {
+    const ev = past[i];
+    const detail = await fetchRaidHelperEventDetail(ev.id);
+    if (detail) {
+      out.push({
+        eventId: ev.id,
+        startTime: ev.startTime,
+        signUps: detail.signUps,
+      });
+    }
+    if (throttleMs > 0 && i < past.length - 1) {
+      await new Promise((r) => setTimeout(r, throttleMs));
+    }
+  }
+  return out;
+}
+
+async function runSyncCharacterSpecsFromGuildSignals() {
+  const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
+
+  /** WCL combat-type harvest (Tier 1) */
+  const wclSamples = await collectWclCombatTypeSamplesForGuild(
+    guildId,
+    characterSpecsGuildReportCap()
+  );
+  const wclMap = buildLatestCombatTypeMap(wclSamples);
+  if (wclSamples.length > 0 && wclMap.size === 0) {
+    const preview = wclSamples
+      .slice(0, 5)
+      .map((s) => `${s.characterName}=${s.combatType}`)
+      .join(", ");
+    console.warn(
+      `[sync:character-specs-from-guild] WCL produced ${wclSamples.length} samples but 0 winning specs. First 5: ${preview}`
+    );
+  } else if (wclSamples.length === 0) {
+    console.warn(
+      "[sync:character-specs-from-guild] WCL produced 0 samples — check that recent reports include tracked raid fights and that table entries carry a `type` field."
+    );
+  }
+
+  /** Raid Helper signup-spec harvest (Tier 2 fallback) */
+  const rhEvents = await collectRecentRaidHelperEventsForSpecs(
+    characterSpecsRhEventCap(),
+    characterSpecsRhThrottleMs()
+  );
+  const rhMap = buildLatestSignupSpecMap(rhEvents);
+
+  let rows = [];
+  try {
+    rows = identityCharactersListAll({});
+  } catch (error) {
+    console.warn(
+      "[sync:character-specs-from-guild] charactersListAll failed:",
+      error?.message || error
+    );
+    return { rowsChanged: 0 };
+  }
+
+  let scanned = 0;
+  let wclWins = 0;
+  let rhWins = 0;
+  let unchanged = 0;
+  let noEvidence = 0;
+  let failed = 0;
+  let rowsChanged = 0;
+
+  for (const row of rows) {
+    scanned += 1;
+    const key = identityRhNameKey(row.characterName);
+    if (!key) {
+      noEvidence += 1;
+      continue;
+    }
+    const fromWcl = wclMap.get(key);
+    const fromRh = !fromWcl ? rhMap.get(key) : null;
+    let chosenSpec = null;
+    let chosenSource = null;
+    if (fromWcl?.specName) {
+      chosenSpec = fromWcl.specName;
+      chosenSource = "sync:wcl-combat-type";
+    } else if (fromRh?.specName) {
+      chosenSpec = fromRh.specName;
+      chosenSource = "sync:rh-signup";
+    }
+    if (!chosenSpec) {
+      noEvidence += 1;
+      continue;
+    }
+    if (chosenSpec === row.wowSpec) {
+      unchanged += 1;
+      if (chosenSource === "sync:wcl-combat-type") wclWins += 1;
+      else rhWins += 1;
+      continue;
+    }
+    try {
+      identityCharacterUpsert({
+        userId: row.userId,
+        characterName: row.characterName,
+        wowSpec: chosenSpec,
+        source: chosenSource,
+      });
+      rowsChanged += 1;
+      if (chosenSource === "sync:wcl-combat-type") wclWins += 1;
+      else rhWins += 1;
+    } catch (error) {
+      console.warn(
+        `[sync:character-specs-from-guild] upsert failed for ${row.characterName}:`,
+        error?.message || error
+      );
+      failed += 1;
+    }
+  }
+
+  console.log(
+    `[sync:character-specs-from-guild] scanned=${scanned} wclWins=${wclWins} rhWins=${rhWins} unchanged=${unchanged} noEvidence=${noEvidence} failed=${failed} (rowsChanged=${rowsChanged}, wclMap=${wclMap.size}, rhMap=${rhMap.size})`
+  );
+  return { rowsChanged };
+}
+
+registerSyncTask({
+  id: "character-specs-from-guild",
+  intervalMs: 60 * 60_000,
+  description:
+    "Resolve wow_spec for every user_characters row from WCL combat type (primary) and Raid Helper signup spec (fallback).",
+  run: runSyncCharacterSpecsFromGuildSignals,
+});
+
+/**
  * Materialise per-character parse summaries (best percentile per bracket)
  * by re-running the same gather + leaderboard pipeline the live
  * `/api/wcl/guild/.../attendance` endpoint already uses, then writing
@@ -13434,6 +14048,132 @@ registerSyncTask({
   run: runSyncLoot,
 });
 
+/**
+ * Resolve `wow_class` and `wow_spec` for every row in `user_characters`
+ * that doesn't already have them. Source priority is Battle.net summary
+ * -> Battle.net specializations -> Raider.IO classic profile, all via
+ * the self-contained resolver in `lib/compute/character-specs.mjs` so a
+ * standalone CLI can share the exact same code path.
+ *
+ * Runs every 6 hours. Sequential per-character with a small inter-call
+ * delay so we stay polite to both APIs even though Bnet's rate limit is
+ * roughly two orders of magnitude above what we use here.
+ */
+let cachedCharacterSpecResolver = null;
+function characterSpecResolver() {
+  if (cachedCharacterSpecResolver) return cachedCharacterSpecResolver;
+  cachedCharacterSpecResolver = createCharacterSpecResolver({
+    blizzardClientId: process.env.BLIZZARD_CLIENT_ID,
+    blizzardClientSecret: process.env.BLIZZARD_CLIENT_SECRET,
+    blizzardTokenUrl: BLIZZARD_TOKEN_URL,
+    blizzardApiBaseUrl: blizzardApiBaseUrl(),
+    blizzardLocale: wowClassicLocale(),
+    blizzardRegion: wowClassicRegion(),
+    blizzardNamespaceOverride: process.env.BLIZZARD_PROFILE_NAMESPACE,
+    raiderIoApiBase: raiderIoClassicApiBase(),
+    raiderIoRegion: wowRosterRegion(),
+    defaultRealm: defaultWowRealmForRoster(),
+  });
+  return cachedCharacterSpecResolver;
+}
+
+function characterSpecsThrottleMs() {
+  const n = Number(process.env.CHARACTER_SPECS_THROTTLE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(5_000, Math.floor(n));
+  return 300;
+}
+
+function characterSpecsBatchCap() {
+  const n = Number(process.env.CHARACTER_SPECS_BATCH_CAP);
+  if (Number.isFinite(n) && n > 0) return Math.min(2000, Math.floor(n));
+  return 500;
+}
+
+async function runSyncCharacterSpecs() {
+  const resolve = characterSpecResolver();
+  const realmDefault = defaultWowRealmForRoster();
+  if (!realmDefault) {
+    console.warn(
+      "[sync:character-specs] WOW_GUILD_REALM/WOW_DEFAULT_REALM not set; skipping (no realm to query)."
+    );
+    return { rowsChanged: 0 };
+  }
+
+  let rows;
+  try {
+    rows = identityCharactersListAll({ missingClassOrSpec: true });
+  } catch (error) {
+    console.warn("[sync:character-specs] charactersListAll failed:", error?.message || error);
+    return { rowsChanged: 0 };
+  }
+
+  const cap = characterSpecsBatchCap();
+  const queue = rows.slice(0, cap);
+  const throttleMs = characterSpecsThrottleMs();
+
+  let scanned = 0;
+  let resolved = 0;
+  let skippedNoData = 0;
+  let failed = 0;
+  let rowsChanged = 0;
+
+  for (const row of queue) {
+    scanned += 1;
+    try {
+      const out = await resolve({
+        characterName: row.characterName,
+        realm: row.realm || realmDefault,
+      });
+      const wowClass = out?.wowClass || null;
+      const wowSpec = out?.wowSpec || null;
+      if (!wowClass && !wowSpec) {
+        skippedNoData += 1;
+      } else {
+        const update = {
+          userId: row.userId,
+          characterName: row.characterName,
+          source: `sync:character-specs:${out?.source || "mixed"}`,
+        };
+        if (wowClass) update.wowClass = wowClass;
+        if (wowSpec) update.wowSpec = wowSpec;
+        try {
+          identityCharacterUpsert(update);
+          resolved += 1;
+          rowsChanged += 1;
+        } catch (error) {
+          console.warn(
+            `[sync:character-specs] upsert failed for ${row.characterName}:`,
+            error?.message || error
+          );
+          failed += 1;
+        }
+      }
+    } catch (error) {
+      console.warn(
+        `[sync:character-specs] resolve failed for ${row.characterName}:`,
+        error?.message || error
+      );
+      failed += 1;
+    }
+    if (throttleMs > 0 && scanned < queue.length) {
+      await new Promise((r) => setTimeout(r, throttleMs));
+    }
+  }
+
+  console.log(
+    `[sync:character-specs] scanned=${scanned} resolved=${resolved} skippedNoData=${skippedNoData} failed=${failed} (queue size: ${queue.length}/${rows.length})`
+  );
+  return { rowsChanged };
+}
+
+registerSyncTask({
+  id: "character-specs",
+  intervalMs: 6 * 60 * 60_000,
+  description:
+    "Resolve wow_class/wow_spec for every user_characters row from Battle.net + Raider.IO.",
+  run: runSyncCharacterSpecs,
+});
+
 startSyncRunner();
 
 app.listen(port, () => {
@@ -13449,9 +14189,18 @@ app.listen(port, () => {
   } else {
     console.warn("[auth] Discord OAuth disabled — set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET to enable login.");
   }
-  ensureVotingStore().catch((error) => {
-    console.error("Failed to initialize voting store:", error?.message || error);
-  });
+  ensureVotingStore()
+    .then(() => {
+      // Backfill the materialised MVP-award rows on first boot (and on
+      // every restart) so the leaderboard never has to fall back to the
+      // live HoF pipeline for the achievement badge.
+      recomputeMvpAwardsFromVotes("").catch((error) => {
+        console.warn("[mvp-awards] boot backfill failed:", error?.message || error);
+      });
+    })
+    .catch((error) => {
+      console.error("Failed to initialize voting store:", error?.message || error);
+    });
   ensureP2MaterialsStore().catch((error) => {
     console.error("Failed to initialize P2 materials store:", error?.message || error);
   });

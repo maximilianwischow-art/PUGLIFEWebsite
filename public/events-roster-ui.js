@@ -1131,14 +1131,24 @@ function playerMatchesAchievementNameSet(player, keySet) {
 }
 
 function playerEarnedBestTimeParticipantBadge(player) {
+  if (player?.preResolvedBadges?.bestTimeParticipant === true) return true;
   return playerMatchesAchievementNameSet(player, pbBestTimeRankedNameKeys);
 }
 
 function playerEarnedHallOfFameMvpBadge(player) {
+  /* Phase 9 cutover: the leaderboard bundle (`/api/leaderboard`) stamps
+     `mvpAwardCount` on each row from the materialised `mvp_awards` SQLite
+     table, so the badge resolves without ever calling the live HoF
+     pipeline. We still fall back to the legacy name-set when the bundle
+     hasn't populated the field (other pages keep the old contract). */
+  const fromBundle = Number(player?.mvpAwardCount);
+  if (Number.isFinite(fromBundle) && fromBundle > 0) return true;
+  if (player?.preResolvedBadges?.hallOfFameMvp === true) return true;
   return playerMatchesAchievementNameSet(player, hallOfFameWinnerNameKeys);
 }
 
 function playerEarnedMostDeathsLastSixBadge(player) {
+  if (player?.preResolvedBadges?.mostDeathsLastSix === true) return true;
   return playerMatchesAchievementNameSet(player, mostDeathsLastSixNameKeys);
 }
 
@@ -1184,14 +1194,17 @@ function playerEarnedParsingCeilingBadge(player) {
 }
 
 function playerEarnedFirstClearKaraBadge(player) {
+  if (player?.preResolvedBadges?.firstClearKara === true) return true;
   return playerMatchesAchievementNameSet(player, firstClearKaraNameKeys);
 }
 
 function playerEarnedFirstClearGruulBadge(player) {
+  if (player?.preResolvedBadges?.firstClearGruul === true) return true;
   return playerMatchesAchievementNameSet(player, firstClearGruulNameKeys);
 }
 
 function playerEarnedFirstClearMagBadge(player) {
+  if (player?.preResolvedBadges?.firstClearMag === true) return true;
   return playerMatchesAchievementNameSet(player, firstClearMagNameKeys);
 }
 

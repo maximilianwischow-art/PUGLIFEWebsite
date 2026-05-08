@@ -22,16 +22,22 @@ let expandedPlayerKey = null;
 let leaderboardLootItemMetaMap = new Map();
 
 /**
- * Session-only cache (tab lifetime) to avoid re-fetching heavy roster/death/loot APIs on every navigation.
+ * Session-only cache (tab lifetime) to avoid re-fetching the leaderboard
+ * bundle on every navigation.
  *
- * Bumped to v3 (2026-05-08) to discard cached rows from before active-roster
- * carried `specificEventBadges` (AOE Cleave etc.) — v2 session rows never
- * re-fetched and the achievement column stayed empty after deploy.
+ * Bumped to v4 (2026-05-08) for the SQLite bundle cutover: rows now come
+ * from `/api/leaderboard` (single SQLite-only call). Previous v3 entries
+ * still carry the legacy multi-fetch shape and must be discarded.
  */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v3";
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v4";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
 /** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
 const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;
+
+/** Per-row loot cache (canonical user id → loot items + item meta), populated lazily on row expand. */
+const lootByDbUserId = new Map();
+/** Inflight per-row loot promises so rapid expand toggles don't dogpile the API. */
+const lootInflightByDbUserId = new Map();
 
 function lbApiGetJson(url, init) {
   const c = window.plbSessionApiCache;
@@ -306,6 +312,17 @@ function lootPanelHtml(p, itemMetaById) {
   const escapeHtml = plb.escapeHtml;
   const map = itemMetaById instanceof Map ? itemMetaById : leaderboardLootItemMetaMap;
   const items = p._lootItems || [];
+  /* Lazy-load: if the row hasn't been opened yet, render a placeholder
+     instead of "no loot". `ensureLootForRow()` swaps this out as soon
+     as the per-row API call returns. */
+  if (!p._lootHydrated) {
+    const expectedRaw = Number(p?._lootCount || 0);
+    const expectedNote =
+      Number.isFinite(expectedRaw) && expectedRaw > 0
+        ? ` (${expectedRaw} item${expectedRaw === 1 ? "" : "s"} expected)`
+        : "";
+    return `<div class="leaderboard-loot-loading subtle" data-lb-loot-loading="1">Loading loot…${expectedNote}</div>`;
+  }
   if (!items.length) {
     return `<div class="leaderboard-loot-empty subtle">No loot matched to this character in the tracked guild loot history yet.</div>`;
   }
@@ -487,7 +504,12 @@ function renderLeaderboardTable() {
       const isOpen = expandedPlayerKey && expandedPlayerKey === rowKey;
       const playerCell = raiderCellHtml(p, recentCap, considered);
       const badges = plb.rosterBadgeRowHtml(p);
-      const lootCount = Number(p._lootItems?.length || 0);
+      /* Prefer the bundle-provided count over `_lootItems.length`, since
+         loot items are now lazy-loaded on row expand and the items array
+         stays empty until the user actually opens that row. */
+      const lootCount = Number(
+        p._lootHydrated ? p._lootItems?.length || 0 : p._lootCount || p._lootItems?.length || 0
+      );
       const hint =
         lootCount > 0
           ? `${lootCount} item${lootCount === 1 ? "" : "s"} in history — click to expand`
@@ -566,6 +588,47 @@ function toggleLeaderboardRowByKey(key) {
     const open = k && expandedPlayerKey === k;
     tr.hidden = !open;
   });
+  /* Lazy-load: when the user opens a row, fetch that player's loot and
+     swap the placeholder for the real list. Cached after the first open
+     so toggling the same row again is instant. */
+  if (expandedPlayerKey === key) {
+    const player = leaderboardRows.find((r) => playerRowKey(r) === key);
+    if (player && !player._lootHydrated) {
+      void hydrateLootForPlayerAndRefreshPanel(player, key);
+    }
+  }
+}
+
+async function hydrateLootForPlayerAndRefreshPanel(player, key) {
+  try {
+    const { items } = await ensureLootForRow(player);
+    player._lootItems = Array.isArray(items) ? items : [];
+    player._lootHydrated = true;
+    /* Replace just the loot panel for this row instead of re-rendering
+       the whole table — keeps scroll position and any open tooltips. */
+    if (!leaderboardTbody) return;
+    const lootRow = leaderboardTbody.querySelector(`tr.leaderboard-row-loot[data-lb-key="${cssEscape(key)}"]`);
+    if (!lootRow) return;
+    const panel = lootRow.querySelector(".leaderboard-loot-panel");
+    if (!panel) return;
+    panel.innerHTML = lootPanelHtml(player, leaderboardLootItemMetaMap);
+    /* Re-bind the Wowhead-style tooltip handlers for the freshly inserted nodes. */
+    const lootScroll = document.querySelector(".leaderboard-table-scroll") || leaderboardTbody;
+    if (window.WowItemTooltip && typeof window.WowItemTooltip.bindLootTooltipHandlers === "function") {
+      window.WowItemTooltip.bindLootTooltipHandlers(lootScroll, (id) =>
+        leaderboardLootItemMetaMap.get(Number(id))
+      );
+    }
+  } catch {
+    /* keep the placeholder; user can close + reopen to retry */
+  }
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") {
+    return window.CSS.escape(String(value || ""));
+  }
+  return String(value || "").replace(/["\\]/g, "\\$&");
 }
 
 function wireLeaderboardRowExpand() {
@@ -605,57 +668,26 @@ function wireSortHeaders() {
 }
 
 /**
- * Fetches roster, deaths, loot + item icons from the API and builds row models (same work as a full reload).
- * @returns {{ rows: object[], lootMap: Map<number, object> }}
- */
-/**
+ * Single-call leaderboard build: hits the SQLite-backed
+ * `/api/leaderboard` bundle endpoint and synthesises the same row shape
+ * the renderer used to receive from the active-roster / death-leaderboard
+ * / loot-received fan-out. Loot items are intentionally **not** preloaded
+ * — `_lootCount` carries the hint and items are fetched lazily on row
+ * expand by `ensureLootForRow()`.
+ *
  * @param {number} gid
- * @param {number} reportLimit
- * @param {{ skipCache?: boolean }} [opts] when true, bypass session-api-cache
- *        for the active-roster + death + loot fetches. Used by the explicit
- *        background refresh after rendering from cache, so we actually get
- *        fresh server data instead of replaying the same cached body.
+ * @param {{ skipCache?: boolean }} [opts] when true, bypass `plbSessionApiCache`
+ *        for the bundle fetch (post-cache-render refresh path).
  */
-async function fetchAndBuildLeaderboardRows(gid, reportLimit, opts = {}) {
+async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
   const skipCache = !!opts.skipCache;
-  const rosterUrl = `/api/wcl/guild/${gid}/active-roster?limit=${reportLimit}&top=250&maxRhPastEvents=0`;
-  const [rosterPayload, deathPayload, lootPayload] = await Promise.all([
-    lbApiGetJson(rosterUrl, { credentials: "include", skipCache }),
-    lbApiGetJson(`/api/wcl/guild/${gid}/death-leaderboard?limit=${reportLimit}&top=400`, { skipCache }),
-    lbApiGetJson(`/api/wcl/guild/${gid}/loot-received?limit=${reportLimit}`, { skipCache }).catch(() => ({ items: [] })),
-  ]);
-  const allLootItems = Array.isArray(lootPayload?.items) ? lootPayload.items : [];
+  const bundleUrl = `/api/leaderboard?guildId=${encodeURIComponent(gid)}`;
+  const bundle = await lbApiGetJson(bundleUrl, { credentials: "include", skipCache });
+  const players = Array.isArray(bundle?.players) ? bundle.players : [];
+  const consideredRaids = Number(bundle?.consideredRaids || 0);
+  const recentRaidCap = Number(bundle?.attendanceScope?.recentRaidCap || 6);
 
-  const lootMap = new Map();
-  const lootItemIds = [
-    ...new Set(allLootItems.map((x) => Number(x?.itemId || 0)).filter((n) => Number.isInteger(n) && n > 0)),
-  ];
-  const chunkSize = 80;
-  const chunks = [];
-  for (let i = 0; i < lootItemIds.length; i += chunkSize) {
-    chunks.push(lootItemIds.slice(i, i + chunkSize));
-  }
-  await Promise.all(
-    chunks.map(async (chunk) => {
-      try {
-        const metaPayload = await lbApiGetJson(
-          `/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`
-        );
-        if (!Array.isArray(metaPayload?.items)) return;
-        for (const row of metaPayload.items) {
-          if (Number(row?.itemId) > 0) lootMap.set(Number(row.itemId), row);
-        }
-      } catch {
-        /* icons/tooltips best-effort */
-      }
-    })
-  );
-
-  const players = Array.isArray(rosterPayload.players) ? rosterPayload.players : [];
-  const deathMap = buildDeathTotalsMap(deathPayload.leaderboard);
-  const consideredRaids = Number(rosterPayload.consideredRaids || 0);
-  const recentRaidCap = Number(rosterPayload.attendanceScope?.recentRaidCap || 6);
-  // Resolve any uploaded profile pictures so portraits render the avatar
+  // Resolve uploaded profile pictures so portraits render the avatar
   // override rather than the class crest. Best-effort — failures are silent.
   if (typeof plb?.prefetchRosterProfilePictures === "function") {
     try {
@@ -669,7 +701,7 @@ async function fetchAndBuildLeaderboardRows(gid, reportLimit, opts = {}) {
     const ps = plb.rosterParseForDisplay(p, p);
     return {
       ...p,
-      _deaths: totalDeathsForPlayer(p, deathMap),
+      _deaths: 0, // backfilled below from server-attached _deaths field
       _consideredRaids: consideredRaids,
       _recentRaidCap: recentRaidCap,
       _peakParse: ps.value != null && Number.isFinite(Number(ps.value)) ? Number(ps.value) : null,
@@ -681,20 +713,99 @@ async function fetchAndBuildLeaderboardRows(gid, reportLimit, opts = {}) {
           : p.rhPastEventCount || 0
       ),
       _sortName: plb.eventsRosterCharacterLabel(p).toLowerCase(),
-      _lootItems: lootItemsForPlayer(p, allLootItems),
+      /* Loot is fetched lazily on row expand. `_lootItems` is hydrated
+         from cache by `ensureLootForRow()` before the panel renders, so
+         it stays empty until the user actually opens that row. */
+      _lootItems: [],
+      _lootCount: Number(p.lootCount || 0),
+      _lootHydrated: false,
     };
   });
 
-  return { rows, lootMap };
+  return { rows, lootMap: leaderboardLootItemMetaMap };
 }
 
-async function refreshLeaderboardFromNetwork(gid, reportLimit) {
+/**
+ * Lazily fetch one player's loot + item metadata. Cached for the tab
+ * lifetime so repeated row toggles don't re-fetch.
+ *
+ * @returns {Promise<{ items: object[] }>}
+ */
+async function ensureLootForRow(player) {
+  const dbUserId = Number(player?.dbUserId);
+  if (!Number.isInteger(dbUserId) || dbUserId <= 0) {
+    return { items: [] };
+  }
+  if (lootByDbUserId.has(dbUserId)) return lootByDbUserId.get(dbUserId);
+  const inflight = lootInflightByDbUserId.get(dbUserId);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    let awards = [];
+    try {
+      const payload = await lbApiGetJson(`/api/leaderboard/player/${dbUserId}/loot`);
+      awards = Array.isArray(payload?.awards) ? payload.awards : [];
+    } catch {
+      awards = [];
+    }
+    /* Map materialised `loot_awards` rows onto the same shape the legacy
+       `lootPanelHtml` consumes (recipient, reportStartTime, itemId, source). */
+    const items = awards
+      .map((a) => ({
+        itemId: Number(a?.itemId || 0),
+        itemName: a?.itemName || null,
+        recipient: a?.characterName || null,
+        reportStartTime: Number(a?.awardedAt || 0),
+        reportCode: a?.reportCode || null,
+        source: a?.source || "WCL",
+      }))
+      .sort((a, b) => Number(b?.reportStartTime || 0) - Number(a?.reportStartTime || 0));
+
+    /* Fetch item metadata for icons + tooltips, chunked at 80 ids per
+       request (matches the existing `/api/wow-classic/items` cap). New
+       metadata is merged into the shared map so other rows can reuse it. */
+    const itemIds = [
+      ...new Set(items.map((x) => Number(x?.itemId || 0)).filter((n) => Number.isInteger(n) && n > 0)),
+    ];
+    const missingIds = itemIds.filter((id) => !leaderboardLootItemMetaMap.has(id));
+    const chunkSize = 80;
+    const chunks = [];
+    for (let i = 0; i < missingIds.length; i += chunkSize) {
+      chunks.push(missingIds.slice(i, i + chunkSize));
+    }
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        try {
+          const metaPayload = await lbApiGetJson(
+            `/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`
+          );
+          if (!Array.isArray(metaPayload?.items)) return;
+          for (const row of metaPayload.items) {
+            if (Number(row?.itemId) > 0) leaderboardLootItemMetaMap.set(Number(row.itemId), row);
+          }
+        } catch {
+          /* icons/tooltips best-effort */
+        }
+      })
+    );
+
+    const result = { items };
+    lootByDbUserId.set(dbUserId, result);
+    return result;
+  })().finally(() => {
+    lootInflightByDbUserId.delete(dbUserId);
+  });
+  lootInflightByDbUserId.set(dbUserId, promise);
+  return promise;
+}
+
+async function refreshLeaderboardFromNetwork(gid) {
   try {
     // skipCache: this is the *post-cache-render* refresh — bypass
-    // plbSessionApiCache so we hit the origin and get fresh roster rows.
+    // plbSessionApiCache so we hit the origin and get fresh bundle rows.
     // Without skipCache, the cache layer just replays the same stale body
     // we already rendered, defeating the refresh.
-    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, reportLimit, { skipCache: true });
+    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, { skipCache: true });
     leaderboardRows = rows;
     leaderboardLootItemMetaMap = lootMap;
     writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
@@ -713,10 +824,20 @@ async function loadGuildLeaderboard() {
   expandedPlayerKey = null;
 
   const gid = plb.EVENTS_WCL_GUILD_ID;
-  const reportLimit = 40;
 
   try {
-    const prep = Promise.all([plb.loadTbcSpecIconMap(), plb.loadWclAttendanceForEvents()]);
+    /* Spec icon map + legacy WCL attendance are no longer in the critical
+       path — the bundle endpoint already carries class/spec from
+       `user_characters` and the badge name-sets are pre-resolved
+       server-side. We still kick them off in the background so any UI
+       chrome that depends on them (e.g. event-page badges) gets warmed,
+       and re-render after they resolve in case any tooltip text changes. */
+    const prep = Promise.all([
+      plb.loadTbcSpecIconMap(),
+      typeof plb.loadWclAttendanceForEvents === "function"
+        ? plb.loadWclAttendanceForEvents().catch(() => null)
+        : Promise.resolve(null),
+    ]);
 
     const cached = readLeaderboardSessionCache(gid);
     if (cached) {
@@ -737,19 +858,23 @@ async function loadGuildLeaderboard() {
             .catch(() => {});
         }
       }
-      void refreshLeaderboardFromNetwork(gid, reportLimit);
-      try {
-        await prep;
-        renderLeaderboardTable();
-      } catch {
-        /* badges/spec icons best-effort */
-      }
+      void refreshLeaderboardFromNetwork(gid);
+      /* Re-render after legacy badge name-sets resolve so anything we
+         can't yet pre-resolve server-side picks up the latest data. */
+      void prep
+        .then(() => renderLeaderboardTable())
+        .catch(() => {
+          /* spec icons / legacy badges are best-effort */
+        });
       return;
     }
 
     leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">Loading roster…</td></tr>`;
 
-    const [{ rows, lootMap }] = await Promise.all([fetchAndBuildLeaderboardRows(gid, reportLimit), prep]);
+    /* Cold path: render the bundle as soon as it lands; do not block on
+       `prep`. The bundle already contains every field the table needs
+       for first paint, including pre-resolved achievement flags. */
+    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid);
     leaderboardRows = rows;
     leaderboardLootItemMetaMap = lootMap;
 
@@ -760,6 +885,12 @@ async function loadGuildLeaderboard() {
 
     writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
     renderLeaderboardTable();
+
+    /* Resolve spec icons + legacy badge name-sets in the background and
+       re-render once they land. Failures are best-effort. */
+    void prep
+      .then(() => renderLeaderboardTable())
+      .catch(() => {});
   } catch (e) {
     leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">${plb.escapeHtml(
       e?.message || "Failed to load leaderboard."
