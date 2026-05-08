@@ -95,6 +95,7 @@ function showAdminPanel(panelId, opts = {}) {
     const id = el.getAttribute("data-admin-panel");
     el.classList.toggle("is-admin-panel-active", id === panelId);
   });
+  if (panelId === "analytics") scheduleAnalyticsChartsResize();
   document.querySelectorAll("[data-admin-nav]").forEach((btn) => {
     const id = btn.getAttribute("data-admin-nav");
     const on = id === panelId;
@@ -2025,6 +2026,31 @@ const ANALYTICS_CHART_MOUNT_IDS = [
 
 const analyticsChartInstances = new Map();
 
+function analyticsChartsPanelVisible() {
+  const panel = document.getElementById("admin-panel-analytics");
+  return !!(panel && panel.classList.contains("is-admin-panel-active"));
+}
+
+/** ApexCharts reads layout at render time; hidden panels (`display: none`) yield broken axes until resize. */
+function resizeAllAnalyticsCharts() {
+  if (!analyticsChartsPanelVisible()) return;
+  for (const chart of analyticsChartInstances.values()) {
+    try {
+      if (chart && typeof chart.resize === "function") chart.resize();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function scheduleAnalyticsChartsResize() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      resizeAllAnalyticsCharts();
+    });
+  });
+}
+
 function adminAnalyticsCssVar(name, fallback) {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -2319,6 +2345,8 @@ function renderAnalyticsDashboard(payload) {
       tooltip: { theme: "dark" },
     });
   }
+
+  scheduleAnalyticsChartsResize();
 }
 
 function updateAnalyticsRangeButtons() {
