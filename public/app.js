@@ -597,8 +597,10 @@ async function loadRecentRaidsCalendar() {
       <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
     </div>`;
   try {
+    const cacheBust = `nocache=1&t=${Date.now()}`;
     const payload = await apiGetJson(
-      `/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=${DASHBOARD_CALENDAR_LIMIT}`
+      `/api/wcl/guild/${GUILD_ID}/recent-raids-calendar?limit=${DASHBOARD_CALENDAR_LIMIT}&${cacheBust}`,
+      { skipCache: true }
     );
     const entries = payload.entries || [];
     // #region agent log
@@ -681,7 +683,11 @@ function buildBestTimeRow(boss) {
 async function loadBossTimes() {
   setStatus("Loading best kill times...");
   try {
-    const payload = await apiGetJson(`/api/wcl/guild/${GUILD_ID}/boss-times?limit=${DASHBOARD_REPORT_LIMIT}`);
+    const cacheBust = `nocache=1&t=${Date.now()}`;
+    const payload = await apiGetJson(
+      `/api/wcl/guild/${GUILD_ID}/boss-times?limit=${DASHBOARD_REPORT_LIMIT}&${cacheBust}`,
+      { skipCache: true }
+    );
 
     renderDashboardOverview(payload.raidSummary || []);
     setStatus("Best times updated.");
