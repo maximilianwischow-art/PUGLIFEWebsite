@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260508joinredesign1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260508analyticsdash1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -242,23 +242,85 @@
 
             <section class="card admin-panel" data-admin-panel="analytics" id="admin-panel-analytics">
               <h3 class="section-title">Website Analytics</h3>
-              <p class="subtle">Traffic totals, top visited subpages, and DM subscribers list.</p>
-              <div id="adminAnalyticsSummary" class="admin-grid-note">Loading analytics...</div>
-              <div class="admin-actions admin-actions--tight">
-                <label class="subtle" for="adminAnalyticsDays">Range (days)</label>
-                <input id="adminAnalyticsDays" class="admin-input" type="number" min="1" max="365" value="30" style="max-width: 110px" />
+              <p class="subtle">Traffic, conversions, Join funnel, referrers, and DM subscribers.</p>
+
+              <div class="admin-dash-toolbar">
+                <div class="admin-dash-range" role="group" aria-label="Analytics range presets">
+                  <button type="button" class="admin-dash-range-btn" data-admin-analytics-range="7">7d</button>
+                  <button type="button" class="admin-dash-range-btn" data-admin-analytics-range="30">30d</button>
+                  <button type="button" class="admin-dash-range-btn" data-admin-analytics-range="90">90d</button>
+                </div>
+                <label class="subtle admin-dash-custom-label" for="adminAnalyticsDays">Custom (days)</label>
+                <input id="adminAnalyticsDays" class="admin-input admin-dash-days-input" type="number" min="1" max="365" value="30" />
                 <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminAnalyticsReloadBtn">
                   Reload analytics
                 </button>
               </div>
-              <div id="adminAnalyticsTopPages" class="admin-grid-note">Loading top pages...</div>
-              <div id="adminAnalyticsDaily" class="admin-grid-note">Loading daily trend...</div>
-              <h4 class="section-title" style="margin-top: 14px">Conversions (Join Us)</h4>
-              <p class="subtle">Discord clicks, Subscribe clicks, Subscribe successes, and event sign-up clicks within the selected range.</p>
-              <div id="adminAnalyticsConversions" class="admin-grid-note">Loading conversions...</div>
-              <div id="adminAnalyticsConversionsByLabel" class="admin-grid-note">Loading conversion sources...</div>
-              <div id="adminAnalyticsConversionsDaily" class="admin-grid-note">Loading conversion trend...</div>
-              <h4 class="section-title" style="margin-top: 14px">Subscribers</h4>
+
+              <div id="adminAnalyticsDashError" class="admin-dash-error admin-grid-note" hidden></div>
+
+              <div class="admin-dash-kpis" id="adminAnalyticsKpis">
+                <div class="admin-dash-kpi" data-admin-dash-kpi="pageviews">
+                  <div class="admin-dash-kpi-label">Pageviews</div>
+                  <div class="admin-dash-kpi-value">—</div>
+                  <div class="admin-dash-kpi-delta subtle">vs prior period</div>
+                </div>
+                <div class="admin-dash-kpi" data-admin-dash-kpi="sessions">
+                  <div class="admin-dash-kpi-label">Unique sessions</div>
+                  <div class="admin-dash-kpi-value">—</div>
+                  <div class="admin-dash-kpi-delta subtle">vs prior period</div>
+                </div>
+                <div class="admin-dash-kpi" data-admin-dash-kpi="avgday">
+                  <div class="admin-dash-kpi-label">Avg / day</div>
+                  <div class="admin-dash-kpi-value">—</div>
+                  <div class="admin-dash-kpi-delta subtle">vs prior period</div>
+                </div>
+                <div class="admin-dash-kpi" data-admin-dash-kpi="subscriberate">
+                  <div class="admin-dash-kpi-label">Subscribe rate</div>
+                  <div class="admin-dash-kpi-value">—</div>
+                  <div class="admin-dash-kpi-delta subtle">success ÷ join visits · vs prior</div>
+                </div>
+              </div>
+
+              <div class="admin-dash-charts admin-dash-charts--two">
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Daily traffic</h4>
+                  <p class="subtle admin-dash-chart-hint">Pageviews vs unique sessions (UTC days).</p>
+                  <div id="adminAnalyticsChartDaily" class="admin-dash-chart-mount"></div>
+                </div>
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Conversions over time</h4>
+                  <p class="subtle admin-dash-chart-hint">Stacked conversion events by day.</p>
+                  <div id="adminAnalyticsChartConversionsDaily" class="admin-dash-chart-mount"></div>
+                </div>
+              </div>
+
+              <div class="admin-dash-charts admin-dash-charts--two">
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Join funnel</h4>
+                  <p class="subtle admin-dash-chart-hint">Join page visits → subscribe clicks → successes.</p>
+                  <div id="adminAnalyticsChartFunnel" class="admin-dash-chart-mount"></div>
+                </div>
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Subscribe CTA placement</h4>
+                  <p class="subtle admin-dash-chart-hint">Breakdown of subscribe_click by label.</p>
+                  <div id="adminAnalyticsChartCtaDonut" class="admin-dash-chart-mount"></div>
+                </div>
+              </div>
+
+              <div class="admin-dash-charts admin-dash-charts--two">
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Top pages</h4>
+                  <div id="adminAnalyticsChartTopPages" class="admin-dash-chart-mount"></div>
+                </div>
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Top referrers</h4>
+                  <p class="subtle admin-dash-chart-hint">External hosts only; same-site referrers omitted.</p>
+                  <div id="adminAnalyticsChartReferrers" class="admin-dash-chart-mount"></div>
+                </div>
+              </div>
+
+              <h4 class="section-title admin-dash-subscribers-heading">Subscribers</h4>
               <div id="adminSubscribersSummary" class="admin-grid-note">Loading subscribers...</div>
               <div id="adminSubscribersTable" class="admin-grid-note">Loading subscribers list...</div>
             </section>
@@ -319,7 +381,8 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/admin.js?v=20260508joinredesign1"></script>
+    <script defer src="/vendor/apexcharts.min.js"></script>
+    <script defer src="/admin.js?v=20260508analyticsdash1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

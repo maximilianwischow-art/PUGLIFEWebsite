@@ -3338,6 +3338,136 @@ button.raid-cal-run.raid-cal-run--column:hover {
   margin-top: 8px;
 }
 
+.admin-dash-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-top: 12px;
+}
+
+.admin-dash-range {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-dash-range-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: rgba(13, 10, 20, 0.55);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 6px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.admin-dash-range-btn:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(24, 18, 34, 0.72);
+}
+
+.admin-dash-range-btn--active {
+  color: var(--text);
+  border-color: rgba(154, 172, 255, 0.45);
+  background: rgba(90, 104, 190, 0.22);
+}
+
+.admin-dash-custom-label {
+  margin: 0;
+}
+
+.admin-dash-days-input {
+  max-width: 110px;
+}
+
+.admin-dash-error {
+  margin-top: 10px;
+}
+
+.admin-dash-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.admin-dash-kpi {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(13, 10, 20, 0.55);
+  padding: 10px 12px;
+}
+
+.admin-dash-kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.admin-dash-kpi-value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.admin-dash-kpi-delta {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.admin-dash-charts {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.admin-dash-charts--two {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+
+.admin-dash-chart {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(10, 8, 16, 0.52);
+  padding: 12px 12px 10px;
+}
+
+.admin-dash-chart-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.admin-dash-chart-hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
+
+.admin-dash-chart-mount {
+  min-height: 200px;
+}
+
+.admin-dash-subscribers-heading {
+  margin-top: 22px;
+}
+
 .admin-table-wrap {
   overflow-x: auto;
   margin-top: 8px;

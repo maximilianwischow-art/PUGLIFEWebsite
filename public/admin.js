@@ -2006,170 +2006,330 @@ function fmtWhen(ms) {
   return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString();
 }
 
-function renderAnalyticsSummary(payload) {
-  const host = document.getElementById("adminAnalyticsSummary");
-  if (!host) return;
-  if (!payload || payload.ok === false) {
-    host.innerHTML = `<p class="subtle">Analytics unavailable.</p>`;
-    return;
-  }
-  host.innerHTML = `
-    <div class="admin-table-wrap">
-      <table class="admin-table">
-        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
-        <tbody>
-          <tr><td>Range</td><td>${esc(String(payload.days || 0))} days</td></tr>
-          <tr><td>Total events</td><td>${Number(payload.totalEvents || 0)}</td></tr>
-          <tr><td>Pageviews</td><td>${Number(payload.pageviews || 0)}</td></tr>
-          <tr><td>Unique visitors (sessions)</td><td>${Number(payload.uniqueSessions || 0)}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderAnalyticsTopPages(payload) {
-  const host = document.getElementById("adminAnalyticsTopPages");
-  if (!host) return;
-  const rows = Array.isArray(payload?.topPages) ? payload.topPages : [];
-  if (!rows.length) {
-    host.innerHTML = `<p class="subtle">No pageview data yet.</p>`;
-    return;
-  }
-  host.innerHTML = `
-    <h4 class="subtle" style="margin: 0 0 6px"><strong>Top subpages</strong></h4>
-    <div class="admin-table-wrap">
-      <table class="admin-table">
-        <thead><tr><th>Path</th><th>Views</th></tr></thead>
-        <tbody>
-          ${rows.map((r) => `<tr><td><code>${esc(String(r.path || "/"))}</code></td><td>${Number(r.views || 0)}</td></tr>`).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-function renderAnalyticsDaily(payload) {
-  const host = document.getElementById("adminAnalyticsDaily");
-  if (!host) return;
-  const rows = Array.isArray(payload?.daily) ? payload.daily : [];
-  if (!rows.length) {
-    host.innerHTML = `<p class="subtle">No daily trend data yet.</p>`;
-    return;
-  }
-  host.innerHTML = `
-    <h4 class="subtle" style="margin: 0 0 6px"><strong>Daily pageviews</strong></h4>
-    <div class="admin-table-wrap">
-      <table class="admin-table">
-        <thead><tr><th>Date</th><th>Views</th></tr></thead>
-        <tbody>
-          ${rows.map((r) => `<tr><td>${esc(String(r.day || "-"))}</td><td>${Number(r.views || 0)}</td></tr>`).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
 const CONVERSION_TILE_LABELS = {
-  discord_click: "Discord clicks",
-  subscribe_click: "Subscribe clicks",
-  subscribe_success: "Subscribe successes",
-  event_signup_click: "Event sign-up clicks",
+  discord_click: "Discord",
+  subscribe_click: "Subscribe click",
+  subscribe_success: "Subscribe success",
+  event_signup_click: "Event signup",
 };
 const CONVERSION_CATEGORIES = Object.keys(CONVERSION_TILE_LABELS);
 
-function renderAnalyticsConversions(payload) {
-  const host = document.getElementById("adminAnalyticsConversions");
-  if (!host) return;
-  const counts = (payload && payload.conversions) || {};
-  const totalSubscribeClicks = Number(counts.subscribe_click || 0);
-  const totalSubscribeSuccess = Number(counts.subscribe_success || 0);
-  const conversionRate =
-    totalSubscribeClicks > 0
-      ? `${((totalSubscribeSuccess / totalSubscribeClicks) * 100).toFixed(1)}%`
-      : "—";
-  host.innerHTML = `
-    <div class="admin-table-wrap">
-      <table class="admin-table">
-        <thead><tr><th>Metric</th><th>Count</th></tr></thead>
-        <tbody>
-          ${CONVERSION_CATEGORIES.map(
-            (cat) => `<tr><td>${esc(CONVERSION_TILE_LABELS[cat])}</td><td>${Number(counts[cat] || 0)}</td></tr>`
-          ).join("")}
-          <tr><td>Subscribe success rate</td><td>${esc(conversionRate)}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  `;
+const ANALYTICS_CHART_MOUNT_IDS = [
+  "adminAnalyticsChartDaily",
+  "adminAnalyticsChartConversionsDaily",
+  "adminAnalyticsChartFunnel",
+  "adminAnalyticsChartCtaDonut",
+  "adminAnalyticsChartTopPages",
+  "adminAnalyticsChartReferrers",
+];
+
+const analyticsChartInstances = new Map();
+
+function adminAnalyticsCssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
-function renderAnalyticsConversionsByLabel(payload) {
-  const host = document.getElementById("adminAnalyticsConversionsByLabel");
-  if (!host) return;
-  const byLabel = (payload && payload.conversionsByLabel) || {};
-  const blocks = CONVERSION_CATEGORIES.map((cat) => {
-    const rows = Array.isArray(byLabel[cat]) ? byLabel[cat] : [];
-    if (!rows.length) {
-      return `
-        <div class="admin-conv-by-label-block">
-          <h5 class="subtle" style="margin: 6px 0"><strong>${esc(CONVERSION_TILE_LABELS[cat])}</strong> · by source</h5>
-          <p class="subtle">No data yet.</p>
-        </div>
-      `;
+function destroyAnalyticsChartByMountId(mountId) {
+  const chart = analyticsChartInstances.get(mountId);
+  if (!chart) return;
+  try {
+    chart.destroy();
+  } catch {
+    /* ignore */
+  }
+  analyticsChartInstances.delete(mountId);
+}
+
+function mountAnalyticsChart(mountId, options) {
+  const Apex = typeof ApexCharts !== "undefined" ? ApexCharts : globalThis.ApexCharts;
+  const el = document.getElementById(mountId);
+  if (!el || !Apex) return null;
+  destroyAnalyticsChartByMountId(mountId);
+  el.innerHTML = "";
+  const chart = new Apex(el, options);
+  chart.render();
+  analyticsChartInstances.set(mountId, chart);
+  return chart;
+}
+
+function adminAnalyticsClearMountMessage(mountId, html) {
+  destroyAnalyticsChartByMountId(mountId);
+  const el = document.getElementById(mountId);
+  if (el) el.innerHTML = html;
+}
+
+function analyticsFmtPctDelta(cur, prev) {
+  const p = Number(prev);
+  const c = Number(cur);
+  if (!Number.isFinite(c)) return "—";
+  if (!Number.isFinite(p) || p === 0) return c > 0 ? "new" : "—";
+  const ch = ((c - p) / p) * 100;
+  const sign = ch >= 0 ? "+" : "";
+  return `${sign}${ch.toFixed(1)}% vs prior`;
+}
+
+function analyticsFmtSubscribeRate(ppJoin, succ) {
+  const j = Number(ppJoin);
+  const s = Number(succ);
+  if (!Number.isFinite(j) || j <= 0) return "—";
+  if (!Number.isFinite(s)) return "—";
+  return `${((s / j) * 100).toFixed(1)}%`;
+}
+
+function analyticsSubscribeRateDeltaPP(curJoin, curSucc, prevJoin, prevSucc) {
+  const cj = Number(curJoin);
+  const cs = Number(curSucc);
+  const pj = Number(prevJoin);
+  const ps = Number(prevSucc);
+  if (!Number.isFinite(cj) || cj <= 0) return "—";
+  if (!Number.isFinite(pj) || pj <= 0) return "—";
+  const cur = (cs / cj) * 100;
+  const prv = (ps / pj) * 100;
+  const d = cur - prv;
+  const sign = d >= 0 ? "+" : "";
+  return `${sign}${d.toFixed(1)} pp vs prior`;
+}
+
+function renderAnalyticsDashboard(payload) {
+  const errEl = document.getElementById("adminAnalyticsDashError");
+  const kpisRoot = document.getElementById("adminAnalyticsKpis");
+
+  const setKpi = (key, valueHtml, deltaHtml) => {
+    const card = kpisRoot?.querySelector(`[data-admin-dash-kpi="${key}"]`);
+    if (!card) return;
+    const v = card.querySelector(".admin-dash-kpi-value");
+    const d = card.querySelector(".admin-dash-kpi-delta");
+    if (v) v.innerHTML = valueHtml;
+    if (d) d.textContent = deltaHtml;
+  };
+
+  if (!payload || payload.ok === false) {
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.innerHTML = `<p class="subtle">Analytics unavailable.</p>`;
     }
-    return `
-      <div class="admin-conv-by-label-block">
-        <h5 class="subtle" style="margin: 6px 0"><strong>${esc(CONVERSION_TILE_LABELS[cat])}</strong> · by source</h5>
-        <div class="admin-table-wrap">
-          <table class="admin-table">
-            <thead><tr><th>Source</th><th>Count</th></tr></thead>
-            <tbody>
-              ${rows
-                .map(
-                  (r) =>
-                    `<tr><td><code>${esc(String(r.label || "(none)"))}</code></td><td>${Number(r.count || 0)}</td></tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }).join("");
-  host.innerHTML = blocks;
-}
-
-function renderAnalyticsConversionsDaily(payload) {
-  const host = document.getElementById("adminAnalyticsConversionsDaily");
-  if (!host) return;
-  const rows = Array.isArray(payload?.conversionsDaily) ? payload.conversionsDaily : [];
-  if (!rows.length) {
-    host.innerHTML = `<p class="subtle">No conversion events recorded yet.</p>`;
+    for (const id of ANALYTICS_CHART_MOUNT_IDS) {
+      destroyAnalyticsChartByMountId(id);
+      const node = document.getElementById(id);
+      if (node) node.innerHTML = "";
+    }
+    setKpi("pageviews", "—", "vs prior period");
+    setKpi("sessions", "—", "vs prior period");
+    setKpi("avgday", "—", "vs prior period");
+    setKpi("subscriberate", "—", "success ÷ join visits · vs prior");
     return;
   }
-  host.innerHTML = `
-    <h5 class="subtle" style="margin: 6px 0"><strong>Conversions per day</strong></h5>
-    <div class="admin-table-wrap">
-      <table class="admin-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            ${CONVERSION_CATEGORIES.map((cat) => `<th>${esc(CONVERSION_TILE_LABELS[cat])}</th>`).join("")}
-          </tr>
-        </thead>
-        <tbody>
-          ${rows
-            .map(
-              (r) => `<tr>
-                <td>${esc(String(r.day || "-"))}</td>
-                ${CONVERSION_CATEGORIES.map((cat) => `<td>${Number(r[cat] || 0)}</td>`).join("")}
-              </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
+
+  if (errEl) {
+    errEl.hidden = true;
+    errEl.innerHTML = "";
+  }
+
+  const days = Math.max(1, Math.min(365, Number(payload.days) || 30));
+  const pv = Number(payload.pageviews || 0);
+  const us = Number(payload.uniqueSessions || 0);
+  const prev = payload.previous || {};
+  const prevPv = Number(prev.pageviews || 0);
+  const prevUs = Number(prev.uniqueSessions || 0);
+  const avg = pv / days;
+  const prevAvg = prevPv / days;
+
+  const jf = payload.joinFunnel || {};
+  const joinPv = Number(jf.joinPageviews || 0);
+  const subSucc = Number(jf.subscribeSuccess || 0);
+  const prevJoin = Number(prev.joinPageviews || 0);
+  const prevSubSucc = Number(prev.conversions?.subscribe_success || 0);
+
+  setKpi("pageviews", esc(String(pv)), analyticsFmtPctDelta(pv, prevPv));
+  setKpi("sessions", esc(String(us)), analyticsFmtPctDelta(us, prevUs));
+  setKpi("avgday", esc(avg.toFixed(1)), analyticsFmtPctDelta(avg, prevAvg));
+  setKpi(
+    "subscriberate",
+    esc(analyticsFmtSubscribeRate(joinPv, subSucc)),
+    analyticsSubscribeRateDeltaPP(joinPv, subSucc, prevJoin, prevSubSucc)
+  );
+
+  const fore = adminAnalyticsCssVar("--text", "#eceaf3");
+  const muted = adminAnalyticsCssVar("--text-muted", "#b9afc8");
+  const gridColor = adminAnalyticsCssVar("--border", "rgba(255,255,255,0.08)");
+
+  const chartFont = 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif';
+  const baseChart = {
+    chart: {
+      fontFamily: chartFont,
+      foreColor: muted,
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      animations: { enabled: true },
+    },
+    theme: { mode: "dark" },
+    grid: { borderColor: gridColor, strokeDashArray: 4 },
+    legend: { fontFamily: chartFont, labels: { colors: fore } },
+    dataLabels: { enabled: false },
+  };
+
+  const daily = Array.isArray(payload.daily) ? payload.daily : [];
+  const dayLabels = daily.map((r) => String(r.day || ""));
+  const rotateLabels = dayLabels.length > 14;
+
+  mountAnalyticsChart("adminAnalyticsChartDaily", {
+    ...baseChart,
+    chart: { ...baseChart.chart, type: "line", height: 280 },
+    colors: ["#9aacff", "#6fd9a8"],
+    stroke: { curve: "smooth", width: [2, 2] },
+    series: [
+      { name: "Pageviews", data: daily.map((r) => Number(r.views || 0)) },
+      { name: "Unique sessions", data: daily.map((r) => Number(r.uniqueSessions || 0)) },
+    ],
+    xaxis: {
+      categories: dayLabels,
+      labels: {
+        rotate: rotateLabels ? -45 : 0,
+        rotateAlways: rotateLabels,
+        hideOverlappingLabels: true,
+      },
+    },
+    yaxis: { labels: { style: { colors: muted } } },
+    tooltip: { theme: "dark", shared: true, intersect: false },
+  });
+
+  const convDaily = Array.isArray(payload.conversionsDaily) ? payload.conversionsDaily : [];
+  mountAnalyticsChart("adminAnalyticsChartConversionsDaily", {
+    ...baseChart,
+    chart: { ...baseChart.chart, type: "bar", stacked: true, height: 280 },
+    plotOptions: { bar: { columnWidth: "52%", borderRadius: 2 } },
+    colors: ["#8b7bc8", "#d96fb8", "#5eb87a", "#e2b060"],
+    series: CONVERSION_CATEGORIES.map((cat) => ({
+      name: CONVERSION_TILE_LABELS[cat],
+      data: convDaily.map((r) => Number(r[cat] || 0)),
+    })),
+    xaxis: {
+      categories: convDaily.map((r) => String(r.day || "")),
+      labels: {
+        rotate: rotateLabels ? -45 : 0,
+        rotateAlways: rotateLabels,
+        hideOverlappingLabels: true,
+      },
+    },
+    yaxis: { labels: { style: { colors: muted } } },
+    tooltip: { theme: "dark", shared: true, intersect: false },
+  });
+
+  const funnelVisits = Number(jf.joinPageviews || 0);
+  const funnelClicks = Number(jf.subscribeClicks || 0);
+  const funnelOk = Number(jf.subscribeSuccess || 0);
+  mountAnalyticsChart("adminAnalyticsChartFunnel", {
+    ...baseChart,
+    chart: { ...baseChart.chart, type: "bar", height: 260 },
+    plotOptions: { bar: { borderRadius: 4, columnWidth: "42%", distributed: true } },
+    colors: ["#7eb8ff", "#c497ff", "#56d4a5"],
+    series: [{ name: "Count", data: [funnelVisits, funnelClicks, funnelOk] }],
+    xaxis: {
+      categories: ["Join visits", "Subscribe clicks", "Successes"],
+      labels: { style: { colors: muted } },
+    },
+    yaxis: { labels: { style: { colors: muted } } },
+    tooltip: { theme: "dark" },
+  });
+
+  const ctaRows = Array.isArray(payload.conversionsByLabel?.subscribe_click)
+    ? payload.conversionsByLabel.subscribe_click
+    : [];
+  if (!ctaRows.length) {
+    adminAnalyticsClearMountMessage(
+      "adminAnalyticsChartCtaDonut",
+      `<p class="subtle">No subscribe_click labels in this range.</p>`
+    );
+  } else {
+    mountAnalyticsChart("adminAnalyticsChartCtaDonut", {
+      ...baseChart,
+      chart: { ...baseChart.chart, type: "donut", height: 280 },
+      labels: ctaRows.map((r) => String(r.label || "(none)")),
+      series: ctaRows.map((r) => Number(r.count || 0)),
+      legend: { ...baseChart.legend, position: "bottom" },
+      plotOptions: {
+        pie: {
+          donut: {
+            labels: {
+              show: true,
+              name: { color: fore },
+              value: { color: fore },
+              total: {
+                show: true,
+                label: "Clicks",
+                color: muted,
+                formatter: () =>
+                  String(ctaRows.reduce((acc, r) => acc + Number(r.count || 0), 0)),
+              },
+            },
+          },
+        },
+      },
+      tooltip: { theme: "dark" },
+    });
+  }
+
+  const topPages = Array.isArray(payload.topPages) ? payload.topPages.slice(0, 12) : [];
+  if (!topPages.length) {
+    adminAnalyticsClearMountMessage("adminAnalyticsChartTopPages", `<p class="subtle">No pageview data yet.</p>`);
+  } else {
+    const paths = topPages.map((r) => {
+      const p = String(r.path || "/");
+      return p.length > 48 ? `${p.slice(0, 22)}…${p.slice(-20)}` : p;
+    });
+    const views = topPages.map((r) => Number(r.views || 0));
+    mountAnalyticsChart("adminAnalyticsChartTopPages", {
+      ...baseChart,
+      chart: { ...baseChart.chart, type: "bar", height: Math.max(220, topPages.length * 28) },
+      plotOptions: { bar: { horizontal: true, borderRadius: 3, barHeight: "72%" } },
+      colors: ["#9aacff"],
+      series: [{ name: "Views", data: views }],
+      xaxis: {
+        categories: paths,
+        labels: { style: { colors: muted } },
+      },
+      yaxis: { labels: { style: { colors: muted } } },
+      tooltip: { theme: "dark" },
+    });
+  }
+
+  const refs = Array.isArray(payload.topReferrers) ? payload.topReferrers.slice(0, 12) : [];
+  if (!refs.length) {
+    adminAnalyticsClearMountMessage(
+      "adminAnalyticsChartReferrers",
+      `<p class="subtle">No external referrers in this range.</p>`
+    );
+  } else {
+    mountAnalyticsChart("adminAnalyticsChartReferrers", {
+      ...baseChart,
+      chart: { ...baseChart.chart, type: "bar", height: Math.max(220, refs.length * 28) },
+      plotOptions: { bar: { horizontal: true, borderRadius: 3, barHeight: "72%" } },
+      colors: ["#e2b060"],
+      series: [{ name: "Pageviews", data: refs.map((r) => Number(r.count || 0)) }],
+      xaxis: {
+        categories: refs.map((r) => String(r.host || "")),
+        labels: { style: { colors: muted } },
+      },
+      yaxis: { labels: { style: { colors: muted } } },
+      tooltip: { theme: "dark" },
+    });
+  }
+}
+
+function updateAnalyticsRangeButtons() {
+  const input = document.getElementById("adminAnalyticsDays");
+  const days = Math.max(1, Math.min(365, Number(input?.value || 30) || 30));
+  const panel = document.getElementById("admin-panel-analytics");
+  if (!panel) return;
+  panel.querySelectorAll("[data-admin-analytics-range]").forEach((btn) => {
+    const v = Number(btn.getAttribute("data-admin-analytics-range"));
+    btn.classList.toggle("admin-dash-range-btn--active", Number.isFinite(v) && v === days);
+  });
 }
 
 function renderSubscribers(payload) {
@@ -2264,13 +2424,9 @@ async function loadAnalyticsPanel() {
     getJson(`/api/admin/analytics/summary?days=${days}`),
     getJson("/api/admin/subscribers"),
   ]);
-  renderAnalyticsSummary(analyticsPayload);
-  renderAnalyticsTopPages(analyticsPayload);
-  renderAnalyticsDaily(analyticsPayload);
-  renderAnalyticsConversions(analyticsPayload);
-  renderAnalyticsConversionsByLabel(analyticsPayload);
-  renderAnalyticsConversionsDaily(analyticsPayload);
+  renderAnalyticsDashboard(analyticsPayload);
   renderSubscribers(subscribersPayload);
+  updateAnalyticsRangeButtons();
 }
 
 async function loadHofNotesPanel() {
@@ -2326,9 +2482,7 @@ async function loadAdminData() {
   try {
     await loadAnalyticsPanel();
   } catch (error) {
-    renderAnalyticsSummary({ ok: false });
-    renderAnalyticsTopPages({ ok: false });
-    renderAnalyticsDaily({ ok: false });
+    renderAnalyticsDashboard({ ok: false });
     renderSubscribers({ ok: false });
     status(`Analytics load failed: ${error?.message || "Unknown error"}`);
   }
@@ -3236,6 +3390,18 @@ document.getElementById("adminAnalyticsReloadBtn")?.addEventListener("click", as
   } catch (error) {
     status(error?.message || "Analytics reload failed");
   }
+});
+
+document.getElementById("admin-panel-analytics")?.addEventListener("click", (event) => {
+  const btn = event.target.closest("[data-admin-analytics-range]");
+  if (!btn) return;
+  const raw = btn.getAttribute("data-admin-analytics-range");
+  const nextDays = Math.max(1, Math.min(365, Number(raw) || 30));
+  const input = document.getElementById("adminAnalyticsDays");
+  if (input) input.value = String(nextDays);
+  loadAnalyticsPanel().catch((error) => {
+    status(error?.message || "Analytics load failed");
+  });
 });
 
 document.getElementById("adminHofNotesReloadBtn")?.addEventListener("click", async () => {

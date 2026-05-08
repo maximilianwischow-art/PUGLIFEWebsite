@@ -1202,6 +1202,8 @@ async function ensureAnalyticsStore() {
             title: String(row?.title || "").slice(0, 160),
             referrer: String(row?.referrer || "").slice(0, 220),
             sessionId: String(row?.sessionId || "").slice(0, 120),
+            category: String(row?.category || "").slice(0, 60),
+            label: String(row?.label || "").slice(0, 120),
           }))
           .filter((row) => row.at > 0 && row.path),
       };
@@ -1227,26 +1229,76 @@ async function appendAnalyticsEvent(event) {
   await analyticsWriteChain;
 }
 
+function analyticsReferrerSelfHosts() {
+  const hosts = new Set();
+  const candidates = [publicBaseUrl, process.env.PUBLIC_SITE_URL?.trim() || ""];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    try {
+      const host = new URL(raw).hostname.toLowerCase();
+      if (host) hosts.add(host);
+    } catch {
+      /* ignore malformed env URLs */
+    }
+  }
+  return hosts;
+}
+
 function analyticsSummary({ days = 30 } = {}) {
+  const TRACKED_CATEGORIES = ["discord_click", "subscribe_click", "subscribe_success", "event_signup_click"];
   const safeDays = Math.max(1, Math.min(365, Math.floor(Number(days) || 30)));
-  const since = Date.now() - safeDays * 24 * 60 * 60 * 1000;
-  const rows = (analyticsStoreState.events || []).filter((row) => Number(row?.at || 0) >= since);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const spanMs = safeDays * dayMs;
+  const now = Date.now();
+  const since = now - spanMs;
+  const prevSince = since - spanMs;
+  const selfHosts = analyticsReferrerSelfHosts();
+
+  const allEvents = analyticsStoreState.events || [];
+  const rows = allEvents.filter((row) => Number(row?.at || 0) >= since);
+  const prevRows = allEvents.filter((row) => {
+    const t = Number(row?.at || 0);
+    return t >= prevSince && t < since;
+  });
+
   const pageviews = rows.filter((row) => row.type === "pageview");
   const conversionEvents = rows.filter((row) => row.type === "event" && row.category);
 
   const byPath = new Map();
   const byDay = new Map();
+  const sessionsByDay = new Map();
   const uniqueSessions = new Set();
+  let joinPageviews = 0;
+  const referrerHostCounts = new Map();
+
   for (const row of pageviews) {
     const pathKey = String(row.path || "/");
+    if (pathKey === "/join.html" || pathKey.startsWith("/join")) joinPageviews += 1;
+
     byPath.set(pathKey, (byPath.get(pathKey) || 0) + 1);
     if (row.sessionId) uniqueSessions.add(String(row.sessionId));
     const d = new Date(Number(row.at || 0));
     const day = Number.isNaN(d.getTime()) ? "unknown" : d.toISOString().slice(0, 10);
     byDay.set(day, (byDay.get(day) || 0) + 1);
+
+    if (day !== "unknown") {
+      if (!sessionsByDay.has(day)) sessionsByDay.set(day, new Set());
+      if (row.sessionId) sessionsByDay.get(day).add(String(row.sessionId));
+    }
+
+    const refRaw = String(row.referrer || "").trim();
+    if (refRaw) {
+      try {
+        const host = new URL(refRaw).hostname.toLowerCase();
+        if (host && !selfHosts.has(host)) {
+          referrerHostCounts.set(host, (referrerHostCounts.get(host) || 0) + 1);
+        }
+      } catch {
+        /* skip invalid referrer URLs */
+      }
+    }
   }
 
-  const TRACKED_CATEGORIES = ["discord_click", "subscribe_click", "subscribe_success", "event_signup_click"];
   const conversionTotals = Object.fromEntries(TRACKED_CATEGORIES.map((c) => [c, 0]));
   const conversionByLabel = Object.fromEntries(TRACKED_CATEGORIES.map((c) => [c, new Map()]));
   const conversionByDay = new Map();
@@ -1263,17 +1315,73 @@ function analyticsSummary({ days = 30 } = {}) {
     conversionByDay.get(day)[cat] += 1;
   }
 
+  const emptyConversionRow = () => Object.fromEntries(TRACKED_CATEGORIES.map((c) => [c, 0]));
+
+  function aggregatePrevious(slice) {
+    let pv = 0;
+    let joinPv = 0;
+    const sess = new Set();
+    const conv = emptyConversionRow();
+    for (const row of slice) {
+      if (row.type === "pageview") {
+        pv += 1;
+        const p = String(row.path || "/");
+        if (p === "/join.html" || p.startsWith("/join")) joinPv += 1;
+        if (row.sessionId) sess.add(String(row.sessionId));
+      }
+      if (row.type === "event" && row.category && Object.prototype.hasOwnProperty.call(conv, row.category)) {
+        conv[row.category] += 1;
+      }
+    }
+    return {
+      pageviews: pv,
+      uniqueSessions: sess.size,
+      conversions: conv,
+      joinPageviews: joinPv,
+    };
+  }
+
+  const previous = aggregatePrevious(prevRows);
+
+  const subscribeClicks = conversionTotals.subscribe_click;
+  const subscribeSuccess = conversionTotals.subscribe_success;
+  const joinFunnel = {
+    joinPageviews,
+    subscribeClicks,
+    subscribeSuccess,
+    clickThroughRate: joinPageviews > 0 ? (subscribeClicks / joinPageviews) * 100 : null,
+    successRate: subscribeClicks > 0 ? (subscribeSuccess / subscribeClicks) * 100 : null,
+  };
+
+  const topReferrers = [...referrerHostCounts.entries()]
+    .map(([host, count]) => ({ host, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  const daily = [];
+  const conversionsDaily = [];
+  for (let i = 0; i < safeDays; i++) {
+    const day = new Date(since + i * dayMs).toISOString().slice(0, 10);
+    daily.push({
+      day,
+      views: byDay.get(day) || 0,
+      uniqueSessions: sessionsByDay.has(day) ? sessionsByDay.get(day).size : 0,
+    });
+    const rowCounts = conversionByDay.get(day);
+    conversionsDaily.push({
+      day,
+      ...TRACKED_CATEGORIES.reduce((acc, c) => {
+        acc[c] = rowCounts ? Number(rowCounts[c] || 0) : 0;
+        return acc;
+      }, {}),
+    });
+  }
+
   const topPages = [...byPath.entries()]
     .map(([path, views]) => ({ path, views }))
     .sort((a, b) => b.views - a.views)
     .slice(0, 25);
-  const daily = [...byDay.entries()]
-    .map(([day, views]) => ({ day, views }))
-    .sort((a, b) => a.day.localeCompare(b.day));
-  const conversionsDaily = [...conversionByDay.entries()]
-    .map(([day, counts]) => ({ day, ...counts }))
-    .sort((a, b) => a.day.localeCompare(b.day));
-  const conversionsByLabel = Object.fromEntries(
+  const conversionsByLabelOut = Object.fromEntries(
     TRACKED_CATEGORIES.map((c) => [
       c,
       [...conversionByLabel[c].entries()]
@@ -1292,8 +1400,11 @@ function analyticsSummary({ days = 30 } = {}) {
     topPages,
     daily,
     conversions: conversionTotals,
-    conversionsByLabel,
+    conversionsByLabel: conversionsByLabelOut,
     conversionsDaily,
+    joinFunnel,
+    topReferrers,
+    previous,
   };
 }
 
