@@ -25,11 +25,18 @@ let leaderboardLootItemMetaMap = new Map();
  * Session-only cache (tab lifetime) to avoid re-fetching the leaderboard
  * bundle on every navigation.
  *
+ * Bumped to v5 (2026-05-08) to invalidate stale session rows that were
+ * captured from snapshot responses that could lag behind Attendance sync.
+ * Fresh fetches now force a snapshot refresh.
+ *
+ * Previous v4 entries can carry truncated/stale roster state and must be
+ * discarded.
+ *
  * Bumped to v4 (2026-05-08) for the SQLite bundle cutover: rows now come
  * from `/api/leaderboard` (single SQLite-only call). Previous v3 entries
  * still carry the legacy multi-fetch shape and must be discarded.
  */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v4";
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v5";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
 /** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
 const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;
@@ -681,7 +688,10 @@ function wireSortHeaders() {
  */
 async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
   const skipCache = !!opts.skipCache;
-  const bundleUrl = `/api/leaderboard?guildId=${encodeURIComponent(gid)}`;
+  const forceFresh = skipCache;
+  const bundleUrl = forceFresh
+    ? `/api/leaderboard?guildId=${encodeURIComponent(gid)}&snapshot_refresh=1&nocache=1`
+    : `/api/leaderboard?guildId=${encodeURIComponent(gid)}`;
   const bundle = await lbApiGetJson(bundleUrl, { credentials: "include", skipCache });
   const players = Array.isArray(bundle?.players) ? bundle.players : [];
   const consideredRaids = Number(bundle?.consideredRaids || 0);
@@ -874,7 +884,7 @@ async function loadGuildLeaderboard() {
     /* Cold path: render the bundle as soon as it lands; do not block on
        `prep`. The bundle already contains every field the table needs
        for first paint, including pre-resolved achievement flags. */
-    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid);
+    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, { skipCache: true });
     leaderboardRows = rows;
     leaderboardLootItemMetaMap = lootMap;
 
