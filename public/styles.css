@@ -3804,6 +3804,8 @@ button.raid-cal-run.raid-cal-run--column:hover {
 /* Admin page: one tool visible; section submenu in intro card */
 .admin-page-main .admin-panel {
   display: none;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .admin-page-main .admin-panel.is-admin-panel-active {
@@ -3966,6 +3968,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 .admin-content {
   min-width: 0;
+  overflow-x: auto;
 }
 
 .admin-submenu--inline {
