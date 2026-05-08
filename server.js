@@ -10751,7 +10751,22 @@ function raidCalendarDayKey(startTimeMs) {
   }
 }
 
-function choosePreferredRaidCalendarEntry(a, b, priorityList) {
+function choosePreferredRaidCalendarEntry(a, b, priorityList, selectedRankByCode = null) {
+  const rankOf = (entry) => {
+    if (!selectedRankByCode) return Number.POSITIVE_INFINITY;
+    const code = String(entry?.reportCode || "").trim();
+    const hit = selectedRankByCode.get(code);
+    return Number.isFinite(Number(hit)) ? Number(hit) : Number.POSITIVE_INFINITY;
+  };
+  const fullA = !!a?.isFullClear;
+  const fullB = !!b?.isFullClear;
+  if (fullA !== fullB) return fullA ? a : b;
+  const killedA = Number(a?.bossesKilled || 0);
+  const killedB = Number(b?.bossesKilled || 0);
+  if (killedA !== killedB) return killedB > killedA ? b : a;
+  const ra = rankOf(a);
+  const rb = rankOf(b);
+  if (ra !== rb) return ra < rb ? a : b;
   const score = (entry) => {
     const n = normalizeText(entry.uploadedBy || "");
     const idx = priorityList.findIndex((p) => p === n);
@@ -10763,7 +10778,9 @@ function choosePreferredRaidCalendarEntry(a, b, priorityList) {
   return (Number(b.startTime) || 0) >= (Number(a.startTime) || 0) ? b : a;
 }
 
-function dedupeRaidCalendarEntries(entries) {
+function dedupeRaidCalendarEntries(entries, options = {}) {
+  const selectedRankByCode =
+    options?.selectedRankByCode instanceof Map ? options.selectedRankByCode : null;
   const priorityList = wclPriorityUploaders();
   const groups = new Map();
   for (const entry of entries) {
@@ -10775,12 +10792,12 @@ function dedupeRaidCalendarEntries(entries) {
       groups.set(k, entry);
       continue;
     }
-    groups.set(k, choosePreferredRaidCalendarEntry(prev, entry, priorityList));
+    groups.set(k, choosePreferredRaidCalendarEntry(prev, entry, priorityList, selectedRankByCode));
   }
   return [...groups.values()].sort((a, b) => b.startTime - a.startTime);
 }
 
-function buildRecentRaidCalendarEntries(reports) {
+function buildRecentRaidCalendarEntries(reports, options = {}) {
   const entries = [];
   for (const report of reports) {
     const zoneBuckets = new Map();
@@ -10827,7 +10844,7 @@ function buildRecentRaidCalendarEntries(reports) {
     }
   }
 
-  const dedupedEntries = dedupeRaidCalendarEntries(entries);
+  const dedupedEntries = dedupeRaidCalendarEntries(entries, options);
 
   for (const entry of dedupedEntries) {
     entry.calendarDay = raidCalendarDayKey(entry.startTime);
@@ -12037,10 +12054,13 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
       )
     );
     const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
+    const selectedRankByCode = new Map(selectedReportCodes.map((code, idx) => [code, idx]));
     const scopedReports = selectedSet
       ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
       : reports;
-    const entries = buildRecentRaidCalendarEntries(scopedReports);
+    const entries = buildRecentRaidCalendarEntries(scopedReports, {
+      selectedRankByCode,
+    });
     return res.json({
       guildId,
       limit,
