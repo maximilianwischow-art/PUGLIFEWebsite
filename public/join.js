@@ -6,6 +6,65 @@ function escJoin(v) {
     .replace(/"/g, "&quot;");
 }
 
+const JOIN_PAGE_NEXT = "/join.html#join-future-events";
+const JOIN_DISCORD_INVITE = "https://discord.gg/TBnt5f8DFc";
+const JOIN_EVENT_IMG_VER = "20260504j";
+const JOIN_GUILD_ID = 817080;
+const JOIN_DISCORD_CLICKED_KEY = "plb_join_discord_clicked_v1";
+
+/* ─────────────────────────── Conversion tracking ─────────────────────────── */
+
+/** Best-effort beacon to /api/analytics/track. Never blocks UI; never throws. */
+function trackJoinEvent(category, label) {
+  try {
+    const body = JSON.stringify({
+      type: "event",
+      category: String(category || "").slice(0, 60),
+      label: String(label || "").slice(0, 120),
+      path: "/join.html",
+      title: String(document.title || "").slice(0, 160),
+      sessionId: (() => {
+        try {
+          return window.sessionStorage.getItem("plb_analytics_session_v1") || "";
+        } catch {
+          return "";
+        }
+      })(),
+    });
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon("/api/analytics/track", blob)) return;
+    }
+    fetch("/api/analytics/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+      credentials: "same-origin",
+    }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+function markDiscordClickedThisSession() {
+  try {
+    window.sessionStorage.setItem(JOIN_DISCORD_CLICKED_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+function hasClickedDiscordThisSession() {
+  try {
+    return window.sessionStorage.getItem(JOIN_DISCORD_CLICKED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/* ─────────────────────────── Current needs ─────────────────────────── */
+
 function joinPriorityClass(priority) {
   const key = String(priority || "").toLowerCase();
   if (key === "high") return "join-priority--high";
@@ -63,6 +122,8 @@ async function loadJoinNeeds() {
 
 loadJoinNeeds();
 
+/* ─────────────────────────── Subscribe button ─────────────────────────── */
+
 async function apiJson(url, init) {
   const res = await fetch(url, { credentials: "include", ...(init || {}) });
   const payload = await res.json().catch(() => ({}));
@@ -70,30 +131,44 @@ async function apiJson(url, init) {
   return payload;
 }
 
-function setSubscribeButtonState(btn, state) {
-  if (!btn) return;
-  const textEl = btn.querySelector(".join-subscribe-btn-text");
-  const statusEl = btn.querySelector(".join-subscribe-btn-status");
-  const setLabel = (text, symbol) => {
-    if (textEl) textEl.textContent = text;
-    else btn.textContent = text;
-    if (statusEl) statusEl.textContent = symbol;
-  };
+function joinSubscribeButtons() {
+  return Array.from(document.querySelectorAll("[data-track-subscribe]"));
+}
+
+function setSubscribeButtonState(state) {
+  const buttons = joinSubscribeButtons();
+  if (!buttons.length) return;
+  const microcopy = document.getElementById("joinSubscribeMicrocopy");
+  let labelText = "Get raid DM alerts";
+  let symbol = "○";
+  let title = "Subscribe to Discord DM for SignUps";
+  let microText = "DM the moment new raids open. No spam, unsubscribe anytime.";
   if (state === "loading") {
-    setLabel("Loading...", "⋯");
-    btn.setAttribute("aria-busy", "true");
-    return;
+    labelText = "Connecting Discord…";
+    symbol = "⋯";
+    microText = "Authenticating with Discord — this only takes a second.";
+  } else if (state === "subscribed") {
+    labelText = "DM alerts on";
+    symbol = "✓";
+    title = "You are subscribed to Discord DM for SignUps";
+    microText = "You're on the list. We'll DM you the moment new raids open.";
   }
-  btn.removeAttribute("aria-busy");
-  if (state === "subscribed") {
-    setLabel("Subscribed", "✓");
-    btn.setAttribute("title", "You are subscribed to Discord DM for SignUps");
-    btn.setAttribute("aria-label", "You are subscribed to Discord DM for SignUps");
-    return;
+  for (const btn of buttons) {
+    const textEl = btn.querySelector(".join-subscribe-btn-text");
+    const statusEl = btn.querySelector(".join-subscribe-btn-status");
+    if (textEl) textEl.textContent = labelText;
+    else btn.textContent = labelText;
+    if (statusEl) statusEl.textContent = symbol;
+    btn.setAttribute("title", title);
+    btn.setAttribute("aria-label", title);
+    if (state === "loading") {
+      btn.setAttribute("aria-busy", "true");
+    } else {
+      btn.removeAttribute("aria-busy");
+    }
+    btn.classList.toggle("join-discord-btn--subscribed", state === "subscribed");
   }
-  setLabel("Subscribe", "○");
-  btn.setAttribute("title", "Subscribe to Discord DM for SignUps");
-  btn.setAttribute("aria-label", "Subscribe to Discord DM for SignUps");
+  if (microcopy) microcopy.textContent = microText;
 }
 
 function showJoinSubscribePopup() {
@@ -113,9 +188,11 @@ function hideJoinSubscribePopup() {
 }
 
 async function handleJoinDmSubscribeClick(event) {
-  event.preventDefault();
   const btn = event.currentTarget;
-  setSubscribeButtonState(btn, "loading");
+  const placement = String(btn?.getAttribute("data-track-subscribe") || "hero");
+  trackJoinEvent("subscribe_click", placement);
+  event.preventDefault();
+  setSubscribeButtonState("loading");
   try {
     const me = await apiJson("/api/auth/me");
     if (!me?.authenticated) {
@@ -128,17 +205,20 @@ async function handleJoinDmSubscribeClick(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscribed: true }),
     });
-    setSubscribeButtonState(btn, out?.subscribed ? "subscribed" : "idle");
-    if (out?.subscribed) showJoinSubscribePopup();
+    setSubscribeButtonState(out?.subscribed ? "subscribed" : "idle");
+    if (out?.subscribed) {
+      trackJoinEvent("subscribe_success", placement);
+      showJoinSubscribePopup();
+    }
   } catch (_error) {
-    setSubscribeButtonState(btn, "idle");
+    setSubscribeButtonState("idle");
   }
 }
 
 async function initJoinDmSubscriptionButton() {
-  const btn = document.getElementById("joinDmSubscribeBtn");
-  if (!btn) return;
-  btn.addEventListener("click", handleJoinDmSubscribeClick);
+  const buttons = joinSubscribeButtons();
+  if (!buttons.length) return;
+  for (const btn of buttons) btn.addEventListener("click", handleJoinDmSubscribeClick);
   const params = new URLSearchParams(window.location.search);
   const shouldAutoSubscribe = params.get("subscribe_dm") === "1";
   const shouldAutoUnsubscribe = params.get("unsubscribe_dm") === "1";
@@ -150,7 +230,7 @@ async function initJoinDmSubscriptionButton() {
         window.location.href = `/auth/discord/login?next=${next}`;
         return;
       }
-      setSubscribeButtonState(btn, "idle");
+      setSubscribeButtonState("idle");
       return;
     }
     if (shouldAutoUnsubscribe) {
@@ -159,14 +239,14 @@ async function initJoinDmSubscriptionButton() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscribed: false }),
       });
-      setSubscribeButtonState(btn, "idle");
+      setSubscribeButtonState("idle");
       const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
       window.history.replaceState(null, "", cleanUrl);
       return;
     }
     const state = await apiJson("/api/join/dm-subscription");
     if (state?.subscribed) {
-      setSubscribeButtonState(btn, "subscribed");
+      setSubscribeButtonState("subscribed");
       return;
     }
     if (shouldAutoSubscribe) {
@@ -175,15 +255,16 @@ async function initJoinDmSubscriptionButton() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscribed: true }),
       });
-      setSubscribeButtonState(btn, "subscribed");
+      setSubscribeButtonState("subscribed");
+      trackJoinEvent("subscribe_success", "redirect-return");
       showJoinSubscribePopup();
       const cleanUrl = `${window.location.pathname}${window.location.hash || ""}`;
       window.history.replaceState(null, "", cleanUrl);
       return;
     }
-    setSubscribeButtonState(btn, "idle");
+    setSubscribeButtonState("idle");
   } catch {
-    setSubscribeButtonState(btn, "idle");
+    setSubscribeButtonState("idle");
   }
 }
 
@@ -200,11 +281,134 @@ function initJoinSubscribePopup() {
 
 initJoinSubscribePopup();
 
-/** ─── Future Events (compact tiles on Join Us) ─────────────────────────── */
+/* ─────────────────────────── Discord click tracking + smart mobile CTA ─────────────────────────── */
 
-const JOIN_PAGE_NEXT = "/join.html#join-future-events";
-const JOIN_DISCORD_INVITE = "https://discord.gg/TBnt5f8DFc";
-const JOIN_EVENT_IMG_VER = "20260504j";
+function setMobileCtaMode(mode) {
+  const cta = document.getElementById("joinMobileCta");
+  if (!cta) return;
+  if (mode === "subscribe") {
+    cta.textContent = "Get raid DM alerts";
+    cta.setAttribute("href", "/auth/discord/login?next=%2Fjoin.html%3Fsubscribe_dm%3D1");
+    cta.removeAttribute("target");
+    cta.removeAttribute("rel");
+    cta.setAttribute("data-mode", "subscribe");
+    cta.setAttribute("data-track-subscribe", "mobile-sticky");
+    cta.removeAttribute("data-track-discord");
+  } else {
+    cta.textContent = "Join our Discord";
+    cta.setAttribute("href", JOIN_DISCORD_INVITE);
+    cta.setAttribute("target", "_blank");
+    cta.setAttribute("rel", "noopener noreferrer");
+    cta.setAttribute("data-mode", "discord");
+    cta.setAttribute("data-track-discord", "mobile-sticky");
+    cta.removeAttribute("data-track-subscribe");
+  }
+}
+
+function refreshMobileCtaForSession() {
+  const cta = document.getElementById("joinMobileCta");
+  if (!cta) return;
+  const mode = hasClickedDiscordThisSession() ? "subscribe" : "discord";
+  if (cta.getAttribute("data-mode") !== mode) setMobileCtaMode(mode);
+}
+
+function initDiscordClickTracking() {
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const discordEl = target.closest("[data-track-discord]");
+    if (discordEl) {
+      const placement = String(discordEl.getAttribute("data-track-discord") || "");
+      trackJoinEvent("discord_click", placement);
+      const href = String(discordEl.getAttribute("href") || "");
+      if (/discord\.gg\//i.test(href)) {
+        markDiscordClickedThisSession();
+        // After a small delay, swap mobile CTA so the next mobile interaction biases toward subscribe.
+        setTimeout(refreshMobileCtaForSession, 200);
+      }
+      return;
+    }
+    // Subscribe-button clicks are handled by handleJoinDmSubscribeClick via direct listeners; the
+    // mobile sticky CTA, when in subscribe mode, also has data-track-subscribe but its anchor will
+    // navigate to /auth/discord/login — we still record the intent here for clarity.
+    const subscribeEl = target.closest("[data-track-subscribe]");
+    if (subscribeEl && subscribeEl.id !== "joinDmSubscribeBtn" && subscribeEl.id !== "joinFooterSubscribeBtn") {
+      const placement = String(subscribeEl.getAttribute("data-track-subscribe") || "");
+      trackJoinEvent("subscribe_click", placement);
+    }
+  });
+  refreshMobileCtaForSession();
+}
+
+initDiscordClickTracking();
+
+/* ─────────────────────────── Trust strip (boss-times + Event Management meta) ─────────────────────────── */
+
+async function loadJoinTrustStrip() {
+  const strip = document.getElementById("joinTrustStrip");
+  if (!strip) return;
+  const raidersEl = strip.querySelector('[data-trust="raiders"]');
+  const curatedEl = strip.querySelector('[data-trust="curated-count"]');
+  const raidersStat = strip.querySelector('[data-trust-stat="raiders"]');
+  const curatedStat = strip.querySelector('[data-trust-stat="curated"]');
+
+  try {
+    const [bossRes, emRes] = await Promise.all([
+      fetch(`/api/wcl/guild/${JOIN_GUILD_ID}/boss-times?limit=40&scope=public&live=1`, {
+        credentials: "same-origin",
+      }),
+      fetch("/api/join/event-management-selection", { credentials: "same-origin" }),
+    ]);
+
+    const payload = await bossRes.json().catch(() => ({}));
+    const emPayload = await emRes.json().catch(() => ({}));
+
+    if (!bossRes.ok) {
+      if (raidersEl) raidersEl.textContent = "—";
+    } else {
+      const source = String(payload?.rosterInfo?.source || "");
+      if (raidersStat) {
+        if (source === "event_management") {
+          raidersStat.title =
+            "Warcraft Logs: unique names on the ranked roster from reports selected in Admin → Event Management.";
+        } else if (source === "join_public_fallback") {
+          raidersStat.title =
+            "Warcraft Logs: unique ranked roster names from recent guild logs (no reports selected in Event Management yet — choose them in Admin).";
+        } else {
+          raidersStat.title =
+            "Warcraft Logs: no Event Management selections and no roster sample loaded yet.";
+        }
+      }
+      const raiders = Number(payload?.rosterInfo?.rankedRosterCount || 0);
+      if (raidersEl) raidersEl.textContent = raiders > 0 ? String(raiders) : "—";
+    }
+
+    const emCount =
+      emRes.ok && emPayload?.ok === true && Number.isFinite(Number(emPayload.count))
+        ? Number(emPayload.count)
+        : Array.isArray(payload?.rosterInfo?.selectedReportCodes)
+          ? payload.rosterInfo.selectedReportCodes.filter(Boolean).length
+          : 0;
+    const countSource = String(emPayload?.countSource || "");
+    if (curatedStat) {
+      if (countSource === "sqlite_raid_appearances_fallback") {
+        curatedStat.title =
+          "Distinct Warcraft Logs raid reports with roster data stored on this server. Your gargul-loot-history.json has no Event Management list yet — click Save Event Selection in Admin after ticking raids so this matches your curated IDs exactly.";
+      } else {
+        curatedStat.title =
+          "Number of Warcraft Logs report codes selected in Admin → Event Management (same scope as leaderboard / attendance).";
+      }
+    }
+    if (curatedEl) curatedEl.textContent = String(emCount);
+  } catch {
+    if (raidersEl) raidersEl.textContent = "—";
+    if (curatedEl) curatedEl.textContent = "—";
+  }
+}
+
+loadJoinTrustStrip();
+
+/* ─────────────────────────── Future Events (compact tiles + hero capsule) ─────────────────────────── */
 
 function joinVersionedRaidImage(path) {
   const p = String(path || "").trim();
@@ -245,6 +449,23 @@ function joinRosterCapacityForEvent(event) {
   const raids = joinDetectEventRaids(event);
   if (!raids.some((raid) => raid.rosterCap === 25)) return 10;
   return 25;
+}
+
+function joinNonP2RaidHelperEvents(events) {
+  return (events || []).filter((event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids");
+}
+
+/** Next hero capsule: earliest upcoming **25-player** raid (Gruul/Mag/SSC/TK/…); avoids Kara/ZA 10-player rows when a Thu raid exists. */
+function joinPickHeroNextRaidEvent(events) {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = joinNonP2RaidHelperEvents(events)
+    .filter((e) => Number(e?.startTime || 0) > 0)
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  if (!rows.length) return null;
+  const upcoming = rows.filter((e) => Number(e.startTime) >= now);
+  const timeline = upcoming.length ? upcoming : rows;
+  const preferred25 = timeline.filter((e) => joinRosterCapacityForEvent(e) === 25);
+  return preferred25.length ? preferred25[0] : timeline[0];
 }
 
 function joinRoleCompositionTargets(capacity) {
@@ -323,7 +544,7 @@ function joinSignupActionsHtml(event, isAuthenticated) {
   const eventId = String(event?.id || "");
   if (!isAuthenticated) {
     const next = encodeURIComponent(JOIN_PAGE_NEXT);
-    return `<a href="/auth/discord/login?next=${next}" class="join-event-signup-btn">Login to sign up</a>`;
+    return `<a href="/auth/discord/login?next=${next}" class="join-event-signup-btn" data-track-subscribe="event-tile-login">Login to sign up</a>`;
   }
   const currentStatus = String(event?.currentUserSignup?.status || "").toLowerCase();
   const isSignedUp = currentStatus === "primary";
@@ -331,7 +552,7 @@ function joinSignupActionsHtml(event, isAuthenticated) {
       <button type="button" class="join-event-signup-btn" data-join-event-signup-action="${
         isSignedUp ? "signoff" : "signup"
       }" data-join-event-id="${escJoin(eventId)}">${isSignedUp ? "Sign off" : "Sign up"}</button>
-      <a href="${escJoin(JOIN_DISCORD_INVITE)}" target="_blank" rel="noreferrer" class="join-event-signup-btn join-event-signup-btn--ghost">Discord</a>
+      <a href="${escJoin(JOIN_DISCORD_INVITE)}" target="_blank" rel="noreferrer" class="join-event-signup-btn join-event-signup-btn--ghost" data-track-discord="event-tile">Discord</a>
     `;
 }
 
@@ -353,19 +574,13 @@ async function joinSubmitSignupAction(eventId, action) {
   }
 }
 
-function joinTruncateDesc(text, maxLen) {
-  const t = String(text || "").replace(/\s+/g, " ").trim();
-  if (t.length <= maxLen) return t;
-  return `${t.slice(0, Math.max(0, maxLen - 1))}…`;
-}
-
 let joinEventsCountdownTimer = null;
 
 function joinUpdateEventCountdowns() {
   const now = Math.floor(Date.now() / 1000);
   document.querySelectorAll("[data-join-event-start]").forEach((el) => {
     const start = Number(el.getAttribute("data-join-event-start"));
-    const inner = el.querySelector(".join-event-countdown-value");
+    const inner = el.querySelector(".join-event-countdown-value, .join-next-raid-countdown-value");
     if (!inner || !start) return;
     inner.textContent = joinFormatCountdownRemaining(start - now);
   });
@@ -390,8 +605,35 @@ async function joinLoadAuthMeForEvents() {
   }
 }
 
+function joinRenderHeroNextRaidCapsule(events) {
+  const capsule = document.getElementById("joinNextRaidCapsule");
+  if (!capsule) return;
+  const next = joinPickHeroNextRaidEvent(events);
+  if (!next || !Number(next.startTime)) {
+    capsule.hidden = true;
+    capsule.removeAttribute("data-join-event-start");
+    return;
+  }
+  const titleEl = capsule.querySelector("[data-next-raid-title]");
+  const whenEl = capsule.querySelector("[data-next-raid-when]");
+  const countdownEl = capsule.querySelector("[data-next-raid-countdown]");
+  const startSec = Number(next.startTime);
+  const { date, time } = joinFmtEventDateTime(startSec);
+  if (titleEl) titleEl.textContent = String(next.title || "Next raid");
+  if (whenEl) whenEl.textContent = `${date} · ${time}`;
+  capsule.setAttribute("data-join-event-start", String(startSec));
+  if (countdownEl) {
+    countdownEl.innerHTML = `
+      <span class="join-next-raid-countdown-label">Starts in</span>
+      <span class="join-next-raid-countdown-value">${escJoin(joinFormatCountdownRemaining(startSec - Math.floor(Date.now() / 1000)))}</span>
+    `;
+  }
+  capsule.hidden = false;
+}
+
 function joinRenderFutureEvents(events, isAuthenticated) {
   const host = document.getElementById("joinEventsList");
+  joinRenderHeroNextRaidCapsule(events);
   if (!host) return;
 
   const rows = (events || []).filter((event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids");
@@ -475,6 +717,7 @@ function initJoinFutureEventsSection() {
     const eventId = String(btn.getAttribute("data-join-event-id") || "").trim();
     const action = String(btn.getAttribute("data-join-event-signup-action") || "").trim();
     if (!eventId || !action) return;
+    if (action === "signup") trackJoinEvent("event_signup_click", eventId);
     btn.disabled = true;
     const originalText = btn.textContent;
     btn.textContent = action === "signoff" ? "Signing off…" : "Signing up…";

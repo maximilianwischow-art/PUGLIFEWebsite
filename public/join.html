@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="PUG Life Balance — recruit for TBC Classic 25-player raids on EU Thunderstrike. Schedule, needs, and how to join."
+      content="PUG Life Balance — recruit for TBC Classic 25-player raids on EU Thunderstrike. Join the Discord or get a DM the moment new raids open."
     />
     <title>PUG LIFE BALANCE · Join Us</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -16,7 +16,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260507leadersize2" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260508clearedids1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-vivid">
@@ -49,70 +49,91 @@
       </header>
 
       <main class="container join-page">
-        <div id="welcomePopupBackdrop" class="welcome-popup-backdrop" hidden></div>
-        <section
-          id="welcomePopupCard"
-          class="welcome-popup-card"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="welcomePopupTitle"
-          hidden
-        >
-          <img class="welcome-popup-img" src="/welcome-popup-hyjal.png" alt="" width="1600" height="900" decoding="async" loading="lazy" fetchpriority="low" />
-          <button type="button" id="welcomePopupClose" class="welcome-popup-close" aria-label="Close welcome popup">×</button>
-          <div class="welcome-popup-copy">
-            <h2 id="welcomePopupTitle" class="welcome-popup-title">Welcome to our lair, Friend!</h2>
-            <button type="button" id="welcomePopupEnter" class="welcome-popup-enter">Enter</button>
-          </div>
-        </section>
-
         <section>
           <section class="card surface-highlight join-hero">
-            <p class="join-hero-kicker">Recruitment Open</p>
+            <p class="join-hero-kicker">Recruitment Open · TBC Classic · EU Thunderstrike</p>
             <h2 class="join-hero-title">Answer the Call</h2>
             <div class="join-hero-body">
               <p class="join-hero-lede">
-                We are looking for skilled, reliable raiders for <strong>TBC Classic</strong> on <strong>EU Thunderstrike</strong>.
-                Progression-focused runs with calm comms and a drama-light roster.
+                Skilled, reliable raiders for <strong>TBC Classic</strong> on <strong>EU Thunderstrike</strong>.
+                Calm comms, drama-light roster, Thursday progression nights.
               </p>
               <div class="join-hero-actions">
-                <div class="join-value-chips" role="list" aria-label="Recruitment highlights">
-                  <span class="join-value-chip" role="listitem">Raid day: Thursday</span>
-                  <span class="join-value-chip" role="listitem">Server: Thunderstrike EU</span>
-                </div>
-                <div class="join-cta-row">
-                  <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join our Discord</a>
+                <div class="join-cta-stack">
+                  <a
+                    class="join-discord-btn join-discord-btn--primary"
+                    id="joinHeroDiscordBtn"
+                    href="https://discord.gg/TBnt5f8DFc"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-track-discord="hero"
+                  >
+                    <span class="join-discord-btn-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="18" height="18" focusable="false" aria-hidden="true">
+                        <path
+                          fill="currentColor"
+                          d="M20.317 4.369A19.79 19.79 0 0 0 16.558 3a14.6 14.6 0 0 0-.69 1.398 18.32 18.32 0 0 0-5.736 0A14.4 14.4 0 0 0 9.44 3a19.74 19.74 0 0 0-3.76 1.369C2.27 9.43 1.353 14.36 1.81 19.21a19.94 19.94 0 0 0 5.99 2.99 14.4 14.4 0 0 0 1.28-2.04 12.81 12.81 0 0 1-2.02-.96c.17-.12.34-.25.5-.38a14.27 14.27 0 0 0 12.88 0c.16.13.33.26.5.38a12.6 12.6 0 0 1-2.02.96c.36.71.79 1.39 1.28 2.04a19.93 19.93 0 0 0 5.99-2.99c.55-5.55-.93-10.43-3.97-14.84ZM8.69 16.32c-1.18 0-2.16-1.08-2.16-2.4 0-1.32.95-2.4 2.16-2.4 1.21 0 2.18 1.08 2.16 2.4 0 1.32-.95 2.4-2.16 2.4Zm6.62 0c-1.18 0-2.16-1.08-2.16-2.4 0-1.32.95-2.4 2.16-2.4 1.21 0 2.18 1.08 2.16 2.4 0 1.32-.95 2.4-2.16 2.4Z"
+                        />
+                      </svg>
+                    </span>
+                    <span class="join-discord-btn-text">Join our Discord</span>
+                  </a>
                   <a
                     class="join-discord-btn join-discord-btn--soft"
                     id="joinDmSubscribeBtn"
-                    href="/auth/discord/login?next=%2Fjoin.html"
+                    href="/auth/discord/login?next=%2Fjoin.html%3Fsubscribe_dm%3D1"
+                    data-track-subscribe="hero"
                     title="Subscribe to Discord DM for SignUps"
                     aria-label="Subscribe to Discord DM for SignUps"
-                    ><span class="join-subscribe-btn-text">Subscribe</span><span class="join-subscribe-btn-status" aria-hidden="true">○</span></a
                   >
+                    <span class="join-subscribe-btn-text">Get raid DM alerts</span>
+                    <span class="join-subscribe-btn-status" aria-hidden="true">○</span>
+                  </a>
+                  <p class="join-cta-microcopy" id="joinSubscribeMicrocopy">
+                    DM the moment new raids open. No spam, unsubscribe anytime.
+                  </p>
                 </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="card surface-elevated">
-            <h3 class="section-title">At a glance</h3>
-            <div class="join-stats" role="list">
-              <div class="join-stat" role="listitem">
-                <span class="join-stat-label">Realm</span>
-                <span class="join-stat-value">Thunderstrike EU</span>
-              </div>
-              <div class="join-stat" role="listitem">
-                <span class="join-stat-label">Content</span>
-                <span class="join-stat-value">TBC Classic</span>
-              </div>
-              <div class="join-stat" role="listitem">
-                <span class="join-stat-label">Raid style</span>
-                <span class="join-stat-value">OG PUG</span>
-              </div>
-              <div class="join-stat" role="listitem">
-                <span class="join-stat-label">Atmosphere</span>
-                <span class="join-stat-value join-stat-value--good">Chill · Focused</span>
+                <div class="join-trust-strip" id="joinTrustStrip" role="list" aria-label="Guild stats">
+                  <span
+                    class="join-trust-stat"
+                    role="listitem"
+                    data-trust-stat="raiders"
+                    title="Warcraft Logs: unique names on the ranked roster. Uses reports ticked in Admin → Event Management; if none are selected yet, recent guild logs are used instead."
+                  >
+                    <span class="join-trust-value" data-trust="raiders">—</span>
+                    <span class="join-trust-label">active raiders</span>
+                  </span>
+                  <span class="join-trust-stat" role="listitem">
+                    <span class="join-trust-value">Thursday</span>
+                    <span class="join-trust-label">weekly progression</span>
+                  </span>
+                  <span
+                    class="join-trust-stat"
+                    role="listitem"
+                    data-trust-stat="curated"
+                    title="Number of Warcraft Logs report codes currently selected in Admin → Event Management. Those feeds power leaderboard, attendance, and this site’s raid stats."
+                  >
+                    <span class="join-trust-value" data-trust="curated-count">—</span>
+                    <span class="join-trust-label join-trust-label--nowrap">cleared IDs</span>
+                  </span>
+                </div>
+                <a
+                  class="join-next-raid-capsule"
+                  id="joinNextRaidCapsule"
+                  href="#join-future-events"
+                  data-track-discord="next-raid-capsule"
+                  hidden
+                >
+                  <span class="join-next-raid-icon" aria-hidden="true">⚔</span>
+                  <span class="join-next-raid-text">
+                    <span class="join-next-raid-title" data-next-raid-title>Next raid</span>
+                    <span class="join-next-raid-when" data-next-raid-when>—</span>
+                  </span>
+                  <span class="join-next-raid-countdown" data-next-raid-countdown>
+                    <span class="join-next-raid-countdown-label">Starts in</span>
+                    <span class="join-next-raid-countdown-value">—</span>
+                  </span>
+                </a>
               </div>
             </div>
           </section>
@@ -123,15 +144,12 @@
             <div class="join-needs" id="joinNeedsList" aria-live="polite">Loading current needs…</div>
           </section>
 
-          <section class="card join-prose">
-            <h3 class="section-title">Who we are</h3>
-            <p>
-              We are a collection of World of Warcraft veterans who have been exploring Azeroth since Day 1. As our lives have
-              evolved over the years, so has our approach to the game. We built this community to keep the spirit of raiding alive
-              without the unnecessary drama. At PUG Life Balance, we prioritize a healthy harmony between high-level gaming and
-              real-world responsibilities. Welcome home!
-            </p>
-            <blockquote class="join-blockquote">"Time is money, friend!"<br />— Gazlowe / Every Goblin ever</blockquote>
+          <section class="card join-future-events" id="join-future-events">
+            <h3 class="section-title">Future Events</h3>
+            <p class="subtle join-future-events-lede">Upcoming Raid Helper runs — roster gaps update as people sign.</p>
+            <div class="join-events-grid" id="joinEventsList" aria-live="polite">
+              <p class="subtle join-events-loading">Loading upcoming events…</p>
+            </div>
           </section>
 
           <section class="card">
@@ -152,15 +170,24 @@
             </div>
           </section>
 
-          <div class="join-ornament" aria-hidden="true">· · · ✦ · · ·</div>
-
-          <section class="card join-future-events" id="join-future-events">
-            <h3 class="section-title">Future Events</h3>
-            <p class="subtle join-future-events-lede">Upcoming Raid Helper runs — roster gaps update as people sign.</p>
-            <div class="join-events-grid" id="joinEventsList" aria-live="polite">
-              <p class="subtle join-events-loading">Loading upcoming events…</p>
+          <section class="card join-prose">
+            <h3 class="section-title">Who we are</h3>
+            <div class="join-prose-meta" role="list" aria-label="Guild facts">
+              <span class="join-prose-chip" role="listitem">Realm · Thunderstrike EU</span>
+              <span class="join-prose-chip" role="listitem">Content · TBC Classic</span>
+              <span class="join-prose-chip" role="listitem">Style · OG PUG</span>
+              <span class="join-prose-chip join-prose-chip--good" role="listitem">Atmosphere · Chill &amp; Focused</span>
             </div>
+            <p>
+              We are a collection of World of Warcraft veterans who have been exploring Azeroth since Day 1. As our lives have
+              evolved over the years, so has our approach to the game. We built this community to keep the spirit of raiding alive
+              without the unnecessary drama. At PUG Life Balance, we prioritize a healthy harmony between high-level gaming and
+              real-world responsibilities. Welcome home!
+            </p>
+            <blockquote class="join-blockquote">"Time is money, friend!"<br />— Gazlowe / Every Goblin ever</blockquote>
           </section>
+
+          <div class="join-ornament" aria-hidden="true">· · · ✦ · · ·</div>
 
           <section class="card surface-elevated">
             <h3 class="section-title">What we expect</h3>
@@ -195,13 +222,49 @@
               </li>
             </ul>
             <div class="join-cta-row join-cta-row--footer">
-              <a class="join-discord-btn" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join our Discord</a>
+              <a
+                class="join-discord-btn join-discord-btn--primary"
+                id="joinFooterDiscordBtn"
+                href="https://discord.gg/TBnt5f8DFc"
+                target="_blank"
+                rel="noopener noreferrer"
+                data-track-discord="expect-footer"
+              >
+                <span class="join-discord-btn-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18" focusable="false" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M20.317 4.369A19.79 19.79 0 0 0 16.558 3a14.6 14.6 0 0 0-.69 1.398 18.32 18.32 0 0 0-5.736 0A14.4 14.4 0 0 0 9.44 3a19.74 19.74 0 0 0-3.76 1.369C2.27 9.43 1.353 14.36 1.81 19.21a19.94 19.94 0 0 0 5.99 2.99 14.4 14.4 0 0 0 1.28-2.04 12.81 12.81 0 0 1-2.02-.96c.17-.12.34-.25.5-.38a14.27 14.27 0 0 0 12.88 0c.16.13.33.26.5.38a12.6 12.6 0 0 1-2.02.96c.36.71.79 1.39 1.28 2.04a19.93 19.93 0 0 0 5.99-2.99c.55-5.55-.93-10.43-3.97-14.84ZM8.69 16.32c-1.18 0-2.16-1.08-2.16-2.4 0-1.32.95-2.4 2.16-2.4 1.21 0 2.18 1.08 2.16 2.4 0 1.32-.95 2.4-2.16 2.4Zm6.62 0c-1.18 0-2.16-1.08-2.16-2.4 0-1.32.95-2.4 2.16-2.4 1.21 0 2.18 1.08 2.16 2.4 0 1.32-.95 2.4-2.16 2.4Z"
+                    />
+                  </svg>
+                </span>
+                <span class="join-discord-btn-text">Join our Discord</span>
+              </a>
+              <a
+                class="join-discord-btn join-discord-btn--soft"
+                id="joinFooterSubscribeBtn"
+                href="/auth/discord/login?next=%2Fjoin.html%3Fsubscribe_dm%3D1"
+                data-track-subscribe="expect-footer"
+                title="Subscribe to Discord DM for SignUps"
+                aria-label="Subscribe to Discord DM for SignUps"
+              >
+                <span class="join-subscribe-btn-text">Get raid DM alerts</span>
+                <span class="join-subscribe-btn-status" aria-hidden="true">○</span>
+              </a>
             </div>
           </section>
         </section>
       </main>
 
-      <a class="join-mobile-cta" href="https://discord.gg/TBnt5f8DFc" target="_blank" rel="noopener noreferrer">Join our Discord</a>
+      <a
+        class="join-mobile-cta"
+        id="joinMobileCta"
+        href="https://discord.gg/TBnt5f8DFc"
+        target="_blank"
+        rel="noopener noreferrer"
+        data-track-discord="mobile-sticky"
+        data-mode="discord"
+      >Join our Discord</a>
 
       <div id="joinSubscribePopupBackdrop" class="join-subscribe-popup-backdrop" hidden></div>
       <section
@@ -229,13 +292,13 @@
         <p class="footer-sub">TBC Classic · EU — Thunderstrike</p>
         <p class="footer-legal-links">
           <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a> ·
-          <a href="/join.html?unsubscribe_dm=1">Unsuscribe</a>
+          <a href="/join.html?unsubscribe_dm=1">Unsubscribe</a>
         </p>
       </footer>
     </div>
 
     <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/join.js?v=20260506joinv1"></script>
+    <script defer src="/join.js?v=20260508clearedids-clean1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

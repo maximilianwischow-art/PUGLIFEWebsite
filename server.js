@@ -1232,6 +1232,7 @@ function analyticsSummary({ days = 30 } = {}) {
   const since = Date.now() - safeDays * 24 * 60 * 60 * 1000;
   const rows = (analyticsStoreState.events || []).filter((row) => Number(row?.at || 0) >= since);
   const pageviews = rows.filter((row) => row.type === "pageview");
+  const conversionEvents = rows.filter((row) => row.type === "event" && row.category);
 
   const byPath = new Map();
   const byDay = new Map();
@@ -1245,6 +1246,23 @@ function analyticsSummary({ days = 30 } = {}) {
     byDay.set(day, (byDay.get(day) || 0) + 1);
   }
 
+  const TRACKED_CATEGORIES = ["discord_click", "subscribe_click", "subscribe_success", "event_signup_click"];
+  const conversionTotals = Object.fromEntries(TRACKED_CATEGORIES.map((c) => [c, 0]));
+  const conversionByLabel = Object.fromEntries(TRACKED_CATEGORIES.map((c) => [c, new Map()]));
+  const conversionByDay = new Map();
+  for (const row of conversionEvents) {
+    const cat = String(row.category || "");
+    if (!Object.prototype.hasOwnProperty.call(conversionTotals, cat)) continue;
+    conversionTotals[cat] += 1;
+    const lbl = String(row.label || "(none)");
+    const labelMap = conversionByLabel[cat];
+    labelMap.set(lbl, (labelMap.get(lbl) || 0) + 1);
+    const d = new Date(Number(row.at || 0));
+    const day = Number.isNaN(d.getTime()) ? "unknown" : d.toISOString().slice(0, 10);
+    if (!conversionByDay.has(day)) conversionByDay.set(day, Object.fromEntries(TRACKED_CATEGORIES.map((c) => [c, 0])));
+    conversionByDay.get(day)[cat] += 1;
+  }
+
   const topPages = [...byPath.entries()]
     .map(([path, views]) => ({ path, views }))
     .sort((a, b) => b.views - a.views)
@@ -1252,6 +1270,18 @@ function analyticsSummary({ days = 30 } = {}) {
   const daily = [...byDay.entries()]
     .map(([day, views]) => ({ day, views }))
     .sort((a, b) => a.day.localeCompare(b.day));
+  const conversionsDaily = [...conversionByDay.entries()]
+    .map(([day, counts]) => ({ day, ...counts }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+  const conversionsByLabel = Object.fromEntries(
+    TRACKED_CATEGORIES.map((c) => [
+      c,
+      [...conversionByLabel[c].entries()]
+        .map(([labelName, count]) => ({ label: labelName, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10),
+    ])
+  );
 
   return {
     ok: true,
@@ -1261,6 +1291,9 @@ function analyticsSummary({ days = 30 } = {}) {
     uniqueSessions: uniqueSessions.size,
     topPages,
     daily,
+    conversions: conversionTotals,
+    conversionsByLabel,
+    conversionsDaily,
   };
 }
 
@@ -5231,11 +5264,16 @@ app.post("/api/analytics/track", async (req, res) => {
     const title = String(body.title || "").trim().slice(0, 160);
     const referrer = String(body.referrer || "").trim().slice(0, 220);
     const sessionId = String(body.sessionId || "").trim().slice(0, 120);
+    const category = String(body.category || "").trim().slice(0, 60);
+    const label = String(body.label || "").trim().slice(0, 120);
     if (!pathVal.startsWith("/")) {
       return res.status(400).json({ ok: false, error: "Invalid path" });
     }
     if (!["pageview", "event"].includes(type)) {
       return res.status(400).json({ ok: false, error: "Invalid analytics type" });
+    }
+    if (type === "event" && !category) {
+      return res.status(400).json({ ok: false, error: "Event analytics require a category" });
     }
     await appendAnalyticsEvent({
       at: Date.now(),
@@ -5244,6 +5282,8 @@ app.post("/api/analytics/track", async (req, res) => {
       title,
       referrer,
       sessionId,
+      category,
+      label,
     });
     return res.json({ ok: true });
   } catch (error) {
@@ -5399,6 +5439,38 @@ app.get("/api/join/current-needs", async (_req, res) => {
     return res.json({ ok: true, rows: joinNeedsState.rows || [] });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load current needs" });
+  }
+});
+
+/** Join trust strip: Event Management tick count (never use public WCL snapshot — always fresh from disk). */
+app.get("/api/join/event-management-selection", async (_req, res) => {
+  try {
+    await ensureGargulLootHistoryStore();
+    const codes = Array.from(
+      new Set(
+        (gargulLootState?.selectedReportCodes || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    let count = codes.length;
+    /** When `gargul-loot-history.json` predates Event Management or omits `selectedReportCodes`, disk reads as []. Fall back to materialised WCL reports so Join matches leaderboard reality. */
+    let countSource = "gargul_em_selection";
+    if (!count) {
+      try {
+        const dbCount = raidAppearancesDistinctReportCount();
+        if (Number(dbCount) > 0) {
+          count = Number(dbCount);
+          countSource = "sqlite_raid_appearances_fallback";
+        }
+      } catch {
+        /* DB offline / not opened — keep 0 */
+      }
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ ok: true, count, countSource });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Event Management selection" });
   }
 });
 
@@ -10774,34 +10846,6 @@ function choosePreferredRaidCalendarEntry(a, b, priorityList, selectedRankByCode
   };
   const sa = score(a);
   const sb = score(b);
-  // #region agent log
-  if (String(a?.raidName || b?.raidName || "") === "Gruul's Lair") {
-    const dayA = raidCalendarDayKey(a?.startTime);
-    const dayB = raidCalendarDayKey(b?.startTime);
-    if (dayA === "2026-05-07" || dayB === "2026-05-07") {
-      fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
-        body: JSON.stringify({
-          sessionId: "59406e",
-          runId: "calendar-repro-1",
-          hypothesisId: "H3",
-          location: "server.js:choosePreferredRaidCalendarEntry",
-          message: "same-day gruul dedupe decision inputs",
-          data: {
-            a: { code: a?.reportCode, day: dayA, full: !!a?.isFullClear, killed: Number(a?.bossesKilled || 0), start: Number(a?.startTime || 0) },
-            b: { code: b?.reportCode, day: dayB, full: !!b?.isFullClear, killed: Number(b?.bossesKilled || 0), start: Number(b?.startTime || 0) },
-            rankA: rankOf(a),
-            rankB: rankOf(b),
-            uploaderScoreA: sa,
-            uploaderScoreB: sb,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-  }
-  // #endregion
   if (sa !== sb) return sa < sb ? a : b;
   return (Number(b.startTime) || 0) >= (Number(a.startTime) || 0) ? b : a;
 }
@@ -11961,11 +12005,19 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
     const scopedReports = selectedSet
       ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
       : [];
+    /** Join Us trust strip only: when curation is empty, allow unscoped guild reports so localhost / fresh installs still show proof. */
+    const joinPublicScope = String(req.query.scope || "").toLowerCase() === "public";
+    const effectiveReports =
+      scopedReports.length > 0
+        ? scopedReports
+        : joinPublicScope && reports.length > 0
+          ? reports
+          : scopedReports;
 
     const raidSummary = Object.entries(TRACKED_RAIDS).map(([raidName, bosses]) => {
       const bestByBoss = new Map();
       let bestClear = null;
-      for (const report of scopedReports) {
+      for (const report of effectiveReports) {
         const raidBossKills = (report.fights || []).filter(
           (fight) =>
             resolvedTrackedRaidForFight(fight, report) === raidName &&
@@ -12039,7 +12091,7 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
             .filter(Boolean);
 
     /** Only reports that achieved the fastest tracked full clear per raid (tiles above). */
-    const reportByCode = new Map((scopedReports || []).map((r) => [r.code, r]));
+    const reportByCode = new Map((effectiveReports || []).map((r) => [r.code, r]));
     const pbClearReportCodes = [];
     const pbClearCodesSet = new Set();
     for (const raid of raidSummary) {
@@ -12060,6 +12112,15 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
       }
     }
 
+    if (!rankedNameSet.size && joinPublicScope && effectiveReports.length > 0) {
+      for (const report of effectiveReports) {
+        for (const c of report.rankedCharacters || []) {
+          const n = String(c?.name || "").trim();
+          if (n) rankedNameSet.add(n);
+        }
+      }
+    }
+
     const recentRankedRoster = [...rankedNameSet].sort((a, b) =>
       String(a).localeCompare(String(b), undefined, { sensitivity: "base" })
     );
@@ -12069,13 +12130,18 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
       limit,
       raidSummary,
       rosterInfo: {
-        source: selectedSet ? "event_management" : "event_management_empty_selection",
+        source:
+          scopedReports.length > 0
+            ? "event_management"
+            : effectiveReports.length > 0 && joinPublicScope
+              ? "join_public_fallback"
+              : "event_management_empty_selection",
         selectedReportCodes,
         requiredRaidPlayers: requiredRaidPlayersList,
         recentRankedRoster,
         rankedRosterCount: rankedNameSet.size,
         pbClearReportCodes,
-        reportsScanned: scopedReports.length,
+        reportsScanned: effectiveReports.length,
         calendarTimeZone: wclCalendarTimeZone(),
         raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
       },
@@ -12111,31 +12177,6 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
     const scopedReports = selectedSet
       ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
       : [];
-    // #region agent log
-    fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
-      body: JSON.stringify({
-        sessionId: "59406e",
-        runId: "calendar-repro-1",
-        hypothesisId: "H1",
-        location: "server.js:/api/wcl/guild/:guildId/recent-raids-calendar",
-        message: "selection and scope snapshot",
-        data: {
-          selectedReportCodes,
-          reportsCount: Array.isArray(reports) ? reports.length : 0,
-          scopedCount: Array.isArray(scopedReports) ? scopedReports.length : 0,
-          may7All: (reports || [])
-            .filter((r) => raidCalendarDayKey(reportStartTimeMs(r?.startTime)) === "2026-05-07")
-            .map((r) => ({ code: r?.code, start: reportStartTimeMs(r?.startTime), title: r?.title })),
-          may7Scoped: (scopedReports || [])
-            .filter((r) => raidCalendarDayKey(reportStartTimeMs(r?.startTime)) === "2026-05-07")
-            .map((r) => ({ code: r?.code, start: reportStartTimeMs(r?.startTime), title: r?.title })),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     const entries = buildRecentRaidCalendarEntries(scopedReports, {
       selectedRankByCode,
     });

@@ -603,34 +603,6 @@ async function loadRecentRaidsCalendar() {
       { skipCache: true }
     );
     const entries = payload.entries || [];
-    // #region agent log
-    fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
-      body: JSON.stringify({
-        sessionId: "59406e",
-        runId: "calendar-repro-1",
-        hypothesisId: "H4",
-        location: "public/app.js:loadRecentRaidsCalendar",
-        message: "calendar payload snapshot",
-        data: {
-          source: String(payload?.source || ""),
-          selectedReportCodes: Array.isArray(payload?.selectedReportCodes) ? payload.selectedReportCodes : [],
-          may7Gruul: entries
-            .filter((e) => String(e?.raidName || "") === "Gruul's Lair" && String(e?.calendarDay || "") === "2026-05-07")
-            .map((e) => ({
-              reportCode: String(e?.reportCode || ""),
-              isFullClear: !!e?.isFullClear,
-              bossesKilled: Number(e?.bossesKilled || 0),
-              bossesTotal: Number(e?.bossesTotal || 0),
-              startTime: Number(e?.startTime || 0),
-              title: String(e?.title || ""),
-            })),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     raidCalendarColumnsData = {};
     for (const name of RAID_CALENDAR_RAID_ORDER) {
       raidCalendarColumnsData[name] = [];

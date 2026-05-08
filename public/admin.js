@@ -2070,6 +2070,108 @@ function renderAnalyticsDaily(payload) {
   `;
 }
 
+const CONVERSION_TILE_LABELS = {
+  discord_click: "Discord clicks",
+  subscribe_click: "Subscribe clicks",
+  subscribe_success: "Subscribe successes",
+  event_signup_click: "Event sign-up clicks",
+};
+const CONVERSION_CATEGORIES = Object.keys(CONVERSION_TILE_LABELS);
+
+function renderAnalyticsConversions(payload) {
+  const host = document.getElementById("adminAnalyticsConversions");
+  if (!host) return;
+  const counts = (payload && payload.conversions) || {};
+  const totalSubscribeClicks = Number(counts.subscribe_click || 0);
+  const totalSubscribeSuccess = Number(counts.subscribe_success || 0);
+  const conversionRate =
+    totalSubscribeClicks > 0
+      ? `${((totalSubscribeSuccess / totalSubscribeClicks) * 100).toFixed(1)}%`
+      : "—";
+  host.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Metric</th><th>Count</th></tr></thead>
+        <tbody>
+          ${CONVERSION_CATEGORIES.map(
+            (cat) => `<tr><td>${esc(CONVERSION_TILE_LABELS[cat])}</td><td>${Number(counts[cat] || 0)}</td></tr>`
+          ).join("")}
+          <tr><td>Subscribe success rate</td><td>${esc(conversionRate)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAnalyticsConversionsByLabel(payload) {
+  const host = document.getElementById("adminAnalyticsConversionsByLabel");
+  if (!host) return;
+  const byLabel = (payload && payload.conversionsByLabel) || {};
+  const blocks = CONVERSION_CATEGORIES.map((cat) => {
+    const rows = Array.isArray(byLabel[cat]) ? byLabel[cat] : [];
+    if (!rows.length) {
+      return `
+        <div class="admin-conv-by-label-block">
+          <h5 class="subtle" style="margin: 6px 0"><strong>${esc(CONVERSION_TILE_LABELS[cat])}</strong> · by source</h5>
+          <p class="subtle">No data yet.</p>
+        </div>
+      `;
+    }
+    return `
+      <div class="admin-conv-by-label-block">
+        <h5 class="subtle" style="margin: 6px 0"><strong>${esc(CONVERSION_TILE_LABELS[cat])}</strong> · by source</h5>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Source</th><th>Count</th></tr></thead>
+            <tbody>
+              ${rows
+                .map(
+                  (r) =>
+                    `<tr><td><code>${esc(String(r.label || "(none)"))}</code></td><td>${Number(r.count || 0)}</td></tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }).join("");
+  host.innerHTML = blocks;
+}
+
+function renderAnalyticsConversionsDaily(payload) {
+  const host = document.getElementById("adminAnalyticsConversionsDaily");
+  if (!host) return;
+  const rows = Array.isArray(payload?.conversionsDaily) ? payload.conversionsDaily : [];
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle">No conversion events recorded yet.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <h5 class="subtle" style="margin: 6px 0"><strong>Conversions per day</strong></h5>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            ${CONVERSION_CATEGORIES.map((cat) => `<th>${esc(CONVERSION_TILE_LABELS[cat])}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (r) => `<tr>
+                <td>${esc(String(r.day || "-"))}</td>
+                ${CONVERSION_CATEGORIES.map((cat) => `<td>${Number(r[cat] || 0)}</td>`).join("")}
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderSubscribers(payload) {
   const summary = document.getElementById("adminSubscribersSummary");
   const table = document.getElementById("adminSubscribersTable");
@@ -2165,6 +2267,9 @@ async function loadAnalyticsPanel() {
   renderAnalyticsSummary(analyticsPayload);
   renderAnalyticsTopPages(analyticsPayload);
   renderAnalyticsDaily(analyticsPayload);
+  renderAnalyticsConversions(analyticsPayload);
+  renderAnalyticsConversionsByLabel(analyticsPayload);
+  renderAnalyticsConversionsDaily(analyticsPayload);
   renderSubscribers(subscribersPayload);
 }
 
