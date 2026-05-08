@@ -10774,6 +10774,34 @@ function choosePreferredRaidCalendarEntry(a, b, priorityList, selectedRankByCode
   };
   const sa = score(a);
   const sb = score(b);
+  // #region agent log
+  if (String(a?.raidName || b?.raidName || "") === "Gruul's Lair") {
+    const dayA = raidCalendarDayKey(a?.startTime);
+    const dayB = raidCalendarDayKey(b?.startTime);
+    if (dayA === "2026-05-07" || dayB === "2026-05-07") {
+      fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+        body: JSON.stringify({
+          sessionId: "59406e",
+          runId: "calendar-repro-1",
+          hypothesisId: "H3",
+          location: "server.js:choosePreferredRaidCalendarEntry",
+          message: "same-day gruul dedupe decision inputs",
+          data: {
+            a: { code: a?.reportCode, day: dayA, full: !!a?.isFullClear, killed: Number(a?.bossesKilled || 0), start: Number(a?.startTime || 0) },
+            b: { code: b?.reportCode, day: dayB, full: !!b?.isFullClear, killed: Number(b?.bossesKilled || 0), start: Number(b?.startTime || 0) },
+            rankA: rankOf(a),
+            rankB: rankOf(b),
+            uploaderScoreA: sa,
+            uploaderScoreB: sb,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+  }
+  // #endregion
   if (sa !== sb) return sa < sb ? a : b;
   return (Number(b.startTime) || 0) >= (Number(a.startTime) || 0) ? b : a;
 }
@@ -10844,6 +10872,28 @@ function buildRecentRaidCalendarEntries(reports, options = {}) {
     }
   }
   const dedupedEntries = dedupeRaidCalendarEntries(entries, options);
+  // #region agent log
+  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+    body: JSON.stringify({
+      sessionId: "59406e",
+      runId: "calendar-repro-1",
+      hypothesisId: "H5",
+      location: "server.js:buildRecentRaidCalendarEntries",
+      message: "pre/post dedupe May7 Gruul entries",
+      data: {
+        pre: entries
+          .filter((e) => e.raidName === "Gruul's Lair" && raidCalendarDayKey(e.startTime) === "2026-05-07")
+          .map((e) => ({ code: e.reportCode, full: !!e.isFullClear, killed: e.bossesKilled, start: e.startTime, title: e.title })),
+        post: dedupedEntries
+          .filter((e) => e.raidName === "Gruul's Lair" && raidCalendarDayKey(e.startTime) === "2026-05-07")
+          .map((e) => ({ code: e.reportCode, full: !!e.isFullClear, killed: e.bossesKilled, start: e.startTime, title: e.title })),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
 
   for (const entry of dedupedEntries) {
     entry.calendarDay = raidCalendarDayKey(entry.startTime);
@@ -11910,7 +11960,7 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
     // when the admin curated events, only those report codes are considered.
     const scopedReports = selectedSet
       ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
-      : reports;
+      : [];
 
     const raidSummary = Object.entries(TRACKED_RAIDS).map(([raidName, bosses]) => {
       const bestByBoss = new Map();
@@ -12019,7 +12069,7 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
       limit,
       raidSummary,
       rosterInfo: {
-        source: selectedSet ? "event_management" : "rolling_recent",
+        source: selectedSet ? "event_management" : "event_management_empty_selection",
         selectedReportCodes,
         requiredRaidPlayers: requiredRaidPlayersList,
         recentRankedRoster,
@@ -12060,7 +12110,32 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
     const selectedRankByCode = new Map(selectedReportCodes.map((code, idx) => [code, idx]));
     const scopedReports = selectedSet
       ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
-      : reports;
+      : [];
+    // #region agent log
+    fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
+      body: JSON.stringify({
+        sessionId: "59406e",
+        runId: "calendar-repro-1",
+        hypothesisId: "H1",
+        location: "server.js:/api/wcl/guild/:guildId/recent-raids-calendar",
+        message: "selection and scope snapshot",
+        data: {
+          selectedReportCodes,
+          reportsCount: Array.isArray(reports) ? reports.length : 0,
+          scopedCount: Array.isArray(scopedReports) ? scopedReports.length : 0,
+          may7All: (reports || [])
+            .filter((r) => raidCalendarDayKey(reportStartTimeMs(r?.startTime)) === "2026-05-07")
+            .map((r) => ({ code: r?.code, start: reportStartTimeMs(r?.startTime), title: r?.title })),
+          may7Scoped: (scopedReports || [])
+            .filter((r) => raidCalendarDayKey(reportStartTimeMs(r?.startTime)) === "2026-05-07")
+            .map((r) => ({ code: r?.code, start: reportStartTimeMs(r?.startTime), title: r?.title })),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     const entries = buildRecentRaidCalendarEntries(scopedReports, {
       selectedRankByCode,
     });
@@ -12068,7 +12143,7 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
       guildId,
       limit,
       count: entries.length,
-      source: selectedSet ? "event_management" : "rolling_recent",
+      source: selectedSet ? "event_management" : "event_management_empty_selection",
       selectedReportCodes,
       calendarTimeZone: wclCalendarTimeZone(),
       raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
