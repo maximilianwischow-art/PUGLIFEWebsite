@@ -639,6 +639,10 @@ function renderRhWclTodo(payload) {
   const missing = Array.isArray(payload?.missing?.raidHelperRowsWithoutWcl)
     ? payload.missing.raidHelperRowsWithoutWcl
     : [];
+  const unassignedWcl = Array.isArray(payload?.unassignedWclNames)
+    ? payload.unassignedWclNames.filter(Boolean)
+    : [];
+  const rejectedIcebox = Array.isArray(payload?.rejectedIcebox) ? payload.rejectedIcebox : [];
   const generatedAt = payload?.generatedAt ? new Date(payload.generatedAt) : null;
   const lastEl = document.getElementById("rhWclLastSync");
   if (lastEl) {
@@ -667,11 +671,40 @@ function renderRhWclTodo(payload) {
     })
     .join("");
 
-  const missingRows = missing
+  const unassignedWclChips = unassignedWcl
+    .map((name) => {
+      const n = String(name || "");
+      return `<span class="admin-rh-todo-chip admin-rh-todo-chip--wcl" draggable="true" data-rh-wcl-drag-wcl="${esc(n)}" data-rh-wcl-drop-wcl="${esc(n)}" title="Drag onto a row or an RH chip to assign ${esc(n)}; or drop an RH chip onto this WCL name">
+        <span class="admin-rh-todo-chip-label">${esc(n)}</span>
+        <button type="button" class="event-signup-btn admin-btn-danger admin-rh-todo-chip-btn" data-rh-wcl-proposal-reject data-wcl="${esc(n)}" title="Hide this WCL name; remembered so the next sync skips it">Reject</button>
+      </span>`;
+    })
+    .join("");
+
+  const missingRhChips = missing
     .map((m) => {
       const rh = String(m?.raidHelperName || "");
       const role = String(m?.guildRole || "Peon");
-      return `<tr><td><strong>${esc(rh)}</strong></td><td>${esc(role)}</td></tr>`;
+      if (!rh) return "";
+      return `<span class="admin-rh-todo-chip admin-rh-todo-chip--rh admin-rh-todo-chip--missing" draggable="true" data-rh-wcl-drag-rh="${esc(rh)}" data-rh-wcl-droptarget="missing-rh" data-rh-wcl-rh="${esc(rh)}" title="Drop a WCL character chip here to stage assignment onto saved row ${esc(rh)}, or drag this RH name onto a WCL chip">
+        <span class="admin-rh-todo-chip-label">${esc(rh)}</span>
+        <span class="subtle">${esc(role)}</span>
+      </span>`;
+    })
+    .join("");
+  const iceboxRows = rejectedIcebox
+    .map((entry) => {
+      const wcl = String(entry?.wclCharacterName || "");
+      const untilMs = Number(entry?.until || 0);
+      const untilTxt =
+        Number.isFinite(untilMs) && untilMs > 0 ? new Date(untilMs).toLocaleString() : "unknown";
+      return `<tr>
+        <td><strong>${esc(wcl)}</strong></td>
+        <td>${esc(untilTxt)}</td>
+        <td class="admin-rh-todo-actions">
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-icebox-restore data-wcl="${esc(wcl)}" title="Remove from ICEBOX so sync can suggest this name again">Restore</button>
+        </td>
+      </tr>`;
     })
     .join("");
 
@@ -700,14 +733,42 @@ function renderRhWclTodo(payload) {
     <details class="admin-rh-todo-block" data-rh-wcl-todo-block="missing" ${missing.length ? "open" : ""}>
       <summary>Missing data (${missing.length})</summary>
       ${
-        missing.length
-          ? `<div class="admin-table-wrap">
-              <table class="admin-table admin-rh-todo-table">
-                <thead><tr><th>Raid Helper name</th><th>Guild role</th></tr></thead>
-                <tbody>${missingRows}</tbody>
-              </table>
+        missing.length || unassignedWcl.length
+          ? `<div class="admin-rh-todo-split">
+              <section class="admin-rh-todo-split-col">
+                <h4 class="admin-rh-todo-mini-title">Raid Helper rows without WCL</h4>
+                ${
+                  missing.length
+                    ? `<p class="subtle">Drop a WCL chip directly onto one of these rows to stage assignment without scrolling.</p>
+                       <div class="admin-rh-todo-chips" data-rh-wcl-chips="missing-rh">${missingRhChips}</div>`
+                    : `<p class="subtle">Every saved Raid Helper row has at least one WCL character.</p>`
+                }
+              </section>
+              <section class="admin-rh-todo-split-col">
+                <h4 class="admin-rh-todo-mini-title">Unassigned WCL log characters</h4>
+                ${
+                  unassignedWcl.length
+                    ? `<p class="subtle">Drag onto a missing RH row on the left or onto any saved row below.</p>
+                       <div class="admin-rh-todo-chips" data-rh-wcl-chips="wcl">${unassignedWclChips}</div>`
+                    : `<p class="subtle">No leftover log characters from the last sync.</p>`
+                }
+              </section>
             </div>`
-          : `<p class="subtle">Every saved Raid Helper row has at least one WCL character.</p>`
+          : `<p class="subtle">Every saved Raid Helper row has at least one WCL character, and there are no unassigned WCL names.</p>`
+      }
+    </details>
+    <details class="admin-rh-todo-block" data-rh-wcl-todo-block="icebox" ${rejectedIcebox.length ? "open" : ""}>
+      <summary>ICEBOX (${rejectedIcebox.length})</summary>
+      ${
+        rejectedIcebox.length
+          ? `<p class="subtle">Rejected WCL names are parked here until their TTL expires. Restore to allow suggestions again.</p>
+             <div class="admin-table-wrap">
+               <table class="admin-table admin-rh-todo-table">
+                 <thead><tr><th>WCL character</th><th>Ignored until</th><th>Actions</th></tr></thead>
+                 <tbody>${iceboxRows}</tbody>
+               </table>
+             </div>`
+          : `<p class="subtle">ICEBOX is empty.</p>`
       }
     </details>
   `;
@@ -844,6 +905,154 @@ document.addEventListener("keydown", (event) => {
   rhWclAppendAltForRow(tr).catch((err) => status(err?.message || "Add alt failed"));
 });
 
+// Drag-and-drop: WCL chip → saved row OR unassigned RH chip. Staged in
+// memory only — Save row / Save all rows persists the assignment.
+let rhWclActiveDrag = null;
+let rhWclAutoScrollTimer = null;
+let rhWclAutoScrollDeltaY = 0;
+
+function stopRhWclAutoScroll() {
+  if (rhWclAutoScrollTimer) {
+    clearInterval(rhWclAutoScrollTimer);
+    rhWclAutoScrollTimer = null;
+  }
+  rhWclAutoScrollDeltaY = 0;
+}
+
+function updateRhWclAutoScroll(clientY) {
+  if (!Number.isFinite(clientY)) {
+    stopRhWclAutoScroll();
+    return;
+  }
+  const edge = 96;
+  const maxSpeed = 24;
+  let delta = 0;
+  if (clientY < edge) {
+    const ratio = Math.min(1, (edge - clientY) / edge);
+    delta = -Math.max(4, Math.round(maxSpeed * ratio));
+  } else if (clientY > window.innerHeight - edge) {
+    const ratio = Math.min(1, (clientY - (window.innerHeight - edge)) / edge);
+    delta = Math.max(4, Math.round(maxSpeed * ratio));
+  }
+  rhWclAutoScrollDeltaY = delta;
+  if (!delta) {
+    stopRhWclAutoScroll();
+    return;
+  }
+  if (rhWclAutoScrollTimer) return;
+  rhWclAutoScrollTimer = setInterval(() => {
+    if (!rhWclAutoScrollDeltaY) return;
+    window.scrollBy(0, rhWclAutoScrollDeltaY);
+  }, 16);
+}
+
+document.addEventListener("dragstart", (event) => {
+  const srcWcl = event.target.closest("[data-rh-wcl-drag-wcl]");
+  const srcRh = event.target.closest("[data-rh-wcl-drag-rh]");
+  if (!srcWcl && !srcRh) return;
+  const dragType = srcWcl ? "wcl" : "rh";
+  const src = srcWcl || srcRh;
+  const value = String(src.getAttribute(dragType === "wcl" ? "data-rh-wcl-drag-wcl" : "data-rh-wcl-drag-rh") || "").trim();
+  if (!value) return;
+  const rhDropKind = dragType === "rh" ? String(src.getAttribute("data-rh-wcl-droptarget") || "rh-name").trim() : "";
+  if (event.dataTransfer) {
+    try {
+      event.dataTransfer.setData("text/plain", value);
+      event.dataTransfer.setData("application/x-rh-wcl-drag-type", dragType);
+      if (dragType === "rh") event.dataTransfer.setData("application/x-rh-wcl-rh-kind", rhDropKind);
+    } catch {
+      // Some browsers throw if dataTransfer is read-only; the closure binding below covers us.
+    }
+    event.dataTransfer.effectAllowed = "copy";
+  }
+  src.classList.add("is-rh-wcl-dragging");
+  rhWclActiveDrag = { type: dragType, value, rhKind: rhDropKind };
+});
+
+document.addEventListener("dragend", (event) => {
+  event.target.closest("[data-rh-wcl-drag-wcl], [data-rh-wcl-drag-rh]")?.classList.remove("is-rh-wcl-dragging");
+  rhWclActiveDrag = null;
+  stopRhWclAutoScroll();
+  document
+    .querySelectorAll(".is-rh-wcl-drop-hover")
+    .forEach((el) => el.classList.remove("is-rh-wcl-drop-hover"));
+});
+
+document.addEventListener("dragover", (event) => {
+  if (!rhWclActiveDrag) return;
+  updateRhWclAutoScroll(event.clientY);
+  const target =
+    rhWclActiveDrag.type === "wcl"
+      ? event.target.closest("[data-rh-wcl-row], [data-rh-wcl-droptarget]")
+      : event.target.closest("[data-rh-wcl-drop-wcl]");
+  if (!target) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  target.classList.add("is-rh-wcl-drop-hover");
+});
+
+document.addEventListener("dragleave", (event) => {
+  const target = event.target.closest("[data-rh-wcl-row], [data-rh-wcl-droptarget]");
+  if (!target) return;
+  // Only clear when actually leaving the target — dragleave also fires when
+  // entering child nodes, so we re-check whether the related target is still
+  // inside the same drop zone.
+  const related = event.relatedTarget;
+  if (related && target.contains(related)) return;
+  target.classList.remove("is-rh-wcl-drop-hover");
+});
+
+document.addEventListener("drop", (event) => {
+  let dragType = "";
+  let value = "";
+  let rhKind = "";
+  try {
+    dragType = String(event.dataTransfer?.getData("application/x-rh-wcl-drag-type") || "").trim();
+    rhKind = String(event.dataTransfer?.getData("application/x-rh-wcl-rh-kind") || "").trim();
+    value = String(event.dataTransfer?.getData("text/plain") || "").trim();
+  } catch {
+    value = "";
+  }
+  if (!value && rhWclActiveDrag?.value) value = String(rhWclActiveDrag.value || "").trim();
+  if (!dragType && rhWclActiveDrag?.type) dragType = String(rhWclActiveDrag.type || "").trim();
+  if (!rhKind && rhWclActiveDrag?.rhKind) rhKind = String(rhWclActiveDrag.rhKind || "").trim();
+  if (!value || !dragType) return;
+
+  const row = event.target.closest("[data-rh-wcl-row]");
+  const dropTarget = event.target.closest("[data-rh-wcl-droptarget]");
+  const wclChipTarget = event.target.closest("[data-rh-wcl-drop-wcl]");
+  if (!row && !dropTarget && !wclChipTarget) return;
+  event.preventDefault();
+  stopRhWclAutoScroll();
+  document
+    .querySelectorAll(".is-rh-wcl-drop-hover")
+    .forEach((el) => el.classList.remove("is-rh-wcl-drop-hover"));
+
+  if (dragType === "wcl") {
+    const wcl = value;
+    if (row) {
+      stageWclOntoRow(row, wcl);
+    } else if (dropTarget) {
+      const rh = String(dropTarget.getAttribute("data-rh-wcl-rh") || "").trim();
+      const kind = String(dropTarget.getAttribute("data-rh-wcl-droptarget") || "").trim();
+      if (kind === "rh-name") {
+        stageWclOntoUnassignedRh(rh, wcl);
+      } else if (kind === "missing-rh") {
+        stageWclOntoMissingRhRow(rh, wcl);
+      }
+    }
+  } else if (dragType === "rh" && wclChipTarget) {
+    const rh = value;
+    const wcl = String(wclChipTarget.getAttribute("data-rh-wcl-drop-wcl") || "").trim();
+    const kind = rhKind || "rh-name";
+    if (wcl) {
+      if (kind === "missing-rh") stageWclOntoMissingRhRow(rh, wcl);
+      else stageWclOntoUnassignedRh(rh, wcl);
+    }
+  }
+  rhWclActiveDrag = null;
+});
+
 /** Append a WCL alt to the row’s comma list; saves immediately when Raid Helper name is set. */
 async function rhWclAppendAltForRow(tr) {
   const rhInp = tr.querySelector('[data-rh-wcl-k="rh"]');
@@ -956,6 +1165,128 @@ function readRhWclLinksFromTable() {
   return [...document.querySelectorAll("[data-rh-wcl-row]")]
     .map((tr) => readRhWclLinkRowFromTr(tr))
     .filter(Boolean);
+}
+
+/**
+ * Append a WCL character name to the comma-separated list on a saved row
+ * without persisting. Sets `data-rh-wcl-dirty="1"` so the existing
+ * Save row / Save all rows handlers pick it up. Removes the chip from the
+ * to-do panel for instant feedback (server still has it until the next sync,
+ * but the admin sees the assignment land immediately).
+ */
+function stageWclOntoRow(tr, wclName) {
+  if (!tr) return false;
+  const wcl = String(wclName || "").trim();
+  if (!wcl) return false;
+  const wclInp = tr.querySelector('[data-rh-wcl-k="wcl"]');
+  if (!wclInp) return false;
+  const existing = String(wclInp.value || "")
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const lower = new Set(existing.map((n) => n.toLowerCase()));
+  if (lower.has(wcl.toLowerCase())) {
+    status(`“${wcl}” is already on that row.`);
+    return false;
+  }
+  existing.push(wcl);
+  wclInp.value = existing.join(", ");
+  tr.setAttribute("data-rh-wcl-dirty", "1");
+  const tdSrc = tr.querySelector(".admin-rh-src-cell");
+  if (tdSrc) tdSrc.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+  removeRhWclTodoChipByWcl(wcl);
+  const rhInp = tr.querySelector('[data-rh-wcl-k="rh"]');
+  const rhValue = String(rhInp?.value || "").trim();
+  status(`Staged “${wcl}” → ${rhValue || "(unnamed row)"}; click Save row or Save all rows to persist.`);
+  return true;
+}
+
+/**
+ * Stage a WCL→RH assignment for an unassigned Raid Helper signup name. Reads
+ * the current table, appends a new row pre-populated with the RH name and the
+ * dropped WCL character, re-renders, then sets the dirty flag on that new
+ * row. Removes both chips from the to-do panel.
+ */
+function stageWclOntoUnassignedRh(rhName, wclName) {
+  const rh = String(rhName || "").trim();
+  const wcl = String(wclName || "").trim();
+  if (!rh || !wcl) return false;
+  const links = readRhWclLinksFromTable();
+  const targetKey = rh.toLowerCase();
+  const already = links.some((r) => String(r?.raidHelperName || "").trim().toLowerCase() === targetKey);
+  if (already) {
+    const existingTr = [...document.querySelectorAll("[data-rh-wcl-row]")].find((tr) => {
+      const v = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim().toLowerCase();
+      return v === targetKey;
+    });
+    if (existingTr) {
+      const ok = stageWclOntoRow(existingTr, wcl);
+      if (ok) removeRhWclTodoChipByRh(rh);
+      return ok;
+    }
+  }
+  links.push({ raidHelperName: rh, wclCharacterNames: [wcl], guildRole: "Peon" });
+  renderRhWclLinksTable(links);
+  const newTr = [...document.querySelectorAll("[data-rh-wcl-row]")].find((tr) => {
+    const v = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim().toLowerCase();
+    return v === targetKey;
+  });
+  if (newTr) {
+    newTr.setAttribute("data-rh-wcl-dirty", "1");
+    const tdSrc = newTr.querySelector(".admin-rh-src-cell");
+    if (tdSrc) tdSrc.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+  }
+  removeRhWclTodoChipByWcl(wcl);
+  removeRhWclTodoChipByRh(rh);
+  status(`Staged new row “${rh}” ← “${wcl}”; click Save row or Save all rows to persist.`);
+  return true;
+}
+
+/** Stage WCL character onto an already-saved RH row surfaced in Missing data. */
+function stageWclOntoMissingRhRow(rhName, wclName) {
+  const rh = String(rhName || "").trim();
+  const wcl = String(wclName || "").trim();
+  if (!rh || !wcl) return false;
+  const targetKey = rh.toLowerCase();
+  const existingTr = [...document.querySelectorAll("[data-rh-wcl-row]")].find((tr) => {
+    const v = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim().toLowerCase();
+    return v === targetKey;
+  });
+  if (!existingTr) {
+    status(`Could not find saved row for “${rh}”. Click Refresh now and try again.`);
+    return false;
+  }
+  const ok = stageWclOntoRow(existingTr, wcl);
+  if (ok) removeRhWclTodoMissingRhChip(rh);
+  return ok;
+}
+
+function removeRhWclTodoChipByWcl(wclName) {
+  const v = String(wclName || "").trim();
+  if (!v) return;
+  document
+    .querySelectorAll(`[data-rh-wcl-drag-wcl]`)
+    .forEach((el) => {
+      if (String(el.getAttribute("data-rh-wcl-drag-wcl") || "").trim() === v) el.remove();
+    });
+}
+
+function removeRhWclTodoChipByRh(rhName) {
+  const v = String(rhName || "").trim();
+  if (!v) return;
+  document
+    .querySelectorAll(`[data-rh-wcl-droptarget="rh-name"]`)
+    .forEach((el) => {
+      if (String(el.getAttribute("data-rh-wcl-rh") || "").trim() === v) el.remove();
+    });
+}
+
+function removeRhWclTodoMissingRhChip(rhName) {
+  const v = String(rhName || "").trim();
+  if (!v) return;
+  document.querySelectorAll(`[data-rh-wcl-droptarget="missing-rh"]`).forEach((el) => {
+    if (String(el.getAttribute("data-rh-wcl-rh") || "").trim() === v) el.remove();
+  });
 }
 
 function renderP2Table(materials) {
@@ -1983,6 +2314,16 @@ document.getElementById("rhWclAddRowBtn")?.addEventListener("click", () => {
 
 document.getElementById("rhWclRefreshBtn")?.addEventListener("click", async () => {
   const btn = document.getElementById("rhWclRefreshBtn");
+  const dirty = document.querySelector("[data-rh-wcl-row][data-rh-wcl-dirty='1']");
+  if (dirty) {
+    const ok = window.confirm(
+      "There are unsaved row edits (e.g. drag-and-drop assignments). Refreshing will re-render the table from disk and discard them. Continue anyway?"
+    );
+    if (!ok) {
+      status("Refresh cancelled — Save row / Save all rows first to keep your changes.");
+      return;
+    }
+  }
   try {
     await runWithButtonFeedback(
       btn,
@@ -2206,6 +2547,31 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const createRowBtn = event.target.closest("[data-rh-wcl-create-row]");
+  if (createRowBtn) {
+    const rh = String(createRowBtn.getAttribute("data-rh-wcl-create-row") || "").trim();
+    if (!rh) return;
+    const links = readRhWclLinksFromTable();
+    const targetKey = rh.toLowerCase();
+    const already = links.some((r) => String(r?.raidHelperName || "").trim().toLowerCase() === targetKey);
+    if (!already) {
+      links.push({ raidHelperName: rh, wclCharacterNames: [], guildRole: "Peon" });
+      renderRhWclLinksTable(links);
+      const newTr = [...document.querySelectorAll("[data-rh-wcl-row]")].find((tr) => {
+        const v = String(tr.querySelector('[data-rh-wcl-k="rh"]')?.value || "").trim().toLowerCase();
+        return v === targetKey;
+      });
+      if (newTr) {
+        newTr.setAttribute("data-rh-wcl-dirty", "1");
+        const tdSrc = newTr.querySelector(".admin-rh-src-cell");
+        if (tdSrc) tdSrc.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+      }
+    }
+    removeRhWclTodoChipByRh(rh);
+    status(`Added empty row for “${rh}”; click Save row or Save all rows to persist.`);
+    return;
+  }
+
   const acceptBtn = event.target.closest("[data-rh-wcl-proposal-accept], [data-rh-wcl-proposal-accept-verify]");
   if (acceptBtn) {
     const verify = acceptBtn.hasAttribute("data-rh-wcl-proposal-accept-verify");
@@ -2247,6 +2613,27 @@ document.addEventListener("click", async (event) => {
       status(error?.message || "Reject failed");
     } finally {
       rejectBtn.disabled = false;
+    }
+    return;
+  }
+
+  const restoreIceboxBtn = event.target.closest("[data-rh-wcl-icebox-restore]");
+  if (restoreIceboxBtn) {
+    const wcl = restoreIceboxBtn.getAttribute("data-wcl");
+    if (!wcl) return;
+    restoreIceboxBtn.disabled = true;
+    try {
+      await getJson("/api/admin/rh-wcl-links/proposals/unreject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wclCharacterName: wcl }),
+      });
+      await loadRhWclTodo();
+      status(`Restored “${wcl}” from ICEBOX. Sync can suggest it again.`);
+    } catch (error) {
+      status(error?.message || "Restore from ICEBOX failed");
+    } finally {
+      restoreIceboxBtn.disabled = false;
     }
     return;
   }

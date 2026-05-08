@@ -613,7 +613,13 @@ let rhWclLinksState = { links: [] };
 let rhWclLinksWriteChain = Promise.resolve();
 let rhWclProposalsReady = null;
 /** In-memory mirror of {@link rhWclProposalsPath}; written by `runSyncAccountAssignment`, read by `/api/admin/rh-wcl-links/proposals`. */
-let rhWclProposalsState = { generatedAt: null, proposals: [], rejected: [] };
+let rhWclProposalsState = {
+  generatedAt: null,
+  proposals: [],
+  rejected: [],
+  unassignedRaidHelperNames: [],
+  unassignedWclNames: [],
+};
 let rhWclProposalsWriteChain = Promise.resolve();
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
@@ -3649,14 +3655,34 @@ async function ensureRhWclProposalsStore() {
       const rejected = Array.isArray(parsed?.rejected)
         ? parsed.rejected.map((r) => sanitizeRejectedEntry(r, now)).filter(Boolean)
         : [];
+      const unassignedRaidHelperNames = Array.isArray(parsed?.unassignedRaidHelperNames)
+        ? parsed.unassignedRaidHelperNames
+            .map((n) => String(n || "").trim())
+            .filter(Boolean)
+            .slice(0, 500)
+        : [];
+      const unassignedWclNames = Array.isArray(parsed?.unassignedWclNames)
+        ? parsed.unassignedWclNames
+            .map((n) => String(n || "").trim())
+            .filter(Boolean)
+            .slice(0, 500)
+        : [];
       rhWclProposalsState = {
         generatedAt: typeof parsed?.generatedAt === "string" ? parsed.generatedAt : null,
         proposals,
         rejected,
+        unassignedRaidHelperNames,
+        unassignedWclNames,
       };
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
-      rhWclProposalsState = { generatedAt: null, proposals: [], rejected: [] };
+      rhWclProposalsState = {
+        generatedAt: null,
+        proposals: [],
+        rejected: [],
+        unassignedRaidHelperNames: [],
+        unassignedWclNames: [],
+      };
     }
   })();
   return rhWclProposalsReady;
@@ -7229,11 +7255,31 @@ app.get("/api/admin/rh-wcl-links/proposals", async (req, res) => {
       .map((r) => ({ raidHelperName: r.raidHelperName, guildRole: r.guildRole || "Peon" }))
       .slice(0, 200);
 
+    // Live-filter unassignedWclNames against the current rejected set so
+    // freshly-rejected chips disappear immediately on the next reload — even
+    // before the worker re-runs and re-persists the trimmed list.
+    const rejectedLowerSet = rhWclRejectedNameSet();
+    const unassignedRaidHelperNames = Array.isArray(rhWclProposalsState.unassignedRaidHelperNames)
+      ? rhWclProposalsState.unassignedRaidHelperNames
+      : [];
+    const unassignedWclNames = (Array.isArray(rhWclProposalsState.unassignedWclNames)
+      ? rhWclProposalsState.unassignedWclNames
+      : []
+    ).filter((n) => !rejectedLowerSet.has(String(n || "").toLowerCase()));
+    const rejectedIcebox = (Array.isArray(rhWclProposalsState.rejected) ? rhWclProposalsState.rejected : [])
+      .map((r) => ({
+        wclCharacterName: String(r?.wclCharacterName || "").trim(),
+        until: Number(r?.until || 0),
+      }))
+      .filter((r) => r.wclCharacterName && Number.isFinite(r.until) && r.until > Date.now())
+      .sort((a, b) => String(a.wclCharacterName).localeCompare(String(b.wclCharacterName)));
+
     return res.json({
       ok: true,
       generatedAt: rhWclProposalsState.generatedAt || null,
       proposals: rhWclProposalsState.proposals || [],
       rejectedCount: (rhWclProposalsState.rejected || []).length,
+      rejectedIcebox,
       missing: {
         raidHelperRowsWithoutWcl: missingRhRows,
         // Unmatched WCL log names (no proposal, no row) are inferred from the
@@ -7241,6 +7287,8 @@ app.get("/api/admin/rh-wcl-links/proposals", async (req, res) => {
         // admin can run "Refresh now" to repopulate proposals if needed.
       },
       proposalsCount: (rhWclProposalsState.proposals || []).length,
+      unassignedRaidHelperNames,
+      unassignedWclNames,
       rejectionTtlMs: RH_WCL_PROPOSAL_REJECTION_TTL_MS,
     });
   } catch (error) {
@@ -7363,6 +7411,40 @@ app.post("/api/admin/rh-wcl-links/proposals/reject", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to reject proposal" });
+  }
+});
+
+/** Remove one rejected WCL name from the ICEBOX so future syncs can suggest it again. */
+app.post("/api/admin/rh-wcl-links/proposals/unreject", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRhWclProposalsStore();
+
+    const wclName = String(req.body?.wclCharacterName || "").trim();
+    if (!wclName) return res.status(400).json({ ok: false, error: "wclCharacterName is required" });
+    const wclLow = wclName.toLowerCase();
+    const before = (rhWclProposalsState.rejected || []).length;
+    const rejected = (rhWclProposalsState.rejected || []).filter(
+      (r) => String(r.wclCharacterName || "").toLowerCase() !== wclLow
+    );
+
+    rhWclProposalsWriteChain = rhWclProposalsWriteChain.then(async () => {
+      rhWclProposalsState = {
+        ...rhWclProposalsState,
+        rejected,
+      };
+      await persistRhWclProposalsStore();
+    });
+    await rhWclProposalsWriteChain;
+
+    return res.json({
+      ok: true,
+      removed: before - rejected.length,
+      rejected: rhWclProposalsState.rejected || [],
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to unreject proposal" });
   }
 });
 
@@ -14075,17 +14157,43 @@ async function runSyncAccountAssignment() {
   });
   await rhWclLinksWriteChain;
 
+  // Compute unassigned chips for the to-do panel:
+  //   - unassignedRaidHelperNames: RH signup names with no saved row at all.
+  //   - unassignedWclNames: WCL log names not attached to any row and not
+  //     currently rejected (proposals already cover the high-confidence side
+  //     of this list, so we keep both groups visible side-by-side).
+  const savedRhKeys = new Set(
+    finalLinks
+      .map((r) => normalizeRaidHelperDisplayKey(String(r?.raidHelperName || "")))
+      .filter(Boolean)
+  );
+  const unassignedRaidHelperNames = (Array.isArray(raidHelperNames) ? raidHelperNames : [])
+    .filter((n) => {
+      const key = normalizeRaidHelperDisplayKey(String(n || ""));
+      return key && !savedRhKeys.has(key);
+    })
+    .sort((a, b) => String(a).localeCompare(String(b)));
+
+  const stats = merged.stats || {};
+  const unmatchedWclList = Array.isArray(stats.unmatchedWclNames) ? stats.unmatchedWclNames : [];
+  const rejectedLower = new Set([...rejectedSet].map((s) => String(s).toLowerCase()));
+  const unassignedWclNames = unmatchedWclList
+    .map((n) => String(n || "").trim())
+    .filter((n) => n && !rejectedLower.has(n.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b));
+
   rhWclProposalsWriteChain = rhWclProposalsWriteChain.then(async () => {
     rhWclProposalsState = {
       generatedAt: new Date().toISOString(),
       proposals: split.pendingProposals,
       rejected: rhWclProposalsState.rejected || [],
+      unassignedRaidHelperNames,
+      unassignedWclNames,
     };
     await persistRhWclProposalsStore();
   });
   await rhWclProposalsWriteChain;
 
-  const stats = merged.stats || {};
   const summary = {
     rowsChanged: 0,
     autoApplied: split.autoApplyLinks.length,
@@ -14095,6 +14203,8 @@ async function runSyncAccountAssignment() {
     wclNameCount: wclCharacterNames.length,
     raidHelperSource,
     unmatchedWclCount: stats.unmatchedWclCount || 0,
+    unassignedRaidHelperCount: unassignedRaidHelperNames.length,
+    unassignedWclCount: unassignedWclNames.length,
   };
   console.log(
     `[sync:account-assignment] auto=${summary.autoApplied} proposals=${summary.proposals} verifiedLocked=${summary.verifiedSkipped} rh=${summary.raidHelperSignupCount} wcl=${summary.wclNameCount} unmatched=${summary.unmatchedWclCount}`

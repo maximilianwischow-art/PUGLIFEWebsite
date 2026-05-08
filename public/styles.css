@@ -3522,6 +3522,85 @@ button.raid-cal-run.raid-cal-run--column:hover {
   margin-left: 6px;
 }
 
+.admin-rh-todo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.admin-rh-todo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(13, 10, 20, 0.6);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.admin-rh-todo-chip-label {
+  font-weight: 600;
+}
+
+.admin-rh-todo-chip-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.admin-rh-todo-chip[draggable="true"] {
+  cursor: grab;
+}
+
+.admin-rh-todo-chip[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.admin-rh-todo-chip.is-rh-wcl-dragging {
+  opacity: 0.5;
+}
+
+[data-rh-wcl-row].is-rh-wcl-drop-hover {
+  outline: 2px dashed var(--accent, #8b5cf6);
+  outline-offset: -2px;
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.admin-rh-todo-chip.is-rh-wcl-drop-hover {
+  border-color: var(--accent, #8b5cf6);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+.admin-rh-todo-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.admin-rh-todo-split-col {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(13, 10, 20, 0.35);
+  min-width: 0;
+}
+
+.admin-rh-todo-mini-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+@media (max-width: 980px) {
+  .admin-rh-todo-split {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-rh-wcl-cell {
   vertical-align: top;
 }
