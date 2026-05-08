@@ -8881,6 +8881,20 @@ async function getLatestRaidVotingPayload(guildId) {
   const hpsByName = toMetricMap(heal);
   const takenByName = toMetricMap(taken);
 
+  // Reuse the same per-report rankings bundle as Hall of Fame so the
+  // voting card "Peak Parse (raid)" can show this raid's percentile.
+  let rankingsBundle = null;
+  try {
+    const cacheKey = `hof-merged-rankings-v1-${report.code}`;
+    rankingsBundle = await getOrRefreshCachedPayload(cacheKey, {
+      ttlMs: 7 * 24 * 60 * 60 * 1000,
+      maxStaleMs: 14 * 24 * 60 * 60 * 1000,
+      loader: () => loadMergedRankingsBundleForHallOfFameUncached(report.code),
+    });
+  } catch {
+    rankingsBundle = null;
+  }
+
   const rosterNames = new Set();
   for (const c of report?.rankedCharacters || []) {
     const n = String(c?.name || "").trim();
@@ -8899,12 +8913,17 @@ async function getLatestRaidVotingPayload(guildId) {
       const k = name.toLowerCase();
       const rawCombatType = playerClassByName.get(k) || "";
       const className = englishClassDisplayFromWclCombatType(rawCombatType) || rawCombatType;
+      const peak = rankingsBundle?.mergedDps && rankingsBundle?.mergedHps
+        ? pickHallOfFamePeakParse(rankingsBundle.mergedDps, rankingsBundle.mergedHps, report.code, name, "unk")
+        : { value: null, source: null };
       return {
         name,
         className,
         dps: Math.round(dpsByName.get(k) || 0),
         hps: Math.round(hpsByName.get(k) || 0),
         damageTaken: Math.round(takenByName.get(k) || 0),
+        peakParse: peak?.value != null && Number.isFinite(Number(peak.value)) ? Number(peak.value) : null,
+        peakParseSource: peak?.source || null,
       };
     })
     .sort((a, b) => b.dps - a.dps || a.name.localeCompare(b.name));
@@ -8921,7 +8940,7 @@ async function getLatestRaidVotingPayload(guildId) {
 }
 
 async function getCurrentVotingRoundCached(guildId) {
-  const key = `voting-round-v1-${Number(guildId)}`;
+  const key = `voting-round-v2-${Number(guildId)}`;
   const ttlMs = votingRoundCacheTtlMs();
   return getOrRefreshCachedPayload(key, {
     ttlMs,
