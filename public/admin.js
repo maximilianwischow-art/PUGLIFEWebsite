@@ -609,6 +609,45 @@ function rhWclMatchChipsHtml(row) {
     .join("");
 }
 
+function rhWclNamesFromRawInput(raw) {
+  return String(raw || "")
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function rhWclMainPickerHtmlFromNames(names, mainCharacterName) {
+  const list = Array.isArray(names) ? names : [];
+  const main = String(mainCharacterName || "").trim().toLowerCase();
+  if (!list.length) return `<span class="subtle">Set WCL character names first.</span>`;
+  return list
+    .map((name) => {
+      const n = String(name || "").trim();
+      if (!n) return "";
+      const isMain = n.toLowerCase() === main;
+      return `<button type="button" class="event-signup-btn admin-rh-main-chip ${
+        isMain ? "admin-rh-main-chip--active" : "event-signup-btn--softres"
+      }" data-rh-wcl-main-set="${esc(n)}" title="${
+        isMain ? "This row main in Account Assignment" : "Mark as row main"
+      }">${esc(n)}${isMain ? " · Main" : ""}</button>`;
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function refreshRhWclMainPickerForRow(tr) {
+  if (!tr) return;
+  const wclInp = tr.querySelector('[data-rh-wcl-k="wcl"]');
+  const mainInp = tr.querySelector('[data-rh-wcl-k="main"]');
+  const picker = tr.querySelector("[data-rh-wcl-main-picker]");
+  if (!wclInp || !mainInp || !picker) return;
+  const names = rhWclNamesFromRawInput(wclInp.value);
+  const mainRaw = String(mainInp.value || "").trim();
+  const matchedMain = names.find((n) => n.toLowerCase() === mainRaw.toLowerCase()) || "";
+  if (mainRaw && !matchedMain) mainInp.value = "";
+  picker.innerHTML = rhWclMainPickerHtmlFromNames(names, matchedMain);
+}
+
 function updateRhWclLinksChrome(list) {
   const dataCount = list.filter((r) => String(r?.raidHelperName || "").trim()).length;
   const countEl = document.getElementById("rhWclRowCount");
@@ -757,7 +796,7 @@ function renderRhWclTodo(payload) {
           : `<p class="subtle">Every saved Raid Helper row has at least one WCL character, and there are no unassigned WCL names.</p>`
       }
     </details>
-    <details class="admin-rh-todo-block" data-rh-wcl-todo-block="icebox" ${rejectedIcebox.length ? "open" : ""}>
+    <details class="admin-rh-todo-block" data-rh-wcl-todo-block="icebox">
       <summary>ICEBOX (${rejectedIcebox.length})</summary>
       ${
         rejectedIcebox.length
@@ -822,6 +861,8 @@ function renderRhWclLinksTable(rows) {
               const idChip = discordId
                 ? `<span class="admin-rh-src-chip ${idSource === "rh-scan" ? "admin-rh-src-guess" : "admin-rh-src-manual"}" title="${esc(idSource || "manual")}">${idSource === "rh-scan" ? "Auto (RH scan)" : "Manual"}</span>`
                 : `<span class="subtle">unset</span>`;
+              const wclNames = Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames : [];
+              const mainCharacterName = String(row.mainCharacterName || "").trim();
               return `
             <tr data-rh-wcl-row="${idx}" data-rh-wcl-stored-name="${esc(storedRh)}" data-rh-wcl-stored-id="${esc(discordId)}" data-rh-wcl-stored-verified-at="${esc(String(row.verifiedAt || ""))}"${metaAttr}>
               <td class="admin-rh-discord-cell">
@@ -840,8 +881,9 @@ function renderRhWclLinksTable(rows) {
               <td class="admin-rh-role-cell">${rhWclGuildRoleSelectHtml(row.guildRole)}</td>
               <td class="admin-rh-wcl-cell">
                 <input class="admin-input" data-rh-wcl-k="wcl" value="${esc(
-                  Array.isArray(row.wclCharacterNames) ? row.wclCharacterNames.join(", ") : ""
+                  wclNames.join(", ")
                 )}" placeholder="Comma-separated, or use Add alt below" />
+                <input type="hidden" data-rh-wcl-k="main" value="${esc(mainCharacterName)}" />
                 <div class="admin-rh-add-alt">
                   <input
                     class="admin-input"
@@ -855,6 +897,11 @@ function renderRhWclLinksTable(rows) {
                     Add alt
                   </button>
                 </div>
+                <div class="admin-rh-main-picker-note subtle">Main in this mapping (profile main-character can override):</div>
+                <div class="admin-rh-main-picker" data-rh-wcl-main-picker>${rhWclMainPickerHtmlFromNames(
+                  wclNames,
+                  mainCharacterName
+                )}</div>
               </td>
               <td class="admin-rh-src-cell">
                 <div class="admin-rh-status-line">${rhWclRowStatusChipHtml(row)}</div>
@@ -879,6 +926,7 @@ function renderRhWclLinksTable(rows) {
   host.querySelectorAll('[data-rh-wcl-k="rh"], [data-rh-wcl-k="wcl"], [data-rh-wcl-k="discordId"]').forEach((inp) => {
     inp.addEventListener("input", () => {
       const tr = inp.closest("tr");
+      if (inp.getAttribute("data-rh-wcl-k") === "wcl") refreshRhWclMainPickerForRow(tr);
       tr?.setAttribute("data-rh-wcl-dirty", "1");
       const td = tr?.querySelector(".admin-rh-src-cell");
       if (td) td.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
@@ -1106,10 +1154,7 @@ function readRhWclLinkRowFromTr(tr) {
   const wclRaw = String(tr.querySelector('[data-rh-wcl-k="wcl"]')?.value || "").trim();
   const discordIdRaw = String(tr.querySelector('[data-rh-wcl-k="discordId"]')?.value || "").trim();
   if (!rh && !wclRaw && !discordIdRaw) return null;
-  const wclCharacterNames = wclRaw
-    .split(/[,;\n]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const wclCharacterNames = rhWclNamesFromRawInput(wclRaw);
 
   const dirty = tr.getAttribute("data-rh-wcl-dirty") === "1";
   let wclSources = [];
@@ -1144,6 +1189,11 @@ function readRhWclLinkRowFromTr(tr) {
   const guildRole = normalizeGuildRoleValue(roleRaw);
 
   const row = { raidHelperName: rh, wclCharacterNames, guildRole };
+  const mainRaw = String(tr.querySelector('[data-rh-wcl-k="main"]')?.value || "").trim();
+  if (mainRaw) {
+    const chosen = wclCharacterNames.find((n) => n.toLowerCase() === mainRaw.toLowerCase());
+    if (chosen) row.mainCharacterName = chosen;
+  }
   if (/^\d{17,20}$/.test(discordIdRaw)) {
     row.discordUserId = discordIdRaw;
     // Source is "manual" whenever the operator's value differs from the
@@ -1191,6 +1241,7 @@ function stageWclOntoRow(tr, wclName) {
   }
   existing.push(wcl);
   wclInp.value = existing.join(", ");
+  refreshRhWclMainPickerForRow(tr);
   tr.setAttribute("data-rh-wcl-dirty", "1");
   const tdSrc = tr.querySelector(".admin-rh-src-cell");
   if (tdSrc) tdSrc.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
@@ -2480,6 +2531,21 @@ document.getElementById("rhWclDeleteAllBtn")?.addEventListener("click", async ()
 });
 
 document.addEventListener("click", async (event) => {
+  const mainSetBtn = event.target.closest("[data-rh-wcl-main-set]");
+  if (mainSetBtn) {
+    const tr = mainSetBtn.closest("tr");
+    const mainInp = tr?.querySelector('[data-rh-wcl-k="main"]');
+    const name = String(mainSetBtn.getAttribute("data-rh-wcl-main-set") || "").trim();
+    if (!tr || !mainInp || !name) return;
+    mainInp.value = name;
+    refreshRhWclMainPickerForRow(tr);
+    tr.setAttribute("data-rh-wcl-dirty", "1");
+    const td = tr.querySelector(".admin-rh-src-cell");
+    if (td) td.innerHTML = `<span class="subtle">Edited — unsaved (use Save row or Save all)</span>`;
+    status(`Set “${name}” as row main character (profile main-character can override).`);
+    return;
+  }
+
   const addAltBtn = event.target.closest("[data-rh-wcl-add-alt]");
   if (addAltBtn) {
     const tr = addAltBtn.closest("tr");

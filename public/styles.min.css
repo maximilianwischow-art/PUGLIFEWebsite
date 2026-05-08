@@ -3567,6 +3567,29 @@ button.raid-cal-run.raid-cal-run--column:hover {
   max-width: 18rem;
 }
 
+.admin-rh-main-picker-note {
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.admin-rh-main-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.admin-rh-main-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.admin-rh-main-chip--active {
+  background: rgba(72, 140, 96, 0.28);
+  border-color: rgba(72, 140, 96, 0.5);
+  color: #c4efd4;
+}
+
 .admin-rh-actions-cell {
   white-space: nowrap;
 }

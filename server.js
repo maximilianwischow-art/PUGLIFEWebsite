@@ -3796,6 +3796,11 @@ function sanitizeRhWclLinksPayload(rawLinks) {
       wclCharacterNames: names,
       guildRole: normalizeRhWclGuildRole(row?.guildRole),
     };
+    const mainRaw = String(row?.mainCharacterName || "").trim().slice(0, 64);
+    if (mainRaw) {
+      const mainMatch = names.find((n) => n.toLowerCase() === mainRaw.toLowerCase());
+      if (mainMatch) out.mainCharacterName = mainMatch;
+    }
     const discordUserId = sanitizeDiscordUserId(row?.discordUserId);
     if (discordUserId) out.discordUserId = discordUserId;
     // Provenance for the Discord id field — `manual` when the operator typed
