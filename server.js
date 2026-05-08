@@ -13614,6 +13614,7 @@ function buildLeaderboardBundlePayload(guildId) {
     const specName = String(main?.wowSpec || "").trim();
     const mainCharacterName = main?.characterName || row.name || row.raidHelperName || "";
     const lootCount = Number(lootCountByUserId.get(u.id) || 0);
+    const deaths = Number(deathByUserId.get(u.id) || 0);
     const mvpAwardCount = Number(mvpAwardCountByUserId.get(u.id) || 0);
     const specificEventBadges = specificEventBadgesByUserId.get(u.id) || [];
 
@@ -13645,6 +13646,8 @@ function buildLeaderboardBundlePayload(guildId) {
       legacyRhSignupCount: 0,
       mvpAwardCount,
       lootCount,
+      deaths,
+      _deaths: deaths,
       specificEventBadges,
       preResolvedBadges: {
         bestTimeParticipant: !!earnedBestTime,

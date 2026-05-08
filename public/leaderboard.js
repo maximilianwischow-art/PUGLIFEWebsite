@@ -709,9 +709,16 @@ async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
 
   const rows = players.map((p) => {
     const ps = plb.rosterParseForDisplay(p, p);
+    const deaths = Number(
+      p._deaths != null && Number.isFinite(Number(p._deaths))
+        ? p._deaths
+        : p.deaths != null && Number.isFinite(Number(p.deaths))
+          ? p.deaths
+          : 0
+    );
     return {
       ...p,
-      _deaths: 0, // backfilled below from server-attached _deaths field
+      _deaths: deaths,
       _consideredRaids: consideredRaids,
       _recentRaidCap: recentRaidCap,
       _peakParse: ps.value != null && Number.isFinite(Number(ps.value)) ? Number(ps.value) : null,
