@@ -424,25 +424,30 @@ function joinDetectEventRaids(event) {
   const matches = [];
   const v = (p) => joinVersionedRaidImage(p);
   if (text.includes("karazhan") || /\bkara\b/.test(text)) {
-    matches.push({ id: "kara", image: v("/raid-images/pb-header-kara.png"), rosterCap: 10 });
+    matches.push({ id: "kara", image: v("/raid-images/pb-header-kara.png"), squareImage: v("/raid-images/kara.png"), rosterCap: 10 });
   }
   if (text.includes("gruul")) {
-    matches.push({ id: "gruul", image: v("/raid-images/pb-header-gruul.png"), rosterCap: 25 });
+    matches.push({ id: "gruul", image: v("/raid-images/pb-header-gruul.png"), squareImage: v("/raid-images/gruul.png"), rosterCap: 25 });
   }
   if (text.includes("magtheridon") || /\bmag\b/.test(text)) {
-    matches.push({ id: "mag", image: v("/raid-images/pb-header-magtheridon.png"), rosterCap: 25 });
+    matches.push({
+      id: "mag",
+      image: v("/raid-images/pb-header-magtheridon.png"),
+      squareImage: v("/raid-images/magtheridon.png"),
+      rosterCap: 25,
+    });
   }
   if (text.includes("serpentshrine") || /\bssc\b/.test(text)) {
-    matches.push({ id: "ssc", image: v("/raid-images/pb-header-ssc.png"), rosterCap: 25 });
+    matches.push({ id: "ssc", image: v("/raid-images/pb-header-ssc.png"), squareImage: v("/raid-images/ssc.png"), rosterCap: 25 });
   }
   if (text.includes("tempest keep") || /\btk\b/.test(text) || text.includes("the eye")) {
-    matches.push({ id: "tk", image: v("/raid-images/pb-header-tk.png"), rosterCap: 25 });
+    matches.push({ id: "tk", image: v("/raid-images/pb-header-tk.png"), squareImage: v("/raid-images/tk.png"), rosterCap: 25 });
   }
   if (text.includes("zul'aman") || text.includes("zul aman") || /\bza\b/.test(text)) {
-    matches.push({ id: "za", image: v("/raid-images/pb-header-kara.png"), rosterCap: 10 });
+    matches.push({ id: "za", image: v("/raid-images/pb-header-kara.png"), squareImage: v("/raid-images/kara.png"), rosterCap: 10 });
   }
   if (!matches.length) {
-    return [{ id: "fallback", image: v("/raid-images/pb-header-kara.png"), rosterCap: 25 }];
+    return [{ id: "fallback", image: v("/raid-images/pb-header-kara.png"), squareImage: v("/raid-images/kara.png"), rosterCap: 25 }];
   }
   return matches.slice(0, 2);
 }
@@ -747,6 +752,11 @@ function joinEventBannerSrc(event) {
   );
 }
 
+function joinEventSquareThumbSrc(event) {
+  const raids = joinDetectEventRaids(event);
+  return raids[0]?.squareImage || raids[0]?.image || joinVersionedRaidImage("/raid-images/kara.png");
+}
+
 function joinEventRosterCapacity(event) {
   return joinRosterCapacityForEvent(event);
 }
@@ -798,7 +808,7 @@ function joinRenderFeaturedNextEvent(event, isAuthenticated) {
 }
 
 function joinRenderUpcomingEventCard(event, isAuthenticated) {
-  const bannerSrc = joinEventBannerSrc(event);
+  const thumbSrc = joinEventSquareThumbSrc(event);
   const cap = joinRoleTargetCapacity(joinEventRosterCapacity(event), event?.roleTargets);
   const confirmed = Number(event?.signups?.confirmed ?? 0);
   const signupsTotal = Number(event?.signups?.total ?? 0);
@@ -810,7 +820,7 @@ function joinRenderUpcomingEventCard(event, isAuthenticated) {
   return `
     <article class="join-upcoming-event-row">
       <div class="join-upcoming-event-thumb">
-        <img src="${escJoin(bannerSrc)}" alt="" loading="lazy" decoding="async" width="220" height="96" />
+        <img src="${escJoin(thumbSrc)}" alt="" loading="lazy" decoding="async" width="180" height="180" />
       </div>
       <div class="join-upcoming-event-main">
         <h4 class="join-upcoming-event-title">${escJoin(event?.title || "Upcoming raid")}</h4>
