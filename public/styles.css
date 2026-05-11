@@ -3661,6 +3661,49 @@ button.raid-cal-run.raid-cal-run--column:hover {
   box-sizing: border-box;
 }
 
+.admin-dash-chart-mount .apexcharts-canvas {
+  position: relative;
+}
+
+.admin-dash-chart-mount .apexcharts-tooltip,
+.admin-dash-chart-mount .apexcharts-xaxistooltip,
+.admin-dash-chart-mount .apexcharts-yaxistooltip {
+  position: absolute !important;
+  pointer-events: none;
+  z-index: 12;
+  max-width: min(260px, calc(100% - 16px));
+  border: 1px solid rgba(167, 139, 250, 0.26);
+  border-radius: 10px;
+  background: rgba(12, 9, 22, 0.94);
+  color: var(--text);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
+}
+
+.admin-dash-chart-mount .apexcharts-tooltip:not(.apexcharts-active),
+.admin-dash-chart-mount .apexcharts-xaxistooltip:not(.apexcharts-active),
+.admin-dash-chart-mount .apexcharts-yaxistooltip:not(.apexcharts-active) {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.admin-dash-chart-mount .apexcharts-tooltip-title,
+.admin-dash-chart-mount .apexcharts-tooltip-series-group {
+  padding: 3px 8px;
+}
+
+.admin-dash-chart-mount .apexcharts-tooltip-series-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-dash-chart-mount .apexcharts-tooltip-marker {
+  flex: 0 0 8px;
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 999px;
+}
+
 .admin-dash-subscribers-heading {
   margin-top: 22px;
 }

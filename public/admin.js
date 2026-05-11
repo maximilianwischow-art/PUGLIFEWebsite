@@ -2062,6 +2062,18 @@ function adminAnalyticsCssVar(name, fallback) {
   }
 }
 
+function analyticsDayMs(day) {
+  const ms = Date.parse(`${String(day || "").slice(0, 10)}T00:00:00Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function analyticsDateSeries(rows, key) {
+  return (Array.isArray(rows) ? rows : []).map((row, index) => {
+    const ms = analyticsDayMs(row?.day);
+    return { x: ms ?? index, y: Number(row?.[key] || 0) };
+  });
+}
+
 function destroyAnalyticsChartByMountId(mountId) {
   const chart = analyticsChartInstances.get(mountId);
   if (!chart) return;
@@ -2191,19 +2203,19 @@ function renderAnalyticsDashboard(payload) {
     chart: {
       fontFamily: chartFont,
       foreColor: muted,
+      background: "transparent",
       toolbar: { show: false },
       zoom: { enabled: false },
       animations: { enabled: true },
     },
     theme: { mode: "dark" },
     grid: { borderColor: gridColor, strokeDashArray: 4 },
-    legend: { fontFamily: chartFont, labels: { colors: fore } },
+    legend: { show: false, fontFamily: chartFont, labels: { colors: fore } },
     dataLabels: { enabled: false },
   };
 
   const daily = Array.isArray(payload.daily) ? payload.daily : [];
   const dayLabels = daily.map((r) => String(r.day || ""));
-  const rotateLabels = dayLabels.length > 14;
 
   mountAnalyticsChart("adminAnalyticsChartDaily", {
     ...baseChart,
@@ -2211,15 +2223,18 @@ function renderAnalyticsDashboard(payload) {
     colors: ["#9aacff", "#6fd9a8"],
     stroke: { curve: "smooth", width: [2, 2] },
     series: [
-      { name: "Pageviews", data: daily.map((r) => Number(r.views || 0)) },
-      { name: "Unique sessions", data: daily.map((r) => Number(r.uniqueSessions || 0)) },
+      { name: "Pageviews", data: analyticsDateSeries(daily, "views") },
+      { name: "Unique sessions", data: analyticsDateSeries(daily, "uniqueSessions") },
     ],
     xaxis: {
-      categories: dayLabels,
+      type: "datetime",
+      tickAmount: Math.min(7, Math.max(2, dayLabels.length)),
       labels: {
-        rotate: rotateLabels ? -45 : 0,
-        rotateAlways: rotateLabels,
+        datetimeUTC: true,
+        format: "MM-dd",
+        rotate: 0,
         hideOverlappingLabels: true,
+        maxHeight: 32,
       },
     },
     yaxis: { labels: { style: { colors: muted } } },
@@ -2227,6 +2242,7 @@ function renderAnalyticsDashboard(payload) {
   });
 
   const convDaily = Array.isArray(payload.conversionsDaily) ? payload.conversionsDaily : [];
+  const convDayLabels = convDaily.map((r) => String(r.day || ""));
   mountAnalyticsChart("adminAnalyticsChartConversionsDaily", {
     ...baseChart,
     chart: { ...baseChart.chart, type: "bar", stacked: true, height: 280 },
@@ -2234,14 +2250,17 @@ function renderAnalyticsDashboard(payload) {
     colors: ["#8b7bc8", "#d96fb8", "#5eb87a", "#e2b060"],
     series: CONVERSION_CATEGORIES.map((cat) => ({
       name: CONVERSION_TILE_LABELS[cat],
-      data: convDaily.map((r) => Number(r[cat] || 0)),
+      data: analyticsDateSeries(convDaily, cat),
     })),
     xaxis: {
-      categories: convDaily.map((r) => String(r.day || "")),
+      type: "datetime",
+      tickAmount: Math.min(7, Math.max(2, convDayLabels.length)),
       labels: {
-        rotate: rotateLabels ? -45 : 0,
-        rotateAlways: rotateLabels,
+        datetimeUTC: true,
+        format: "MM-dd",
+        rotate: 0,
         hideOverlappingLabels: true,
+        maxHeight: 32,
       },
     },
     yaxis: { labels: { style: { colors: muted } } },
@@ -2279,7 +2298,7 @@ function renderAnalyticsDashboard(payload) {
       chart: { ...baseChart.chart, type: "donut", height: 280 },
       labels: ctaRows.map((r) => String(r.label || "(none)")),
       series: ctaRows.map((r) => Number(r.count || 0)),
-      legend: { ...baseChart.legend, position: "bottom" },
+      legend: { ...baseChart.legend, show: true, position: "bottom" },
       plotOptions: {
         pie: {
           donut: {
