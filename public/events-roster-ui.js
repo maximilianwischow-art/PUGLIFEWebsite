@@ -64,12 +64,102 @@ const WOW_CLASS_COLORS = {
   Druid: "#FF7D0A",
 };
 
+const badgeTooltipById = new Map();
+let badgeTooltipCatalogPromise = null;
+
 function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function badgeIdFromAchievementFile(fileName) {
+  return String(fileName || "")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .trim();
+}
+
+function badgeTooltipFallbackDescription(rawTitle, fallbackName) {
+  const title = String(rawTitle || "").trim();
+  const name = String(fallbackName || "").trim();
+  const sep = title.indexOf(" — ");
+  if (sep >= 0) return title.slice(sep + 3).trim();
+  return title && title !== name ? title : "";
+}
+
+function loadBadgeTooltipsOnce() {
+  if (badgeTooltipCatalogPromise) return badgeTooltipCatalogPromise;
+  badgeTooltipCatalogPromise = fetch("/api/badge-tooltips", { credentials: "include" })
+    .then((res) => (res.ok ? res.json() : { rows: [] }))
+    .then((payload) => {
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+      for (const row of rows) {
+        const id = String(row?.badgeId || "").trim();
+        if (!id) continue;
+        badgeTooltipById.set(id, {
+          name: String(row?.name || "").trim(),
+          description: String(row?.description || "").trim(),
+          rarity: String(row?.rarity || "epic").trim() || "epic",
+        });
+      }
+      return badgeTooltipById;
+    })
+    .catch(() => badgeTooltipById);
+  return badgeTooltipCatalogPromise;
+}
+
+function badgeTooltipMeta(badgeId, fallbackName, fallbackDescription, rarity) {
+  const fromCatalog = badgeTooltipById.get(String(badgeId || "").trim()) || {};
+  const id = String(badgeId || "").trim();
+  return {
+    id,
+    name: String(fromCatalog.name || fallbackName || "").trim(),
+    description: String(fromCatalog.description || fallbackDescription || "").trim(),
+    rarity: String(fromCatalog.rarity || rarity || "epic").trim() || "epic",
+    glowColor: badgeTooltipGlowColor(id, String(fromCatalog.rarity || rarity || "epic")),
+  };
+}
+
+function badgeTooltipGlowColor(badgeId, rarity) {
+  const id = String(badgeId || "").trim();
+  const byId = {
+    "iron-attendance": "#22c55e",
+    "parsing-ceiling": "#ef4444",
+    "most-deaths-last-6-raids": "#f97316",
+    "hall-of-fame": "#f97316",
+    "best-time-participant": "#a855f7",
+    "aoe-cleave": "#f97316",
+  };
+  if (byId[id]) return byId[id];
+  if (id.includes("first-time-clear")) return "#22c55e";
+  if (id.startsWith("raids-with-guild-")) return "#a855f7";
+  if (rarity === "legendary") return "#f97316";
+  if (rarity === "rare") return "#0070de";
+  if (rarity === "common") return "#9e9e9e";
+  return "#a855f7";
+}
+
+function badgeTooltipRarityColor(rarity) {
+  if (rarity === "legendary") return "rgba(255, 128, 0, 0.8)";
+  if (rarity === "rare") return "rgba(0, 112, 222, 0.6)";
+  if (rarity === "common") return "rgba(158, 158, 158, 0.5)";
+  return "rgba(163, 53, 238, 0.7)";
+}
+
+function achievementTooltipHtml(meta) {
+  const rarity = ["common", "rare", "epic", "legendary"].includes(meta.rarity) ? meta.rarity : "epic";
+  const description = String(meta.description || "").trim();
+  const style = `--achievement-glow-color:${meta.glowColor};--achievement-rarity-color:${badgeTooltipRarityColor(rarity)};`;
+  return `
+    <span class="achievement-tooltip" aria-hidden="true">
+      <span class="achievement-tooltip-box rarity-${escapeHtml(rarity)}" style="${escapeHtml(style)}">
+        <span class="achievement-name">${escapeHtml(meta.name)}</span>
+        ${description ? `<span class="achievement-description">${escapeHtml(description)}</span>` : ""}
+        <span class="achievement-rarity"><span class="achievement-rarity-text">${escapeHtml(rarity)}</span></span>
+      </span>
+    </span>`;
 }
 
 /**
@@ -1371,8 +1461,17 @@ function rosterAchievementBadgesHtml(player) {
   return badges
     .filter((b) => b.ok)
     .map((b) => {
+      const badgeId = badgeIdFromAchievementFile(b.file);
+      const meta = badgeTooltipMeta(badgeId, b.alt, badgeTooltipFallbackDescription(b.title, b.alt), "epic");
       const icon = achievementBadgeIconUrlWithFallback(b.file);
-      return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${escapeHtml(b.title)}"><img class="raider-badge-achievement-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} /></span>`;
+      const fallbackTitle = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
+      return `<span class="raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container" aria-label="${escapeHtml(fallbackTitle)}">
+        <span class="achievement-badge-frame">
+          <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
+          <span class="achievement-badge-glow" aria-hidden="true"></span>
+        </span>
+        ${achievementTooltipHtml(meta)}
+      </span>`;
     })
     .join("");
 }
@@ -1401,6 +1500,7 @@ async function loadWclAttendanceForEvents(opts = {}) {
   firstClearMagNameKeys = new Set();
   parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
   try {
+    await loadBadgeTooltipsOnce();
     const api = window.plbSessionApiCache;
     const getJson = (url, init) => {
       const merged = { ...(init || {}), ...cacheInit };
@@ -1625,10 +1725,18 @@ function rosterGuildRoleBadgeSrcForLabel(roleLabel) {
 function rosterGuildRoleBadgeHtml(player) {
   const roleLabel = primaryGuildRankLabel(player);
   const displayLabel = displayGuildRoleLabel(roleLabel);
-  const title = `Guild rank: ${displayLabel}`;
+  const badgeId = guildRoleBadgeImageSlug(roleLabel);
+  const meta = badgeTooltipMeta(badgeId, displayLabel, `Guild rank: ${displayLabel}`, badgeId === "guildlead" || badgeId === "raidlead" ? "rare" : "common");
+  const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(roleLabel));
   const alt = escapeHtml(`Guild rank: ${displayLabel}`);
-  return `<span class="raider-badge-slot raider-badge-slot--guild-role" title="${escapeHtml(title)}"><img class="raider-badge-role-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" /></span>`;
+  return `<span class="raider-badge-slot raider-badge-slot--guild-role achievement-badge-container" aria-label="${escapeHtml(title)}">
+    <span class="achievement-badge-frame achievement-badge-frame--guild">
+      <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" />
+      <span class="achievement-badge-glow" aria-hidden="true"></span>
+    </span>
+    ${achievementTooltipHtml(meta)}
+  </span>`;
 }
 
 /** Second badge for officers only: attendance-based Peon / Grunt / Veteran. */
@@ -1637,10 +1745,23 @@ function rosterAttendanceCompanionBadgeHtml(player) {
   const tier = attendanceTierGuildRole(player);
   const raids = attendanceRaidsCountForPlayer(player);
   const cap = Math.max(1, attendanceConsideredRaids || 6);
-  const title = `Attendance rank (last ${cap} Event Management raids): ${tier} · ${raids}/${cap} raids`;
+  const badgeId = guildRoleBadgeImageSlug(tier);
+  const meta = badgeTooltipMeta(
+    badgeId,
+    displayGuildRoleLabel(tier),
+    `Attendance rank over the last ${cap} Event Management raids: ${raids}/${cap} raids.`,
+    "common"
+  );
+  const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(tier));
   const alt = escapeHtml(`Attendance rank: ${tier}`);
-  return `<span class="raider-badge-slot raider-badge-slot--guild-role raider-badge-slot--attendance-companion" title="${escapeHtml(title)}"><img class="raider-badge-role-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" /></span>`;
+  return `<span class="raider-badge-slot raider-badge-slot--guild-role raider-badge-slot--attendance-companion achievement-badge-container" aria-label="${escapeHtml(title)}">
+    <span class="achievement-badge-frame achievement-badge-frame--guild">
+      <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" />
+      <span class="achievement-badge-glow" aria-hidden="true"></span>
+    </span>
+    ${achievementTooltipHtml(meta)}
+  </span>`;
 }
 
 /** Section heading for guild roster page — rank badge + label (decorative img alt empty; label is visible). */
@@ -1649,11 +1770,16 @@ function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
   const displayLabel = displayGuildRoleLabel(label);
   const slug = guildRoleBadgeImageSlug(label);
   const src = escapeHtml(`/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`);
-  const tip = escapeHtml(`Guild rank: ${displayLabel}`);
+  const meta = badgeTooltipMeta(slug, displayLabel, `Guild rank: ${displayLabel}`, slug === "guildlead" || slug === "raidlead" ? "rare" : "common");
+  const tip = escapeHtml(`${meta.name}${meta.description ? ` — ${meta.description}` : ""}`);
   return `
     <div class="roster-role-title roster-role-title--guild-tier">
-      <span class="roster-section-guild-badge raider-badge-slot raider-badge-slot--guild-role" title="${tip}">
-        <img class="raider-badge-role-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async" />
+      <span class="roster-section-guild-badge raider-badge-slot raider-badge-slot--guild-role achievement-badge-container" aria-label="${tip}">
+        <span class="achievement-badge-frame achievement-badge-frame--guild">
+          <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async" />
+          <span class="achievement-badge-glow" aria-hidden="true"></span>
+        </span>
+        ${achievementTooltipHtml(meta)}
       </span>
       <span class="roster-role-title-text">${escapeHtml(displayLabel)} <span class="roster-role-title-count">(${Number(count) || 0})</span></span>
     </div>`;

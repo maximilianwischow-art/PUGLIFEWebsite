@@ -544,11 +544,50 @@ function renderLeaderboardTable() {
     })
     .join("");
 
-  // Upgrade badge hover UX from default title to styled tooltip cards.
+  // Upgrade any legacy badge title into the shared WoW-style tooltip card.
   leaderboardTbody.querySelectorAll(".raider-badge-slot[title]").forEach((el) => {
     const tip = String(el.getAttribute("title") || "").trim();
     if (!tip) return;
-    el.setAttribute("data-badge-tip", tip);
+    el.removeAttribute("title");
+    el.setAttribute("aria-label", tip);
+    el.classList.add("achievement-badge-container");
+    if (!el.querySelector(".achievement-badge-frame")) {
+      const frame = document.createElement("span");
+      frame.className = "achievement-badge-frame";
+      while (el.firstChild) frame.appendChild(el.firstChild);
+      const glow = document.createElement("span");
+      glow.className = "achievement-badge-glow";
+      glow.setAttribute("aria-hidden", "true");
+      frame.appendChild(glow);
+      el.appendChild(frame);
+    }
+    if (!el.querySelector(".achievement-tooltip")) {
+      const [nameRaw, ...descParts] = tip.split(" — ");
+      const tooltip = document.createElement("span");
+      tooltip.className = "achievement-tooltip";
+      tooltip.setAttribute("aria-hidden", "true");
+      const box = document.createElement("span");
+      box.className = "achievement-tooltip-box rarity-epic";
+      box.style.setProperty("--achievement-glow-color", "#f97316");
+      box.style.setProperty("--achievement-rarity-color", "rgba(163, 53, 238, 0.7)");
+      const name = document.createElement("span");
+      name.className = "achievement-name";
+      name.textContent = nameRaw || tip;
+      const desc = document.createElement("span");
+      desc.className = "achievement-description";
+      desc.textContent = descParts.join(" — ");
+      const rarity = document.createElement("span");
+      rarity.className = "achievement-rarity";
+      const rarityText = document.createElement("span");
+      rarityText.className = "achievement-rarity-text";
+      rarityText.textContent = "EPIC";
+      rarity.appendChild(rarityText);
+      box.appendChild(name);
+      if (desc.textContent) box.appendChild(desc);
+      box.appendChild(rarity);
+      tooltip.appendChild(box);
+      el.appendChild(tooltip);
+    }
   });
 
   document.querySelectorAll("[data-leaderboard-sort]").forEach((btn) => {

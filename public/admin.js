@@ -23,8 +23,10 @@ let roleAlertsCandidateFilterState = {
   subscribed: "",
   dmSent: "",
 };
+let badgeTooltipsRowsState = [];
 
 const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
+const BADGE_RARITIES = ["common", "rare", "epic", "legendary"];
 
 /** Same guild as Leaderboard (/) / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
 const ADMIN_WCL_GUILD_ID = 817080;
@@ -46,7 +48,7 @@ function rhWclGuildRoleSelectHtml(current) {
 }
 
 const ADMIN_GROUPS = [
-  { id: "people", label: "People", tools: ["rh-wcl", "database", "hof-notes"] },
+  { id: "people", label: "People", tools: ["rh-wcl", "database", "hof-notes", "badge-tooltips"] },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm"] },
@@ -2444,6 +2446,103 @@ function renderHofNotesTable(payload) {
   `;
 }
 
+function renderBadgeTooltipsTable(payload) {
+  const host = document.getElementById("adminBadgeTooltipsTable");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    badgeTooltipsRowsState = [];
+    host.innerHTML = `<p class="subtle">Badge management unavailable.</p>`;
+    return;
+  }
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  badgeTooltipsRowsState = rows.map((row) => ({
+    badgeId: String(row.badgeId || ""),
+    categoryLabel: String(row.categoryLabel || ""),
+    name: String(row.name || ""),
+    icon: String(row.icon || ""),
+    rarity: String(row.rarity || ""),
+    defaultRarity: String(row.defaultRarity || row.rarity || ""),
+    description: String(row.description || ""),
+    defaultDescription: String(row.defaultDescription || ""),
+    hasOverride: Boolean(row.hasOverride),
+    updatedAt: Number(row.updatedAt || 0),
+    updatedBy: String(row.updatedBy || ""),
+  }));
+  if (!badgeTooltipsRowsState.length) {
+    host.innerHTML = `<p class="subtle">No badges found in the catalog.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="admin-table-wrap role-alert-candidates-wrap">
+      <table class="admin-table role-alert-candidates-table admin-badge-tooltips-table">
+        <thead>
+          <tr><th>Category</th><th>Badge</th><th>Rarity</th><th>Tooltip description</th><th>Updated</th><th>Reset</th></tr>
+        </thead>
+        <tbody>
+          ${badgeTooltipsRowsState
+            .map(
+              (row) => `<tr data-badge-tooltip-row="${esc(row.badgeId)}">
+                <td>${esc(row.categoryLabel || "-")}</td>
+                <td>
+                  <div class="admin-badge-tooltip-badge">
+                    ${row.icon ? `<img src="${esc(row.icon)}" alt="" loading="lazy" decoding="async" />` : ""}
+                    <div>
+                      <strong>${esc(row.name || row.badgeId)}</strong>
+                      <div class="subtle">${esc(row.badgeId)}</div>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  ${badgeRaritySelectHtml(row.rarity)}
+                  <div class="subtle admin-badge-tooltip-default">Default: ${esc(row.defaultRarity || "-")}</div>
+                </td>
+                <td>
+                  <textarea
+                    class="admin-input"
+                    data-badge-tooltip-description
+                    rows="3"
+                    maxlength="600"
+                    placeholder="${esc(row.defaultDescription || "Tooltip description")}"
+                  >${esc(row.description || "")}</textarea>
+                  <div class="subtle admin-badge-tooltip-default">Default: ${esc(row.defaultDescription || "-")}</div>
+                </td>
+                <td class="subtle">${esc(row.hasOverride && row.updatedAt ? `${fmtWhen(row.updatedAt)}${row.updatedBy ? ` · ${row.updatedBy}` : ""}` : "default")}</td>
+                <td>
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" data-badge-tooltip-reset="${esc(row.badgeId)}">Reset to defaults</button>
+                </td>
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function badgeRaritySelectHtml(current) {
+  const selected = BADGE_RARITIES.includes(String(current || "").trim()) ? String(current).trim() : "epic";
+  return `<select class="admin-input admin-badge-rarity-select" data-badge-tooltip-rarity aria-label="Badge rarity">${BADGE_RARITIES.map(
+    (rarity) => `<option value="${esc(rarity)}"${rarity === selected ? " selected" : ""}>${esc(rarity)}</option>`
+  ).join("")}</select>`;
+}
+
+async function loadBadgeTooltipsPanel() {
+  const payload = await getJson("/api/admin/badge-tooltips");
+  renderBadgeTooltipsTable(payload);
+}
+
+function readBadgeTooltipsFromTable() {
+  const rows = [];
+  document.querySelectorAll("[data-badge-tooltip-row]").forEach((tr) => {
+    const badgeId = String(tr.getAttribute("data-badge-tooltip-row") || "").trim();
+    if (!badgeId) return;
+    const description = String(tr.querySelector("[data-badge-tooltip-description]")?.value || "").trim();
+    const rarity = String(tr.querySelector("[data-badge-tooltip-rarity]")?.value || "").trim();
+    rows.push({ badgeId, description, rarity });
+  });
+  return rows;
+}
+
 async function loadAnalyticsPanel() {
   const daysInput = document.getElementById("adminAnalyticsDays");
   const days = Math.max(1, Math.min(365, Number(daysInput?.value || 30) || 30));
@@ -2519,6 +2618,12 @@ async function loadAdminData() {
   } catch (error) {
     renderHofNotesTable({ ok: false });
     status(`Hall of Fame quotes load failed: ${error?.message || "Unknown error"}`);
+  }
+  try {
+    await loadBadgeTooltipsPanel();
+  } catch (error) {
+    renderBadgeTooltipsTable({ ok: false });
+    status(`Badge tooltips load failed: ${error?.message || "Unknown error"}`);
   }
   renderRoleAlertsEventSelect(Array.isArray(roleAlertEvents?.events) ? roleAlertEvents.events : []);
   renderRoleAlertsAnalysis(null);
@@ -3475,6 +3580,58 @@ document.addEventListener("click", async (event) => {
   } finally {
     saveBtn.disabled = false;
   }
+});
+
+document.getElementById("adminBadgeTooltipsReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("adminBadgeTooltipsReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload badges", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => {
+        await loadBadgeTooltipsPanel();
+      }
+    );
+    status("Badge management reloaded.");
+  } catch (error) {
+    status(error?.message || "Badge management reload failed");
+  }
+});
+
+document.getElementById("adminBadgeTooltipsSaveBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("adminBadgeTooltipsSaveBtn");
+  try {
+    const badges = readBadgeTooltipsFromTable();
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Save badge changes", loading: "Saving...", success: "Saved", failure: "Failed" },
+      async () => {
+        await getJson("/api/admin/badge-tooltips", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ badges }),
+        });
+      }
+    );
+    status("Badge changes saved.");
+    await loadBadgeTooltipsPanel();
+  } catch (error) {
+    status(error?.message || "Failed to save badge changes");
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const resetBtn = event.target.closest("[data-badge-tooltip-reset]");
+  if (!resetBtn) return;
+  const badgeId = String(resetBtn.getAttribute("data-badge-tooltip-reset") || "").trim();
+  if (!badgeId) return;
+  const row = badgeTooltipsRowsState.find((r) => r.badgeId === badgeId);
+  const tr = resetBtn.closest("[data-badge-tooltip-row]");
+  const textarea = tr?.querySelector("[data-badge-tooltip-description]");
+  const select = tr?.querySelector("[data-badge-tooltip-rarity]");
+  if (textarea) textarea.value = row?.defaultDescription || "";
+  if (select) select.value = row?.defaultRarity || "epic";
+  status("Badge reset in the editor. Click Save badge changes to persist it.");
 });
 
 /* =============================================================================

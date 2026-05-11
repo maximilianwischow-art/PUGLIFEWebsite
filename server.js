@@ -566,6 +566,7 @@ const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const hofNotesPath = path.join(dataDir, "hof-notes.json");
+const badgeTooltipsPath = path.join(dataDir, "badge-tooltips.json");
 /** Persisted enriched Hall of Fame payload (roster match + peak parses + raid names). Refreshed when winners list changes or TTL expires. */
 const hofEnrichedCachePath = path.join(dataDir, "hof-enriched-cache.json");
 let hofEnrichedWriteChain = Promise.resolve();
@@ -596,6 +597,8 @@ let roleAlertDmLogReady = null;
 let roleAlertDmLogWriteChain = Promise.resolve();
 let hofNotesReady = null;
 let hofNotesWriteChain = Promise.resolve();
+let badgeTooltipsReady = null;
+let badgeTooltipsWriteChain = Promise.resolve();
 let gargulLootReady = null;
 let gargulLootWriteChain = Promise.resolve();
 let netherVortexReady = null;
@@ -608,6 +611,7 @@ let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
 let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let analyticsStoreState = { events: [] };
+let badgeTooltipsState = { byBadgeId: {} };
 let rhWclLinksReady = null;
 /** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
@@ -5625,6 +5629,79 @@ app.put("/api/admin/hof-notes", async (req, res) => {
   }
 });
 
+app.get("/api/admin/badge-tooltips", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureBadgeTooltipsStore();
+    return res.json({ ok: true, categories: mergedBadgeCatalogCategories(), rows: flatMergedBadgeCatalogRows() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load badge tooltips" });
+  }
+});
+
+app.put("/api/admin/badge-tooltips", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureBadgeTooltipsStore();
+
+    const rows = Array.isArray(req.body?.badges)
+      ? req.body.badges
+      : [{ badgeId: req.body?.badgeId, description: req.body?.description, rarity: req.body?.rarity }];
+    const catalogRows = flatMergedBadgeCatalogRows();
+    const defaultById = new Map(
+      catalogRows.map((row) => [
+        row.badgeId,
+        { description: row.defaultDescription || "", rarity: row.defaultRarity || "epic" },
+      ])
+    );
+    const actor =
+      String(session?.user?.globalName || "").trim() || String(session?.user?.username || "").trim() || "admin";
+    const updates = [];
+
+    for (const row of rows) {
+      const badgeId = String(row?.badgeId || "").trim();
+      if (!badgeId || !defaultById.has(badgeId)) continue;
+      const description = String(row?.description || "").trim().slice(0, 600);
+      const rarity = sanitizeBadgeTooltipRarity(row?.rarity);
+      const defaults = defaultById.get(badgeId) || { description: "", rarity: "epic" };
+      updates.push({
+        badgeId,
+        description,
+        rarity: rarity || defaults.rarity,
+        defaultDescription: defaults.description,
+        defaultRarity: defaults.rarity,
+      });
+    }
+    if (!updates.length) {
+      return res.status(400).json({ ok: false, error: "No valid badge tooltip rows supplied" });
+    }
+
+    badgeTooltipsWriteChain = badgeTooltipsWriteChain.catch(() => {}).then(async () => {
+      for (const update of updates) {
+        const descriptionChanged = Boolean(update.description) && update.description !== update.defaultDescription;
+        const rarityChanged = update.rarity !== update.defaultRarity;
+        if (!descriptionChanged && !rarityChanged) {
+          delete badgeTooltipsState.byBadgeId[update.badgeId];
+        } else {
+          badgeTooltipsState.byBadgeId[update.badgeId] = {
+            ...(descriptionChanged ? { description: update.description } : {}),
+            ...(rarityChanged ? { rarity: update.rarity } : {}),
+            updatedAt: Date.now(),
+            updatedBy: actor,
+          };
+        }
+      }
+      await persistBadgeTooltipsStore();
+    });
+    await badgeTooltipsWriteChain;
+    return res.json({ ok: true, saved: updates.length, categories: mergedBadgeCatalogCategories(), rows: flatMergedBadgeCatalogRows() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save badge tooltips" });
+  }
+});
+
 app.get("/api/p2-preparation/materials", async (req, res) => {
   try {
     await ensureP2MaterialsStore();
@@ -6657,12 +6734,12 @@ const BADGE_CATALOG = [
     label: "Guild rank",
     description: "Manual officer ranks and attendance-based tiers.",
     badges: [
-      { id: "guildlead", name: "PUG Lead", icon: "/images/guild-roles/guildlead.png", tier: "officer" },
-      { id: "raidlead", name: "Raid Lead", icon: "/images/guild-roles/raidlead.png", tier: "officer" },
-      { id: "core", name: "Core", icon: "/images/guild-roles/core.png", tier: "officer" },
-      { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance" },
-      { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance" },
-      { id: "peon", name: "Peon", icon: "/images/guild-roles/peon.png", tier: "attendance" },
+      { id: "guildlead", name: "PUG Lead", icon: "/images/guild-roles/guildlead.png", tier: "officer", description: "Officer rank for guild leadership and raid organization." },
+      { id: "raidlead", name: "Raid Lead", icon: "/images/guild-roles/raidlead.png", tier: "officer", description: "Officer rank for players leading raid nights and roster execution." },
+      { id: "core", name: "Core", icon: "/images/guild-roles/core.png", tier: "officer", description: "Trusted core raider rank assigned in Account Assignment." },
+      { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance", description: "Attendance rank for consistently joining tracked guild raids." },
+      { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance", description: "Attendance rank for regular participation in tracked guild raids." },
+      { id: "peon", name: "Peon", icon: "/images/guild-roles/peon.png", tier: "attendance", description: "Starting guild rank for new or low-attendance raiders." },
     ],
   },
   {
@@ -6670,11 +6747,11 @@ const BADGE_CATALOG = [
     label: "Achievements",
     description: "Earned by appearing in WCL rosters / MVP votes.",
     badges: [
-      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png" },
-      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png" },
-      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png" },
-      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png" },
-      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png" },
+      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
+      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png", description: "You won a raid MVP vote in a past round listed on the Hall of Fame page." },
+      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", description: "100% attendance in the current tracked raid window." },
+      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
+      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
     ],
   },
   {
@@ -6685,6 +6762,7 @@ const BADGE_CATALOG = [
       id: cfg.badgeId,
       name: cfg.label,
       icon: cfg.icon,
+      description: cfg.description,
     })),
   },
   {
@@ -6692,9 +6770,9 @@ const BADGE_CATALOG = [
     label: "First clears",
     description: "Listed in the ranked roster of the guild's first full clear of each raid.",
     badges: [
-      { id: "kara-first-time-clear", name: "Karazhan first clear", icon: "/images/achievements/kara-first-time-clear.png" },
-      { id: "gruul-first-time-clear", name: "Gruul first clear", icon: "/images/achievements/gruul-first-time-clear.png" },
-      { id: "magtheridon-first-time-clear", name: "Magtheridon first clear", icon: "/images/achievements/magtheridon-first-time-clear.png" },
+      { id: "kara-first-time-clear", name: "Karazhan first clear", icon: "/images/achievements/kara-first-time-clear.png", description: "You were in the ranked roster on the guild's first Karazhan full clear report." },
+      { id: "gruul-first-time-clear", name: "Gruul first clear", icon: "/images/achievements/gruul-first-time-clear.png", description: "You were in the ranked roster on the guild's first Gruul's Lair full clear report." },
+      { id: "magtheridon-first-time-clear", name: "Magtheridon first clear", icon: "/images/achievements/magtheridon-first-time-clear.png", description: "You were in the ranked roster on the guild's first Magtheridon's Lair full clear report." },
     ],
   },
   {
@@ -6703,14 +6781,120 @@ const BADGE_CATALOG = [
     description:
       "Distinct guild raid reports a player appeared in on Warcraft Logs, scoped to the admin Event Management selection (only WCL events explicitly marked as guild raids count). Attendance % still uses only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). On this profile view, **every** milestone tier you have reached is shown (e.g. at 12 events you see both the 5- and 10-raid badges). Compact roster rows elsewhere may still show only the highest milestone icon.",
     badges: [
-      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png" },
-      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png" },
-      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png" },
-      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png" },
-      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png" },
+      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png", description: "Appeared in at least 5 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png", description: "Appeared in at least 10 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
     ],
   },
 ];
+
+function badgeCatalogRarityForCategory(categoryId, badge) {
+  const cat = String(categoryId || "");
+  if (cat === "event-awards") return "legendary";
+  if (cat === "achievements" || cat === "first-clears" || cat === "raid-milestones") return "epic";
+  return String(badge?.tier || "") === "officer" ? "rare" : "common";
+}
+
+function sanitizeBadgeTooltipRarity(value) {
+  const rarity = String(value || "").trim().toLowerCase();
+  return ["common", "rare", "epic", "legendary"].includes(rarity) ? rarity : "";
+}
+
+function sanitizeBadgeTooltipsState(raw) {
+  const input = raw && typeof raw.byBadgeId === "object" ? raw.byBadgeId : {};
+  const byBadgeId = {};
+  for (const [idRaw, rowRaw] of Object.entries(input)) {
+    const badgeId = String(idRaw || "").trim().slice(0, 96);
+    if (!badgeId) continue;
+    const row = rowRaw && typeof rowRaw === "object" ? rowRaw : {};
+    const description = String(row.description || "").trim().slice(0, 600);
+    const rarity = sanitizeBadgeTooltipRarity(row.rarity);
+    if (!description && !rarity) continue;
+    byBadgeId[badgeId] = {
+      ...(description ? { description } : {}),
+      ...(rarity ? { rarity } : {}),
+      updatedAt: Number.isFinite(Number(row.updatedAt)) ? Number(row.updatedAt) : Date.now(),
+      updatedBy: String(row.updatedBy || "").trim().slice(0, 128),
+    };
+  }
+  return { byBadgeId };
+}
+
+async function persistBadgeTooltipsStore() {
+  const tmpPath = `${badgeTooltipsPath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(badgeTooltipsState, null, 2), "utf8");
+  await rename(tmpPath, badgeTooltipsPath);
+}
+
+async function ensureBadgeTooltipsStore() {
+  if (badgeTooltipsReady) return badgeTooltipsReady;
+  badgeTooltipsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(badgeTooltipsPath, "utf8");
+      badgeTooltipsState = sanitizeBadgeTooltipsState(JSON.parse(raw));
+    } catch {
+      badgeTooltipsState = { byBadgeId: {} };
+    }
+  })();
+  return badgeTooltipsReady;
+}
+
+function mergedBadgeCatalogCategories() {
+  const overrides = badgeTooltipsState?.byBadgeId || {};
+  return BADGE_CATALOG.map((cat) => ({
+    ...cat,
+    badges: (cat.badges || []).map((badge) => {
+      const defaultDescription = String(badge.description || cat.description || "").trim();
+      const defaultRarity = badgeCatalogRarityForCategory(cat.id, badge);
+      const override = overrides[badge.id] || null;
+      const description = String(override?.description || defaultDescription).trim();
+      const rarity = sanitizeBadgeTooltipRarity(override?.rarity) || defaultRarity;
+      return {
+        ...badge,
+        categoryId: cat.id,
+        categoryLabel: cat.label,
+        defaultDescription,
+        defaultRarity,
+        description,
+        rarity,
+        hasOverride: Boolean(override?.description || override?.rarity),
+        updatedAt: Number(override?.updatedAt || 0),
+        updatedBy: String(override?.updatedBy || ""),
+      };
+    }),
+  }));
+}
+
+function flatMergedBadgeCatalogRows() {
+  return mergedBadgeCatalogCategories().flatMap((cat) =>
+    (cat.badges || []).map((badge) => ({
+      categoryId: cat.id,
+      categoryLabel: cat.label,
+      badgeId: badge.id,
+      name: badge.name,
+      icon: badge.icon,
+      rarity: badge.rarity,
+      defaultRarity: badge.defaultRarity,
+      description: badge.description,
+      defaultDescription: badge.defaultDescription,
+      hasOverride: badge.hasOverride,
+      updatedAt: badge.updatedAt,
+      updatedBy: badge.updatedBy,
+    }))
+  );
+}
+
+app.get("/api/badge-tooltips", async (_req, res) => {
+  try {
+    await ensureBadgeTooltipsStore();
+    return res.json({ ok: true, categories: mergedBadgeCatalogCategories(), rows: flatMergedBadgeCatalogRows() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load badge tooltips" });
+  }
+});
 
 /** Public profile getter — same payload shape we hand back from /me, minus the ability to upload. */
 function publicProfileFromDb(userId) {
@@ -7143,6 +7327,8 @@ app.get("/api/profile/me/badges", async (req, res) => {
     } catch {
       /* fall through with whatever's in memory */
     }
+    await ensureBadgeTooltipsStore();
+    const badgeCatalog = mergedBadgeCatalogCategories();
     const linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
 
     // Phase 4 cutover: prefer materialised badge_state. Falls back to live
@@ -7156,7 +7342,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
           if (states.length) {
             const stateById = new Map(states.map((s) => [s.badgeId, s]));
             const milestoneInferredCount = inferRaidMilestoneEventCountFromBadgeStates(stateById);
-            const categories = BADGE_CATALOG.map((cat) => ({
+            const categories = badgeCatalog.map((cat) => ({
               ...cat,
               badges: cat.badges.map((b) => {
                 const st = stateById.get(b.id);
@@ -7328,7 +7514,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       }
     } catch {}
 
-    const categories = BADGE_CATALOG.map((cat) => ({
+    const categories = badgeCatalog.map((cat) => ({
       ...cat,
       badges: cat.badges.map((b) => ({ ...b, earned: earned.has(b.id) })),
     }));

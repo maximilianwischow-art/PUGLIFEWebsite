@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260508analyticsdash2" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260511badge-tooltip2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -47,6 +47,7 @@
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="rh-wcl">Account Assignment</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="database">Database</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="badge-tooltips">Badge Management</button>
               </div>
               <div class="admin-sidebar-group" data-admin-group="roster">
                 <div class="admin-sidebar-group-label">Roster &amp; Loot</div>
@@ -336,6 +337,20 @@
               <div id="adminHofNotesTable" class="admin-grid-note">Loading Hall of Fame winners...</div>
             </section>
 
+            <section class="card admin-panel" data-admin-panel="badge-tooltips" id="admin-panel-badge-tooltips">
+              <h3 class="section-title">Badge Management</h3>
+              <p class="subtle">Edit the rarity and tooltip description shown on profile and roster badge hover cards. Default values reset the badge to its built-in copy.</p>
+              <div class="admin-actions admin-actions--tight">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminBadgeTooltipsReloadBtn">
+                  Reload badges
+                </button>
+                <button type="button" class="event-signup-btn" id="adminBadgeTooltipsSaveBtn">
+                  Save badge changes
+                </button>
+              </div>
+              <div id="adminBadgeTooltipsTable" class="admin-grid-note">Loading badge management...</div>
+            </section>
+
             <section class="card admin-panel" data-admin-panel="role-alerts" id="admin-panel-role-alerts">
               <h3 class="section-title">Raid Roster Management</h3>
               <p class="subtle">
@@ -382,7 +397,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260508analyticsdash2"></script>
+    <script defer src="/admin.js?v=20260511badge-management1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

@@ -2055,35 +2055,138 @@ body.framework-bg-vivid {
   box-sizing: border-box;
 }
 
-.raider-badge-slot::after {
-  content: "";
-  pointer-events: none;
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%);
-  width: min(280px, 42vw);
-  border: 1px solid rgba(168, 85, 247, 0.34);
-  border-radius: 10px;
-  padding: 7px 9px;
-  background: rgba(10, 8, 18, 0.96);
-  color: #f0e8ff;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-  font-size: 11px;
-  line-height: 1.35;
-  text-transform: none;
-  letter-spacing: 0.02em;
-  white-space: normal;
-  opacity: 0;
-  visibility: hidden;
-  z-index: 30;
+.achievement-badge-container {
+  position: relative;
+  display: inline-flex;
 }
 
-.raider-badge-slot[data-badge-tip]:hover::after,
-.raider-badge-slot[data-badge-tip]:focus-visible::after {
-  content: attr(data-badge-tip);
+.achievement-badge-frame {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  box-shadow:
+    0 0 0 1px rgba(168, 85, 247, 0.5),
+    0 4px 8px rgba(0, 0, 0, 0.5);
+  cursor: help;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.achievement-badge-container:hover .achievement-badge-frame,
+.achievement-badge-container:focus-visible .achievement-badge-frame {
+  transform: scale(1.08);
+}
+
+.achievement-badge-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 60%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 22%, transparent);
+}
+
+.achievement-badge-container:hover .achievement-badge-glow,
+.achievement-badge-container:focus-visible .achievement-badge-glow {
   opacity: 1;
-  visibility: visible;
+}
+
+.achievement-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease-in-out;
+  z-index: 80;
+  min-width: 200px;
+}
+
+.achievement-badge-container:hover .achievement-tooltip,
+.achievement-badge-container:focus-visible .achievement-tooltip,
+.achievement-badge-container:focus-within .achievement-tooltip {
+  opacity: 1;
+}
+
+.achievement-tooltip-box {
+  display: block;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 16px;
+  border: 2px solid var(--achievement-rarity-color, rgba(163, 53, 238, 0.7));
+  border-radius: 8px;
+  background-color: #1a1a1a;
+  color: #d1d5db;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 40%, transparent),
+    0 8px 16px rgba(0, 0, 0, 0.9);
+}
+
+.achievement-name,
+.achievement-description,
+.achievement-rarity,
+.achievement-rarity-text {
+  display: block;
+}
+
+.achievement-name {
+  margin-bottom: 8px;
+  color: var(--achievement-glow-color, #a855f7);
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 700;
+  filter: drop-shadow(0 0 10px currentColor);
+}
+
+.achievement-description {
+  max-width: 250px;
+  color: #d1d5db;
+  font-size: 12px;
+  line-height: 1.625;
+  white-space: normal;
+}
+
+.achievement-rarity {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #374151;
+}
+
+.achievement-rarity-text {
+  color: var(--achievement-rarity-color, rgba(163, 53, 238, 0.9));
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.achievement-tooltip-box.rarity-common {
+  --achievement-rarity-color: rgba(158, 158, 158, 0.5);
+}
+
+.achievement-tooltip-box.rarity-rare {
+  --achievement-rarity-color: rgba(0, 112, 222, 0.6);
+}
+
+.achievement-tooltip-box.rarity-epic {
+  --achievement-rarity-color: rgba(163, 53, 238, 0.7);
+}
+
+.achievement-tooltip-box.rarity-legendary {
+  --achievement-rarity-color: rgba(255, 128, 0, 0.8);
+}
+
+.leaderboard-table tbody tr:nth-child(-n + 4) .achievement-tooltip {
+  top: calc(100% + 12px);
+  bottom: auto;
 }
 
 /*
@@ -2098,7 +2201,7 @@ body.framework-bg-vivid {
   border-width: 0;
   border-style: solid;
   background: #000;
-  overflow: hidden;
+  overflow: visible;
   vertical-align: top;
   box-shadow: inset 0 0 0 2px rgba(168, 85, 247, 0.42);
 }
@@ -2128,7 +2231,7 @@ body.framework-bg-vivid {
   padding: 0;
   border: 0;
   background: #000;
-  overflow: hidden;
+  overflow: visible;
   line-height: 0;
   vertical-align: top;
 }
@@ -3536,6 +3639,32 @@ button.raid-cal-run.raid-cal-run--column:hover {
   width: 100%;
   min-width: 1040px;
   border-collapse: collapse;
+}
+
+.admin-badge-tooltips-table {
+  min-width: 980px;
+}
+
+.admin-badge-tooltip-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+
+.admin-badge-tooltip-badge img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.24);
+}
+
+.admin-badge-tooltip-default {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .admin-rh-role-cell {
@@ -6473,7 +6602,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   border: 1px solid rgba(167, 139, 250, 0.18);
   text-align: center;
   transition: border-color 0.15s ease, transform 0.05s ease;
-  overflow: hidden;
+  overflow: visible;
 }
 .profile-badge-tile-icon {
   width: 100%;
@@ -6482,6 +6611,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.profile-badge-tile .achievement-tooltip {
+  bottom: calc(100% + 10px);
 }
 .profile-badge-tile-icon img {
   width: 100%;

@@ -61,6 +61,52 @@
     if (kind) node.classList.add(`is-${kind}`);
   }
 
+  function badgeTooltipHtml(badge, earned) {
+    const rarity = ["common", "rare", "epic", "legendary"].includes(String(badge?.rarity || ""))
+      ? String(badge.rarity)
+      : "epic";
+    const status = earned ? "Earned" : "Not yet earned";
+    const description = String(badge?.description || badge?.defaultDescription || "").trim();
+    const glowColor = badgeTooltipGlowColor(badge?.id, rarity);
+    const style = `--achievement-glow-color:${glowColor};--achievement-rarity-color:${badgeTooltipRarityColor(rarity)};`;
+    return `
+      <span class="achievement-tooltip" aria-hidden="true">
+        <span class="achievement-tooltip-box rarity-${escapeHtml(rarity)}" style="${escapeHtml(style)}">
+          <span class="achievement-name">${escapeHtml(badge?.name || "")}</span>
+          ${description ? `<span class="achievement-description">${escapeHtml(description)}</span>` : ""}
+          <span class="achievement-rarity">
+            <span class="achievement-rarity-text">${escapeHtml(status)} · ${escapeHtml(rarity)}</span>
+          </span>
+        </span>
+      </span>`;
+  }
+
+  function badgeTooltipGlowColor(badgeId, rarity) {
+    const id = String(badgeId || "").trim();
+    const byId = {
+      "iron-attendance": "#22c55e",
+      "parsing-ceiling": "#ef4444",
+      "most-deaths-last-6-raids": "#f97316",
+      "hall-of-fame": "#f97316",
+      "best-time-participant": "#a855f7",
+      "aoe-cleave": "#f97316",
+    };
+    if (byId[id]) return byId[id];
+    if (id.includes("first-time-clear")) return "#22c55e";
+    if (id.startsWith("raids-with-guild-")) return "#a855f7";
+    if (rarity === "legendary") return "#f97316";
+    if (rarity === "rare") return "#0070de";
+    if (rarity === "common") return "#9e9e9e";
+    return "#a855f7";
+  }
+
+  function badgeTooltipRarityColor(rarity) {
+    if (rarity === "legendary") return "rgba(255, 128, 0, 0.8)";
+    if (rarity === "rare") return "rgba(0, 112, 222, 0.6)";
+    if (rarity === "common") return "rgba(158, 158, 158, 0.5)";
+    return "rgba(163, 53, 238, 0.7)";
+  }
+
   function showLockedState() {
     if (els.locked) els.locked.hidden = false;
     if (els.grid) els.grid.hidden = true;
@@ -464,14 +510,18 @@
     const total = (cat.badges || []).length;
     const items = (cat.badges || [])
       .map((b) => {
-        const cls = b.earned ? "profile-badge-tile is-earned" : "profile-badge-tile is-locked";
-        const desc = b.earned ? `${b.name} — earned` : `${b.name} — not yet earned`;
+        const cls = b.earned
+          ? "profile-badge-tile achievement-badge-container is-earned"
+          : "profile-badge-tile achievement-badge-container is-locked";
+        const desc = `${b.name} — ${b.description || b.defaultDescription || (b.earned ? "earned" : "not yet earned")}`;
         return `
-          <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" title="${escapeHtml(desc)}">
-            <div class="profile-badge-tile-icon" aria-hidden="true">
-              <img src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
+          <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" aria-label="${escapeHtml(desc)}">
+            <div class="profile-badge-tile-icon achievement-badge-frame" aria-hidden="true">
+              <img class="achievement-badge-img" src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
+              <span class="achievement-badge-glow" aria-hidden="true"></span>
             </div>
             <span class="profile-badge-name">${escapeHtml(b.name)}</span>
+            ${badgeTooltipHtml(b, b.earned)}
           </div>`;
       })
       .join("");
@@ -604,6 +654,9 @@
       const id = tile.getAttribute("data-badge-id") || "";
       const img = tile.querySelector("img");
       const badgeName = img?.getAttribute("alt") || id;
+      const currentTitle = String(tile.getAttribute("aria-label") || "");
+      const description = currentTitle.includes(" — ") ? currentTitle.slice(currentTitle.indexOf(" — ") + 3) : "";
+      const accessibleLabel = `${badgeName}${description ? ` — ${description}` : ""}`;
 
       const isEarnedNow = serverEarnedIds.has(id) || earnedFromClient.has(id);
 
@@ -611,14 +664,14 @@
         if (tile.classList.contains("is-earned")) return;
         tile.classList.remove("is-locked");
         tile.classList.add("is-earned");
-        tile.setAttribute("title", `${badgeName} — earned`);
+        tile.setAttribute("aria-label", accessibleLabel);
         return;
       }
 
       if (tile.classList.contains("is-earned")) {
         tile.classList.remove("is-earned");
         tile.classList.add("is-locked");
-        tile.setAttribute("title", `${badgeName} — not yet earned`);
+        tile.setAttribute("aria-label", accessibleLabel);
       }
     });
 

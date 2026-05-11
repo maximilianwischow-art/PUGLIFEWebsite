@@ -6176,3 +6176,141 @@ html { -webkit-tap-highlight-color: transparent; }
   .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
   .top-nav a { font-size: 11px; padding: 8px 6px; letter-spacing: 0.04em; }
 }
+
+/* WoW-style achievement badge tooltips */
+.achievement-badge-container {
+  position: relative;
+  display: inline-flex;
+}
+.achievement-badge-frame {
+  position: relative;
+  display: inline-flex;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.5), 0 4px 8px rgba(0, 0, 0, 0.5);
+  cursor: help;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.achievement-badge-container:hover .achievement-badge-frame,
+.achievement-badge-container:focus-visible .achievement-badge-frame {
+  transform: scale(1.08);
+}
+.achievement-badge-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 60%, transparent),
+    inset 0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 22%, transparent);
+}
+.achievement-badge-container:hover .achievement-badge-glow,
+.achievement-badge-container:focus-visible .achievement-badge-glow {
+  opacity: 1;
+}
+.achievement-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease-in-out;
+  z-index: 80;
+  min-width: 200px;
+}
+.achievement-badge-container:hover .achievement-tooltip,
+.achievement-badge-container:focus-visible .achievement-tooltip,
+.achievement-badge-container:focus-within .achievement-tooltip {
+  opacity: 1;
+}
+.achievement-tooltip-box {
+  display: block;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 16px;
+  border: 2px solid var(--achievement-rarity-color, rgba(163, 53, 238, 0.7));
+  border-radius: 8px;
+  background-color: #1a1a1a;
+  color: #d1d5db;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow:
+    0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 40%, transparent),
+    0 8px 16px rgba(0, 0, 0, 0.9);
+}
+.achievement-name,
+.achievement-description,
+.achievement-rarity,
+.achievement-rarity-text {
+  display: block;
+}
+.achievement-name {
+  margin-bottom: 8px;
+  color: var(--achievement-glow-color, #a855f7);
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 700;
+  filter: drop-shadow(0 0 10px currentColor);
+}
+.achievement-description {
+  max-width: 250px;
+  color: #d1d5db;
+  font-size: 12px;
+  line-height: 1.625;
+  white-space: normal;
+}
+.achievement-rarity {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #374151;
+}
+.achievement-rarity-text {
+  color: var(--achievement-rarity-color, rgba(163, 53, 238, 0.9));
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.achievement-tooltip-box.rarity-common { --achievement-rarity-color: rgba(158, 158, 158, 0.5); }
+.achievement-tooltip-box.rarity-rare { --achievement-rarity-color: rgba(0, 112, 222, 0.6); }
+.achievement-tooltip-box.rarity-epic { --achievement-rarity-color: rgba(163, 53, 238, 0.7); }
+.achievement-tooltip-box.rarity-legendary { --achievement-rarity-color: rgba(255, 128, 0, 0.8); }
+.leaderboard-table tbody tr:nth-child(-n + 4) .achievement-tooltip {
+  top: calc(100% + 12px);
+  bottom: auto;
+}
+.raider-badge-slot--guild-role,
+.raider-badge-slot--achievement-earned,
+.profile-badge-tile {
+  overflow: visible;
+}
+.profile-badge-tile .achievement-tooltip {
+  bottom: calc(100% + 10px);
+}
+.admin-badge-tooltips-table {
+  min-width: 980px;
+}
+.admin-badge-tooltip-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+.admin-badge-tooltip-badge img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.24);
+}
+.admin-badge-tooltip-default {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.35;
+}
