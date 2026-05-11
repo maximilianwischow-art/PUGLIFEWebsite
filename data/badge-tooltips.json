@@ -1,0 +1,100 @@
+{
+  "byBadgeId": {
+    "guildlead": {
+      "description": "Great Lord of the PUG",
+      "rarity": "legendary",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "raidlead": {
+      "description": "Our honored Raid Leads!",
+      "rarity": "legendary",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "core": {
+      "description": "Trusted & reliable core raider",
+      "rarity": "legendary",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "veteran": {
+      "description": "Rolling last 6 Raid -> Highest Attendance",
+      "rarity": "epic",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "grunt": {
+      "description": "Rolling last 6 Raid -> mid Attendance",
+      "rarity": "rare",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "hall-of-fame": {
+      "description": "Was voted as MVP in a past Raid.",
+      "rarity": "legendary",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "most-deaths-last-6-raids": {
+      "description": "YOU DIE A LOT",
+      "rarity": "legendary",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "raids-with-guild-5": {
+      "description": "You did 5 Raids with us Yay!",
+      "rarity": "common",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "raids-with-guild-10": {
+      "description": "You did 10 Raids with us Yay!",
+      "rarity": "common",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "raids-with-guild-25": {
+      "description": "You seem to like us, thanks for having 25 Raids with us!",
+      "rarity": "rare",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "raids-with-guild-100": {
+      "description": "100!",
+      "rarity": "legendary",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "peon": {
+      "description": "Rolling last 6 Raid -> low Attendance",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "best-time-participant": {
+      "description": "Raider participated in one of our Best Time Raids.",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "iron-attendance": {
+      "description": "Rolling last 6 Raid -> 100% Attendance",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "parsing-ceiling": {
+      "description": "Best Parser based on your role in recent raid.",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "aoe-cleave": {
+      "description": "Attended the AOE Cleave Maulgar Kill on May 7, 2026.",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    },
+    "raids-with-guild-50": {
+      "description": "Dude we are basically friends now!",
+      "updatedAt": 1778491212449,
+      "updatedBy": "Dr34ml3ss"
+    }
+  }
+}
