@@ -2298,7 +2298,7 @@ function renderAnalyticsDashboard(payload) {
       chart: { ...baseChart.chart, type: "donut", height: 280 },
       labels: ctaRows.map((r) => String(r.label || "(none)")),
       series: ctaRows.map((r) => Number(r.count || 0)),
-      legend: { ...baseChart.legend, show: true, position: "bottom" },
+      legend: { ...baseChart.legend, show: false },
       plotOptions: {
         pie: {
           donut: {
