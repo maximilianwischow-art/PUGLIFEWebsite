@@ -98,21 +98,6 @@ let raidCalendarColumnsData = {};
 
 function apiGetJson(url, init) {
   const c = window.plbSessionApiCache;
-  // #region agent log
-  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
-    body: JSON.stringify({
-      sessionId: "59406e",
-      runId: "calendar-repro-1",
-      hypothesisId: "H4",
-      location: "public/app.js:apiGetJson",
-      message: "apiGetJson called",
-      data: { url: String(url || ""), hasSessionApiCache: !!c, skipCache: !!init?.skipCache },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   if (c) return c.getJson(url, init);
   return fetch(url, { method: "GET", ...init }).then(async (res) => {
     const body = await res.json().catch(() => ({}));

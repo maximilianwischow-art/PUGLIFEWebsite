@@ -313,19 +313,6 @@ app.use("/api", async (req, res, next) => {
     const key = publicSnapshotKeyFromRequest(req);
     const hit = publicDataSnapshotState.byKey?.[key];
     if (hit && Object.prototype.hasOwnProperty.call(hit, "payload")) {
-      if (snapshotOriginalPath(req) === "/api/voting/hall-of-fame") {
-        agentDebugLog("pre-fix", "H1", "server.js:publicSnapshotMiddleware", "public hof served from snapshot", {
-          key,
-          syncedAt: Number(hit.syncedAt || 0),
-          count: Array.isArray(hit.payload?.hallOfFame) ? hit.payload.hallOfFame.length : null,
-          rows: (Array.isArray(hit.payload?.hallOfFame) ? hit.payload.hallOfFame : []).map((row, idx) => ({
-            idx,
-            roundKey: String(row?.roundKey || ""),
-            raidStartTime: Number(row?.raidStartTime || 0),
-            winnerName: String(row?.winnerName || ""),
-          })),
-        });
-      }
       res.setHeader("x-plb-public-snapshot", "hit");
       return res.json(hit.payload);
     }
@@ -670,24 +657,6 @@ let roleAlertDmLogState = { byEventId: {} };
 let hofNotesState = { byWinnerRaidKey: {} };
 let raidHelperDmPollTimer = null;
 let raidHelperDmPollRunning = false;
-
-function agentDebugLog(runId, hypothesisId, location, message, data = {}) {
-  // #region agent log
-  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "dbac0b" },
-    body: JSON.stringify({
-      sessionId: "dbac0b",
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-}
 
 function parseCookieHeader(cookieHeader) {
   const out = {};
@@ -2283,39 +2252,10 @@ async function getHallOfFameForGuild(guildId, limit = 10) {
   if (!identityRows.length) identityRows = buildMockHallOfFameRows(limit);
   identityRows = sortHallOfFameRowsByRaidStartDesc(identityRows);
   const fingerprint = computeHallOfFameWinnerFingerprint(identityRows);
-  agentDebugLog("pre-fix", "H1,H2,H3", "server.js:getHallOfFameForGuild", "hof identity rows built", {
-    guildId,
-    limit,
-    currentRoundKey,
-    totalVotes: Array.isArray(votingStoreState.votes) ? votingStoreState.votes.length : null,
-    identityCount: identityRows.length,
-    identityRows: identityRows.map((row, idx) => ({
-      idx,
-      roundKey: String(row.roundKey || ""),
-      raidCode: String(row.raidCode || ""),
-      raidStartTime: Number(row.raidStartTime || 0),
-      winnerName: String(row.winnerName || ""),
-      winnerVotes: Number(row.winnerVotes || 0),
-    })),
-    fingerprint,
-  });
 
   const cached = await tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint);
   if (cached) {
-    const out = applyHofNotesToHallOfFameRows(cached);
-    agentDebugLog("pre-fix", "H2,H4", "server.js:getHallOfFameForGuild", "hof enriched cache hit", {
-      guildId,
-      limit,
-      count: out.length,
-      rows: out.map((row, idx) => ({
-        idx,
-        roundKey: String(row.roundKey || ""),
-        raidStartTime: Number(row.raidStartTime || 0),
-        winnerName: String(row.winnerName || ""),
-        hasCustomQuote: Boolean(String(row.customQuote || "").trim()),
-      })),
-    });
-    return out;
+    return applyHofNotesToHallOfFameRows(cached);
   }
 
   try {
@@ -2323,25 +2263,10 @@ async function getHallOfFameForGuild(guildId, limit = 10) {
     const withRaidNames = await hydrateHallOfFameRaidMetadata(enriched);
     const sorted = sortHallOfFameRowsByRaidStartDesc(withRaidNames);
     await persistHallOfFameEnrichedCache(guildId, limit, fingerprint, stripHallOfFameRowsForDiskCache(sorted));
-    const out = applyHofNotesToHallOfFameRows(sorted);
-    agentDebugLog("pre-fix", "H2,H3", "server.js:getHallOfFameForGuild", "hof enriched fresh rows", {
-      guildId,
-      limit,
-      count: out.length,
-      rows: out.map((row, idx) => ({
-        idx,
-        roundKey: String(row.roundKey || ""),
-        raidStartTime: Number(row.raidStartTime || 0),
-        winnerName: String(row.winnerName || ""),
-        raidName: String(row.raidName || ""),
-        hasPlayer: Boolean(row.player),
-        hasCustomQuote: Boolean(String(row.customQuote || "").trim()),
-      })),
-    });
-    return out;
+    return applyHofNotesToHallOfFameRows(sorted);
   } catch {
     const hydrated = await hydrateHallOfFameRaidMetadata(identityRows).catch(() => identityRows);
-    const fallback = sortHallOfFameRowsByRaidStartDesc(applyHofNotesToHallOfFameRows(hydrated)).map((r) => ({
+    return sortHallOfFameRowsByRaidStartDesc(applyHofNotesToHallOfFameRows(hydrated)).map((r) => ({
       ...r,
       player: null,
       peakParse: null,
@@ -2349,19 +2274,6 @@ async function getHallOfFameForGuild(guildId, limit = 10) {
       peakParseBracket: null,
       wclClassName: "",
     }));
-    agentDebugLog("pre-fix", "H2,H3", "server.js:getHallOfFameForGuild", "hof fallback rows after enrichment failure", {
-      guildId,
-      limit,
-      count: fallback.length,
-      rows: fallback.map((row, idx) => ({
-        idx,
-        roundKey: String(row.roundKey || ""),
-        raidStartTime: Number(row.raidStartTime || 0),
-        winnerName: String(row.winnerName || ""),
-        hasCustomQuote: Boolean(String(row.customQuote || "").trim()),
-      })),
-    });
-    return fallback;
   }
 }
 
@@ -5583,16 +5495,6 @@ app.get("/api/admin/hof-notes", async (req, res) => {
         };
       });
     }
-    agentDebugLog("pre-fix", "H2", "server.js:/api/admin/hof-notes", "admin hof notes rows returned", {
-      count: rows.length,
-      rows: rows.map((row, idx) => ({
-        idx,
-        winnerName: String(row.winnerName || ""),
-        raidCode: String(row.raidCode || ""),
-        raidStartTime: Number(row.raidStartTime || 0),
-        hasQuote: Boolean(String(row.quote || "").trim()),
-      })),
-    });
     return res.json({ ok: true, rows });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame notes" });
@@ -7944,18 +7846,6 @@ app.get("/api/admin/wcl-attendee-names", async (req, res) => {
 app.get("/api/voting/hall-of-fame", async (_req, res) => {
   try {
     const hallOfFame = await getHallOfFameForGuild(votingGuildId, 10);
-    agentDebugLog("pre-fix", "H1,H2,H3,H4", "server.js:/api/voting/hall-of-fame", "public hof endpoint rows returned", {
-      count: hallOfFame.length,
-      rows: hallOfFame.map((row, idx) => ({
-        idx,
-        roundKey: String(row.roundKey || ""),
-        winnerName: String(row.winnerName || ""),
-        raidCode: String(row.raidCode || ""),
-        raidStartTime: Number(row.raidStartTime || 0),
-        hasCustomQuote: Boolean(String(row.customQuote || "").trim()),
-        hasPlayer: Boolean(row.player),
-      })),
-    });
     return res.json({ ok: true, hallOfFame });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame" });
@@ -11137,29 +11027,6 @@ function buildRecentRaidCalendarEntries(reports, options = {}) {
     }
   }
   const dedupedEntries = dedupeRaidCalendarEntries(entries, options);
-  // #region agent log
-  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "59406e" },
-    body: JSON.stringify({
-      sessionId: "59406e",
-      runId: "calendar-repro-1",
-      hypothesisId: "H5",
-      location: "server.js:buildRecentRaidCalendarEntries",
-      message: "pre/post dedupe May7 Gruul entries",
-      data: {
-        pre: entries
-          .filter((e) => e.raidName === "Gruul's Lair" && raidCalendarDayKey(e.startTime) === "2026-05-07")
-          .map((e) => ({ code: e.reportCode, full: !!e.isFullClear, killed: e.bossesKilled, start: e.startTime, title: e.title })),
-        post: dedupedEntries
-          .filter((e) => e.raidName === "Gruul's Lair" && raidCalendarDayKey(e.startTime) === "2026-05-07")
-          .map((e) => ({ code: e.reportCode, full: !!e.isFullClear, killed: e.bossesKilled, start: e.startTime, title: e.title })),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-
   for (const entry of dedupedEntries) {
     entry.calendarDay = raidCalendarDayKey(entry.startTime);
   }
