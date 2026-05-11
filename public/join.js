@@ -11,6 +11,11 @@ const JOIN_DISCORD_INVITE = "https://discord.gg/TBnt5f8DFc";
 const JOIN_EVENT_IMG_VER = "20260504j";
 const JOIN_GUILD_ID = 817080;
 const JOIN_DISCORD_CLICKED_KEY = "plb_join_discord_clicked_v1";
+const JOIN_CLASS_LABELS = ["Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Shaman", "Mage", "Warlock", "Druid"];
+
+let joinSpecIconsReady = null;
+let joinSpecIconByKey = new Map();
+let joinSpecIconBySpecOnly = new Map();
 
 /* ─────────────────────────── Conversion tracking ─────────────────────────── */
 
@@ -63,64 +68,61 @@ function hasClickedDiscordThisSession() {
   }
 }
 
-/* ─────────────────────────── Current needs ─────────────────────────── */
-
-function joinPriorityClass(priority) {
-  const key = String(priority || "").toLowerCase();
-  if (key === "high") return "join-priority--high";
-  if (key === "medium") return "join-priority--medium";
-  return "join-priority--open";
+function joinIconSlug(v) {
+  return String(v || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
 }
 
-function renderJoinNeeds(rows) {
-  const host = document.getElementById("joinNeedsList");
-  if (!host) return;
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) {
-    host.innerHTML = `<p class="subtle">No specific roles listed right now. Exceptional players are always welcome.</p>`;
-    return;
-  }
-  host.innerHTML = `
-    <div class="join-need-row join-need-row--head" aria-hidden="true">
-      <span>Class</span>
-      <span>Spec focus</span>
-      <span>Priority</span>
-    </div>
-    ${list
-      .map((row) => {
-        const className = String(row?.className || "").trim();
-        const specFocus = String(row?.specFocus || "").trim();
-        const priority = String(row?.priority || "open").trim();
-        const color = String(row?.color || "").trim();
-        const safeColor = /^#[0-9a-f]{6}$/i.test(color) ? color : "#ffffff";
-        return `
-          <div class="join-need-row">
-            <div class="join-class">
-              <span class="join-class-dot" style="background: ${escJoin(safeColor)}"></span>
-              ${escJoin(className)}
-            </div>
-            <span class="join-spec">${escJoin(specFocus)}</span>
-            <span class="join-priority ${joinPriorityClass(priority)}">${escJoin(priority || "Open")}</span>
-          </div>
-        `;
-      })
-      .join("")}
-  `;
+function joinNormalizeSpecSlug(specName, className = "") {
+  const spec = joinIconSlug(specName);
+  const cls = joinIconSlug(className);
+  if (cls === "druid" && spec === "feral") return "feralcombat";
+  if (cls === "hunter" && (spec === "beastmaster" || spec === "bm")) return "beastmastery";
+  if (cls === "paladin" && spec === "ret") return "retribution";
+  return spec;
 }
 
-async function loadJoinNeeds() {
-  const host = document.getElementById("joinNeedsList");
-  try {
-    const res = await fetch("/api/join/current-needs", { credentials: "same-origin" });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok || payload?.ok === false) throw new Error(payload?.error || "Failed to load current needs");
-    renderJoinNeeds(Array.isArray(payload?.rows) ? payload.rows : []);
-  } catch (_error) {
-    if (host) host.innerHTML = `<p class="subtle">Could not load current needs right now.</p>`;
-  }
+function joinSpecIconKey(className, specName) {
+  const cls = joinIconSlug(className);
+  const spec = joinNormalizeSpecSlug(specName, className);
+  return cls && spec ? `${cls}_${spec}` : "";
 }
 
-loadJoinNeeds();
+async function loadJoinSpecIcons() {
+  if (joinSpecIconsReady) return joinSpecIconsReady;
+  joinSpecIconsReady = (async () => {
+    try {
+      const res = await fetch("/tbc-spec-icons.json", { credentials: "same-origin" });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error("Failed to load spec icons");
+      const byKey = new Map();
+      const bySpecOnly = new Map();
+      const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+      for (const entry of entries) {
+        const iconUrl = String(entry?.iconUrl || "").trim();
+        const className = String(entry?.className || "").trim();
+        const specName = String(entry?.specName || "").trim();
+        const key = String(entry?.key || joinSpecIconKey(className, specName)).trim().toLowerCase();
+        if (!key || !iconUrl) continue;
+        byKey.set(key, { iconUrl, className, specName });
+        const specOnly = joinNormalizeSpecSlug(specName, className);
+        if (specOnly) {
+          bySpecOnly.set(specOnly, bySpecOnly.has(specOnly) ? null : { iconUrl, className, specName });
+        }
+      }
+      joinSpecIconByKey = byKey;
+      joinSpecIconBySpecOnly = bySpecOnly;
+    } catch {
+      joinSpecIconByKey = new Map();
+      joinSpecIconBySpecOnly = new Map();
+    }
+    return joinSpecIconByKey;
+  })();
+  return joinSpecIconsReady;
+}
 
 /* ─────────────────────────── Subscribe button ─────────────────────────── */
 
@@ -495,6 +497,126 @@ function joinFmtEventDateTime(unixSec) {
   };
 }
 
+function joinPublicNeededSpecs(neededSpecs) {
+  if (!Array.isArray(neededSpecs)) return [];
+  return neededSpecs
+    .map((row) => {
+      const role = String(row?.role || "").trim();
+      const spec = String(row?.spec || "").trim();
+      const count = Math.max(0, Math.floor(Number(row?.count) || 0));
+      return { role, spec, count };
+    })
+    .filter((row) => row.spec && row.count > 0);
+}
+
+function joinRoleProgressRowsHtml(rosterByRole, capacity) {
+  const targets = joinRoleCompositionTargets(capacity);
+  const rows = [
+    {
+      key: "tanks",
+      label: "Tanks",
+      current: Number(rosterByRole?.Tanks || 0),
+      target: Number(targets.Tanks || 0),
+    },
+    {
+      key: "healers",
+      label: "Healers",
+      current: Number(rosterByRole?.Healers || 0),
+      target: Number(targets.Healers || 0),
+    },
+    {
+      key: "dps",
+      label: "DPS",
+      current: Number(rosterByRole?.Melee || 0) + Number(rosterByRole?.Ranged || 0),
+      target: Number(targets.Melee || 0) + Number(targets.Ranged || 0),
+    },
+  ];
+  return `<div class="join-role-bars">${rows
+    .map((row) => {
+      const target = Math.max(1, Math.floor(Number(row.target || 0)));
+      const current = Math.max(0, Math.floor(Number(row.current || 0)));
+      const missing = Math.max(0, target - current);
+      const value = Math.min(current, target);
+      return `<div class="join-role-bar join-role-bar--${escJoin(row.key)}">
+        <div class="join-role-bar-meta">
+          <span class="join-role-bar-label">${escJoin(row.label)}</span>
+          <span class="join-role-bar-count">${escJoin(String(current))}/${escJoin(String(target))}${
+            missing > 0 ? ` <span>${escJoin(String(missing))} needed</span>` : ""
+          }</span>
+        </div>
+        <progress class="join-role-progress join-role-progress--${escJoin(row.key)}" value="${escJoin(
+          String(value)
+        )}" max="${escJoin(String(target))}" aria-label="${escJoin(`${row.label}: ${current} of ${target}`)}"></progress>
+      </div>`;
+    })
+    .join("")}</div>`;
+}
+
+function joinParseNeededSpecLabel(label) {
+  const raw = String(label || "").trim();
+  const lower = raw.toLowerCase();
+  for (const className of JOIN_CLASS_LABELS) {
+    const classLower = className.toLowerCase();
+    if (lower === classLower) return { className, specName: "" };
+    if (lower.endsWith(` ${classLower}`)) {
+      return { className, specName: raw.slice(0, -className.length).trim() };
+    }
+  }
+  return { className: "", specName: raw };
+}
+
+function joinSpecNeedIcon(row) {
+  const parsed = joinParseNeededSpecLabel(row?.spec);
+  const key = joinSpecIconKey(parsed.className, parsed.specName);
+  if (key && joinSpecIconByKey.has(key)) return joinSpecIconByKey.get(key);
+  const specOnly = joinNormalizeSpecSlug(parsed.specName || row?.spec || "", parsed.className);
+  return specOnly ? joinSpecIconBySpecOnly.get(specOnly) || null : null;
+}
+
+function joinSpecNeedInitials(label) {
+  const parsed = joinParseNeededSpecLabel(label);
+  const base = parsed.specName || label;
+  const initials = String(base || "")
+    .split(/\s+/)
+    .map((part) => part.trim()[0])
+    .filter(Boolean)
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  return initials || "?";
+}
+
+function joinSpecIconNeedsHtml(neededSpecs, confirmed, capacity) {
+  const specNeeds = joinPublicNeededSpecs(neededSpecs);
+  if (!specNeeds.length) {
+    return `<div class="join-spec-icon-needs join-spec-icon-needs--empty">
+      <span>No specific spec blockers</span>
+      <span class="join-event-gap-meta">${escJoin(String(confirmed))}/${escJoin(String(capacity))} confirmed</span>
+    </div>`;
+  }
+  const maxVisibleSpecs = 12;
+  const buttons = specNeeds.slice(0, maxVisibleSpecs).map((row) => {
+    const label = `${row.count} ${row.spec}`;
+    const icon = joinSpecNeedIcon(row);
+    const iconMarkup = icon?.iconUrl
+      ? `<img class="join-spec-icon-img" src="${escJoin(icon.iconUrl)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+      : `<span class="join-spec-icon-fallback" aria-hidden="true">${escJoin(joinSpecNeedInitials(row.spec))}</span>`;
+    return `<span class="join-spec-icon-btn" title="${escJoin(label)}" role="img" aria-label="${escJoin(label)}">
+      ${iconMarkup}
+      ${row.count > 1 ? `<span class="join-spec-icon-count">${escJoin(String(row.count))}</span>` : ""}
+    </span>`;
+  });
+  const hiddenCount = specNeeds.length - buttons.length;
+  if (hiddenCount > 0) {
+    buttons.push(`<span class="join-spec-icon-more" title="${escJoin(String(hiddenCount))} more missing specs">+${escJoin(
+      String(hiddenCount)
+    )}</span>`);
+  }
+  return `<div class="join-spec-icon-needs">${buttons.join(
+    ""
+  )}<span class="join-event-gap-meta">${escJoin(String(confirmed))}/${escJoin(String(capacity))} confirmed</span></div>`;
+}
+
 function joinFormatCountdownRemaining(totalSec) {
   if (totalSec <= 0) return "Starting soon";
   const d = Math.floor(totalSec / 86400);
@@ -507,37 +629,12 @@ function joinFormatCountdownRemaining(totalSec) {
   return `${s}s`;
 }
 
-function joinMissingGapsHtml(rosterByRole, capacity, confirmed) {
-  const targets = joinRoleCompositionTargets(capacity);
-  const keys = ["Tanks", "Healers", "Melee", "Ranged"];
-  const gaps = keys
-    .map((role) => {
-      const have = Number(rosterByRole?.[role] ?? 0);
-      const need = Math.max(0, targets[role] - have);
-      return { role, need };
-    })
-    .filter((g) => g.need > 0);
-
+function joinMissingGapsHtml(rosterByRole, capacity, confirmed, neededSpecs) {
   const c = Math.max(0, Number(confirmed || 0));
-  const openSlots = Math.max(0, capacity - c);
-
-  if (openSlots === 0 && gaps.length === 0) {
-    return `<div class="join-event-gaps join-event-gaps--ok" role="status"><span class="join-event-gap-chip">Composition OK</span><span class="join-event-gap-meta">${c}/${capacity}</span></div>`;
-  }
-
-  const chips = gaps.map(
-    (g) =>
-      `<span class="join-event-gap-chip join-event-gap-chip--need">${escJoin(String(g.need))} ${escJoin(
-        joinRoleGapLabel(g.role, g.need)
-      )}</span>`
-  );
-  if (!gaps.length && openSlots > 0) {
-    chips.push(`<span class="join-event-gap-chip">${escJoin(String(openSlots))} open slot${openSlots === 1 ? "" : "s"}</span>`);
-  }
-
-  return `<div class="join-event-gaps" role="status">${chips.join(
-    ""
-  )}<span class="join-event-gap-meta">${escJoin(String(c))}/${escJoin(String(capacity))} confirmed</span></div>`;
+  return `<div class="join-event-needs-summary" role="status">
+    ${joinRoleProgressRowsHtml(rosterByRole, capacity)}
+    ${joinSpecIconNeedsHtml(neededSpecs, c, capacity)}
+  </div>`;
 }
 
 function joinSignupActionsHtml(event, isAuthenticated) {
@@ -631,6 +728,105 @@ function joinRenderHeroNextRaidCapsule(events) {
   capsule.hidden = false;
 }
 
+function joinEventBannerSrc(event) {
+  const raids = joinDetectEventRaids(event);
+  return (
+    String(event?.headerImage || "").trim() ||
+    raids[0]?.image ||
+    joinVersionedRaidImage("/raid-images/pb-header-kara.png")
+  );
+}
+
+function joinEventRosterCapacity(event) {
+  return joinRosterCapacityForEvent(event);
+}
+
+function joinRenderFeaturedNextEvent(event, isAuthenticated) {
+  const bannerSrc = joinEventBannerSrc(event);
+  const cap = joinEventRosterCapacity(event);
+  const confirmed = Number(event?.signups?.confirmed ?? 0);
+  const signupsTotal = Number(event?.signups?.total ?? 0);
+  const startSec = Number(event?.startTime || 0);
+  const { date, time } = joinFmtEventDateTime(startSec);
+  const gapsHtml = joinMissingGapsHtml(event?.rosterByRole, cap, confirmed, event?.neededSpecs);
+  const actions = joinSignupActionsHtml(event, isAuthenticated);
+
+  return `
+    <article class="join-featured-event" data-join-featured-event>
+      <div class="join-featured-event-media" aria-hidden="true">
+        <img src="${escJoin(bannerSrc)}" alt="" loading="eager" decoding="async" width="900" height="260" />
+      </div>
+      <div class="join-featured-event-content">
+        <div class="join-featured-event-main">
+          <p class="join-featured-event-kicker">Next raid</p>
+          <h4 class="join-featured-event-title">${escJoin(event?.title || "Upcoming raid")}</h4>
+          <div class="join-featured-event-time" data-join-event-start="${startSec}">
+            <span class="join-featured-event-date">${escJoin(date)}</span>
+            <span class="join-featured-event-hour">${escJoin(time)}</span>
+            <span class="join-featured-event-countdown">
+              <span class="join-event-countdown-label">Starts in</span>
+              <span class="join-event-countdown-value">—</span>
+            </span>
+          </div>
+        </div>
+        <div class="join-featured-event-side">
+          <div class="join-featured-event-roster">
+            <span>${escJoin(String(confirmed))}/${escJoin(String(cap))} roster</span>
+            <span>${escJoin(String(signupsTotal))} signups</span>
+          </div>
+          <div class="join-featured-event-needs">
+            <span class="join-featured-event-label">Still needed</span>
+            ${gapsHtml}
+          </div>
+          <div class="join-featured-event-signup">
+            <span class="join-featured-event-label">Where to sign up</span>
+            <div class="join-featured-event-actions">${actions}</div>
+          </div>
+        </div>
+      </div>
+    </article>`;
+}
+
+function joinRenderUpcomingEventCard(event, isAuthenticated) {
+  const bannerSrc = joinEventBannerSrc(event);
+  const cap = joinEventRosterCapacity(event);
+  const confirmed = Number(event?.signups?.confirmed ?? 0);
+  const signupsTotal = Number(event?.signups?.total ?? 0);
+  const gapsHtml = joinMissingGapsHtml(event?.rosterByRole, cap, confirmed, event?.neededSpecs);
+  const { date, time } = joinFmtEventDateTime(event?.startTime);
+  const startSec = Number(event?.startTime || 0);
+  const actions = joinSignupActionsHtml(event, isAuthenticated);
+
+  return `
+    <article class="join-upcoming-event-row">
+      <div class="join-upcoming-event-thumb">
+        <img src="${escJoin(bannerSrc)}" alt="" loading="lazy" decoding="async" width="220" height="96" />
+      </div>
+      <div class="join-upcoming-event-main">
+        <h4 class="join-upcoming-event-title">${escJoin(event?.title || "Upcoming raid")}</h4>
+        <div class="join-upcoming-event-when">
+          <span class="join-upcoming-event-date">${escJoin(date)}</span>
+          <span class="join-upcoming-event-time">${escJoin(time)}</span>
+          <span class="join-upcoming-event-countdown" data-join-event-start="${startSec}">
+            <span class="join-event-countdown-label">Starts in</span>
+            <span class="join-event-countdown-value">—</span>
+          </span>
+        </div>
+        <div class="join-upcoming-event-stats">
+          <span title="Primary roster">${escJoin(String(confirmed))}/${escJoin(String(cap))} roster</span>
+          <span title="Total signups incl. bench etc.">${escJoin(String(signupsTotal))} signups</span>
+        </div>
+      </div>
+      <div class="join-upcoming-event-needs">
+        <span class="join-upcoming-event-label">Still needed</span>
+        ${gapsHtml}
+      </div>
+      <div class="join-upcoming-event-actions">
+        ${actions}
+      </div>
+    </article>`;
+}
+
 function joinRenderFutureEvents(events, isAuthenticated) {
   const host = document.getElementById("joinEventsList");
   joinRenderHeroNextRaidCapsule(events);
@@ -642,48 +838,21 @@ function joinRenderFutureEvents(events, isAuthenticated) {
     return;
   }
 
-  host.innerHTML = rows
-    .map((event) => {
-      const raids = joinDetectEventRaids(event);
-      const bannerSrc =
-        String(event.headerImage || "").trim() ||
-        raids[0]?.image ||
-        joinVersionedRaidImage("/raid-images/pb-header-kara.png");
-      const cap = joinRosterCapacityForEvent(event);
-      const confirmed = Number(event?.signups?.confirmed ?? 0);
-      const signupsTotal = Number(event?.signups?.total ?? 0);
-      const gapsHtml = joinMissingGapsHtml(event.rosterByRole, cap, confirmed);
-      const { date, time } = joinFmtEventDateTime(event.startTime);
-      const startSec = Number(event.startTime || 0);
-      const actions = joinSignupActionsHtml(event, isAuthenticated);
+  const featured = joinPickHeroNextRaidEvent(rows) || rows[0];
+  const featuredId = String(featured?.id || "");
+  const secondaryRows = rows.filter((event) => String(event?.id || "") !== featuredId);
+  const secondaryHtml = secondaryRows.length
+    ? `<div class="join-events-secondary">
+        <div class="join-events-secondary-head">
+          <span>More upcoming runs</span>
+        </div>
+        <div class="join-events-grid-secondary">
+          ${secondaryRows.map((event) => joinRenderUpcomingEventCard(event, isAuthenticated)).join("")}
+        </div>
+      </div>`
+    : "";
 
-      return `
-        <article class="join-event-tile">
-          <div class="join-event-tile-banner">
-            <img src="${escJoin(bannerSrc)}" alt="" loading="lazy" decoding="async" width="400" height="90" />
-          </div>
-          <div class="join-event-tile-body">
-            <h4 class="join-event-tile-title">${escJoin(event.title)}</h4>
-            <div class="join-event-tile-when">
-              <span class="join-event-tile-date">${escJoin(date)}</span>
-              <span class="join-event-tile-time">${escJoin(time)}</span>
-              <span class="join-event-tile-countdown" data-join-event-start="${startSec}">
-                <span class="join-event-countdown-label">Starts in</span>
-                <span class="join-event-countdown-value">—</span>
-              </span>
-            </div>
-            <div class="join-event-tile-stats">
-              <span title="Primary roster">${escJoin(String(confirmed))}/${escJoin(String(cap))} roster</span>
-              <span title="Total signups incl. bench etc.">${escJoin(String(signupsTotal))} signups</span>
-            </div>
-            ${gapsHtml}
-            <div class="join-event-tile-actions">
-              ${actions}
-            </div>
-          </div>
-        </article>`;
-    })
-    .join("");
+  host.innerHTML = `${joinRenderFeaturedNextEvent(featured, isAuthenticated)}${secondaryHtml}`;
 
   joinStartEventCountdowns();
 }
@@ -695,11 +864,12 @@ async function loadJoinFutureEvents() {
   try {
     const [me, payload] = await Promise.all([
       joinLoadAuthMeForEvents(),
-      fetch("/api/raid-helper/future-events", { credentials: "include" }).then(async (res) => {
+      fetch("/api/raid-helper/future-events?joinSpecNeeds=2", { credentials: "include" }).then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
         return body;
       }),
+      loadJoinSpecIcons(),
     ]);
     joinRenderFutureEvents(payload?.events || [], Boolean(me?.authenticated));
   } catch (err) {

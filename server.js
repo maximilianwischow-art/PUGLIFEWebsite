@@ -3391,6 +3391,61 @@ function summarizeEventNeedsFromDetail(detail, overridesMap = {}, extraRows = []
   };
 }
 
+function publicSpecNeedLabelFromBlockerRow(row) {
+  let specLabel = normalizeProtectionSpecLabel(String(row?.specName || "").trim());
+  const classLabel = normalizeNeedClassKey(row?.className);
+  if (!specLabel) {
+    const rawName = String(row?.name || "").trim().toLowerCase();
+    if (rawName.includes("enh")) specLabel = "Enhancement";
+    else if (rawName.includes("combat")) specLabel = "Combat";
+    else if (rawName.includes("balance") || rawName.includes("boomkin") || rawName.includes("dreamstate")) {
+      specLabel = "Balance";
+    } else if (rawName.includes("retri") || rawName.includes("ret")) specLabel = "Retribution";
+  }
+  if (!specLabel) return "";
+  if (classLabel && !new RegExp(`\\b${classLabel}\\b`, "i").test(specLabel)) {
+    return `${specLabel} ${classLabel}`;
+  }
+  return specLabel;
+}
+
+function publicNeededSpecsFromSummary(summary) {
+  const byKey = new Map();
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    for (const row of Array.isArray(summary?.blockerRows) ? summary.blockerRows : []) {
+      const rowRole = normalizeNeedRoleKey(row?.roleName);
+      if (rowRole !== role) continue;
+      const label = publicSpecNeedLabelFromBlockerRow(row);
+      if (!label) continue;
+      const key = `${role}\0${label}`;
+      byKey.set(key, { role, spec: label, count: Number(byKey.get(key)?.count || 0) + 1 });
+    }
+  }
+  if (byKey.size === 0) {
+    const needsByRole =
+      summary?.blockerSpecNeedsByRole && typeof summary.blockerSpecNeedsByRole === "object"
+        ? summary.blockerSpecNeedsByRole
+        : {};
+    for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+      const specs = needsByRole[role] && typeof needsByRole[role] === "object" ? needsByRole[role] : {};
+      for (const [spec, countRaw] of Object.entries(specs)) {
+        const label = String(spec || "").trim();
+        const count = Math.max(0, Math.floor(Number(countRaw) || 0));
+        if (!label || count <= 0) continue;
+        byKey.set(`${role}\0${label}`, { role, spec: label, count });
+      }
+    }
+  }
+  const out = [...byKey.values()];
+  return out.sort((a, b) => {
+    const roleDelta =
+      ["Tanks", "Healers", "Melee", "Ranged"].indexOf(a.role) -
+      ["Tanks", "Healers", "Melee", "Ranged"].indexOf(b.role);
+    if (roleDelta) return roleDelta;
+    return a.spec.localeCompare(b.spec);
+  });
+}
+
 function sanitizeRoleSpecNeedsInput(raw) {
   const out = { Tanks: [], Healers: [], Melee: [], Ranged: [] };
   const src = raw && typeof raw === "object" ? raw : {};
@@ -12074,6 +12129,20 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
     const detailed = await mapWithConcurrency(future, rhFutureConc, async (event) => {
       const detail = await fetchRaidHelperEventDetail(event.id);
       const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+      const existingPrimaryNames = new Set(
+        signUps
+          .filter((entry) => String(entry?.status || "").toLowerCase() === "primary")
+          .map((entry) => String(entry?.name || "").trim().toLowerCase())
+          .filter(Boolean)
+      );
+      let compBlockers = [];
+      try {
+        const comp = await raidHelperRequest(`/comps/${encodeURIComponent(event.id)}`);
+        compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+      } catch {
+        compBlockers = [];
+      }
+      const neededSpecs = publicNeededSpecsFromSummary(summarizeEventNeedsFromDetail(detail, {}, compBlockers));
 
       const rosterBase = signUps
         .filter(
@@ -12142,6 +12211,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
           total: signUps.length,
           confirmed: confirmedRoster.length,
         },
+        neededSpecs,
         currentUserSignup:
           viewerUserId &&
           signUps.find((entry) => String(entry?.userId || "") === viewerUserId && String(entry?.status || ""))
