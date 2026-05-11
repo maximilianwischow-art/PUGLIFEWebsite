@@ -3400,10 +3400,36 @@ function roleSpecNeedsMap(roleSpecNeeds) {
 }
 
 function normalizeSpecKey(specRaw) {
-  return String(specRaw || "")
+  const key = String(specRaw || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
+  if (key === "enh" || key === "enhancer") return "enhancement";
+  if (key === "resto") return "restoration";
+  if (key === "ret" || key === "retri" || key === "retrypala") return "retribution";
+  return key.replace(/^(holy|restoration|protection|enhancement|retribution|balance|shadow|discipline|destruction|arcane|guardian|combat)\d+$/, "$1");
+}
+
+function buildRoleAlertEventSignupExclusions(detail, links = []) {
+  const userIds = new Set();
+  const rhKeys = new Set();
+  const linkedUserIdByRhKey = new Map();
+  for (const link of Array.isArray(links) ? links : []) {
+    const rhKey = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    const discordUserId = String(link?.discordUserId || "").trim();
+    if (rhKey && discordUserId) linkedUserIdByRhKey.set(rhKey, discordUserId);
+  }
+  for (const entry of Array.isArray(detail?.signUps) ? detail.signUps : []) {
+    const userId = String(entry?.userId || "").trim();
+    if (userId) userIds.add(userId);
+    const rhKey = normalizeRaidHelperDisplayKey(String(entry?.name || ""));
+    if (rhKey) {
+      rhKeys.add(rhKey);
+      const linkedUserId = linkedUserIdByRhKey.get(rhKey);
+      if (linkedUserId) userIds.add(linkedUserId);
+    }
+  }
+  return { userIds, rhKeys };
 }
 
 async function collectSubscriberRoleSignals(subscribedUserIds, maxPastEvents = 40) {
@@ -4876,10 +4902,13 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         ? roleAlertDmLogState.byEventId[eventId].byUserId
         : {};
     const guildRoleByRhKey = new Map();
+    const discordUserIdByRhKey = new Map();
     for (const link of rhWclLinksState.links || []) {
       const k = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
       if (k) guildRoleByRhKey.set(k, normalizeRhWclGuildRole(link?.guildRole));
+      if (k && String(link?.discordUserId || "").trim()) discordUserIdByRhKey.set(k, String(link.discordUserId).trim());
     }
+    const eventSignupExclusions = buildRoleAlertEventSignupExclusions(detail, rhWclLinksState.links);
     let participantSignals = new Map();
     try {
       participantSignals = await collectPastParticipantSignals(80);
@@ -4921,9 +4950,19 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     for (const row of membershipChecks) {
       const sig = row?.sig;
       if (!sig?.userId) continue;
-      if (row.inGuild !== true) continue;
       const userId = String(sig.userId || "").trim();
       if (!userId) continue;
+      const rhKey = normalizeRaidHelperDisplayKey(String(sig.displayName || ""));
+      const linkedDiscordUserId = discordUserIdByRhKey.get(rhKey) || "";
+      if (
+        eventSignupExclusions.userIds.has(userId) ||
+        (linkedDiscordUserId && eventSignupExclusions.userIds.has(linkedDiscordUserId)) ||
+        (rhKey && eventSignupExclusions.rhKeys.has(rhKey))
+      ) {
+        continue;
+      }
+      const trustedAccountAssignment = Boolean(linkedDiscordUserId && linkedDiscordUserId === userId);
+      if (row.inGuild !== true && !trustedAccountAssignment) continue;
       const matchedRoles = defaultTargetRoles.filter((role) => sig.roles.has(role));
       if (!matchedRoles.length) continue;
       const signalSpecKeys = new Set([...(sig.specs || [])].map((spec) => normalizeSpecKey(spec)).filter(Boolean));
@@ -4945,7 +4984,6 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       }
       if (!specQualified) continue;
       const recent = Array.isArray(sig.samples) && sig.samples.length ? sig.samples[0] : null;
-      const rhKey = normalizeRaidHelperDisplayKey(String(sig.displayName || ""));
       candidateTargets.push({
         userId,
         displayName: String(sig.displayName || userId),
@@ -4959,6 +4997,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         dmSentAt: Number(alreadyDmSentByUserId[userId] || 0),
         raidsSeen: Number(sig.raidsSeen || 0),
         inGuild: row.inGuild === true,
+        discordMembershipConfirmed: row.inGuild === true,
+        discordMembershipTrustedFromAccountAssignment: trustedAccountAssignment && row.inGuild !== true,
       });
     }
     const reachableByRole = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
@@ -5056,6 +5096,17 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
         .filter((row) => row && row.subscribed && String(row.userId || "").trim())
         .map((row) => String(row.userId || "").trim())
     );
+    try {
+      await ensureRhWclLinksStore();
+    } catch {
+      rhWclLinksState = { links: [] };
+    }
+    const trustedRoleAlertUserIds = new Set();
+    for (const link of rhWclLinksState.links || []) {
+      const uid = String(link?.discordUserId || "").trim();
+      if (uid) trustedRoleAlertUserIds.add(uid);
+    }
+    const eventSignupExclusions = buildRoleAlertEventSignupExclusions(detail, rhWclLinksState.links);
     const signals = await collectPastParticipantSignals(80);
     const guildId = raidHelperDiscordGuildId();
     const eventName = String(detail?.title || detail?.name || "Raid Event").trim();
@@ -5077,14 +5128,23 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     for (const uidRaw of userIdsToProcess) {
       const uid = String(uidRaw || "").trim();
       if (!uid) continue;
+      if (eventSignupExclusions.userIds.has(uid)) {
+        skipped.push({ userId: uid, reason: "User already has a signup for this event" });
+        continue;
+      }
       const guildMember = await isDiscordGuildMemberViaBot(uid, guildId);
-      if (guildMember !== true) {
+      if (guildMember !== true && !trustedRoleAlertUserIds.has(uid)) {
         skipped.push({ userId: uid, reason: "User is not confirmed as a Discord server member" });
         continue;
       }
       const signal = signals.get(uid);
       if (!signal) {
         skipped.push({ userId: uid, reason: "No historical role/class signal" });
+        continue;
+      }
+      const rhKey = normalizeRaidHelperDisplayKey(String(signal.displayName || ""));
+      if (rhKey && eventSignupExclusions.rhKeys.has(rhKey)) {
+        skipped.push({ userId: uid, reason: "User already has a signup for this event" });
         continue;
       }
       const roleHit = targetRoles.some((role) => signal.roles.has(role));
@@ -10535,7 +10595,24 @@ function normalizeProtectionSpecLabel(raw) {
   const t = String(raw || "").trim();
   if (!t) return "";
   const slug = slugifyLocaleText(t);
-  if (/^protection\d+$/.test(slug)) return "Protection";
+  const numberedSpec = slug.match(/^(holy|restoration|protection|enhancement|retribution|balance|shadow|discipline|destruction|arcane|guardian|combat)\d+$/);
+  if (numberedSpec) {
+    const labels = {
+      holy: "Holy",
+      restoration: "Restoration",
+      protection: "Protection",
+      enhancement: "Enhancement",
+      retribution: "Retribution",
+      balance: "Balance",
+      shadow: "Shadow",
+      discipline: "Discipline",
+      destruction: "Destruction",
+      arcane: "Arcane",
+      guardian: "Guardian",
+      combat: "Combat",
+    };
+    return labels[numberedSpec[1]] || t;
+  }
   return t;
 }
 
