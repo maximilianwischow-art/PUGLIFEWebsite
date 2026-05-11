@@ -2961,14 +2961,35 @@ function formatRaidHelperEventStartForDm(startTimeSec) {
   }).format(dt);
 }
 
-function raidHelperDiscordEventPostUrl(eventDetail, fallbackEventId = "") {
+function raidHelperDiscordEventPostUrl(eventDetail, fallbackEvent = "") {
   const guildId = raidHelperDiscordGuildId();
-  const channelId = String(eventDetail?.channelId || "").trim();
+  const fallbackRow = fallbackEvent && typeof fallbackEvent === "object" ? fallbackEvent : {};
+  const channelId = String(
+    eventDetail?.channelId ||
+      eventDetail?.channel_id ||
+      eventDetail?.channelID ||
+      eventDetail?.channel?.id ||
+      fallbackRow?.channelId ||
+      fallbackRow?.channel_id ||
+      fallbackRow?.channelID ||
+      fallbackRow?.channel?.id ||
+      process.env.DISCORD_SIGNUP_CHANNEL_ID ||
+      process.env.RAID_HELPER_SIGNUP_CHANNEL_ID ||
+      ""
+  ).trim();
   const messageId = String(
     eventDetail?.messageId ||
+      eventDetail?.message_id ||
       eventDetail?.postId ||
       eventDetail?.signupMessageId ||
       eventDetail?.discordMessageId ||
+      eventDetail?.message?.id ||
+      fallbackRow?.messageId ||
+      fallbackRow?.message_id ||
+      fallbackRow?.postId ||
+      fallbackRow?.signupMessageId ||
+      fallbackRow?.discordMessageId ||
+      fallbackRow?.message?.id ||
       ""
   ).trim();
   if (guildId && channelId && messageId) {
@@ -2977,8 +2998,7 @@ function raidHelperDiscordEventPostUrl(eventDetail, fallbackEventId = "") {
   if (guildId && channelId) {
     return `https://discord.com/channels/${encodeURIComponent(String(guildId))}/${encodeURIComponent(channelId)}`;
   }
-  const evId = String(eventDetail?.id || fallbackEventId || "").trim();
-  return evId ? `https://raid-helper.xyz/events/${encodeURIComponent(evId)}` : "";
+  return "";
 }
 
 async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
@@ -2987,7 +3007,7 @@ async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   const when = formatRaidHelperEventStartForDm(eventRow?.startTime);
   const raidStats = await raidStatsForEventTitle(title);
   const eventDetail = evId ? await fetchRaidHelperEventDetail(evId) : null;
-  const discordPostUrl = raidHelperDiscordEventPostUrl(eventDetail, evId);
+  const discordPostUrl = raidHelperDiscordEventPostUrl(eventDetail, eventRow);
   const headerImageUrl = joinUsDmHeaderImageUrl() || eventDmHeaderImageUrl(eventDetail, title);
   const dm = await discordBotApi("/users/@me/channels", {
     method: "POST",
@@ -5111,7 +5131,16 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     const guildId = raidHelperDiscordGuildId();
     const eventName = String(detail?.title || detail?.name || "Raid Event").trim();
     const raidStats = await raidStatsForEventTitle(eventName);
-    const discordPostUrl = raidHelperDiscordEventPostUrl(detail, eventId);
+    let postedEventRow = null;
+    try {
+      const postedEvents = guildId ? await fetchRaidHelperServerEvents(guildId) : [];
+      postedEventRow = (Array.isArray(postedEvents) ? postedEvents : []).find(
+        (event) => String(event?.id || event?.eventId || event?.eventID || "") === eventId
+      );
+    } catch {
+      postedEventRow = null;
+    }
+    const discordPostUrl = raidHelperDiscordEventPostUrl(detail, postedEventRow || "");
     const headerImageUrl = joinUsDmHeaderImageUrl() || eventDmHeaderImageUrl(detail, eventName);
     const when = formatRaidHelperEventStartForDm(Number(detail?.startTime || detail?.time || 0));
     const delivered = [];
