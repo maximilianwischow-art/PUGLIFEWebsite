@@ -6135,18 +6135,19 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-main-hint { margin: 0.6rem 0 0; }
 .profile-badges-categories { display: flex; flex-direction: column; gap: 1.25rem; }
 .profile-badge-category { border: 1px solid rgba(167, 139, 250, 0.18); border-radius: 14px; padding: 1rem 1.1rem; background: rgba(15, 11, 28, 0.45); }
-.profile-badge-category-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.4rem; flex-wrap: wrap; }
+.profile-badge-category-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.65rem; flex-wrap: wrap; }
 .profile-badge-category-title { margin: 0; font-family: "Bebas Neue", sans-serif; letter-spacing: 0.05em; font-size: 1.4rem; color: #ddd6fe; }
 .profile-badge-category-meter { font-size: 0.85rem; font-weight: 700; color: rgba(225, 220, 245, 0.85); background: rgba(167, 139, 250, 0.15); border-radius: 999px; padding: 0.15rem 0.6rem; }
 .profile-badge-category-desc { margin: 0 0 0.75rem; }
-.profile-badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 0.7rem; }
-.profile-badge-tile { display: flex; flex-direction: column; align-items: stretch; gap: 0.45rem; padding: 0.35rem 0.35rem 0.55rem; border-radius: 12px; background: rgba(20, 15, 34, 0.55); border: 1px solid rgba(167, 139, 250, 0.18); text-align: center; transition: border-color 0.15s ease, transform 0.05s ease; overflow: hidden; }
-.profile-badge-tile-icon { width: 100%; aspect-ratio: 1 / 1; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.profile-badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 84px)); justify-content: flex-start; gap: 0.65rem; }
+.profile-badge-tile { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; min-width: 0; padding: 0.35rem 0.3rem 0.45rem; border-radius: 12px; background: rgba(20, 15, 34, 0.55); border: 1px solid rgba(167, 139, 250, 0.18); text-align: center; transition: border-color 0.15s ease, transform 0.05s ease; overflow: visible; }
+.profile-badge-tile .profile-badge-tile-icon { width: 68px; height: 68px; aspect-ratio: 1 / 1; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.profile-badge-tile.is-locked .profile-badge-tile-icon { width: 56px; height: 56px; margin-top: 6px; }
 .profile-badge-tile-icon img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .profile-badge-tile.is-locked .profile-badge-tile-icon img { filter: grayscale(1) brightness(0.45); opacity: 0.7; }
 .profile-badge-tile.is-locked { opacity: 0.85; }
 .profile-badge-tile.is-earned { border-color: rgba(167, 139, 250, 0.55); box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18); }
-.profile-badge-name { font-size: 0.78rem; line-height: 1.2; color: rgba(225, 220, 245, 0.92); word-break: break-word; }
+.profile-badge-name { display: -webkit-box; min-height: 2.2em; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 0.72rem; line-height: 1.1; color: rgba(225, 220, 245, 0.92); overflow-wrap: anywhere; }
 .profile-badge-resolving { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.04em; color: rgba(225, 220, 245, 0.9); }
 .profile-badge-resolving::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(167, 139, 250, 0.45); border-top-color: rgba(225, 220, 245, 0.95); animation: profile-badge-resolving-spin 0.85s linear infinite; }
 .profile-badge-resolving-hint { margin: 0 0 0.6rem; font-size: 0.78rem; color: rgba(225, 220, 245, 0.65); }
@@ -6165,15 +6166,19 @@ html { -webkit-tap-highlight-color: transparent; }
   .auth-chip-btn, .auth-chip-link { min-height: 36px; padding: 6px 10px; }
   .vortex-chip-remove { min-height: 32px; min-width: 32px; padding: 4px 10px; font-size: 14px; line-height: 1; }
   .profile-picture-drop { width: 140px; height: 140px; }
-  .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 0.55rem; }
-  .profile-badge-tile { padding: 0.3rem 0.3rem 0.45rem; gap: 0.35rem; }
-  .profile-badge-name { font-size: 0.74rem; }
+  .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(76px, 76px)); gap: 0.5rem; }
+  .profile-badge-tile { padding: 0.3rem 0.25rem 0.4rem; gap: 0.3rem; }
+  .profile-badge-tile .profile-badge-tile-icon { width: 62px; height: 62px; }
+  .profile-badge-tile.is-locked .profile-badge-tile-icon { width: 50px; height: 50px; margin-top: 6px; }
+  .profile-badge-name { font-size: 0.68rem; }
   .p2-demand .flex.items-center.gap-2 { width: 100%; }
   .p2-demand .flex.items-center.gap-2 input { width: 100%; max-width: none; }
 }
 @media (max-width: 380px) {
   .profile-picture-drop { width: 120px; height: 120px; }
-  .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+  .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(70px, 70px)); }
+  .profile-badge-tile .profile-badge-tile-icon { width: 56px; height: 56px; }
+  .profile-badge-tile.is-locked .profile-badge-tile-icon { width: 46px; height: 46px; }
   .top-nav a { font-size: 11px; padding: 8px 6px; letter-spacing: 0.04em; }
 }
 

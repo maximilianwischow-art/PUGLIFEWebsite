@@ -535,17 +535,12 @@
     const meterHtml = hasLazy
       ? `<span class="profile-badge-resolving" title="Looking up Warcraft Logs…">resolving…</span>`
       : `${earnedCount} / ${total}`;
-    const resolvingHint = hasLazy
-      ? `<p class="subtle profile-badge-resolving-hint">Looking up Warcraft Logs… achievements light up once your linked characters are matched.</p>`
-      : "";
     return `
       <section class="profile-badge-category${hasLazy ? " is-resolving" : ""}" data-category-id="${escapeHtml(cat.id || "")}">
         <header class="profile-badge-category-head">
           <h4 class="profile-badge-category-title">${escapeHtml(cat.label)}</h4>
           <span class="profile-badge-category-meter" data-meter-total="${total}">${meterHtml}</span>
         </header>
-        ${cat.description ? `<p class="subtle profile-badge-category-desc">${escapeHtml(cat.description)}</p>` : ""}
-        ${resolvingHint}
         <div class="profile-badge-grid">${items}</div>
       </section>`;
   }
