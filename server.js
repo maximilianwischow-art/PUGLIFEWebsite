@@ -569,6 +569,7 @@ const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
+const roleAlertSettingsPath = path.join(dataDir, "role-alert-settings.json");
 const hofNotesPath = path.join(dataDir, "hof-notes.json");
 const badgeTooltipsPath = path.join(dataDir, "badge-tooltips.json");
 /** Persisted enriched Hall of Fame payload (roster match + peak parses + raid names). Refreshed when winners list changes or TTL expires. */
@@ -599,6 +600,8 @@ let discordDmSubscribersReady = null;
 let discordDmSubscribersWriteChain = Promise.resolve();
 let roleAlertDmLogReady = null;
 let roleAlertDmLogWriteChain = Promise.resolve();
+let roleAlertSettingsReady = null;
+let roleAlertSettingsWriteChain = Promise.resolve();
 let hofNotesReady = null;
 let hofNotesWriteChain = Promise.resolve();
 let badgeTooltipsReady = null;
@@ -616,6 +619,7 @@ let netherVortexState = { entries: [] };
 let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let analyticsStoreState = { events: [] };
 let badgeTooltipsState = { byBadgeId: {} };
+let roleAlertSettingsState = { byEventId: {} };
 let rhWclLinksReady = null;
 /** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
@@ -630,6 +634,7 @@ let rhWclProposalsState = {
   unassignedWclNames: [],
 };
 let rhWclProposalsWriteChain = Promise.resolve();
+const DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE = Object.freeze({ Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 });
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
   { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
@@ -2900,6 +2905,90 @@ async function ensureRoleAlertDmLogStore() {
   return roleAlertDmLogReady;
 }
 
+function sanitizeRoleAlertDesiredByRole(input) {
+  const src = input && typeof input === "object" ? input : {};
+  return {
+    Tanks: Math.max(0, Math.floor(Number(src.Tanks ?? DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE.Tanks) || 0)),
+    Healers: Math.max(0, Math.floor(Number(src.Healers ?? DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE.Healers) || 0)),
+    Melee: Math.max(0, Math.floor(Number(src.Melee ?? DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE.Melee) || 0)),
+    Ranged: Math.max(0, Math.floor(Number(src.Ranged ?? DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE.Ranged) || 0)),
+  };
+}
+
+function sanitizeRoleAlertSettingsState(input) {
+  const byEventId = {};
+  const src = input?.byEventId && typeof input.byEventId === "object" ? input.byEventId : {};
+  for (const [eventIdRaw, row] of Object.entries(src)) {
+    const eventId = String(eventIdRaw || "").trim();
+    if (!eventId) continue;
+    byEventId[eventId] = {
+      desiredByRole: sanitizeRoleAlertDesiredByRole(row?.desiredByRole),
+      updatedAt: Number(row?.updatedAt || 0),
+    };
+  }
+  return { byEventId };
+}
+
+async function persistRoleAlertSettingsStore() {
+  const tmpPath = `${roleAlertSettingsPath}.tmp`;
+  const json = JSON.stringify(roleAlertSettingsState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, roleAlertSettingsPath);
+}
+
+async function ensureRoleAlertSettingsStore() {
+  if (roleAlertSettingsReady) return roleAlertSettingsReady;
+  roleAlertSettingsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(roleAlertSettingsPath, "utf8");
+      roleAlertSettingsState = sanitizeRoleAlertSettingsState(JSON.parse(raw));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      roleAlertSettingsState = { byEventId: {} };
+      await persistRoleAlertSettingsStore();
+    }
+  })();
+  return roleAlertSettingsReady;
+}
+
+async function saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole) {
+  const id = String(eventId || "").trim();
+  if (!id) return;
+  await ensureRoleAlertSettingsStore();
+  roleAlertSettingsState.byEventId[id] = {
+    desiredByRole: sanitizeRoleAlertDesiredByRole(desiredByRole),
+    updatedAt: Date.now(),
+  };
+  roleAlertSettingsWriteChain = roleAlertSettingsWriteChain
+    .then(() => persistRoleAlertSettingsStore())
+    .catch((error) => console.error("[role-alert-settings] persist failed:", error?.message || error));
+  await roleAlertSettingsWriteChain;
+  await invalidatePublicFutureEventsSnapshots();
+}
+
+function roleAlertDesiredByRoleForEvent(eventId) {
+  const id = String(eventId || "").trim();
+  const saved = id ? roleAlertSettingsState.byEventId?.[id]?.desiredByRole : null;
+  return sanitizeRoleAlertDesiredByRole(saved);
+}
+
+async function invalidatePublicFutureEventsSnapshots() {
+  await ensurePublicDataSnapshotStore();
+  let changed = false;
+  for (const key of Object.keys(publicDataSnapshotState.byKey || {})) {
+    if (String(key || "").split("?")[0] !== "/api/raid-helper/future-events") continue;
+    delete publicDataSnapshotState.byKey[key];
+    changed = true;
+  }
+  if (!changed) return;
+  publicDataSnapshotState.updatedAt = Date.now();
+  publicDataSnapshotWriteChain = publicDataSnapshotWriteChain
+    .then(() => persistPublicDataSnapshotStore())
+    .catch((error) => console.error("[public-snapshot] persist failed:", error?.message || error));
+  await publicDataSnapshotWriteChain;
+}
+
 async function setDiscordDmSubscriptionForSessionUser(session, subscribed) {
   await ensureDiscordDmSubscribersStore();
   const userId = String(session?.user?.id || "").trim();
@@ -4968,6 +5057,7 @@ app.get("/api/admin/role-alerts/events", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
+    await ensureRoleAlertSettingsStore();
     const serverId = raidHelperDiscordGuildId();
     if (!serverId) {
       return res.status(400).json({ ok: false, error: "Missing DISCORD_GUILD_ID or RAID_HELPER_SERVER_ID" });
@@ -4982,10 +5072,25 @@ app.get("/api/admin/role-alerts/events", async (req, res) => {
       }))
       .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime >= nowSec)
       .sort((a, b) => a.startTime - b.startTime)
-      .slice(0, 30);
+      .slice(0, 30)
+      .map((event) => ({ ...event, roleTargets: roleAlertDesiredByRoleForEvent(event.id) }));
     return res.json({ ok: true, events: future });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load role-alert events" });
+  }
+});
+
+app.put("/api/admin/role-alerts/role-targets", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const eventId = String(req.body?.eventId || "").trim();
+    if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
+    const desiredByRole = sanitizeRoleAlertDesiredByRole(req.body?.desiredByRole);
+    await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
+    return res.json({ ok: true, eventId, desiredByRole });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save role totals" });
   }
 });
 
@@ -5028,13 +5133,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
-    const desiredByRoleIn = req.body?.desiredByRole && typeof req.body.desiredByRole === "object" ? req.body.desiredByRole : {};
-    const desiredByRole = {
-      Tanks: Math.max(0, Math.floor(Number(desiredByRoleIn.Tanks ?? 3) || 0)),
-      Healers: Math.max(0, Math.floor(Number(desiredByRoleIn.Healers ?? 5) || 0)),
-      Melee: Math.max(0, Math.floor(Number(desiredByRoleIn.Melee ?? 8) || 0)),
-      Ranged: Math.max(0, Math.floor(Number(desiredByRoleIn.Ranged ?? 9) || 0)),
-    };
+    const desiredByRole = sanitizeRoleAlertDesiredByRole(req.body?.desiredByRole);
+    await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
     const missingByRole = {};
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
       const cur = Number(summary.currentByRole[role] || 0);
@@ -5211,7 +5311,6 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     const eventId = String(req.body?.eventId || "").trim();
     if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
     const overrides = req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : {};
-    const desiredByRoleIn = req.body?.desiredByRole && typeof req.body.desiredByRole === "object" ? req.body.desiredByRole : {};
     const detail = await fetchRaidHelperEventDetail(eventId);
     if (!detail) return res.status(404).json({ ok: false, error: "Raid event not found" });
     const existingPrimaryNames = new Set(
@@ -5230,12 +5329,8 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
-    const desiredByRole = {
-      Tanks: Math.max(0, Math.floor(Number(desiredByRoleIn.Tanks ?? 3) || 0)),
-      Healers: Math.max(0, Math.floor(Number(desiredByRoleIn.Healers ?? 5) || 0)),
-      Melee: Math.max(0, Math.floor(Number(desiredByRoleIn.Melee ?? 8) || 0)),
-      Ranged: Math.max(0, Math.floor(Number(desiredByRoleIn.Ranged ?? 9) || 0)),
-    };
+    const desiredByRole = sanitizeRoleAlertDesiredByRole(req.body?.desiredByRole);
+    await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
     const neededRoles = [];
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
       const cur = Number(summary.currentByRole[role] || 0);
@@ -12200,6 +12295,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
       .slice(0, 20);
 
     await ensureRhWclLinksStore();
+    await ensureRoleAlertSettingsStore();
     /** Raid Helper display key → guild rank from Account Assignment (`rh-wcl-character-links.json`). */
     const guildRoleByRhKey = new Map();
     for (const link of rhWclLinksState.links || []) {
@@ -12276,6 +12372,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         Melee: confirmedRoster.filter((x) => x.roleName === "Melee").length,
         Ranged: confirmedRoster.filter((x) => x.roleName === "Ranged").length,
       };
+      const roleTargets = roleAlertDesiredByRoleForEvent(event.id);
 
       return {
         ...event,
@@ -12301,6 +12398,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
           confirmed: confirmedRoster.length,
         },
         neededSpecs,
+        roleTargets,
         currentUserSignup:
           viewerUserId &&
           signUps.find((entry) => String(entry?.userId || "") === viewerUserId && String(entry?.status || ""))

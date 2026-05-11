@@ -11,6 +11,7 @@ let allRaidsState = [];
 let selectedReportCodesState = new Set();
 let joinNeedsState = [];
 let roleAlertsEventsState = [];
+let roleAlertsSavedTargetsByEventId = new Map();
 let roleAlertsAnalysisState = null;
 let roleAlertsSelectedUserIds = new Set();
 let roleAlertsCandidateSortState = { key: "displayName", dir: "asc" };
@@ -26,6 +27,7 @@ let roleAlertsCandidateFilterState = {
 let badgeTooltipsRowsState = [];
 
 const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
+const ROLE_ALERT_DEFAULT_TARGETS = { Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 };
 const BADGE_RARITIES = ["common", "rare", "epic", "legendary"];
 
 /** Same guild as Leaderboard (/) / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
@@ -1433,6 +1435,15 @@ function roleAlertsSelectedEventId() {
 
 function renderRoleAlertsEventSelect(events) {
   roleAlertsEventsState = Array.isArray(events) ? events : [];
+  roleAlertsSavedTargetsByEventId = new Map(
+    roleAlertsEventsState
+      .map((event) => {
+        const id = String(event?.id || "").trim();
+        const targets = event?.roleTargets && typeof event.roleTargets === "object" ? event.roleTargets : null;
+        return id ? [id, targets] : null;
+      })
+      .filter(Boolean)
+  );
   const select = document.getElementById("roleAlertsEventSelect");
   if (!select) return;
   const prev = String(select.value || "").trim();
@@ -1464,15 +1475,17 @@ function roleAlertsReadOverrides() {
 }
 
 function roleAlertsReadDesiredByRole() {
-  const pick = (id, fallback) => {
+  const saved = roleAlertsSavedTargetsByEventId.get(roleAlertsSelectedEventId()) || {};
+  const pick = (id, role) => {
     const n = Number(document.getElementById(id)?.value);
-    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
+    const fallback = Number(saved?.[role] ?? ROLE_ALERT_DEFAULT_TARGETS[role] ?? 0);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : Math.max(0, Math.floor(fallback || 0));
   };
   return {
-    Tanks: pick("roleAlertsNeedTanks", 3),
-    Healers: pick("roleAlertsNeedHealers", 5),
-    Melee: pick("roleAlertsNeedMelee", 8),
-    Ranged: pick("roleAlertsNeedRanged", 9),
+    Tanks: pick("roleAlertsNeedTanks", "Tanks"),
+    Healers: pick("roleAlertsNeedHealers", "Healers"),
+    Melee: pick("roleAlertsNeedMelee", "Melee"),
+    Ranged: pick("roleAlertsNeedRanged", "Ranged"),
   };
 }
 
@@ -3223,6 +3236,44 @@ document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async
     status("Role-alert analysis updated.");
   } catch (error) {
     status(error?.message || "Failed to analyze selected event");
+  }
+});
+
+document.getElementById("roleAlertsSaveTargetsBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("roleAlertsSaveTargetsBtn");
+  const eventId = roleAlertsSelectedEventId();
+  if (!eventId) {
+    status("Select a raid event first.");
+    return;
+  }
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Save role totals", loading: "Saving...", success: "Saved", failure: "Failed" },
+      async () => {
+        const payload = await getJson("/api/admin/role-alerts/role-targets", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ eventId, desiredByRole: roleAlertsReadDesiredByRole() }),
+        });
+        const savedTargets = payload?.desiredByRole && typeof payload.desiredByRole === "object" ? payload.desiredByRole : {};
+        roleAlertsSavedTargetsByEventId.set(eventId, savedTargets);
+        if (roleAlertsAnalysisState && String(roleAlertsAnalysisState?.event?.id || "") === eventId) {
+          const currentByRole = roleAlertsAnalysisState.currentByRole || {};
+          roleAlertsAnalysisState.desiredByRole = savedTargets;
+          roleAlertsAnalysisState.missingByRole = Object.fromEntries(
+            ROLE_ALERT_ROLES.map((role) => [
+              role,
+              Math.max(0, Math.floor(Number(savedTargets?.[role] || 0)) - Math.floor(Number(currentByRole?.[role] || 0))),
+            ])
+          );
+          renderRoleAlertsAnalysis(roleAlertsAnalysisState);
+        }
+      }
+    );
+    status("Role totals saved for this event.");
+  } catch (error) {
+    status(error?.message || "Failed to save role totals");
   }
 });
 

@@ -470,11 +470,21 @@ function joinPickHeroNextRaidEvent(events) {
   return preferred25.length ? preferred25[0] : timeline[0];
 }
 
-function joinRoleCompositionTargets(capacity) {
-  if (capacity <= 10) {
-    return { Tanks: 2, Healers: 2, Melee: 3, Ranged: 3 };
+function joinRoleCompositionTargets(capacity, roleTargets) {
+  const fallback = capacity <= 10 ? { Tanks: 2, Healers: 2, Melee: 3, Ranged: 3 } : { Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 };
+  const src = roleTargets && typeof roleTargets === "object" ? roleTargets : {};
+  const next = { ...fallback };
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    const value = Number(src[role]);
+    if (Number.isFinite(value) && value >= 0) next[role] = Math.floor(value);
   }
-  return { Tanks: 3, Healers: 6, Melee: 8, Ranged: 8 };
+  return next;
+}
+
+function joinRoleTargetCapacity(capacity, roleTargets) {
+  const targets = joinRoleCompositionTargets(capacity, roleTargets);
+  const total = Number(targets.Tanks || 0) + Number(targets.Healers || 0) + Number(targets.Melee || 0) + Number(targets.Ranged || 0);
+  return total > 0 ? total : capacity;
 }
 
 function joinRoleGapLabel(role, n) {
@@ -509,8 +519,8 @@ function joinPublicNeededSpecs(neededSpecs) {
     .filter((row) => row.spec && row.count > 0);
 }
 
-function joinRoleProgressRowsHtml(rosterByRole, capacity) {
-  const targets = joinRoleCompositionTargets(capacity);
+function joinRoleProgressRowsHtml(rosterByRole, capacity, roleTargets) {
+  const targets = joinRoleCompositionTargets(capacity, roleTargets);
   const rows = [
     {
       key: "tanks",
@@ -629,10 +639,10 @@ function joinFormatCountdownRemaining(totalSec) {
   return `${s}s`;
 }
 
-function joinMissingGapsHtml(rosterByRole, capacity, confirmed, neededSpecs) {
+function joinMissingGapsHtml(rosterByRole, capacity, confirmed, neededSpecs, roleTargets) {
   const c = Math.max(0, Number(confirmed || 0));
   return `<div class="join-event-needs-summary" role="status">
-    ${joinRoleProgressRowsHtml(rosterByRole, capacity)}
+    ${joinRoleProgressRowsHtml(rosterByRole, capacity, roleTargets)}
     ${joinSpecIconNeedsHtml(neededSpecs, c, capacity)}
   </div>`;
 }
@@ -743,12 +753,12 @@ function joinEventRosterCapacity(event) {
 
 function joinRenderFeaturedNextEvent(event, isAuthenticated) {
   const bannerSrc = joinEventBannerSrc(event);
-  const cap = joinEventRosterCapacity(event);
+  const cap = joinRoleTargetCapacity(joinEventRosterCapacity(event), event?.roleTargets);
   const confirmed = Number(event?.signups?.confirmed ?? 0);
   const signupsTotal = Number(event?.signups?.total ?? 0);
   const startSec = Number(event?.startTime || 0);
   const { date, time } = joinFmtEventDateTime(startSec);
-  const gapsHtml = joinMissingGapsHtml(event?.rosterByRole, cap, confirmed, event?.neededSpecs);
+  const gapsHtml = joinMissingGapsHtml(event?.rosterByRole, cap, confirmed, event?.neededSpecs, event?.roleTargets);
   const actions = joinSignupActionsHtml(event, isAuthenticated);
 
   return `
@@ -789,10 +799,10 @@ function joinRenderFeaturedNextEvent(event, isAuthenticated) {
 
 function joinRenderUpcomingEventCard(event, isAuthenticated) {
   const bannerSrc = joinEventBannerSrc(event);
-  const cap = joinEventRosterCapacity(event);
+  const cap = joinRoleTargetCapacity(joinEventRosterCapacity(event), event?.roleTargets);
   const confirmed = Number(event?.signups?.confirmed ?? 0);
   const signupsTotal = Number(event?.signups?.total ?? 0);
-  const gapsHtml = joinMissingGapsHtml(event?.rosterByRole, cap, confirmed, event?.neededSpecs);
+  const gapsHtml = joinMissingGapsHtml(event?.rosterByRole, cap, confirmed, event?.neededSpecs, event?.roleTargets);
   const { date, time } = joinFmtEventDateTime(event?.startTime);
   const startSec = Number(event?.startTime || 0);
   const actions = joinSignupActionsHtml(event, isAuthenticated);
@@ -864,7 +874,7 @@ async function loadJoinFutureEvents() {
   try {
     const [me, payload] = await Promise.all([
       joinLoadAuthMeForEvents(),
-      fetch("/api/raid-helper/future-events?joinSpecNeeds=2", { credentials: "include" }).then(async (res) => {
+      fetch("/api/raid-helper/future-events?joinSpecNeeds=3", { credentials: "include" }).then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
         return body;
