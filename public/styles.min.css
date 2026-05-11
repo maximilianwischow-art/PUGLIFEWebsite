@@ -6133,6 +6133,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-main-select { appearance: none; background: rgba(20, 15, 34, 0.7); border: 1px solid rgba(167, 139, 250, 0.4); border-radius: 10px; color: #fff; font: inherit; padding: 0.5rem 0.8rem; min-width: 220px; }
 .profile-main-select:focus-visible { outline: none; border-color: rgba(167, 139, 250, 0.9); box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.35); }
 .profile-main-hint { margin: 0.6rem 0 0; }
+.profile-badges-card { overflow: visible; }
 .profile-badges-categories { display: flex; flex-direction: column; gap: 1.25rem; }
 .profile-badge-category { border: 1px solid rgba(167, 139, 250, 0.18); border-radius: 14px; padding: 1rem 1.1rem; background: rgba(15, 11, 28, 0.45); }
 .profile-badge-category-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.65rem; flex-wrap: wrap; }
@@ -6326,6 +6327,11 @@ html { -webkit-tap-highlight-color: transparent; }
 }
 .profile-badge-tile .achievement-tooltip {
   bottom: calc(100% + 10px);
+}
+.profile-badge-grid .profile-badge-tile:first-child .achievement-tooltip,
+.profile-badge-grid .profile-badge-tile:nth-child(6n + 1) .achievement-tooltip {
+  left: 0;
+  transform: none;
 }
 .admin-badge-tooltips-table {
   min-width: 980px;

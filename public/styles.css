@@ -6586,6 +6586,10 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-main-hint { margin: 0.6rem 0 0; }
 
 /* Badges grid */
+.profile-badges-card {
+  overflow: visible;
+}
+
 .profile-badges-categories {
   display: flex;
   flex-direction: column;
@@ -6657,6 +6661,11 @@ button.raid-cal-run.raid-cal-run--column:hover {
 }
 .profile-badge-tile .achievement-tooltip {
   bottom: calc(100% + 10px);
+}
+.profile-badge-grid .profile-badge-tile:first-child .achievement-tooltip,
+.profile-badge-grid .profile-badge-tile:nth-child(6n + 1) .achievement-tooltip {
+  left: 0;
+  transform: none;
 }
 .profile-badge-tile-icon img {
   width: 100%;
