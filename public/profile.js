@@ -107,6 +107,13 @@
     return "rgba(163, 53, 238, 0.7)";
   }
 
+  function badgeFrameAttrs(badge) {
+    const rarity = ["common", "rare", "epic", "legendary"].includes(String(badge?.rarity || ""))
+      ? String(badge.rarity)
+      : "epic";
+    return `class="profile-badge-tile-icon achievement-badge-frame achievement-badge-frame--${escapeHtml(rarity)}"`;
+  }
+
   function showLockedState() {
     if (els.locked) els.locked.hidden = false;
     if (els.grid) els.grid.hidden = true;
@@ -516,7 +523,7 @@
         const desc = `${b.name} — ${b.description || b.defaultDescription || (b.earned ? "earned" : "not yet earned")}`;
         return `
           <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" aria-label="${escapeHtml(desc)}">
-            <div class="profile-badge-tile-icon achievement-badge-frame" aria-hidden="true">
+            <div ${badgeFrameAttrs(b)} aria-hidden="true">
               <img class="achievement-badge-img" src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
               <span class="achievement-badge-glow" aria-hidden="true"></span>
             </div>

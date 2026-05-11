@@ -162,6 +162,17 @@ function achievementTooltipHtml(meta) {
     </span>`;
 }
 
+function achievementBadgeFrameAttrs(meta, extraClass = "") {
+  const rarity = ["common", "rare", "epic", "legendary"].includes(meta?.rarity) ? meta.rarity : "epic";
+  const classes = ["achievement-badge-frame", `achievement-badge-frame--${rarity}`, extraClass].filter(Boolean).join(" ");
+  return `class="${escapeHtml(classes)}"`;
+}
+
+function achievementBadgeSlotAttrs(meta, baseClass) {
+  const rarity = ["common", "rare", "epic", "legendary"].includes(meta?.rarity) ? meta.rarity : "epic";
+  return `class="${escapeHtml(`${baseClass} achievement-badge-slot--${rarity}`)}"`;
+}
+
 /**
  * Mirrors server `LOCALIZED_CLASS_SLUG_TO_ENGLISH_SLUG` — Raid-Helper can send DE/FR/ES class names.
  * Without this, `classicon_krieger.jpg` etc. 404 and prot detection never matches `warrior` / `paladin`.
@@ -1465,8 +1476,8 @@ function rosterAchievementBadgesHtml(player) {
       const meta = badgeTooltipMeta(badgeId, b.alt, badgeTooltipFallbackDescription(b.title, b.alt), "epic");
       const icon = achievementBadgeIconUrlWithFallback(b.file);
       const fallbackTitle = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-      return `<span class="raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container" aria-label="${escapeHtml(fallbackTitle)}">
-        <span class="achievement-badge-frame">
+      return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} aria-label="${escapeHtml(fallbackTitle)}">
+        <span ${achievementBadgeFrameAttrs(meta)}>
           <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
           <span class="achievement-badge-glow" aria-hidden="true"></span>
         </span>
@@ -1730,8 +1741,8 @@ function rosterGuildRoleBadgeHtml(player) {
   const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(roleLabel));
   const alt = escapeHtml(`Guild rank: ${displayLabel}`);
-  return `<span class="raider-badge-slot raider-badge-slot--guild-role achievement-badge-container" aria-label="${escapeHtml(title)}">
-    <span class="achievement-badge-frame achievement-badge-frame--guild">
+  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--guild-role achievement-badge-container")} aria-label="${escapeHtml(title)}">
+    <span ${achievementBadgeFrameAttrs(meta, "achievement-badge-frame--guild")}>
       <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" />
       <span class="achievement-badge-glow" aria-hidden="true"></span>
     </span>
@@ -1755,8 +1766,8 @@ function rosterAttendanceCompanionBadgeHtml(player) {
   const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(tier));
   const alt = escapeHtml(`Attendance rank: ${tier}`);
-  return `<span class="raider-badge-slot raider-badge-slot--guild-role raider-badge-slot--attendance-companion achievement-badge-container" aria-label="${escapeHtml(title)}">
-    <span class="achievement-badge-frame achievement-badge-frame--guild">
+  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--guild-role raider-badge-slot--attendance-companion achievement-badge-container")} aria-label="${escapeHtml(title)}">
+    <span ${achievementBadgeFrameAttrs(meta, "achievement-badge-frame--guild")}>
       <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" />
       <span class="achievement-badge-glow" aria-hidden="true"></span>
     </span>
@@ -1774,8 +1785,8 @@ function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
   const tip = escapeHtml(`${meta.name}${meta.description ? ` — ${meta.description}` : ""}`);
   return `
     <div class="roster-role-title roster-role-title--guild-tier">
-      <span class="roster-section-guild-badge raider-badge-slot raider-badge-slot--guild-role achievement-badge-container" aria-label="${tip}">
-        <span class="achievement-badge-frame achievement-badge-frame--guild">
+      <span ${achievementBadgeSlotAttrs(meta, "roster-section-guild-badge raider-badge-slot raider-badge-slot--guild-role achievement-badge-container")} aria-label="${tip}">
+        <span ${achievementBadgeFrameAttrs(meta, "achievement-badge-frame--guild")}>
           <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="" width="28" height="28" loading="lazy" decoding="async" />
           <span class="achievement-badge-glow" aria-hidden="true"></span>
         </span>

@@ -6190,9 +6190,19 @@ html { -webkit-tap-highlight-color: transparent; }
   border-radius: 6px;
   overflow: hidden;
   background: #000;
-  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.5), 0 4px 8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--achievement-rarity-color, rgba(163, 53, 238, 0.7)), 0 4px 8px rgba(0, 0, 0, 0.5);
   cursor: help;
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.achievement-badge-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--achievement-rarity-color, rgba(163, 53, 238, 0.7)) 82%, transparent),
+    0 0 8px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 26%, transparent);
 }
 .achievement-badge-container:hover .achievement-badge-frame,
 .achievement-badge-container:focus-visible .achievement-badge-frame {
@@ -6280,6 +6290,26 @@ html { -webkit-tap-highlight-color: transparent; }
 .achievement-tooltip-box.rarity-rare { --achievement-rarity-color: rgba(0, 112, 222, 0.6); }
 .achievement-tooltip-box.rarity-epic { --achievement-rarity-color: rgba(163, 53, 238, 0.7); }
 .achievement-tooltip-box.rarity-legendary { --achievement-rarity-color: rgba(255, 128, 0, 0.8); }
+.achievement-badge-slot--common,
+.achievement-badge-frame--common {
+  --achievement-glow-color: #9e9e9e;
+  --achievement-rarity-color: rgba(158, 158, 158, 0.5);
+}
+.achievement-badge-slot--rare,
+.achievement-badge-frame--rare {
+  --achievement-glow-color: #0070de;
+  --achievement-rarity-color: rgba(0, 112, 222, 0.6);
+}
+.achievement-badge-slot--epic,
+.achievement-badge-frame--epic {
+  --achievement-glow-color: #a855f7;
+  --achievement-rarity-color: rgba(163, 53, 238, 0.7);
+}
+.achievement-badge-slot--legendary,
+.achievement-badge-frame--legendary {
+  --achievement-glow-color: #f97316;
+  --achievement-rarity-color: rgba(255, 128, 0, 0.8);
+}
 .leaderboard-table tbody tr:nth-child(-n + 4) .achievement-tooltip {
   top: calc(100% + 12px);
   bottom: auto;
@@ -6313,4 +6343,15 @@ html { -webkit-tap-highlight-color: transparent; }
   margin-top: 5px;
   font-size: 11px;
   line-height: 1.35;
+}
+
+.leaderboard-player-badges .raider-badge-slot--guild-role {
+  box-shadow:
+    inset 0 0 0 1px var(--achievement-rarity-color, rgba(168, 85, 247, 0.45)),
+    0 0 12px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 28%, transparent);
+}
+.leaderboard-player-badges .raider-badge-slot--achievement-earned {
+  box-shadow:
+    inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2)),
+    0 0 10px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 22%, transparent);
 }

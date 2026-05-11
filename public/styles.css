@@ -2069,10 +2069,21 @@ body.framework-bg-vivid {
   overflow: hidden;
   background: #000;
   box-shadow:
-    0 0 0 1px rgba(168, 85, 247, 0.5),
+    0 0 0 1px var(--achievement-rarity-color, rgba(163, 53, 238, 0.7)),
     0 4px 8px rgba(0, 0, 0, 0.5);
   cursor: help;
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.achievement-badge-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--achievement-rarity-color, rgba(163, 53, 238, 0.7)) 82%, transparent),
+    0 0 8px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 26%, transparent);
 }
 
 .achievement-badge-container:hover .achievement-badge-frame,
@@ -2181,6 +2192,30 @@ body.framework-bg-vivid {
 }
 
 .achievement-tooltip-box.rarity-legendary {
+  --achievement-rarity-color: rgba(255, 128, 0, 0.8);
+}
+
+.achievement-badge-slot--common,
+.achievement-badge-frame--common {
+  --achievement-glow-color: #9e9e9e;
+  --achievement-rarity-color: rgba(158, 158, 158, 0.5);
+}
+
+.achievement-badge-slot--rare,
+.achievement-badge-frame--rare {
+  --achievement-glow-color: #0070de;
+  --achievement-rarity-color: rgba(0, 112, 222, 0.6);
+}
+
+.achievement-badge-slot--epic,
+.achievement-badge-frame--epic {
+  --achievement-glow-color: #a855f7;
+  --achievement-rarity-color: rgba(163, 53, 238, 0.7);
+}
+
+.achievement-badge-slot--legendary,
+.achievement-badge-frame--legendary {
+  --achievement-glow-color: #f97316;
   --achievement-rarity-color: rgba(255, 128, 0, 0.8);
 }
 
@@ -4804,8 +4839,8 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 .leaderboard-player-badges .raider-badge-slot--guild-role {
   box-shadow:
-    inset 0 0 0 2px rgba(168, 85, 247, 0.45),
-    0 0 12px rgba(168, 85, 247, 0.2);
+    inset 0 0 0 1px var(--achievement-rarity-color, rgba(168, 85, 247, 0.45)),
+    0 0 12px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 28%, transparent);
 }
 
 .leaderboard-player-badges .raider-badge-slot {
@@ -4829,8 +4864,8 @@ button.raid-cal-run.raid-cal-run--column:hover {
 
 .leaderboard-player-badges .raider-badge-slot--achievement-earned {
   box-shadow:
-    inset 0 0 0 1px rgba(244, 208, 122, 0.2),
-    0 0 10px rgba(244, 208, 122, 0.16);
+    inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2)),
+    0 0 10px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 22%, transparent);
 }
 
 .leaderboard-peak-parse--empty {

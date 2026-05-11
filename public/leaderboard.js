@@ -551,9 +551,10 @@ function renderLeaderboardTable() {
     el.removeAttribute("title");
     el.setAttribute("aria-label", tip);
     el.classList.add("achievement-badge-container");
+    el.classList.add("achievement-badge-slot--epic");
     if (!el.querySelector(".achievement-badge-frame")) {
       const frame = document.createElement("span");
-      frame.className = "achievement-badge-frame";
+      frame.className = "achievement-badge-frame achievement-badge-frame--epic";
       while (el.firstChild) frame.appendChild(el.firstChild);
       const glow = document.createElement("span");
       glow.className = "achievement-badge-glow";
@@ -589,7 +590,6 @@ function renderLeaderboardTable() {
       el.appendChild(tooltip);
     }
   });
-
   document.querySelectorAll("[data-leaderboard-sort]").forEach((btn) => {
     const k = String(btn.getAttribute("data-leaderboard-sort") || "");
     const active = k === sortState.key;
