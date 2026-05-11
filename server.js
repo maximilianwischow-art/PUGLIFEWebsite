@@ -1649,6 +1649,10 @@ function rosterBucketRoleNameForHallOfFame(roleName) {
 
 function hallOfFameBracketFromRosterPlayer(player) {
   if (!player) return "unk";
+  const summaries = player?.parseSummaries || {};
+  if (summaries.encounterTopHeal === true) return "heal";
+  if (summaries.encounterTopTank === true) return "tank";
+  if (summaries.encounterTopDps === true) return "dps";
   const b = rosterBucketRoleNameForHallOfFame(player.roleName);
   if (b === "Healers") return "heal";
   if (b === "Tanks") return "tank";
@@ -2706,9 +2710,10 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
     /* v2 = post-WCL-pivot; v3 = post event-award badges (`specificEventBadges`
        on each enriched `player`). v2 disk caches pin `specificEventBadges: []`
        forever while the fingerprint is unchanged, so HoF / API never re-runs
-       `enrichHallOfFameRows` and the AOE Cleave tile never appears. */
+       `enrichHallOfFameRows` and the AOE Cleave tile never appears.
+       v4 = HoF role bracket derives from role evidence before the generic roster bucket. */
     if (
-      parsed?.v === 3 &&
+      parsed?.v === 4 &&
       Number(parsed.guildId) === Number(guildId) &&
       Number(parsed.limit) === Number(limit) &&
       parsed.fingerprint === fingerprint &&
@@ -2733,7 +2738,7 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
 async function persistHallOfFameEnrichedCache(guildId, limit, fingerprint, hallOfFame) {
   const generatedAt = Date.now();
   const payload = {
-    v: 3,
+    v: 4,
     guildId: Number(guildId),
     limit: Number(limit),
     fingerprint,

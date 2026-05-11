@@ -487,7 +487,7 @@ function renderHallOfFame(payload) {
   const rows = [...rowsUnsorted].sort((a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0));
   const isMock = apiRows.length === 0;
   const roleLabelForRow = (row) => {
-    const bracket = String(row?.bracket || "").trim().toLowerCase();
+    const bracket = String(row?.bracket || row?.peakParseBracket || "").trim().toLowerCase();
     if (bracket === "heal" || bracket === "healer") return "HEALER";
     if (bracket === "tank") return "TANK";
     const roleName = String(row?.player?.roleName || "").trim().toLowerCase();
