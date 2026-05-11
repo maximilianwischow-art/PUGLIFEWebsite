@@ -486,6 +486,32 @@ function renderHallOfFame(payload) {
   const rowsUnsorted = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
   const rows = [...rowsUnsorted].sort((a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0));
   const isMock = apiRows.length === 0;
+  // #region agent log
+  fetch("http://127.0.0.1:7780/ingest/b5d1a1ec-fdf9-46d6-be48-7f772c6203f4", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "dbac0b" },
+    body: JSON.stringify({
+      sessionId: "dbac0b",
+      runId: "pre-fix",
+      hypothesisId: "H4",
+      location: "public/voting.js:renderHallOfFame",
+      message: "frontend hof rows before render",
+      data: {
+        apiCount: apiRows.length,
+        renderCount: rows.length,
+        isMock,
+        rows: rows.map((row, idx) => ({
+          idx,
+          winnerName: String(row?.winnerName || ""),
+          roundKey: String(row?.roundKey || ""),
+          raidStartTime: Number(row?.raidStartTime || 0),
+          hasCustomQuote: Boolean(String(row?.customQuote || "").trim()),
+        })),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
   const roleLabelForRow = (row) => {
     const bracket = String(row?.bracket || "").trim().toLowerCase();
     if (bracket === "heal" || bracket === "healer") return "HEALER";
