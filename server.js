@@ -2237,6 +2237,7 @@ async function enrichHallOfFameRows(guildId, rows) {
       player: syntheticPlayer,
       peakParse,
       peakParseSource,
+      bracket,
       peakParseBracket: bracket,
       wclClassName,
     };
