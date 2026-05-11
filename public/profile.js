@@ -464,19 +464,7 @@
 
   async function loadBadges() {
     if (!els.badgesHost) return;
-    /* Pre-warm the WCL fan-out (`/attendance`, `/boss-times`,
-       `/voting/hall-of-fame`, `/first-clear-participants`,
-       `/death-leaderboard`) in parallel with the badges fetch so the
-       Achievements row resolves as soon as the slowest of the two
-       finishes — instead of waiting until *after* the server response
-       renders before kicking it off (the previous serial behaviour). */
     const plb = window.plbEventsRoster;
-    const wclWarmup =
-      plb && typeof plb.loadWclAttendanceForEvents === "function"
-        ? plb.loadWclAttendanceForEvents({ skipCache: true }).catch((error) => {
-            console.warn("[profile] WCL pre-warm failed:", error?.message || error);
-          })
-        : Promise.resolve();
     try {
       const res = await fetch("/api/profile/me/badges", { credentials: "include" });
       if (res.status === 401) {
@@ -502,9 +490,17 @@
       // resolver missed them (e.g. linked names not present on the Account
       // Assignment row, cold WCL cache, etc.).
       const linkedCharacters = Array.isArray(payload.linkedCharacters) ? payload.linkedCharacters : [];
-      resolveBadgesClientSide(linkedCharacters, categories, wclWarmup).catch(() => {
-        /* leaderboard-only badges stay locked if WCL data is unavailable */
-      });
+      if (lazyBadgeIds.length) {
+        const wclWarmup =
+          plb && typeof plb.loadWclAttendanceForEvents === "function"
+            ? plb.loadWclAttendanceForEvents({ skipCache: true }).catch((error) => {
+                console.warn("[profile] WCL fallback failed:", error?.message || error);
+              })
+            : Promise.resolve();
+        resolveBadgesClientSide(linkedCharacters, categories, wclWarmup).catch(() => {
+          finalizeLazyBadgeCategoriesUI();
+        });
+      }
     } catch (error) {
       els.badgesHost.innerHTML = `<p class="subtle is-error">${escapeHtml(error?.message || "Failed to load badges")}</p>`;
     }

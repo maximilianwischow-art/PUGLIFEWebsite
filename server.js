@@ -106,6 +106,7 @@ import {
   lootAwardsGetByUserId,
   lootAwardsGetByCharacterIds,
   cutoverReadinessCounts,
+  syncStateGet,
 } from "./lib/item-needs-db.mjs";
 
 /**
@@ -7313,6 +7314,102 @@ app.get("/api/profiles/by-user-ids", async (req, res) => {
   }
 });
 
+const PROFILE_CLIENT_FALLBACK_BADGES = [
+  "iron-attendance",
+  "parsing-ceiling",
+  "most-deaths-last-6-raids",
+  "best-time-participant",
+];
+
+function profileMaterializedAchievementResolution(canonicalUser, linkedCharacters) {
+  const canonicalId = Number(canonicalUser?.id);
+  const earnedIds = new Set();
+  const lazyBadges = [];
+  const readiness = {
+    attendance: false,
+    parses: false,
+    deaths: false,
+    bestTime: false,
+  };
+  if (!Number.isInteger(canonicalId) || canonicalId <= 0) {
+    return { earnedIds, lazyBadges: PROFILE_CLIENT_FALLBACK_BADGES.slice(), readiness };
+  }
+
+  try {
+    const fresh = raidAttendanceGetFreshestWindow();
+    if (fresh?.windowLabel && Number(fresh.rowCount || 0) > 0) {
+      const row = raidAttendanceGetByWindow(fresh.windowLabel).find((entry) => Number(entry?.userId) === canonicalId);
+      readiness.attendance = true;
+      const attended = Math.max(0, Math.floor(Number(row?.raidsAttended) || 0));
+      const considered = Math.max(0, Math.floor(Number(row?.raidsConsidered) || 0));
+      if (row && considered > 0 && attended === considered) earnedIds.add("iron-attendance");
+    }
+  } catch {
+    readiness.attendance = false;
+  }
+  if (!readiness.attendance) lazyBadges.push("iron-attendance");
+
+  try {
+    const parseSync = syncStateGet("parses");
+    readiness.parses = Number(parseSync?.lastCompletedAt || 0) > 0;
+    if (readiness.parses) {
+      const summaries = parseSummaryGetByUserId(canonicalId);
+      if (summaries.some((row) => Number(row?.encounterTopInBracket || 0) > 0)) {
+        earnedIds.add("parsing-ceiling");
+      }
+    }
+  } catch {
+    readiness.parses = false;
+  }
+  if (!readiness.parses) lazyBadges.push("parsing-ceiling");
+
+  try {
+    const rows = deathTotalsGetByWindow("last-rolling-window") || [];
+    readiness.deaths = rows.length > 0;
+    if (readiness.deaths) {
+      let maxDeaths = 0;
+      let myDeaths = 0;
+      for (const row of rows) {
+        const deaths = Number(row?.deaths || 0);
+        if (Number.isFinite(deaths) && deaths > maxDeaths) maxDeaths = deaths;
+        if (Number(row?.userId) === canonicalId && Number.isFinite(deaths)) myDeaths = deaths;
+      }
+      if (maxDeaths > 0 && myDeaths === maxDeaths) earnedIds.add("most-deaths-last-6-raids");
+    }
+  } catch {
+    readiness.deaths = false;
+  }
+  if (!readiness.deaths) lazyBadges.push("most-deaths-last-6-raids");
+
+  try {
+    const linkedKeys = new Set(
+      (Array.isArray(linkedCharacters) ? linkedCharacters : [])
+        .map((name) => normalizeRaidHelperDisplayKey(String(name || "")))
+        .filter(Boolean)
+    );
+    for (const ch of identityCharactersGetByUserId(canonicalId) || []) {
+      const key = normalizeRaidHelperDisplayKey(String(ch?.characterName || ""));
+      if (key) linkedKeys.add(key);
+    }
+    const rows = bestTimeRosterGet({}) || [];
+    readiness.bestTime = rows.length > 0;
+    if (readiness.bestTime && linkedKeys.size) {
+      for (const row of rows) {
+        const key = normalizeRaidHelperDisplayKey(String(row?.characterName || ""));
+        if (key && linkedKeys.has(key)) {
+          earnedIds.add("best-time-participant");
+          break;
+        }
+      }
+    }
+  } catch {
+    readiness.bestTime = false;
+  }
+  if (!readiness.bestTime) lazyBadges.push("best-time-participant");
+
+  return { earnedIds, lazyBadges, readiness };
+}
+
 /** GET /api/profile/me/badges — full catalog with obtained / not obtained per badge. */
 app.get("/api/profile/me/badges", async (req, res) => {
   const session = getSessionFromRequest(req);
@@ -7342,11 +7439,12 @@ app.get("/api/profile/me/badges", async (req, res) => {
           if (states.length) {
             const stateById = new Map(states.map((s) => [s.badgeId, s]));
             const milestoneInferredCount = inferRaidMilestoneEventCountFromBadgeStates(stateById);
+            const materializedAchievements = profileMaterializedAchievementResolution(canonical, linkedCharacters);
             const categories = badgeCatalog.map((cat) => ({
               ...cat,
               badges: cat.badges.map((b) => {
                 const st = stateById.get(b.id);
-                let earned = !!st?.earned;
+                let earned = !!st?.earned || materializedAchievements.earnedIds.has(b.id);
                 if (String(b.id || "").startsWith("raids-with-guild-")) {
                   const tier = Number(String(b.id).replace("raids-with-guild-", ""));
                   earned =
@@ -7361,18 +7459,14 @@ app.get("/api/profile/me/badges", async (req, res) => {
                 };
               }),
             }));
-            return res.json({
+            const payload = {
               ok: true,
               source: "materialized",
               categories,
               linkedCharacters,
-              lazyBadges: [
-                "iron-attendance",
-                "parsing-ceiling",
-                "most-deaths-last-6-raids",
-                "best-time-participant",
-              ],
-            });
+              lazyBadges: materializedAchievements.lazyBadges,
+            };
+            return res.json(payload);
           }
         }
       } catch (error) {
@@ -7518,7 +7612,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       ...cat,
       badges: cat.badges.map((b) => ({ ...b, earned: earned.has(b.id) })),
     }));
-    return res.json({
+    const payload = {
       ok: true,
       categories,
       // Names the badge UI should match against when running the leaderboard's
@@ -7536,7 +7630,8 @@ app.get("/api/profile/me/badges", async (req, res) => {
         "most-deaths-last-6-raids",
         "best-time-participant",
       ],
-    });
+    };
+    return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load badges" });
   }
