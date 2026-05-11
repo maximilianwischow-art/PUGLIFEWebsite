@@ -314,8 +314,11 @@ app.use("/api", async (req, res, next) => {
     const key = publicSnapshotKeyFromRequest(req);
     const hit = publicDataSnapshotState.byKey?.[key];
     if (hit && Object.prototype.hasOwnProperty.call(hit, "payload")) {
-      res.setHeader("x-plb-public-snapshot", "hit");
-      return res.json(hit.payload);
+      if (!publicSnapshotPayloadLooksPoisoned(key, hit.payload)) {
+        res.setHeader("x-plb-public-snapshot", "hit");
+        return res.json(hit.payload);
+      }
+      delete publicDataSnapshotState.byKey[key];
     }
     const originalJson = res.json.bind(res);
     res.json = (body) => {
@@ -3848,6 +3851,22 @@ function publicSnapshotKeyFromRequest(req) {
   return query ? `${path}?${query}` : path;
 }
 
+function publicSnapshotPayloadLooksPoisoned(key, payload) {
+  const keyPath = String(key || "").split("?")[0];
+  if (keyPath !== "/api/raid-helper/future-events") return false;
+  const events = Array.isArray(payload?.events) ? payload.events : [];
+  if (!events.length) return false;
+  const hasRosterNeedSignal = events.some((event) => Array.isArray(event?.neededSpecs) && event.neededSpecs.length > 0);
+  const hasAnySignupData = events.some((event) => {
+    const total = Number(event?.signups?.total || 0);
+    const confirmed = Number(event?.signups?.confirmed || 0);
+    const roster = event?.rosterByRole && typeof event.rosterByRole === "object" ? event.rosterByRole : {};
+    const roleTotal = Object.values(roster).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
+    return total > 0 || confirmed > 0 || roleTotal > 0;
+  });
+  return hasRosterNeedSignal && !hasAnySignupData;
+}
+
 function shouldUsePublicSnapshot(req) {
   if (req.method !== "GET") return false;
   if (String(req.query?.live || "") === "1") return false;
@@ -3873,6 +3892,59 @@ async function upsertPublicSnapshotForKey(key, payload) {
     .then(() => persistPublicDataSnapshotStore())
     .catch((error) => console.error("[public-snapshot] persist failed:", error?.message || error));
   await publicDataSnapshotWriteChain;
+}
+
+async function publicFutureEventSnapshotFallback(eventId) {
+  const id = String(eventId || "").trim();
+  if (!id) return null;
+  await ensurePublicDataSnapshotStore();
+  const matches = [];
+  for (const [key, hit] of Object.entries(publicDataSnapshotState.byKey || {})) {
+    const events = Array.isArray(hit?.payload?.events) ? hit.payload.events : [];
+    const event = events.find((row) => String(row?.id || "").trim() === id);
+    if (!event) continue;
+    const confirmedRoster = Array.isArray(event?.confirmedRoster) ? event.confirmedRoster : [];
+    const total = Number(event?.signups?.total || 0);
+    const confirmed = Number(event?.signups?.confirmed || confirmedRoster.length || 0);
+    if (total <= 0 && confirmed <= 0 && confirmedRoster.length <= 0) continue;
+    matches.push({ key, syncedAt: Number(hit?.syncedAt || 0), event });
+  }
+  matches.sort((a, b) => b.syncedAt - a.syncedAt);
+  return matches[0] || null;
+}
+
+async function raidHelperEventDetailFallbackFromPublicSnapshot(eventId) {
+  const match = await publicFutureEventSnapshotFallback(eventId);
+  if (!match) return null;
+  const event = match.event || {};
+  const confirmedRoster = Array.isArray(event.confirmedRoster) ? event.confirmedRoster : [];
+  const signUps = confirmedRoster
+    .map((row, idx) => ({
+      id: idx + 1,
+      userId: String(row?.discordUserId || ""),
+      name: String(row?.name || row?.characterName || "").trim(),
+      status: "primary",
+      roleName: String(row?.roleName || ""),
+      className: String(row?.raidHelperClassName || row?.className || ""),
+      specName: String(row?.raidHelperSpecName || row?.specName || ""),
+      cRoleName: String(row?.roleName || ""),
+      cSpecName: String(row?.raidHelperSpecName || row?.specName || ""),
+      specIcon: String(row?.specIconUrl || ""),
+    }))
+    .filter((row) => row.name);
+  return {
+    id: String(event.id || eventId),
+    title: String(event.title || event.name || "Unnamed Event"),
+    name: String(event.title || event.name || "Unnamed Event"),
+    description: String(event.description || ""),
+    startTime: Number(event.startTime || 0),
+    channelId: String(event?.discord?.channelId || ""),
+    softresId: String(event?.softres?.id || ""),
+    signUps,
+    _fallbackSource: "public-data-snapshot",
+    _fallbackSnapshotKey: String(match.key || ""),
+    _fallbackSyncedAt: Number(match.syncedAt || 0),
+  };
 }
 
 async function ensureRhWclLinksStore() {
@@ -4924,7 +4996,15 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     const eventId = String(req.body?.eventId || "").trim();
     if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
     const overrides = req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : {};
-    const detail = await fetchRaidHelperEventDetail(eventId);
+    const detailWarnings = [];
+    let detail = await fetchRaidHelperEventDetail(eventId);
+    if (!detail) {
+      const fallbackDetail = await raidHelperEventDetailFallbackFromPublicSnapshot(eventId);
+      if (fallbackDetail) {
+        detail = fallbackDetail;
+        detailWarnings.push("Raid Helper API is rate-limited; using the latest local public snapshot for roster/signups.");
+      }
+    }
     if (!detail) return res.status(404).json({ ok: false, error: "Raid event not found" });
     const existingPrimaryNames = new Set(
       (Array.isArray(detail?.signUps) ? detail.signUps : [])
@@ -4961,7 +5041,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       const need = Number(desiredByRole[role] || 0);
       missingByRole[role] = Math.max(0, need - cur);
     }
-    const analysisWarnings = [];
+    const analysisWarnings = [...detailWarnings];
     await ensureDiscordDmSubscribersStore();
     await ensureRoleAlertDmLogStore();
     try {
@@ -6792,6 +6872,8 @@ const BADGE_CATALOG = [
     badges: [
       { id: "guildlead", name: "PUG Lead", icon: "/images/guild-roles/guildlead.png", tier: "officer", description: "Officer rank for guild leadership and raid organization." },
       { id: "raidlead", name: "Raid Lead", icon: "/images/guild-roles/raidlead.png", tier: "officer", description: "Officer rank for players leading raid nights and roster execution." },
+      { id: "dpslead", name: "DPS Lead", icon: "/images/guild-roles/dpslead.png", tier: "officer", description: "Officer rank for players coordinating DPS assignments and execution." },
+      { id: "heallead", name: "Heal Lead", icon: "/images/guild-roles/heallead.png", tier: "officer", description: "Officer rank for players coordinating healer assignments and cooldowns." },
       { id: "core", name: "Core", icon: "/images/guild-roles/core.png", tier: "officer", description: "Trusted core raider rank assigned in Account Assignment." },
       { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance", description: "Attendance rank for consistently joining tracked guild raids." },
       { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance", description: "Attendance rank for regular participation in tracked guild raids." },
@@ -7591,9 +7673,13 @@ app.get("/api/profile/me/badges", async (req, res) => {
     } catch {}
 
     // Guild rank: derive from Account Assignment (`myRow` loaded above for linkedKeys).
-    const guildRoleSlug = String(myRow?.guildRole || "Peon").toLowerCase().replace(/\s+/g, "-");
+    const guildRoleSlug = String(myRow?.guildRole || "Peon")
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "");
     if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
     else if (guildRoleSlug === "raidlead") earned.add("raidlead");
+    else if (guildRoleSlug === "dpslead") earned.add("dpslead");
+    else if (guildRoleSlug === "heallead") earned.add("heallead");
     else if (guildRoleSlug === "core") earned.add("core");
     else if (guildRoleSlug === "veteran") earned.add("veteran");
     else if (guildRoleSlug === "grunt") earned.add("grunt");
@@ -12127,7 +12213,10 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
     );
 
     const detailed = await mapWithConcurrency(future, rhFutureConc, async (event) => {
-      const detail = await fetchRaidHelperEventDetail(event.id);
+      let detail = await fetchRaidHelperEventDetail(event.id);
+      if (!detail) {
+        detail = await raidHelperEventDetailFallbackFromPublicSnapshot(event.id);
+      }
       const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
       const existingPrimaryNames = new Set(
         signUps
@@ -14673,9 +14762,13 @@ async function runSyncBadges() {
     const earned = new Set();
     const evidenceById = new Map();
 
-    const guildRoleSlug = String(user.guildRole || "Peon").toLowerCase().replace(/\s+/g, "-");
+    const guildRoleSlug = String(user.guildRole || "Peon")
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "");
     if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
     else if (guildRoleSlug === "raidlead") earned.add("raidlead");
+    else if (guildRoleSlug === "dpslead") earned.add("dpslead");
+    else if (guildRoleSlug === "heallead") earned.add("heallead");
     else if (guildRoleSlug === "core") earned.add("core");
     else if (guildRoleSlug === "veteran") earned.add("veteran");
     else if (guildRoleSlug === "grunt") earned.add("grunt");

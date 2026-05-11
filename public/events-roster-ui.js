@@ -18,9 +18,19 @@ const IMAGE_ASSET_VERSION = "20260507aoe-cleave1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
-const GUILD_ROLE_BADGE_SLUGS = new Set(["peon", "grunt", "veteran", "core", "puglead", "guildlead", "raidlead"]);
+const GUILD_ROLE_BADGE_SLUGS = new Set([
+  "peon",
+  "grunt",
+  "veteran",
+  "core",
+  "puglead",
+  "guildlead",
+  "raidlead",
+  "dpslead",
+  "heallead",
+]);
 /** Core / leads are set in Account Assignment; Peon–Veteran on site follow WCL attendance (last N raids). */
-const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Puglead", "Guildlead", "Raidlead"]);
+const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Puglead", "Guildlead", "Raidlead", "Dpslead", "Heallead"]);
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 /** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
 let attendanceLeaderboardByKey = new Map();
@@ -1680,19 +1690,33 @@ function rosterGuildRoleSlug(player) {
 function guildRoleBadgeImageSlug(roleLabel) {
   const raw = String(roleLabel || "").trim();
   const normalized = raw === "Guildlead" ? "Puglead" : raw;
-  const slug = String(normalized || "Peon").toLowerCase();
+  const slug = String(normalized || "Peon")
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
   if (slug === "puglead" || slug === "guildlead") return "guildlead";
   if (slug === "raidlead") return "raidlead";
+  if (slug === "dpslead") return "dpslead";
+  if (slug === "heallead") return "heallead";
   return GUILD_ROLE_BADGE_SLUGS.has(slug) ? slug : "peon";
 }
 
 function assignedGuildRoleFromPlayer(player) {
   const raw = String(player?.guildRole ?? "Peon").trim() || "Peon";
+  const compact = raw.toLowerCase().replace(/[\s_-]+/g, "");
+  if (compact === "puglead" || compact === "guildlead") return "Puglead";
+  if (compact === "raidlead") return "Raidlead";
+  if (compact === "dpslead") return "Dpslead";
+  if (compact === "heallead") return "Heallead";
   return raw === "Guildlead" ? "Puglead" : raw;
 }
 
 function displayGuildRoleLabel(roleLabel) {
-  return String(roleLabel || "").trim() === "Puglead" ? "PUG Lead" : String(roleLabel || "").trim();
+  const raw = String(roleLabel || "").trim();
+  const compact = raw.toLowerCase().replace(/[\s_-]+/g, "");
+  if (compact === "puglead" || compact === "guildlead") return "PUG Lead";
+  if (compact === "dpslead") return "DPS Lead";
+  if (compact === "heallead") return "Heal Lead";
+  return raw;
 }
 
 /** Raids attended in the same capped window as KPI / % (last 6 admin-curated Event Management raids when curation is set, else rolling last-6 tracked 25-player raids). */
@@ -1737,7 +1761,8 @@ function rosterGuildRoleBadgeHtml(player) {
   const roleLabel = primaryGuildRankLabel(player);
   const displayLabel = displayGuildRoleLabel(roleLabel);
   const badgeId = guildRoleBadgeImageSlug(roleLabel);
-  const meta = badgeTooltipMeta(badgeId, displayLabel, `Guild rank: ${displayLabel}`, badgeId === "guildlead" || badgeId === "raidlead" ? "rare" : "common");
+  const isLeadBadge = ["guildlead", "raidlead", "dpslead", "heallead"].includes(badgeId);
+  const meta = badgeTooltipMeta(badgeId, displayLabel, `Guild rank: ${displayLabel}`, isLeadBadge ? "rare" : "common");
   const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
   const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(roleLabel));
   const alt = escapeHtml(`Guild rank: ${displayLabel}`);

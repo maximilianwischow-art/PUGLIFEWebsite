@@ -32,18 +32,30 @@ const BADGE_RARITIES = ["common", "rare", "epic", "legendary"];
 const ADMIN_WCL_GUILD_ID = 817080;
 
 /** Must match `RH_WCL_GUILD_ROLES` in `lib/rh-wcl-guess.mjs` / server sanitize. */
-const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Puglead", "Raidlead"];
+const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Puglead", "Raidlead", "Dpslead", "Heallead"];
 
 function normalizeGuildRoleValue(role) {
   const s = String(role || "").trim();
   if (s === "Guildlead") return "Puglead";
+  const compact = s.toLowerCase().replace(/[\s_-]+/g, "");
+  if (compact === "puglead" || compact === "guildlead") return "Puglead";
+  if (compact === "raidlead") return "Raidlead";
+  if (compact === "dpslead") return "Dpslead";
+  if (compact === "heallead") return "Heallead";
   return RH_WCL_GUILD_ROLES.includes(s) ? s : "Peon";
+}
+
+function displayGuildRoleOptionLabel(role) {
+  if (role === "Puglead") return "PUG Lead";
+  if (role === "Dpslead") return "DPS Lead";
+  if (role === "Heallead") return "Heal Lead";
+  return role;
 }
 
 function rhWclGuildRoleSelectHtml(current) {
   const sel = normalizeGuildRoleValue(current);
-  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (Core, PUG Lead, Raidlead are fixed ranks; Peon–Veteran on Events and Roster follow WCL attendance)">${RH_WCL_GUILD_ROLES.map(
-    (r) => `<option value="${esc(r)}"${r === sel ? " selected" : ""}>${esc(r)}</option>`
+  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (Core and lead roles are fixed ranks; Peon–Veteran on Events and Roster follow WCL attendance)">${RH_WCL_GUILD_ROLES.map(
+    (r) => `<option value="${esc(r)}"${r === sel ? " selected" : ""}>${esc(displayGuildRoleOptionLabel(r))}</option>`
   ).join("")}</select>`;
 }
 
@@ -3192,14 +3204,17 @@ document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async
       { idle: "Analyze event", loading: "Analyzing...", success: "Analyzed", failure: "Failed" },
       async () => {
         roleAlertsSelectedUserIds = new Set();
+        const desiredByRole = roleAlertsReadDesiredByRole();
+        const manualRoleSpecNeeds = roleAlertsReadManualRoleSpecNeeds();
+        const overrides = roleAlertsReadOverrides();
         const payload = await getJson("/api/admin/role-alerts/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             eventId,
-            overrides: roleAlertsReadOverrides(),
-            desiredByRole: roleAlertsReadDesiredByRole(),
-            manualRoleSpecNeeds: roleAlertsReadManualRoleSpecNeeds(),
+            overrides,
+            desiredByRole,
+            manualRoleSpecNeeds,
           }),
         });
         renderRoleAlertsAnalysis(payload);
