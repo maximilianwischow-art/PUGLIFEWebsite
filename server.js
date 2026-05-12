@@ -1263,7 +1263,12 @@ function analyticsSummary({ days = 30 } = {}) {
   const dayMs = 24 * 60 * 60 * 1000;
   const spanMs = safeDays * dayMs;
   const now = Date.now();
-  const since = now - spanMs;
+  const todayStart = Date.UTC(
+    new Date(now).getUTCFullYear(),
+    new Date(now).getUTCMonth(),
+    new Date(now).getUTCDate()
+  );
+  const since = todayStart - (safeDays - 1) * dayMs;
   const prevSince = since - spanMs;
   const selfHosts = analyticsReferrerSelfHosts();
 
