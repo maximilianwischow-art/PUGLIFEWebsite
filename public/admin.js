@@ -69,7 +69,7 @@ const ADMIN_GROUPS = [
   { id: "people", label: "People", tools: ["rh-wcl", "database", "hof-notes", "badge-tooltips"] },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
-  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm"] },
+  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-news"] },
   { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "analytics"] },
 ];
 
@@ -91,6 +91,9 @@ let customDmCandidatesState = [];
 let customDmSelectedUserIds = new Set();
 let customDmFilterState = { displayName: "", guildRole: "", recentClass: "", recentSpec: "", subscribed: "" };
 let customDmRoleTargets = new Set(["Tanks", "Healers", "Melee", "Ranged"]);
+let discordNewsStatusState = null;
+const DISCORD_NEWS_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+const DISCORD_NEWS_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 function parseAdminHash() {
   const raw = (location.hash || "").replace(/^#/, "").trim();
@@ -2015,6 +2018,41 @@ async function loadCustomDmCandidates() {
   renderCustomDmPanel();
 }
 
+function renderDiscordNewsStatus(payload = discordNewsStatusState) {
+  const host = document.getElementById("discordNewsStatus");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Discord news status unavailable.</p>`;
+    return;
+  }
+  const configured = Boolean(payload.configured);
+  const valid = Boolean(payload.valid);
+  const recent = Array.isArray(payload.recent) ? payload.recent.slice(0, 5) : [];
+  const statusText = !configured
+    ? "Missing DISCORD_NEWS_WEBHOOK_URL"
+    : valid
+      ? "Webhook configured"
+      : "Webhook URL is invalid";
+  const recentHtml = recent.length
+    ? `<ul class="subtle">${recent
+        .map((row) => {
+          const when = Number(row?.sentAt || 0) ? new Date(Number(row.sentAt)).toLocaleString() : "";
+          return `<li>${esc(row?.title || row?.key || "Notification")} ${when ? `· ${esc(when)}` : ""}</li>`;
+        })
+        .join("")}</ul>`
+    : `<p class="subtle">No news notifications recorded yet.</p>`;
+  host.innerHTML = `
+    <p class="subtle"><strong>${esc(statusText)}</strong>${payload.host ? ` · ${esc(payload.host)}` : ""}</p>
+    ${recentHtml}
+  `;
+}
+
+async function loadDiscordNewsStatus() {
+  const payload = await getJson("/api/admin/discord-news/status");
+  discordNewsStatusState = payload;
+  renderDiscordNewsStatus(payload);
+}
+
 function renderPublicSnapshotStatus(payload) {
   const host = document.getElementById("publicSnapshotStatus");
   if (!host) return;
@@ -2680,6 +2718,12 @@ async function loadAdminData() {
   } catch (error) {
     const host = document.getElementById("customDmHost");
     if (host) host.innerHTML = `<p class="subtle">Failed to load DM candidates: ${esc(error?.message || "Unknown error")}</p>`;
+  }
+  try {
+    await loadDiscordNewsStatus();
+  } catch (error) {
+    renderDiscordNewsStatus({ ok: false });
+    status(`Discord news status failed: ${error?.message || "Unknown error"}`);
   }
   renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
@@ -3360,6 +3404,79 @@ async function sendCustomDm(btn) {
   }
 }
 
+async function discordNewsImageUploadPayload() {
+  const input = document.getElementById("discordNewsImageFileInput");
+  const file = input?.files?.[0] || null;
+  if (!file) return null;
+  if (!DISCORD_NEWS_IMAGE_MIMES.has(String(file.type || "").toLowerCase())) {
+    throw new Error("Uploaded image must be PNG, JPEG, WebP, or GIF.");
+  }
+  if (file.size > DISCORD_NEWS_IMAGE_MAX_BYTES) {
+    throw new Error("Uploaded image is too large (max 6 MB).");
+  }
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return {
+    name: file.name || "news-image",
+    mime: file.type || "application/octet-stream",
+    base64: btoa(binary),
+  };
+}
+
+async function sendDiscordNews(btn) {
+  const title = String(document.getElementById("discordNewsTitleInput")?.value || "").trim();
+  const message = String(document.getElementById("discordNewsMessageInput")?.value || "").trim();
+  const url = String(document.getElementById("discordNewsUrlInput")?.value || "").trim();
+  const imageUrl = String(document.getElementById("discordNewsImageUrlInput")?.value || "").trim();
+  if (!title || !message) {
+    status("Enter a Discord news title and message first.");
+    return false;
+  }
+  try {
+    const imageUpload = await discordNewsImageUploadPayload();
+    const payload = await runWithButtonFeedback(
+      btn || document.getElementById("discordNewsSendBtn"),
+      { idle: "Send news", loading: "Sending...", success: "Sent", failure: "Failed" },
+      async () =>
+        getJson("/api/admin/discord-news/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, message, url, imageUrl, imageUpload }),
+        })
+    );
+    status(`Discord news sent${payload?.messageId ? ` (${payload.messageId})` : ""}.`);
+    document.getElementById("discordNewsTitleInput").value = "";
+    document.getElementById("discordNewsMessageInput").value = "";
+    document.getElementById("discordNewsImageFileInput").value = "";
+    await loadDiscordNewsStatus().catch(() => {});
+    return true;
+  } catch (error) {
+    status(error?.message || "Failed to send Discord news");
+    return false;
+  }
+}
+
+async function sendDiscordNewsTest(btn) {
+  try {
+    const payload = await runWithButtonFeedback(
+      btn || document.getElementById("discordNewsTestBtn"),
+      { idle: "Send test", loading: "Sending...", success: "Sent", failure: "Failed" },
+      async () => getJson("/api/admin/discord-news/test", { method: "POST" })
+    );
+    status(`Discord news test sent${payload?.messageId ? ` (${payload.messageId})` : ""}.`);
+    await loadDiscordNewsStatus().catch(() => {});
+    return true;
+  } catch (error) {
+    status(error?.message || "Failed to send Discord news test");
+    return false;
+  }
+}
+
 document.addEventListener("click", (event) => {
   const addBtn = event.target.closest("[data-role-alert-manual-add]");
   if (addBtn) {
@@ -3415,6 +3532,25 @@ document.addEventListener("click", (event) => {
       { idle: "Reload players", loading: "Loading...", success: "Loaded", failure: "Failed" },
       async () => loadCustomDmCandidates()
     ).catch((error) => status(error?.message || "Failed to reload DM candidates"));
+    return;
+  }
+  const discordNewsSendBtn = event.target.closest("#discordNewsSendBtn");
+  if (discordNewsSendBtn) {
+    sendDiscordNews(discordNewsSendBtn);
+    return;
+  }
+  const discordNewsTestBtn = event.target.closest("#discordNewsTestBtn");
+  if (discordNewsTestBtn) {
+    sendDiscordNewsTest(discordNewsTestBtn);
+    return;
+  }
+  const discordNewsReloadBtn = event.target.closest("#discordNewsReloadBtn");
+  if (discordNewsReloadBtn) {
+    runWithButtonFeedback(
+      discordNewsReloadBtn,
+      { idle: "Reload status", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => loadDiscordNewsStatus()
+    ).catch((error) => status(error?.message || "Failed to reload Discord news status"));
     return;
   }
   const customMarkAll = event.target.closest("#customDmMarkAllBtn");

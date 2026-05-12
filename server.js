@@ -431,6 +431,8 @@ const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || "";
 const discordClientSecret = process.env.DISCORD_CLIENT_SECRET?.trim() || "";
 const discordGuildId =
   process.env.DISCORD_GUILD_ID?.trim() || process.env.RAID_HELPER_SERVER_ID?.trim() || "";
+const discordNewsWebhookUrl = process.env.DISCORD_NEWS_WEBHOOK_URL?.trim() || "";
+const DISCORD_NEWS_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
 
 /** Raid Helper’s “server id” is your Discord guild id — optional duplicate of {@link discordGuildId}. */
 function raidHelperDiscordGuildId() {
@@ -568,6 +570,7 @@ let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
+const discordNewsNotificationsPath = path.join(dataDir, "discord-news-notifications.json");
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const roleAlertSettingsPath = path.join(dataDir, "role-alert-settings.json");
 const hofNotesPath = path.join(dataDir, "hof-notes.json");
@@ -598,6 +601,8 @@ let joinNeedsReady = null;
 let joinNeedsWriteChain = Promise.resolve();
 let discordDmSubscribersReady = null;
 let discordDmSubscribersWriteChain = Promise.resolve();
+let discordNewsNotificationsReady = null;
+let discordNewsNotificationsWriteChain = Promise.resolve();
 let roleAlertDmLogReady = null;
 let roleAlertDmLogWriteChain = Promise.resolve();
 let roleAlertSettingsReady = null;
@@ -620,6 +625,7 @@ let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let analyticsStoreState = { events: [] };
 let badgeTooltipsState = { byBadgeId: {} };
 let roleAlertSettingsState = { byEventId: {} };
+let discordNewsNotificationsState = { sentByKey: {}, recent: [] };
 let rhWclLinksReady = null;
 /** In-memory mirror of {@link rhWclCharacterLinksPath} — one of the main character databases for this deployment. */
 let rhWclLinksState = { links: [] };
@@ -2628,6 +2634,270 @@ async function ensureDiscordDmSubscribersStore() {
   return discordDmSubscribersReady;
 }
 
+function sanitizeDiscordNewsNotificationsState(raw) {
+  const sentByKeyIn = raw && typeof raw.sentByKey === "object" ? raw.sentByKey : {};
+  const sentByKey = {};
+  for (const [keyRaw, rowRaw] of Object.entries(sentByKeyIn)) {
+    const key = String(keyRaw || "").trim().slice(0, 180);
+    if (!key) continue;
+    const row = rowRaw && typeof rowRaw === "object" ? rowRaw : {};
+    sentByKey[key] = {
+      key,
+      kind: String(row.kind || "").trim().slice(0, 40),
+      title: String(row.title || "").trim().slice(0, 180),
+      sentAt: Number(row.sentAt || 0) || Date.now(),
+    };
+  }
+  const recentIn = Array.isArray(raw?.recent) ? raw.recent : [];
+  const recent = recentIn
+    .map((row) => ({
+      key: String(row?.key || "").trim().slice(0, 180),
+      kind: String(row?.kind || "").trim().slice(0, 40),
+      title: String(row?.title || "").trim().slice(0, 180),
+      sentAt: Number(row?.sentAt || 0) || 0,
+      messageId: String(row?.messageId || "").trim().slice(0, 80),
+    }))
+    .filter((row) => row.key && row.sentAt > 0)
+    .sort((a, b) => b.sentAt - a.sentAt)
+    .slice(0, 50);
+  return { sentByKey, recent };
+}
+
+async function persistDiscordNewsNotificationsStore() {
+  const tmpPath = `${discordNewsNotificationsPath}.tmp`;
+  const json = JSON.stringify(discordNewsNotificationsState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, discordNewsNotificationsPath);
+}
+
+async function ensureDiscordNewsNotificationsStore() {
+  if (discordNewsNotificationsReady) return discordNewsNotificationsReady;
+  discordNewsNotificationsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(discordNewsNotificationsPath, "utf8");
+      discordNewsNotificationsState = sanitizeDiscordNewsNotificationsState(JSON.parse(raw));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      discordNewsNotificationsState = { sentByKey: {}, recent: [] };
+      await persistDiscordNewsNotificationsStore();
+    }
+  })();
+  return discordNewsNotificationsReady;
+}
+
+function isConfiguredDiscordWebhookUrl(rawUrl) {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return false;
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    return (
+      u.protocol === "https:" &&
+      (host === "discord.com" || host === "discordapp.com") &&
+      /^\/api\/webhooks\/\d+\/[^/]+\/?$/i.test(u.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isPublicHttpUrl(rawUrl) {
+  const raw = String(rawUrl || "").trim();
+  if (!raw) return false;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" || (!isProd && u.protocol === "http:");
+  } catch {
+    return false;
+  }
+}
+
+function truncateDiscordText(value, maxLen) {
+  const s = String(value || "").trim();
+  if (s.length <= maxLen) return s;
+  return `${s.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
+}
+
+function sanitizeDiscordAttachmentName(filename, mime) {
+  const base = String(filename || "news-image")
+    .trim()
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  const extByMime = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+  const ext = extByMime[String(mime || "").toLowerCase()] || "png";
+  const withoutExt = base.replace(/\.(jpe?g|png|webp|gif)$/i, "") || "news-image";
+  return `${withoutExt}.${ext}`;
+}
+
+function decodeDiscordNewsImageUpload(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const base64 = String(raw.base64 || "").replace(/^data:[^;]+;base64,/i, "").trim();
+  if (!base64) return null;
+  let buffer;
+  try {
+    buffer = Buffer.from(base64, "base64");
+  } catch {
+    throw new Error("Uploaded image could not be decoded");
+  }
+  if (!buffer.length) return null;
+  if (buffer.length > DISCORD_NEWS_IMAGE_MAX_BYTES) {
+    throw new Error("uploaded image is too large (max 6 MB)");
+  }
+  const detectedMime = detectImageMimeFromBytes(buffer);
+  const declaredMime = String(raw.mime || "").trim().toLowerCase();
+  const mime = detectedMime || declaredMime;
+  const allowed = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+  if (!allowed.has(mime)) {
+    throw new Error("uploaded image must be PNG, JPEG, WebP, or GIF");
+  }
+  return {
+    buffer,
+    mime,
+    filename: sanitizeDiscordAttachmentName(raw.name || "news-image", mime),
+  };
+}
+
+function discordNewsWebhookStatusPayload() {
+  const configured = Boolean(discordNewsWebhookUrl);
+  const valid = isConfiguredDiscordWebhookUrl(discordNewsWebhookUrl);
+  let host = "";
+  try {
+    host = configured ? new URL(discordNewsWebhookUrl).hostname : "";
+  } catch {
+    host = "";
+  }
+  return {
+    ok: true,
+    configured,
+    valid,
+    host,
+    recent: Array.isArray(discordNewsNotificationsState.recent) ? discordNewsNotificationsState.recent.slice(0, 10) : [],
+  };
+}
+
+async function sendDiscordNewsWebhook({
+  kind = "news",
+  title,
+  description,
+  url = "",
+  imageUrl = "",
+  imageAttachment = null,
+  fields = [],
+} = {}) {
+  if (!isConfiguredDiscordWebhookUrl(discordNewsWebhookUrl)) {
+    throw new Error("DISCORD_NEWS_WEBHOOK_URL is missing or invalid");
+  }
+  const embed = {
+    title: truncateDiscordText(title || "PUG LIFE News", 256),
+    description: truncateDiscordText(description || "", 4096),
+    color: kind === "event" ? 0x6fd9a8 : kind === "mvp" ? 0xd96fb8 : kind === "badge" ? 0xe2b060 : 0x9aacff,
+    timestamp: new Date().toISOString(),
+    footer: { text: "PUG LIFE BALANCE" },
+  };
+  if (isPublicHttpUrl(url)) embed.url = String(url).trim();
+  if (imageAttachment?.buffer?.length && imageAttachment?.filename) {
+    embed.image = { url: `attachment://${imageAttachment.filename}` };
+  } else if (isPublicHttpUrl(imageUrl)) {
+    embed.image = { url: String(imageUrl).trim() };
+  }
+  const safeFields = (Array.isArray(fields) ? fields : [])
+    .map((field) => ({
+      name: truncateDiscordText(field?.name || "", 256),
+      value: truncateDiscordText(field?.value || "", 1024),
+      inline: field?.inline !== false,
+    }))
+    .filter((field) => field.name && field.value)
+    .slice(0, 10);
+  if (safeFields.length) embed.fields = safeFields;
+
+  const endpoint = discordNewsWebhookUrl.includes("?")
+    ? `${discordNewsWebhookUrl}&wait=true`
+    : `${discordNewsWebhookUrl}?wait=true`;
+  const payloadJson = JSON.stringify({
+    username: "PUG LIFE News",
+    embeds: [embed],
+  });
+  if (imageAttachment?.buffer?.length && imageAttachment?.filename) {
+    const form = new FormData();
+    form.append("payload_json", payloadJson);
+    form.append(
+      "files[0]",
+      new Blob([imageAttachment.buffer], { type: imageAttachment.mime || "application/octet-stream" }),
+      imageAttachment.filename
+    );
+    const res = await fetch(endpoint, {
+      method: "POST",
+      body: form,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = String(payload?.message || `Discord webhook failed (${res.status})`).slice(0, 180);
+      throw new Error(msg);
+    }
+    return payload;
+  }
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payloadJson,
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = String(payload?.message || `Discord webhook failed (${res.status})`).slice(0, 180);
+    throw new Error(msg);
+  }
+  return payload;
+}
+
+async function markDiscordNewsNotificationSent(key, { kind = "news", title = "", messageId = "" } = {}) {
+  const safeKey = String(key || "").trim().slice(0, 180);
+  if (!safeKey) return;
+  await ensureDiscordNewsNotificationsStore();
+  const row = {
+    key: safeKey,
+    kind: String(kind || "").trim().slice(0, 40),
+    title: String(title || "").trim().slice(0, 180),
+    sentAt: Date.now(),
+    messageId: String(messageId || "").trim().slice(0, 80),
+  };
+  discordNewsNotificationsWriteChain = discordNewsNotificationsWriteChain.catch(() => {}).then(async () => {
+    discordNewsNotificationsState.sentByKey[safeKey] = row;
+    discordNewsNotificationsState.recent = [
+      row,
+      ...(Array.isArray(discordNewsNotificationsState.recent) ? discordNewsNotificationsState.recent : []).filter(
+        (existing) => String(existing?.key || "") !== safeKey
+      ),
+    ].slice(0, 50);
+    await persistDiscordNewsNotificationsStore();
+  });
+  await discordNewsNotificationsWriteChain;
+}
+
+async function sendDiscordNewsWebhookOnce(key, payload) {
+  const safeKey = String(key || "").trim().slice(0, 180);
+  if (!safeKey) return { sent: false, skipped: true, reason: "missing-key" };
+  await ensureDiscordNewsNotificationsStore();
+  if (discordNewsNotificationsState.sentByKey?.[safeKey]) {
+    return { sent: false, skipped: true, reason: "already-sent" };
+  }
+  const message = await sendDiscordNewsWebhook(payload);
+  await markDiscordNewsNotificationSent(safeKey, {
+    kind: payload?.kind || "news",
+    title: payload?.title || "",
+    messageId: message?.id || "",
+  });
+  return { sent: true, skipped: false, message };
+}
+
+function sendDiscordNewsWebhookOnceBestEffort(key, payload) {
+  sendDiscordNewsWebhookOnce(key, payload).catch((error) => {
+    if (String(error?.message || "").includes("DISCORD_NEWS_WEBHOOK_URL")) return;
+    console.warn("[discord-news] send failed:", error?.message || error);
+  });
+}
+
 function sanitizeRoleAlertDmLogState(raw) {
   const byEventIdIn = raw && typeof raw.byEventId === "object" ? raw.byEventId : {};
   const byEventId = {};
@@ -3137,6 +3407,39 @@ async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   });
 }
 
+async function notifyDiscordNewsForRaidHelperEvent(eventRow) {
+  const evId = String(eventRow?.id || "").trim();
+  if (!evId) return;
+  const title = String(eventRow?.title || "New raid event").trim() || "New raid event";
+  const detail = await fetchRaidHelperEventDetail(evId).catch(() => null);
+  const discordPostUrl = raidHelperDiscordEventPostUrl(detail, eventRow);
+  const startTime = Number(detail?.startTime || detail?.time || eventRow?.startTime || 0);
+  const when = formatRaidHelperEventStartForDm(startTime);
+  await sendDiscordNewsWebhookOnce(`event:${evId}`, {
+    kind: "event",
+    title: `New raid online: ${title}`,
+    description: `A new Raid Helper event is online.\n\n**${title}**\n${when}`,
+    url: discordPostUrl || `https://raid-helper.xyz/events/${encodeURIComponent(evId)}`,
+    imageUrl: eventDmHeaderImageUrl(detail, title),
+  });
+}
+
+function notifyDiscordNewsForMvpVotingRound(voting) {
+  const roundKey = String(voting?.roundKey || "").trim();
+  if (!roundKey) return;
+  const raidName = String(voting?.raidName || voting?.title || "latest raid").trim();
+  sendDiscordNewsWebhookOnceBestEffort(`mvp:${roundKey}`, {
+    kind: "mvp",
+    title: `MVP voting is open: ${raidName}`,
+    description: "Vote for the player who made the biggest impact in the latest raid.",
+    url: `${String(publicBaseUrl || "https://wow-pug.com").replace(/\/+$/, "")}/voting.html`,
+    fields: [
+      { name: "Raid", value: raidName || "Latest raid" },
+      { name: "Candidates", value: String(Array.isArray(voting?.candidates) ? voting.candidates.length : 0) },
+    ],
+  });
+}
+
 async function runRaidHelperDmPollOnce() {
   if (raidHelperDmPollRunning) return;
   raidHelperDmPollRunning = true;
@@ -3168,6 +3471,12 @@ async function runRaidHelperDmPollOnce() {
     const alreadyNotified = new Set(discordDmSubscribersState.notifiedEventIds || []);
     const newEvents = latestPosted.filter((event) => !alreadyNotified.has(event.id));
     if (!newEvents.length) return;
+    for (const event of newEvents) {
+      await notifyDiscordNewsForRaidHelperEvent(event).catch((error) => {
+        if (String(error?.message || "").includes("DISCORD_NEWS_WEBHOOK_URL")) return;
+        console.warn(`[discord-news] event notification failed for ${event.id}:`, error?.message || error);
+      });
+    }
     const subscribers = Object.values(discordDmSubscribersState.subscribersByUserId || {}).filter(
       (row) => row && row.subscribed && String(row.userId || "").trim()
     );
@@ -5602,6 +5911,79 @@ app.post("/api/admin/custom-dm/send", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to send custom DM" });
+  }
+});
+
+app.get("/api/admin/discord-news/status", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureDiscordNewsNotificationsStore();
+    return res.json(discordNewsWebhookStatusPayload());
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Discord news status" });
+  }
+});
+
+app.post("/api/admin/discord-news/send", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const title = String(req.body?.title || "").trim();
+    const description = String(req.body?.message || req.body?.description || "").trim();
+    const rawUrl = String(req.body?.url || "").trim();
+    const rawImageUrl = String(req.body?.imageUrl || "").trim();
+    const imageAttachment = decodeDiscordNewsImageUpload(req.body?.imageUpload);
+    if (!title) return res.status(400).json({ ok: false, error: "title is required" });
+    if (!description) return res.status(400).json({ ok: false, error: "message is required" });
+    if (title.length > 256) return res.status(400).json({ ok: false, error: "title is too long (max 256 chars)" });
+    if (description.length > 4000) {
+      return res.status(400).json({ ok: false, error: "message is too long (max 4000 chars)" });
+    }
+    const url = rawUrl.startsWith("/") ? absoluteUrlFromPublicBase(rawUrl) : rawUrl;
+    const imageUrl = rawImageUrl.startsWith("/") ? absoluteUrlFromPublicBase(rawImageUrl) : rawImageUrl;
+    if (url && !isPublicHttpUrl(url)) return res.status(400).json({ ok: false, error: "link must be a public http(s) URL" });
+    if (imageUrl && !isPublicHttpUrl(imageUrl)) {
+      return res.status(400).json({ ok: false, error: "image URL must be a public http(s) URL" });
+    }
+    const message = await sendDiscordNewsWebhook({
+      kind: "manual",
+      title,
+      description,
+      url,
+      imageUrl,
+      imageAttachment,
+      fields: [{ name: "Posted by", value: session?.user?.globalName || session?.user?.username || "Admin" }],
+    });
+    await markDiscordNewsNotificationSent(`manual:${message?.id || Date.now()}`, {
+      kind: "manual",
+      title,
+      messageId: message?.id || "",
+    });
+    return res.json({ ok: true, messageId: message?.id || null });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to send Discord news" });
+  }
+});
+
+app.post("/api/admin/discord-news/test", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const message = await sendDiscordNewsWebhook({
+      kind: "test",
+      title: "PUG LIFE webhook test",
+      description: "Discord news notifications are configured correctly.",
+      url: joinUsPageUrl(),
+    });
+    await markDiscordNewsNotificationSent(`test:${message?.id || Date.now()}`, {
+      kind: "test",
+      title: "PUG LIFE webhook test",
+      messageId: message?.id || "",
+    });
+    return res.json({ ok: true, messageId: message?.id || null });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to send Discord news test" });
   }
 });
 
@@ -8478,6 +8860,7 @@ app.get("/api/voting/current", async (req, res) => {
     if (!voting) {
       return res.status(404).json({ ok: false, error: "No recent tracked raid found" });
     }
+    notifyDiscordNewsForMvpVotingRound(voting);
 
     await ensureVotingStore();
     const votesByCandidate = getVotingTallies(voting.roundKey);
@@ -14723,6 +15106,38 @@ app.post("/api/wcl/mvp", async (req, res) => {
  * ============================================================================= */
 
 /** Recompute server-side resolvable badge state for every known user. */
+function badgeCatalogNameById(badgeId) {
+  const id = String(badgeId || "");
+  for (const category of BADGE_CATALOG) {
+    for (const badge of category.badges || []) {
+      if (String(badge?.id || "") === id) return String(badge?.name || id);
+    }
+  }
+  return id;
+}
+
+async function notifyDiscordNewsForBadgeSummary(newBadgeCounts, affectedUsers) {
+  const entries = [...(newBadgeCounts instanceof Map ? newBadgeCounts.entries() : [])]
+    .filter(([, count]) => Number(count) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])));
+  const total = entries.reduce((sum, [, count]) => sum + Number(count || 0), 0);
+  if (!entries.length || total <= 0) return;
+  const day = new Date().toISOString().slice(0, 10);
+  const fingerprint = entries.map(([badgeId, count]) => `${badgeId}:${count}`).join("|").slice(0, 120);
+  const topLines = entries
+    .slice(0, 6)
+    .map(([badgeId, count]) => `**${badgeCatalogNameById(badgeId)}**: ${Number(count)} new`)
+    .join("\n");
+  await sendDiscordNewsWebhookOnce(`badge:${day}:${fingerprint}`, {
+    kind: "badge",
+    title: "New achievement badges earned",
+    description: `${total} new badge award${total === 1 ? "" : "s"} were detected for ${Number(affectedUsers || 0)} raider${
+      Number(affectedUsers || 0) === 1 ? "" : "s"
+    }.\n\n${topLines}`,
+    url: `${String(publicBaseUrl || "https://wow-pug.com").replace(/\/+$/, "")}/profile.html`,
+  });
+}
+
 async function runSyncBadges() {
   const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
   const reports =
@@ -14854,6 +15269,8 @@ async function runSyncBadges() {
 
   let rowsChanged = 0;
   const now = Date.now();
+  const newBadgeCounts = new Map();
+  const newBadgeUsers = new Set();
   for (const user of identityUserListAll()) {
     const linkedNames = identityListLinkedCharacterNames({
       discordUserId: user.discordUserId,
@@ -14928,8 +15345,25 @@ async function runSyncBadges() {
         });
       }
     }
+    const previousRows = badgeStateGetByUserId(user.id);
+    if (previousRows.length) {
+      const previousEarned = new Set(
+        previousRows.filter((row) => Number(row?.earned || 0) > 0).map((row) => String(row.badgeId || ""))
+      );
+      for (const badgeId of earned) {
+        if (previousEarned.has(badgeId)) continue;
+        newBadgeCounts.set(badgeId, Number(newBadgeCounts.get(badgeId) || 0) + 1);
+        newBadgeUsers.add(Number(user.id));
+      }
+    }
     badgeStateReplaceForUser({ userId: user.id, rows, when: now });
     rowsChanged += rows.length;
+  }
+  if (newBadgeCounts.size) {
+    await notifyDiscordNewsForBadgeSummary(newBadgeCounts, newBadgeUsers.size).catch((error) => {
+      if (String(error?.message || "").includes("DISCORD_NEWS_WEBHOOK_URL")) return;
+      console.warn("[discord-news] badge summary failed:", error?.message || error);
+    });
   }
   return { rowsChanged };
 }

@@ -38,6 +38,7 @@ In Render dashboard -> service -> Environment, set:
 - `RAID_HELPER_DEFAULT_EVENT_ID` (optional)
 - `AUTH_SESSION_SECRET` (required in production)
 - `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (if voting login is enabled)
+- `DISCORD_NEWS_WEBHOOK_URL` (secret, optional; enables Admin → News Notifications and automated Discord news posts)
 - `PUBLIC_BASE_URL` (your Render service URL, e.g. `https://fallen-tacticians-api.onrender.com`)
 
 ### Persistent storage (Starter+)

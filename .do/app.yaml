@@ -40,3 +40,6 @@ services:
       - key: RAID_HELPER_DEFAULT_EVENT_ID
         scope: RUN_TIME
         value: ""
+      - key: DISCORD_NEWS_WEBHOOK_URL
+        scope: RUN_TIME
+        type: SECRET

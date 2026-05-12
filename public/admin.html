@@ -64,6 +64,7 @@
                 <div class="admin-sidebar-group-label">Comms</div>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="role-alerts">Raid Roster Management</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="custom-dm">Custom Discord Messages</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="discord-news">News Notifications</button>
               </div>
               <div class="admin-sidebar-group" data-admin-group="data-ops">
                 <div class="admin-sidebar-group-label">Data &amp; Ops</div>
@@ -378,6 +379,64 @@
               ></textarea>
               <div id="customDmHost" class="admin-grid-note">Loading DM candidates...</div>
             </section>
+
+            <section class="card admin-panel" data-admin-panel="discord-news" id="admin-panel-discord-news">
+              <h3 class="section-title">News Notifications</h3>
+              <p class="subtle">Post a news announcement to the configured Discord webhook channel.</p>
+              <div id="discordNewsStatus" class="admin-grid-note">Loading Discord news status...</div>
+              <label class="subtle" for="discordNewsTitleInput">Title</label>
+              <input
+                id="discordNewsTitleInput"
+                class="admin-input"
+                type="text"
+                maxlength="256"
+                placeholder="News title"
+                autocomplete="off"
+              />
+              <label class="subtle" for="discordNewsMessageInput">Message</label>
+              <textarea
+                id="discordNewsMessageInput"
+                class="admin-textarea"
+                rows="6"
+                maxlength="4000"
+                placeholder="Write the Discord announcement text here..."
+              ></textarea>
+              <label class="subtle" for="discordNewsUrlInput">Optional link</label>
+              <input
+                id="discordNewsUrlInput"
+                class="admin-input"
+                type="url"
+                placeholder="https://wow-pug.com/join.html"
+                autocomplete="off"
+              />
+              <label class="subtle" for="discordNewsImageUrlInput">Optional image URL</label>
+              <input
+                id="discordNewsImageUrlInput"
+                class="admin-input"
+                type="url"
+                placeholder="https://wow-pug.com/raid-images/dm-join-us.png"
+                autocomplete="off"
+              />
+              <label class="subtle" for="discordNewsImageFileInput">Or upload image</label>
+              <input
+                id="discordNewsImageFileInput"
+                class="admin-input"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+              />
+              <p class="subtle">Uploaded images are sent as Discord attachments. If both upload and URL are set, the upload is used.</p>
+              <div class="admin-actions admin-actions--tight">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="discordNewsReloadBtn">
+                  Reload status
+                </button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="discordNewsTestBtn">
+                  Send test
+                </button>
+                <button type="button" class="event-signup-btn" id="discordNewsSendBtn">
+                  Send news
+                </button>
+              </div>
+            </section>
           </div>
         </div>
       </main>
@@ -398,7 +457,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260512role-system1"></script>
+    <script defer src="/admin.js?v=20260512discord-news1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

@@ -28,6 +28,7 @@ Set these in App Platform:
 - `RAID_HELPER_API_KEY` (secret)
 - `RAID_HELPER_SERVER_ID=711838953430319115`
 - `RAID_HELPER_DEFAULT_EVENT_ID` (optional)
+- `DISCORD_NEWS_WEBHOOK_URL` (secret, optional; enables Admin → News Notifications and automated Discord news posts)
 
 ## 4) Add your custom domain
 
