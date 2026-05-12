@@ -35,6 +35,7 @@ const ADMIN_WCL_GUILD_ID = 817080;
 
 /** Must match `RH_WCL_GUILD_ROLES` in `lib/rh-wcl-guess.mjs` / server sanitize. */
 const RH_WCL_GUILD_ROLES = ["Peon", "Grunt", "Veteran", "Core", "Puglead", "Raidlead", "Dpslead", "Heallead"];
+const RH_WCL_ASSIGNABLE_GUILD_ROLES = ["Peon", "Puglead", "Raidlead", "Heallead", "Dpslead", "Core"];
 
 function normalizeGuildRoleValue(role) {
   const s = String(role || "").trim();
@@ -48,15 +49,18 @@ function normalizeGuildRoleValue(role) {
 }
 
 function displayGuildRoleOptionLabel(role) {
+  if (role === "Peon") return "Attendance based";
   if (role === "Puglead") return "PUG Lead";
+  if (role === "Raidlead") return "Raid Lead";
   if (role === "Dpslead") return "DPS Lead";
   if (role === "Heallead") return "Heal Lead";
   return role;
 }
 
 function rhWclGuildRoleSelectHtml(current) {
-  const sel = normalizeGuildRoleValue(current);
-  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (Core and lead roles are fixed ranks; Peon–Veteran on Events and Roster follow WCL attendance)">${RH_WCL_GUILD_ROLES.map(
+  const normalized = normalizeGuildRoleValue(current);
+  const sel = ["Grunt", "Veteran"].includes(normalized) ? "Peon" : normalized;
+  return `<select class="admin-input admin-rh-role-select" data-rh-wcl-k="guildRole" aria-label="Guild role (manual roles override attendance; Attendance based resolves to Veteran, Grunt, or Peon from WCL attendance)">${RH_WCL_ASSIGNABLE_GUILD_ROLES.map(
     (r) => `<option value="${esc(r)}"${r === sel ? " selected" : ""}>${esc(displayGuildRoleOptionLabel(r))}</option>`
   ).join("")}</select>`;
 }

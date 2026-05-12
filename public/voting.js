@@ -546,6 +546,10 @@ function renderHallOfFame(payload) {
       const parityCls = idx % 2 === 0 ? "hof-champion-card--parity-a" : "hof-champion-card--parity-b";
       const roleIcon = roleIconForRow(row);
       const specPortrait = hofWinnerSpecPortraitHtml(row);
+      const guildRoleToken =
+        row?.player && plb?.rosterRoleIconHtml
+          ? plb.rosterRoleIconHtml(row.player, { className: "hof-guild-role-token" })
+          : "";
       return `
         <article class="hof-champion-card ${parityCls} ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
           <div class="hof-cine-row ${rowDirCls}">
@@ -554,6 +558,7 @@ function renderHallOfFame(payload) {
                 <div class="hof-role-pill-wrap">
                   <span class="hof-role-emblem">${roleIcon}</span>
                   <span class="hof-role-chip tw-plb-chip">${escapeHtml(role)}</span>
+                  ${guildRoleToken}
                 </div>
               </div>
               <div class="hof-winner-spec-wrap">${specPortrait}</div>

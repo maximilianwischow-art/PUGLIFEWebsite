@@ -7023,6 +7023,8 @@ const BADGE_CATALOG = [
   },
 ];
 
+const GUILD_ROLE_BADGE_IDS = new Set(["guildlead", "raidlead", "dpslead", "heallead", "core", "veteran", "grunt", "peon"]);
+
 function badgeCatalogRarityForCategory(categoryId, badge) {
   const cat = String(categoryId || "");
   if (cat === "event-awards") return "legendary";
@@ -7118,6 +7120,16 @@ function flatMergedBadgeCatalogRows() {
       updatedBy: badge.updatedBy,
     }))
   );
+}
+
+function profileAchievementBadgeCatalogCategories() {
+  return mergedBadgeCatalogCategories()
+    .filter((cat) => cat.id !== "guild-rank")
+    .map((cat) => ({
+      ...cat,
+      badges: (cat.badges || []).filter((badge) => !GUILD_ROLE_BADGE_IDS.has(String(badge.id || ""))),
+    }))
+    .filter((cat) => cat.badges.length > 0);
 }
 
 app.get("/api/badge-tooltips", async (_req, res) => {
@@ -7657,7 +7669,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       /* fall through with whatever's in memory */
     }
     await ensureBadgeTooltipsStore();
-    const badgeCatalog = mergedBadgeCatalogCategories();
+    const badgeCatalog = profileAchievementBadgeCatalogCategories();
     const linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
 
     // Phase 4 cutover: prefer materialised badge_state. Falls back to live
@@ -7766,19 +7778,6 @@ app.get("/api/profile/me/badges", async (req, res) => {
         if (matchAny(firstClears?.["Magtheridon's Lair"])) earned.add("magtheridon-first-time-clear");
       }
     } catch {}
-
-    // Guild rank: derive from Account Assignment (`myRow` loaded above for linkedKeys).
-    const guildRoleSlug = String(myRow?.guildRole || "Peon")
-      .toLowerCase()
-      .replace(/[\s_-]+/g, "");
-    if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
-    else if (guildRoleSlug === "raidlead") earned.add("raidlead");
-    else if (guildRoleSlug === "dpslead") earned.add("dpslead");
-    else if (guildRoleSlug === "heallead") earned.add("heallead");
-    else if (guildRoleSlug === "core") earned.add("core");
-    else if (guildRoleSlug === "veteran") earned.add("veteran");
-    else if (guildRoleSlug === "grunt") earned.add("grunt");
-    else earned.add("peon");
 
     // Phase 9 cutover: raid milestone badges (5/10/25/50/100) are gated on
     // distinct WCL guild raid reports the user appeared in, scoped to the
@@ -14860,18 +14859,6 @@ async function runSyncBadges() {
     const earned = new Set();
     const evidenceById = new Map();
 
-    const guildRoleSlug = String(user.guildRole || "Peon")
-      .toLowerCase()
-      .replace(/[\s_-]+/g, "");
-    if (guildRoleSlug === "guildlead" || guildRoleSlug === "puglead") earned.add("guildlead");
-    else if (guildRoleSlug === "raidlead") earned.add("raidlead");
-    else if (guildRoleSlug === "dpslead") earned.add("dpslead");
-    else if (guildRoleSlug === "heallead") earned.add("heallead");
-    else if (guildRoleSlug === "core") earned.add("core");
-    else if (guildRoleSlug === "veteran") earned.add("veteran");
-    else if (guildRoleSlug === "grunt") earned.add("grunt");
-    else earned.add("peon");
-
     if (linkedKeys.size && [...linkedKeys].some((k) => hofWinnerKeys.has(k))) earned.add("hall-of-fame");
 
     for (const badgeId of Object.keys(firstClearKeySets)) {
@@ -14926,8 +14913,9 @@ async function runSyncBadges() {
     }
 
     const rows = [];
-    for (const cat of BADGE_CATALOG) {
+    for (const cat of BADGE_CATALOG.filter((category) => category.id !== "guild-rank")) {
       for (const b of cat.badges) {
+        if (GUILD_ROLE_BADGE_IDS.has(String(b.id || ""))) continue;
         rows.push({
           badgeId: b.id,
           earned: earned.has(b.id) ? 1 : 0,

@@ -483,7 +483,6 @@ function raiderCellHtml(p, recentCap, considered) {
       : "";
   const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
   const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
-  const badges = plb.rosterBadgeRowHtml(p);
   const rankPill = raidRankPillHtml(p._raidRank);
   return `
     <div class="leaderboard-player-row">
@@ -533,7 +532,13 @@ function renderLeaderboardTable() {
       const keyAttr = escapeHtml(rowKey);
       const isOpen = expandedPlayerKey && expandedPlayerKey === rowKey;
       const playerCell = raiderCellHtml(p, recentCap, considered);
-      const badges = plb.rosterBadgeRowHtml(p);
+      const badges =
+        (typeof plb.rosterAchievementBadgeRowHtml === "function"
+          ? plb.rosterAchievementBadgeRowHtml(p)
+          : plb.rosterBadgeRowHtml(p)) || "";
+      const roleBadge = plb.rosterRoleIconHtml
+        ? plb.rosterRoleIconHtml(p, { hideLabel: true, className: "role-badge-group-token leaderboard-role-badge-token" })
+        : "";
       /* Prefer the bundle-provided count over `_lootItems.length`, since
          loot items are now lazy-loaded on row expand and the items array
          stays empty until the user actually opens that row. */
@@ -557,7 +562,15 @@ function renderLeaderboardTable() {
           title="${escapeHtml(hint)}"
         >
           <td class="leaderboard-td-player">${playerCell}</td>
-          <td class="leaderboard-td-badges"><div class="leaderboard-player-badges"><div class="raider-badges">${badges}</div></div></td>
+          <td class="leaderboard-td-badges">
+            <div class="leaderboard-player-badges role-separated-badges">
+              ${roleBadge ? `<div class="role-badge-group"><span class="role-badge-group-label">Role</span><div class="role-badge-group-items">${roleBadge}</div></div>` : ""}
+              <div class="achievement-badge-group">
+                <span class="role-badge-group-label">Achievements</span>
+                <div class="raider-badges">${badges || `<span class="subtle">—</span>`}</div>
+              </div>
+            </div>
+          </td>
         </tr>
         <tr class="leaderboard-row-loot" data-lb-key="${keyAttr}" data-lb-loot-wrap="1" ${isOpen ? "" : "hidden"}>
           <td colspan="2" class="leaderboard-td-loot">
@@ -784,7 +797,7 @@ async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
       _consideredRaids: consideredRaids,
       _recentRaidCap: recentRaidCap,
       _peakParse: ps.value != null && Number.isFinite(Number(ps.value)) ? Number(ps.value) : null,
-      _raidRank: plb.primaryGuildRankLabel(p),
+      _raidRank: plb.effectiveGuildRole ? plb.effectiveGuildRole(p).label : plb.primaryGuildRankLabel(p),
       _roleBucket: plb.rosterBucketRoleName(p.roleName),
       _pastRhEvents: Number(
         p.wclEventCount != null && Number.isFinite(Number(p.wclEventCount))

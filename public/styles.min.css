@@ -1,4 +1,4 @@
-/* Fallen Tacticians — design tokens (from UI kit) */
+/* Fallen Tacticians ÔÇö design tokens (from UI kit) */
 @font-face {
   font-family: "Inter";
   src: url("/fonts/Inter-Variable.ttf") format("truetype");
@@ -216,7 +216,7 @@ body.framework-bg-vivid {
   }
 }
 
-/* Legacy glow keyframes — unused; kept for optional reuse */
+/* Legacy glow keyframes ÔÇö unused; kept for optional reuse */
 @keyframes glow {
   0%,
   100% {
@@ -1843,7 +1843,7 @@ body.framework-bg-vivid {
   gap: 6px;
 }
 
-/* Events roster — two-column grid of compact character cards */
+/* Events roster ÔÇö two-column grid of compact character cards */
 .raider-grid {
   margin-top: 10px;
   display: grid;
@@ -2016,6 +2016,12 @@ body.framework-bg-vivid {
   color: var(--yellow);
   background: rgba(251, 191, 36, 0.09);
 }
+.raider-role-token {
+  flex: 0 0 auto;
+}
+.raider-role-token .guild-role-token-label {
+  display: none;
+}
 
 .raider-spec-line {
   margin-top: 2px;
@@ -2028,7 +2034,7 @@ body.framework-bg-vivid {
 }
 
 /*
- * Achievement badge slots: compact row (~44×44) under portrait + text on mini cards.
+ * Achievement badge slots: compact row (~44├ù44) under portrait + text on mini cards.
  */
 .raider-badges {
   display: flex;
@@ -2088,7 +2094,7 @@ body.framework-bg-vivid {
 
 /*
  * Guild rank art: PNGs often ship with large transparent margins around the badge.
- * Solid black behind alpha, then scale+clip so the visible emblem fills the 44×44 cell.
+ * Solid black behind alpha, then scale+clip so the visible emblem fills the 44├ù44 cell.
  * Tune --guild-role-badge-zoom if a set of assets needs more/less crop (default ~1.72).
  */
 .raider-badge-slot--guild-role {
@@ -2114,13 +2120,13 @@ body.framework-bg-vivid {
   transform-origin: center center;
 }
 
-/* Second slot for Core / PUG Lead / Raidlead: attendance Peon–Veteran (teal ring vs purple primary). */
+/* Second slot for Core / PUG Lead / Raidlead: attendance PeonÔÇôVeteran (teal ring vs purple primary). */
 .raider-badge-slot--guild-role.raider-badge-slot--attendance-companion {
   box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.45);
 }
 
 /*
- * Earned achievements — match guild-rank badge fill: many PNGs have extra padding in-file;
+ * Earned achievements ÔÇö match guild-rank badge fill: many PNGs have extra padding in-file;
  * scale+clip like `.raider-badge-role-img` (tune --achievement-badge-zoom if a set needs less crop).
  */
 .raider-badge-slot--achievement-earned {
@@ -2154,7 +2160,7 @@ body.framework-bg-vivid {
   border-color: rgba(160, 140, 200, 0.14);
 }
 
-/* WCL attendance — tier glow + % only (no portal art). Glow 0..5 = worst→best on *this* roster. */
+/* WCL attendance ÔÇö tier glow + % only (no portal art). Glow 0..5 = worstÔåÆbest on *this* roster. */
 .raider-badge-tier {
   position: relative;
   width: 44px;
@@ -2193,7 +2199,7 @@ body.framework-bg-vivid {
     0 1px 2px rgba(0, 0, 0, 0.95);
 }
 
-/* Tier from overall WCL % (events.js attendancePercentGlowTier): 0..5 → 5 = 100% (legendary orange/gold). */
+/* Tier from overall WCL % (events.js attendancePercentGlowTier): 0..5 ÔåÆ 5 = 100% (legendary orange/gold). */
 .raider-badge-tier--glow-0 {
   box-shadow:
     0 0 10px 2px rgba(52, 211, 153, 0.55),
@@ -2226,7 +2232,7 @@ body.framework-bg-vivid {
     0 0 40px 10px rgba(251, 146, 60, 0.2);
 }
 
-/* WCL average parse — same ring layout; glow/text hues follow approximate log percentile colours (gray→pink). */
+/* WCL average parse ÔÇö same ring layout; glow/text hues follow approximate log percentile colours (grayÔåÆpink). */
 .raider-badge-parse {
   background: radial-gradient(
     circle at 50% 45%,
@@ -4371,7 +4377,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   }
 }
 
-/* —— Raid Leaderboard (/) —— */
+/* ÔÇöÔÇö Raid Leaderboard (/) ÔÇöÔÇö */
 .leaderboard-page-card {
   margin-top: 12px;
 }
@@ -4459,7 +4465,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   width: 66%;
 }
 
-/* Raid rank: gold pill — matches Leaderboard reference (border + caps label). */
+/* Raid rank: gold pill ÔÇö matches Leaderboard reference (border + caps label). */
 .leaderboard-raid-rank-pill {
   display: inline-block;
   padding: 3px 14px;
@@ -4643,11 +4649,25 @@ button.raid-cal-run.raid-cal-run--column:hover {
   color: var(--text);
   font-weight: 700;
 }
-
 .leaderboard-player-badges .raider-badges {
   flex-wrap: wrap;
   gap: 10px;
-  padding-top: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
+.role-separated-badges {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+.role-separated-badges .achievement-badge-group {
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+.role-separated-badges .achievement-badge-group .raider-badges {
+  margin-top: 6px;
 }
 
 .leaderboard-player-badges .raider-badge-slot--guild-role {
@@ -4686,8 +4706,8 @@ button.raid-cal-run.raid-cal-run--column:hover {
 }
 
 /*
- * WCL-style parse tiers — !important wins over `tbody td { color: var(--text) }` inheritance.
- * Rough bands: grey → green → blue → purple → orange → pink → gold.
+ * WCL-style parse tiers ÔÇö !important wins over `tbody td { color: var(--text) }` inheritance.
+ * Rough bands: grey ÔåÆ green ÔåÆ blue ÔåÆ purple ÔåÆ orange ÔåÆ pink ÔåÆ gold.
  */
 .leaderboard-peak-parse.leaderboard-peak-parse--wcl0 {
   color: #9d9d9d !important;
@@ -4715,7 +4735,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
 }
 
-/* —— Join Us (recruiting) —— */
+/* ÔÇöÔÇö Join Us (recruiting) ÔÇöÔÇö */
 .join-page {
   max-width: 1280px;
   margin: 0 auto;
@@ -5750,7 +5770,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
   }
 }
 
-/* Join Us — Future Events tiles */
+/* Join Us ÔÇö Future Events tiles */
 .join-future-events {
   scroll-margin-top: 100px;
   padding: clamp(20px, 3vw, 28px);
@@ -6539,9 +6559,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
 }
 
 /* =========================================================================
-   Phase 2 — "Current demand by Raider" table.
+   Phase 2 ÔÇö "Current demand by Raider" table.
    Lives in the EXTERNAL stylesheet on purpose: the CSP `style-src` does not
-   include `'unsafe-inline'`, so inline <style> blocks and style="…" attrs
+   include `'unsafe-inline'`, so inline <style> blocks and style="ÔÇª" attrs
    on this page are silently dropped by the browser. Keep all demand-table
    layout rules here.
    ========================================================================= */
@@ -6700,6 +6720,8 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-stat-card { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; padding: 0.95rem 1rem; border-radius: 14px; background: rgba(20, 15, 34, 0.6); border: 1px solid rgba(167, 139, 250, 0.18); }
 .profile-stat-label { font-family: "Bebas Neue", sans-serif; font-size: 0.85rem; letter-spacing: 0.08em; color: rgba(225, 220, 245, 0.7); }
 .profile-stat-value { font-family: "Nunito", sans-serif; font-weight: 800; font-size: 1.55rem; color: #ede9fe; line-height: 1.1; }
+.profile-stat-value .profile-role-token { font-size: 0.8rem; }
+.profile-stat-value .profile-role-token .guild-role-token-frame { width: 32px; height: 32px; }
 .profile-picture-wrap { display: flex; gap: 1rem; align-items: stretch; flex-wrap: wrap; }
 .profile-picture-drop { position: relative; width: 160px; height: 160px; border-radius: 16px; border: 2px dashed rgba(167, 139, 250, 0.45); background: rgba(20, 15, 34, 0.55); display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; overflow: hidden; transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease; }
 .profile-picture-drop:hover, .profile-picture-drop:focus-visible { border-color: rgba(167, 139, 250, 0.85); background: rgba(30, 22, 50, 0.7); outline: none; }
@@ -6727,6 +6749,9 @@ button.raid-cal-run.raid-cal-run--column:hover {
 .profile-main-select:focus-visible { outline: none; border-color: rgba(167, 139, 250, 0.9); box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.35); }
 .profile-main-hint { margin: 0.6rem 0 0; }
 .profile-badges-card { overflow: visible; }
+.profile-role-badge-host { margin: 0.25rem 0 1rem; }
+.profile-role-badge-group { padding: 0.8rem 0.9rem; border: 1px solid rgba(251, 191, 36, 0.24); border-radius: 14px; background: linear-gradient(135deg, rgba(251, 191, 36, 0.08), rgba(167, 139, 250, 0.06)), rgba(15, 11, 28, 0.45); }
+.profile-role-badge-token .guild-role-token-frame { width: 68px; height: 68px; border-radius: 12px; }
 .profile-badges-categories { display: flex; flex-direction: column; gap: 1.25rem; }
 .profile-badge-category { border: 1px solid rgba(167, 139, 250, 0.18); border-radius: 14px; padding: 1rem 1.1rem; background: rgba(15, 11, 28, 0.45); }
 .profile-badge-category-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.65rem; flex-wrap: wrap; }
@@ -6749,7 +6774,7 @@ button.raid-cal-run.raid-cal-run--column:hover {
 @keyframes profile-badge-resolving-spin { to { transform: rotate(360deg); } }
 
 /* =============================================================================
- * Mobile polish (≤640px / phone viewports)
+ * Mobile polish (Ôëñ640px / phone viewports)
  * ============================================================================= */
 html { -webkit-tap-highlight-color: transparent; }
 @media (hover: none) {
@@ -6780,6 +6805,89 @@ html { -webkit-tap-highlight-color: transparent; }
 .achievement-badge-container {
   position: relative;
   display: inline-flex;
+}
+.guild-role-token {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  max-width: 100%;
+  color: var(--yellow);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.guild-role-token-frame {
+  position: relative;
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #000;
+  box-shadow:
+    0 0 0 1px var(--achievement-rarity-color, rgba(251, 191, 36, 0.55)),
+    0 0 12px color-mix(in srgb, var(--achievement-glow-color, #fbbf24) 30%, transparent);
+  cursor: help;
+}
+.guild-role-token-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--achievement-rarity-color, rgba(251, 191, 36, 0.7)) 82%, transparent);
+}
+.guild-role-token-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.45);
+  transform-origin: center center;
+}
+.guild-role-token-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.guild-role-token:hover .guild-role-token-frame,
+.guild-role-token:focus-visible .guild-role-token-frame {
+  transform: scale(1.06);
+}
+.role-badge-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.role-badge-group-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.role-badge-group-items {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.role-badge-group-token .guild-role-token-frame {
+  width: 54px;
+  height: 54px;
+  border-radius: 10px;
+}
+.role-badge-group-token .guild-role-token-img {
+  transform: scale(1.72);
 }
 .achievement-badge-frame {
   position: relative;
@@ -6819,7 +6927,9 @@ html { -webkit-tap-highlight-color: transparent; }
     inset 0 0 20px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 22%, transparent);
 }
 .achievement-badge-container:hover .achievement-badge-glow,
-.achievement-badge-container:focus-visible .achievement-badge-glow {
+.achievement-badge-container:focus-visible .achievement-badge-glow,
+.guild-role-token:hover .achievement-badge-glow,
+.guild-role-token:focus-visible .achievement-badge-glow {
   opacity: 1;
 }
 .achievement-tooltip {
@@ -6835,7 +6945,10 @@ html { -webkit-tap-highlight-color: transparent; }
 }
 .achievement-badge-container:hover .achievement-tooltip,
 .achievement-badge-container:focus-visible .achievement-tooltip,
-.achievement-badge-container:focus-within .achievement-tooltip {
+.achievement-badge-container:focus-within .achievement-tooltip,
+.guild-role-token:hover .achievement-tooltip,
+.guild-role-token:focus-visible .achievement-tooltip,
+.guild-role-token:focus-within .achievement-tooltip {
   opacity: 1;
 }
 .achievement-tooltip-box {

@@ -31,6 +31,7 @@ const GUILD_ROLE_BADGE_SLUGS = new Set([
 ]);
 /** Core / leads are set in Account Assignment; Peon–Veteran on site follow WCL attendance (last N raids). */
 const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Puglead", "Guildlead", "Raidlead", "Dpslead", "Heallead"]);
+const GUILD_ROLE_SORT_ORDER = ["Puglead", "Raidlead", "Heallead", "Dpslead", "Core", "Veteran", "Grunt", "Peon"];
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
 /** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
 let attendanceLeaderboardByKey = new Map();
@@ -1714,6 +1715,7 @@ function displayGuildRoleLabel(roleLabel) {
   const raw = String(roleLabel || "").trim();
   const compact = raw.toLowerCase().replace(/[\s_-]+/g, "");
   if (compact === "puglead" || compact === "guildlead") return "PUG Lead";
+  if (compact === "raidlead") return "Raid Lead";
   if (compact === "dpslead") return "DPS Lead";
   if (compact === "heallead") return "Heal Lead";
   return raw;
@@ -1747,6 +1749,26 @@ function primaryGuildRankLabel(player) {
   return attendanceTierGuildRole(player);
 }
 
+function effectiveGuildRole(player) {
+  const assigned = assignedGuildRoleFromPlayer(player);
+  const attendanceLabel = attendanceTierGuildRole(player);
+  const isManual = MANUAL_ONLY_GUILD_ROLES.has(assigned);
+  const label = isManual ? assigned : attendanceLabel;
+  const displayLabel = displayGuildRoleLabel(label);
+  const slug = guildRoleBadgeImageSlug(label);
+  return {
+    label,
+    displayLabel,
+    slug,
+    source: isManual ? "assigned" : "attendance",
+    attendanceLabel,
+    sortIndex: (() => {
+      const i = GUILD_ROLE_SORT_ORDER.indexOf(label);
+      return i === -1 ? 999 : i;
+    })(),
+  };
+}
+
 function showAttendanceCompanionBadge(player) {
   return MANUAL_ONLY_GUILD_ROLES.has(assignedGuildRoleFromPlayer(player));
 }
@@ -1756,23 +1778,42 @@ function rosterGuildRoleBadgeSrcForLabel(roleLabel) {
   return `/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`;
 }
 
-/** Primary guild rank badge (manual officer art OR attendance tier for everyone else). */
-function rosterGuildRoleBadgeHtml(player) {
-  const roleLabel = primaryGuildRankLabel(player);
-  const displayLabel = displayGuildRoleLabel(roleLabel);
-  const badgeId = guildRoleBadgeImageSlug(roleLabel);
+/** Primary guild rank token (manual officer art OR attendance tier for everyone else). */
+function rosterRoleIconHtml(player, opts = {}) {
+  const role = effectiveGuildRole(player);
+  const displayLabel = role.displayLabel;
+  const badgeId = role.slug;
   const isLeadBadge = ["guildlead", "raidlead", "dpslead", "heallead"].includes(badgeId);
-  const meta = badgeTooltipMeta(badgeId, displayLabel, `Guild rank: ${displayLabel}`, isLeadBadge ? "rare" : "common");
+  const sourceText =
+    role.source === "assigned"
+      ? "Assigned guild role"
+      : `Attendance rank over the last ${Math.max(1, attendanceConsideredRaids || 6)} tracked raids`;
+  const meta = badgeTooltipMeta(badgeId, displayLabel, `${sourceText}: ${displayLabel}`, isLeadBadge ? "rare" : "common");
   const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-  const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(roleLabel));
+  const src = escapeHtml(rosterGuildRoleBadgeSrcForLabel(role.label));
   const alt = escapeHtml(`Guild rank: ${displayLabel}`);
-  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--guild-role achievement-badge-container")} aria-label="${escapeHtml(title)}">
-    <span ${achievementBadgeFrameAttrs(meta, "achievement-badge-frame--guild")}>
-      <img class="raider-badge-role-img achievement-badge-img" src="${src}" alt="${alt}" width="44" height="44" loading="lazy" decoding="async" />
+  const label = opts?.hideLabel ? "" : `<span class="guild-role-token-label">${escapeHtml(displayLabel)}</span>`;
+  const classes = [
+    "guild-role-token",
+    `guild-role-token--${escapeHtml(role.source)}`,
+    `guild-role-token--${escapeHtml(badgeId)}`,
+    opts?.className ? String(opts.className) : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `<span class="${escapeHtml(classes)}" aria-label="${escapeHtml(title)}">
+    <span class="guild-role-token-frame achievement-badge-frame--${escapeHtml(meta.rarity)}">
+      <img class="guild-role-token-img" src="${src}" alt="${alt}" width="34" height="34" loading="lazy" decoding="async" />
       <span class="achievement-badge-glow" aria-hidden="true"></span>
     </span>
+    ${label}
     ${achievementTooltipHtml(meta)}
   </span>`;
+}
+
+/** Back-compat alias for old call sites; new layouts should use `rosterRoleIconHtml`. */
+function rosterGuildRoleBadgeHtml(player) {
+  return rosterRoleIconHtml(player, { hideLabel: true });
 }
 
 /** Second badge for officers only: attendance-based Peon / Grunt / Veteran. */
@@ -1806,7 +1847,7 @@ function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
   const displayLabel = displayGuildRoleLabel(label);
   const slug = guildRoleBadgeImageSlug(label);
   const src = escapeHtml(`/images/guild-roles/${slug}.png?v=${IMAGE_ASSET_VERSION}`);
-  const meta = badgeTooltipMeta(slug, displayLabel, `Guild rank: ${displayLabel}`, slug === "guildlead" || slug === "raidlead" ? "rare" : "common");
+  const meta = badgeTooltipMeta(slug, displayLabel, `Guild rank: ${displayLabel}`, ["guildlead", "raidlead", "dpslead", "heallead"].includes(slug) ? "rare" : "common");
   const tip = escapeHtml(`${meta.name}${meta.description ? ` — ${meta.description}` : ""}`);
   return `
     <div class="roster-role-title roster-role-title--guild-tier">
@@ -1821,8 +1862,12 @@ function rosterGuildRoleSectionTitleHtml(roleLabel, count) {
     </div>`;
 }
 
+function rosterAchievementBadgeRowHtml(player) {
+  return rosterAchievementBadgesHtml(player);
+}
+
 function rosterBadgeRowHtml(player) {
-  return `${rosterGuildRoleBadgeHtml(player)}${rosterAttendanceCompanionBadgeHtml(player)}${rosterAchievementBadgesHtml(player)}`;
+  return rosterAchievementBadgeRowHtml(player);
 }
 
 /** English class label for roster text — matches {@link effectiveRosterClassSlug} (Rio wins Warrior vs Paladin disagreements). */
@@ -1898,6 +1943,8 @@ function rosterRaiderCard(player, confirmedRoster) {
       : "";
   const sourcesTip = `${rosterClassSpecSourcesTooltip(player)}${rhSignupTip}`;
   const cardTitleAttr = sourcesTip ? ` title="${escapeHtml(sourcesTip)}"` : "";
+  const role = effectiveGuildRole(player);
+  const roleToken = rosterRoleIconHtml(player, { className: "raider-role-token" });
 
   return `
     <div class="raider-card"${cardTitleAttr}>
@@ -1919,7 +1966,7 @@ function rosterRaiderCard(player, confirmedRoster) {
         <div class="raider-text">
           <div class="raider-name-line">
             <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(displayName)}</span>
-            <span class="raider-guild-role-chip">${escapeHtml(primaryGuildRankLabel(player))}</span>
+            <span class="raider-guild-role-chip">${escapeHtml(role.displayLabel)}</span>
           </div>
           ${
             specLabel && className
@@ -1927,8 +1974,9 @@ function rosterRaiderCard(player, confirmedRoster) {
               : `<div class="raider-spec-line">${escapeHtml(specLabel || className)}</div>`
           }
         </div>
+        ${roleToken}
       </div>
-      <div class="raider-badges" role="group" aria-label="Guild rank, attendance rank for officers, and earned achievement badges">
+      <div class="raider-badges" role="group" aria-label="Earned achievement badges">
         ${rosterBadgeRowHtml(player)}
       </div>
     </div>
@@ -1946,7 +1994,10 @@ window.plbEventsRoster = {
   loadWclAttendanceForEvents,
   rosterRaiderCard,
   rosterGuildRoleSectionTitleHtml,
+  effectiveGuildRole,
   primaryGuildRankLabel,
+  rosterRoleIconHtml,
+  rosterAchievementBadgeRowHtml,
   rosterBucketRoleName,
   eventsRosterCharacterLabel,
   rosterParseForDisplay,

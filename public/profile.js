@@ -27,6 +27,7 @@
     mainSelect: document.getElementById("profileMainSelect"),
     mainSaveBtn: document.getElementById("profileMainSaveBtn"),
     mainHint: document.getElementById("profileMainHint"),
+    roleBadgeHost: document.getElementById("profileRoleBadgeHost"),
     badgesHost: document.getElementById("profileBadgesCategories"),
     heroPortraitFrame: document.getElementById("profileHeroPortraitFrame"),
     heroPicture: document.getElementById("profileHeroPicture"),
@@ -326,6 +327,35 @@
     }
   }
 
+  function setStatTileHtml(name, html, title) {
+    const node = els.keyStatsHost?.querySelector(`[data-stat="${name}"]`);
+    if (!node) return;
+    node.innerHTML = html || "—";
+    if (title) {
+      const card = node.closest(".profile-stat-card");
+      if (card) card.setAttribute("title", title);
+    }
+  }
+
+  function renderProfileRoleBadge(player) {
+    if (!els.roleBadgeHost) return;
+    if (!player || !window.plbEventsRoster?.rosterRoleIconHtml) {
+      els.roleBadgeHost.hidden = true;
+      els.roleBadgeHost.innerHTML = "";
+      return;
+    }
+    const roleBadge = window.plbEventsRoster.rosterRoleIconHtml(player, {
+      hideLabel: true,
+      className: "role-badge-group-token profile-role-badge-token",
+    });
+    els.roleBadgeHost.innerHTML = `
+      <div class="role-badge-group profile-role-badge-group">
+        <span class="role-badge-group-label">Role</span>
+        <div class="role-badge-group-items">${roleBadge}</div>
+      </div>`;
+    els.roleBadgeHost.hidden = false;
+  }
+
   async function hydrateKeyStats(profile, linkedCharacters) {
     if (!els.keyStatsHost) return;
     const rosterPayload = await fetchActiveRosterOnce();
@@ -345,6 +375,7 @@
         "—",
         "Guild rank is set on the Account Assignment table — ask an admin to map your Discord ID.",
       );
+      renderProfileRoleBadge(null);
       return;
     }
 
@@ -372,12 +403,20 @@
         : "No WCL parse in the tracked window yet.",
     );
 
-    const rank = String(player.guildRole || "").trim() || "Peon";
-    setStatTile(
+    const plb = window.plbEventsRoster;
+    const role = plb?.effectiveGuildRole ? plb.effectiveGuildRole(player) : null;
+    const rank = role?.displayLabel || String(player.guildRole || "").trim() || "Peon";
+    const roleHtml = plb?.rosterRoleIconHtml
+      ? plb.rosterRoleIconHtml(player, { className: "profile-role-token" })
+      : escapeHtml(rank);
+    setStatTileHtml(
       "guild-rank",
-      rank,
-      "Set on the Account Assignment table — ask an admin to update your row.",
+      roleHtml,
+      role?.source === "attendance"
+        ? "Attendance based role from tracked Warcraft Logs raids."
+        : "Assigned role from the Account Assignment table.",
     );
+    renderProfileRoleBadge(player);
   }
 
   async function uploadPictureBlob(blob) {
