@@ -7,7 +7,7 @@ const leaderboardTable = document.querySelector("#leaderboardTable");
 const leaderboardSortBar = document.querySelector("#leaderboardSortBar");
 
 /** Display / default sort: highest rank first (PUG Lead → Peon). */
-const RAID_RANK_SORT_ORDER = ["Puglead", "Raidlead", "Core", "Veteran", "Grunt", "Peon"];
+const RAID_RANK_SORT_ORDER = ["Puglead", "Raidlead", "Heallead", "Dpslead", "Core", "Veteran", "Grunt", "Peon"];
 
 /** @type {{ key: string, dir: "asc"|"desc" }} */
 let sortState = { key: "raidRank", dir: "asc" };
@@ -187,8 +187,31 @@ function totalDeathsForPlayer(player, deathMap) {
   return total;
 }
 
+function normalizeLeaderboardRaidRank(label) {
+  const raw = String(label || "").trim();
+  const compact = raw.toLowerCase().replace(/[\s_-]+/g, "");
+  if (compact === "puglead" || compact === "guildlead") return "Puglead";
+  if (compact === "raidlead") return "Raidlead";
+  if (compact === "heallead") return "Heallead";
+  if (compact === "dpslead") return "Dpslead";
+  if (compact === "core") return "Core";
+  if (compact === "veteran") return "Veteran";
+  if (compact === "grunt") return "Grunt";
+  if (compact === "peon") return "Peon";
+  return raw;
+}
+
+function displayLeaderboardRaidRank(label) {
+  const normalized = normalizeLeaderboardRaidRank(label);
+  if (normalized === "Puglead") return "PUG Lead";
+  if (normalized === "Raidlead") return "Raid Lead";
+  if (normalized === "Heallead") return "Heal Lead";
+  if (normalized === "Dpslead") return "DPS Lead";
+  return normalized;
+}
+
 function raidRankSortIndex(label) {
-  const normalized = String(label || "").trim() === "Guildlead" ? "Puglead" : String(label || "").trim();
+  const normalized = normalizeLeaderboardRaidRank(label);
   const i = RAID_RANK_SORT_ORDER.indexOf(normalized);
   return i === -1 ? 999 : i;
 }
@@ -287,7 +310,7 @@ function peakParseCellHtml(p) {
 
 /** Single-word display for pill (e.g. PUG Lead → PUGLEAD, Raid lead → RAIDLEAD). */
 function raidRankPillDisplay(label) {
-  const displayLabel = String(label || "").trim() === "Guildlead" ? "PUG Lead" : String(label || "");
+  const displayLabel = displayLeaderboardRaidRank(label);
   return displayLabel
     .replace(/\s+/g, "")
     .toUpperCase();
@@ -299,7 +322,7 @@ function raidRankPillHtml(raidRank) {
   }
   const escapeHtml = plb.escapeHtml;
   const raw = String(raidRank || "").trim();
-  const displayRaw = raw === "Guildlead" ? "PUG Lead" : raw;
+  const displayRaw = displayLeaderboardRaidRank(raw);
   if (!raw) {
     return `<span class="leaderboard-raid-rank-pill leaderboard-raid-rank-pill--empty">—</span>`;
   }
