@@ -5549,12 +5549,6 @@ function assignDiscordIdToIdentityUser({ userId, discordUserId, source = "identi
   if (!user) throw new Error("user not found");
   const existing = identityUserGetByDiscordId(id);
   if (existing?.id && Number(existing.id) !== targetUserId) {
-    const existingCharacters = identityCharactersGetByUserId(existing.id);
-    if (existingCharacters.length > 0) {
-      throw new Error(
-        `Discord ID already belongs to ${existing.displayName || existing.raidHelperName || `user #${existing.id}`}. Merge the accounts instead.`
-      );
-    }
     const merged = identityUserMergeInto({
       sourceUserId: targetUserId,
       targetUserId: existing.id,
@@ -8129,10 +8123,11 @@ app.get("/api/admin/identity/unassigned-discord-ids", async (req, res) => {
     const targetUserId = Number(req.query?.userId || 0);
     const targetName = String(req.query?.q || "").trim();
     const limit = Math.min(300, Math.max(20, Number(req.query?.limit || 100)));
-    let payload = identityUnassignedDiscordIdCandidates({ targetName, targetUserId, limit });
+    const includeAssigned = String(req.query?.includeAssigned || "").trim() === "1";
+    let payload = identityUnassignedDiscordIdCandidates({ targetName, targetUserId, limit, includeAssigned });
     if (!payload.total) {
       await refreshDiscordIdToRhNameCache();
-      payload = identityUnassignedDiscordIdCandidates({ targetName, targetUserId, limit });
+      payload = identityUnassignedDiscordIdCandidates({ targetName, targetUserId, limit, includeAssigned });
     }
     return res.json({
       ok: true,
@@ -8143,7 +8138,7 @@ app.get("/api/admin/identity/unassigned-discord-ids", async (req, res) => {
   }
 });
 
-function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId = 0, limit = 100 } = {}) {
+function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId = 0, limit = 100, includeAssigned = false } = {}) {
   const charactersByUserId = identityRowsByUserId(identityCharactersListAll());
   const users = identityUserListAll();
   const usedDiscordIds = new Set();
@@ -8171,7 +8166,7 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
   const candidateDiscordIds = new Set();
   const pushCandidate = (candidate) => {
     const discordUserId = sanitizeDiscordUserId(candidate?.discordUserId);
-    if (!discordUserId || usedDiscordIds.has(discordUserId) || candidateDiscordIds.has(discordUserId)) return;
+    if (!discordUserId || (!includeAssigned && usedDiscordIds.has(discordUserId)) || candidateDiscordIds.has(discordUserId)) return;
     candidateDiscordIds.add(discordUserId);
     candidates.push({ ...candidate, discordUserId });
   };
@@ -8179,7 +8174,6 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
     const discordUserId = sanitizeDiscordUserId(user?.discordUserId);
     if (!discordUserId) continue;
     const hasCharacters = (charactersByUserId.get(Number(user?.id)) || []).length > 0;
-    if (hasCharacters) continue;
     const rhName = String(user?.raidHelperName || user?.displayName || "").trim();
     const rhKey = identityRhNameKey(rhName);
     let matchScore = 0;
@@ -8194,12 +8188,13 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
       lastSeenAt: Number(user.lastSeenAt || 0),
       matchScore,
       matched: matchScore >= 100,
-      source: "identity-placeholder",
+      assigned: hasCharacters,
+      source: hasCharacters ? "identity-connected" : "identity-placeholder",
     });
   }
   for (const [discordUserIdRaw, entryRaw] of Object.entries(discordIdToRhNameState?.byUserId || {})) {
     const discordUserId = sanitizeDiscordUserId(discordUserIdRaw);
-    if (!discordUserId || usedDiscordIds.has(discordUserId)) continue;
+    if (!discordUserId || (!includeAssigned && usedDiscordIds.has(discordUserId))) continue;
     const entry = entryRaw && typeof entryRaw === "object" ? entryRaw : {};
     const rhName = String(entry.rhName || entry.name || "").trim();
     const rhKey = identityRhNameKey(rhName);
@@ -8215,6 +8210,7 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
       lastSeenAt,
       matchScore,
       matched: matchScore >= 100,
+      assigned: usedDiscordIds.has(discordUserId),
       source: "raid-helper-cache",
     });
   }
@@ -8234,6 +8230,65 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
     cacheUpdatedAt: Number(discordIdToRhNameState?.updatedAt || 0),
   };
 }
+
+function identityDiscordCandidateNameMatches(candidate, query) {
+  const key = identityRhNameKey(query);
+  if (!key) return false;
+  const names = [candidate?.rhName, candidate?.username, candidate?.globalName, candidate?.nick, candidate?.discordDisplayName];
+  return names.some((name) => identityRhNameKey(name) === key);
+}
+
+async function resolveDiscordUserIdForAdminInput(query) {
+  const q = String(query || "").trim();
+  const direct = sanitizeDiscordUserId(q);
+  if (direct) return { discordUserId: direct, source: "direct-id" };
+  if (!q) return null;
+  const local = identityUnassignedDiscordIdCandidates({
+    targetName: q,
+    limit: 300,
+    includeAssigned: true,
+  }).candidates;
+  const exact = local.find((candidate) => identityDiscordCandidateNameMatches(candidate, q));
+  if (exact?.discordUserId) {
+    return { discordUserId: exact.discordUserId, source: exact.source || "identity-candidate" };
+  }
+  const guildId = raidHelperDiscordGuildId();
+  if (!guildId || !String(process.env.DISCORD_BOT_TOKEN || "").trim()) return null;
+  const params = new URLSearchParams({ query: q, limit: "10" });
+  let members = [];
+  try {
+    const payload = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}/members/search?${params.toString()}`);
+    members = Array.isArray(payload) ? payload : [];
+  } catch (error) {
+    console.warn("[identity] Discord member search failed:", error?.message || error);
+    return null;
+  }
+  const mapped = members
+    .map((member) => ({
+      discordUserId: sanitizeDiscordUserId(member?.user?.id),
+      username: String(member?.user?.username || "").trim(),
+      globalName: String(member?.user?.global_name || "").trim(),
+      nick: String(member?.nick || "").trim(),
+    }))
+    .filter((row) => row.discordUserId);
+  const match = mapped.find((row) => identityDiscordCandidateNameMatches(row, q)) || (mapped.length === 1 ? mapped[0] : null);
+  return match ? { discordUserId: match.discordUserId, source: "discord-guild-search", candidate: match } : null;
+}
+
+app.get("/api/admin/identity/resolve-discord-id", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureDiscordIdToRhNameCacheLoaded();
+    const result = await resolveDiscordUserIdForAdminInput(req.query?.q);
+    if (!result?.discordUserId) {
+      return res.status(404).json({ ok: false, error: "No matching Discord user found." });
+    }
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "failed to resolve Discord user" });
+  }
+});
 
 function identityNameKeysForUser(user, characters = []) {
   return [

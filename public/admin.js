@@ -5166,8 +5166,8 @@ function renderIdentityBacklog(payload) {
   host.innerHTML = `
     <h4 class="section-title" style="margin-top:8px">Review Backlog</h4>
     ${autoMergeNote}
-    <div class="admin-table-wrap">
-      <table class="admin-table admin-rh-todo-table">
+    <div class="admin-table-wrap admin-identity-backlog-wrap">
+      <table class="admin-table admin-rh-todo-table admin-identity-backlog-table">
         <thead><tr><th>Priority</th><th>What needs review</th><th>Type</th><th>Actions</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -5524,7 +5524,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
               .map((row) => {
                 const checked = row.discordUserId === selectedId ? " checked" : "";
                 const score = Number(row.matchScore || 0);
-                const match = score >= 100 ? "Exact match" : score > 0 ? `Possible match (${score})` : "Available";
+                const match = row.assigned ? "Already connected" : score >= 100 ? "Exact match" : score > 0 ? `Possible match (${score})` : "Available";
                 const name = row.rhName || "Unknown Discord name";
                 return `<tr data-discord-id-row="${esc(row.discordUserId)}" style="cursor:pointer">
                   <td><input type="radio" name="discord-id-choice" value="${esc(row.discordUserId)}"${checked} aria-label="Select ${esc(name)}" /></td>
@@ -5544,7 +5544,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
           <strong>Type Discord name or ID</strong>
           <input type="text" data-discord-id-manual-input list="discord-id-choice-suggestions" placeholder="Start typing a Discord name, or paste the Discord ID" style="width:100%;box-sizing:border-box;border:1px solid rgba(236,72,153,.55);border-radius:12px;background:rgba(255,255,255,.08);color:inherit;padding:12px 14px;font-weight:700" />
           <datalist id="discord-id-choice-suggestions">${suggestionOptions}</datalist>
-          <span class="subtle">Suggestions come from unassigned Discord names in the identity database/cache.</span>
+          <span class="subtle">Suggestions include unassigned names and already connected Discord names, useful for linking alts/twinks.</span>
         </label>
         ${list}
         <div class="admin-actions admin-actions--tight" style="justify-content:flex-end">
@@ -5582,8 +5582,13 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     overlay.querySelector("[data-discord-id-choice-none]")?.addEventListener("click", () => cleanup({ kind: "resolve" }));
     overlay.querySelector("[data-discord-id-choice-connect]")?.addEventListener("click", () => {
       const manualId = resolveManualChoice();
-      const discordUserId = manualId || selectedId;
+      const typed = String(manualValue || "").trim();
+      const discordUserId = manualId || (!typed ? selectedId : "");
       if (!discordUserId) {
+        if (typed) {
+          cleanup({ kind: "connect-query", query: typed });
+          return;
+        }
         status("Type a Discord ID or choose a known name from the list.");
         return;
       }
@@ -5595,11 +5600,19 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
   });
 }
 
+async function resolveDiscordUserIdChoice(choice) {
+  if (choice?.discordUserId) return choice.discordUserId;
+  const query = String(choice?.query || "").trim();
+  if (!query) return "";
+  const payload = await getJson(`/api/admin/identity/resolve-discord-id?q=${encodeURIComponent(query)}`);
+  return String(payload?.discordUserId || "").trim();
+}
+
 async function chooseDiscordIdForBacklogItem(item, action) {
   const kind = String(action?.kind || "");
   const payload = action?.payload || {};
   const row = payload.row || {};
-  const params = new URLSearchParams({ limit: "120" });
+  const params = new URLSearchParams({ limit: "300", includeAssigned: "1" });
   if (kind === "add-discord-id" && payload.userId) params.set("userId", String(payload.userId));
   const targetName =
     row.raidHelperName ||
@@ -5666,7 +5679,7 @@ async function performIdentityBacklogAction(item, action) {
       status("Resolved backlog item without assigning a Discord ID.");
       return;
     }
-    const discordUserId = choice.discordUserId;
+    const discordUserId = await resolveDiscordUserIdChoice(choice);
     await getJson(`/api/admin/database/users/${userId}/discord-id`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5687,7 +5700,7 @@ async function performIdentityBacklogAction(item, action) {
       status("Resolved backlog item without assigning a Discord ID.");
       return;
     }
-    const discordUserId = choice.discordUserId;
+    const discordUserId = await resolveDiscordUserIdChoice(choice);
     await getJson("/api/admin/rh-wcl-links/row", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

@@ -3689,6 +3689,46 @@ body.is-admin-table-maximized {
   margin-left: 6px;
 }
 
+.admin-identity-backlog-wrap {
+  overflow-x: visible;
+}
+
+.admin-identity-backlog-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.admin-identity-backlog-table th:nth-child(1),
+.admin-identity-backlog-table td:nth-child(1) {
+  width: 110px;
+}
+
+.admin-identity-backlog-table th:nth-child(3),
+.admin-identity-backlog-table td:nth-child(3) {
+  width: 100px;
+  word-break: break-word;
+}
+
+.admin-identity-backlog-table th:nth-child(4),
+.admin-identity-backlog-table td:nth-child(4) {
+  width: 132px;
+}
+
+.admin-identity-backlog-table .admin-rh-todo-actions {
+  white-space: normal;
+}
+
+.admin-identity-backlog-table .admin-rh-todo-actions .event-signup-btn {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 10px;
+  white-space: normal;
+}
+
+.admin-identity-backlog-table td {
+  overflow-wrap: anywhere;
+}
+
 .admin-rh-todo-chips {
   display: flex;
   flex-wrap: wrap;
