@@ -376,15 +376,15 @@
             <section class="card admin-panel" data-admin-panel="discord-role-sync" id="admin-panel-discord-role-sync">
               <h3 class="section-title">Discord Role Sync</h3>
               <p class="subtle">
-                Add missing Discord roles from website guild rank and recent class/spec signals. This is add-only:
-                existing Discord roles are never removed.
+                Sync Discord roles from website identity data. Attendance ranks are authoritative; DPS/Heal/Tank is added
+                only when the member does not already have one of those roles.
               </p>
               <div class="admin-actions admin-actions--tight">
                 <button type="button" class="event-signup-btn event-signup-btn--softres" id="discordRoleSyncPreviewBtn">
                   Reload preview
                 </button>
                 <button type="button" class="event-signup-btn" id="discordRoleSyncRunBtn">
-                  Sync missing roles
+                  Sync Discord roles
                 </button>
               </div>
               <div id="discordRoleSyncHost" class="admin-grid-note">Loading role sync preview...</div>
@@ -481,7 +481,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260513discord-modal-wheel1"></script>
+    <script defer src="/admin.js?v=20260513discord-scroll-fixed1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

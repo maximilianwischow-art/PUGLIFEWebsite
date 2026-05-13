@@ -3681,13 +3681,8 @@ async function fetchDiscordGuildRolesRaw() {
 
 function discordRoleSyncTargetRoleNames() {
   return [
-    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Tank,
-    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Heal,
-    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.DPS,
-    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Core,
-    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Veteran,
-    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Grunt,
-    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Peon,
+    ...discordRoleSyncCombatRoleNames(),
+    ...discordRoleSyncAttendanceRoleNames(),
   ];
 }
 
@@ -4137,12 +4132,42 @@ const DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES = Object.freeze({
 });
 const DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES = new Set(["Pug Lead", "Raid Lead", "Heal Lead", "DPS Lead", "Core"]);
 
+function discordRoleSyncAttendanceRoleNames() {
+  return [
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Core,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Veteran,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Grunt,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Peon,
+  ];
+}
+
+function discordRoleSyncCombatRoleNames() {
+  return [
+    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Tank,
+    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Heal,
+    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.DPS,
+  ];
+}
+
 function discordRoleSyncGuildRoleName(guildRoleRaw) {
   const role = normalizeRhWclGuildRole(guildRoleRaw);
   if (DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES.has(role)) return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Core;
   if (role === "Veteran") return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Veteran;
   if (role === "Grunt") return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Grunt;
   return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Peon;
+}
+
+function discordRoleSyncAttendanceTierFromRaids(raidsRaw) {
+  const r = Math.max(0, Math.min(6, Math.floor(Number(raidsRaw) || 0)));
+  if (r <= 1) return "Peon";
+  if (r <= 4) return "Grunt";
+  return "Veteran";
+}
+
+function discordRoleSyncAttendanceRoleName({ guildRole, raidsAttended } = {}) {
+  const role = normalizeRhWclGuildRole(guildRole);
+  if (DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES.has(role)) return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Core;
+  return discordRoleSyncGuildRoleName(discordRoleSyncAttendanceTierFromRaids(raidsAttended));
 }
 
 function discordRoleSyncCombatRoleName(candidate) {
@@ -4617,110 +4642,92 @@ async function buildCustomDmCandidates(maxPastEvents = 120) {
   return { candidates, subscribedById };
 }
 
-async function buildDiscordRoleSyncCandidates() {
-  await ensureRhWclLinksStore();
-  const byDiscordId = new Map();
-  const upsertCandidate = (discordUserIdRaw, patch = {}) => {
-    const discordUserId = sanitizeDiscordUserId(discordUserIdRaw);
-    if (!discordUserId) return null;
-    const prev =
-      byDiscordId.get(discordUserId) || {
-        userId: discordUserId,
-        displayName: "",
-        raidHelperName: "",
-        recentClass: "",
-        recentSpec: "",
-        roles: [],
-        guildRole: "Peon",
-        raidsSeen: 0,
-        sources: [],
-      };
-    const next = { ...prev };
-    for (const key of ["displayName", "raidHelperName", "recentClass", "recentSpec"]) {
-      if (!next[key] && patch[key]) next[key] = String(patch[key] || "").trim();
+async function discordRoleSyncAttendanceByUserId() {
+  await ensureGargulLootHistoryStore();
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+  if (materializeRaidAppearancesEnabled()) {
+    try {
+      if (raidAppearancesDistinctReportCount() > 0) {
+        const window = raidAppearancesAttendanceWindowByUser({
+          reportCodes: selectedReportCodes.length ? selectedReportCodes : undefined,
+          recentLimit: wclAttendanceRecentRaidCount(),
+        });
+        if (window?.orderedReportCodes?.length) return window.perUser;
+      }
+    } catch (error) {
+      console.warn("[discord-role-sync] raid appearance attendance lookup failed:", error?.message || error);
     }
-    if (patch.guildRole && (!next.guildRole || next.guildRole === "Peon")) {
-      next.guildRole = normalizeRhWclGuildRole(patch.guildRole);
-    }
-    if (Array.isArray(patch.roles) && patch.roles.length) {
-      next.roles = [...new Set([...(next.roles || []), ...patch.roles.map((r) => normalizeNeedRoleKey(r)).filter(Boolean)])];
-    }
-    if (Number(patch.raidsSeen || 0) > Number(next.raidsSeen || 0)) next.raidsSeen = Number(patch.raidsSeen || 0);
-    if (patch.source) next.sources = [...new Set([...(next.sources || []), String(patch.source)])];
-    byDiscordId.set(discordUserId, next);
-    return next;
-  };
+  }
+  const freshest = raidAttendanceGetFreshestWindow();
+  if (!freshest?.windowLabel) return new Map();
+  return new Map(
+    raidAttendanceGetByWindow(freshest.windowLabel)
+      .filter((row) => Number.isInteger(Number(row?.userId)) && Number(row.userId) > 0)
+      .map((row) => [
+        Number(row.userId),
+        {
+          raidsAttended: Number(row.raidsAttended || 0),
+          raidsConsidered: Number(row.raidsConsidered || 0),
+          attendanceHistory: Array.isArray(row.attendanceHistory) ? row.attendanceHistory : [],
+        },
+      ])
+  );
+}
 
-  for (const link of rhWclLinksState.links || []) {
-    upsertCandidate(link?.discordUserId, {
-      displayName: link?.raidHelperName || "",
-      raidHelperName: link?.raidHelperName || "",
-      guildRole: link?.guildRole || "Peon",
-      source: "account-assignment",
-    });
+async function buildDiscordRoleSyncCandidates() {
+  const attendanceByUserId = await discordRoleSyncAttendanceByUserId();
+  const users = identityUserListAll();
+  const characters = identityCharactersListAll({});
+  const charsByUserId = new Map();
+  for (const character of characters) {
+    const userId = Number(character?.userId);
+    if (!Number.isInteger(userId) || userId <= 0) continue;
+    const list = charsByUserId.get(userId) || [];
+    list.push(character);
+    charsByUserId.set(userId, list);
   }
 
-  try {
-    const users = identityUserListAll();
-    const characters = identityCharactersListAll({});
-    const charsByUserId = new Map();
-    for (const character of characters) {
-      const list = charsByUserId.get(Number(character.userId)) || [];
-      list.push(character);
-      charsByUserId.set(Number(character.userId), list);
-    }
-    for (const user of users) {
+  return users
+    .map((user) => {
       const discordUserId = sanitizeDiscordUserId(user?.discordUserId);
-      if (!discordUserId) continue;
+      if (!discordUserId) return null;
       const chars = charsByUserId.get(Number(user.id)) || [];
       const preferredChar =
         chars.find((char) => Number(char.id) === Number(user.mainCharacterId)) ||
         chars.find((char) => char.wowSpec || char.wowClass) ||
         chars[0] ||
         null;
-      upsertCandidate(discordUserId, {
+      const attendance = attendanceByUserId.get(Number(user.id)) || {};
+      const combatRoleName = discordRoleSyncCombatRoleName({
         displayName: user.displayName || user.raidHelperName || preferredChar?.characterName || "",
-        raidHelperName: user.raidHelperName || "",
-        guildRole: user.guildRole || "Peon",
         recentClass: preferredChar?.wowClass || "",
         recentSpec: preferredChar?.wowSpec || "",
-        source: "identity-db",
       });
-    }
-  } catch (error) {
-    console.warn("[discord-role-sync] identity candidate load failed:", error?.message || error);
-  }
-
-  try {
-    const { candidates } = await buildCustomDmCandidates(120);
-    for (const row of candidates || []) {
-      upsertCandidate(row?.userId, {
-        displayName: row?.displayName || "",
-        guildRole: row?.guildRole || "Peon",
-        recentClass: row?.recentClass || "",
-        recentSpec: row?.recentSpec || "",
-        roles: row?.roles || [],
-        raidsSeen: row?.raidsSeen || 0,
-        source: "raid-helper-history",
+      const rankRoleName = discordRoleSyncAttendanceRoleName({
+        guildRole: user.guildRole,
+        raidsAttended: attendance.raidsAttended,
       });
-    }
-  } catch (error) {
-    console.warn("[discord-role-sync] Raid Helper candidate load failed:", error?.message || error);
-  }
-
-  return [...byDiscordId.values()]
-    .map((row) => {
-      const combatRoleName = discordRoleSyncCombatRoleName(row);
-      const rankRoleName = discordRoleSyncGuildRoleName(row.guildRole);
       return {
-        ...row,
-        displayName: row.displayName || row.raidHelperName || row.userId,
-        guildRole: normalizeRhWclGuildRole(row.guildRole),
+        dbUserId: Number(user.id),
+        userId: discordUserId,
+        displayName: user.displayName || user.raidHelperName || preferredChar?.characterName || discordUserId,
+        raidHelperName: user.raidHelperName || "",
+        characterName: preferredChar?.characterName || "",
+        recentClass: preferredChar?.wowClass || "",
+        recentSpec: preferredChar?.wowSpec || "",
+        guildRole: normalizeRhWclGuildRole(user.guildRole),
+        raidsAttended: Number(attendance.raidsAttended || 0),
+        raidsConsidered: Number(attendance.raidsConsidered || 0),
+        attendanceHistory: Array.isArray(attendance.attendanceHistory) ? attendance.attendanceHistory : [],
         combatRoleName,
         rankRoleName,
         desiredRoleNames: [...new Set([combatRoleName, rankRoleName].filter(Boolean))],
+        source: "identity-db",
       };
     })
+    .filter(Boolean)
     .sort((a, b) => String(a.displayName || "").localeCompare(String(b.displayName || "")));
 }
 
@@ -4728,6 +4735,10 @@ async function buildDiscordRoleSyncPreview() {
   const context = await discordRoleSyncRoleContext();
   const candidates = await buildDiscordRoleSyncCandidates();
   const roleByNameLower = context.byNameLower;
+  const roleTargetForName = (name) => {
+    const role = roleByNameLower.get(String(name).toLowerCase()) || null;
+    return { name, role: discordRoleSyncRolePublic(role, context.botMaxPosition) };
+  };
   const rows = await mapWithConcurrency(candidates, 4, async (candidate) => {
     const warnings = [];
     let member = null;
@@ -4738,28 +4749,67 @@ async function buildDiscordRoleSyncPreview() {
     } catch (error) {
       warnings.push(error?.message || "Failed to load Discord member");
     }
+    const inGuild = Boolean(member?.user?.id);
     const currentRoleIds = new Set(Array.isArray(member?.roles) ? member.roles.map((id) => String(id)) : []);
-    const desiredRoles = candidate.desiredRoleNames.map((name) => {
-      const role = roleByNameLower.get(String(name).toLowerCase()) || null;
-      const publicRole = discordRoleSyncRolePublic(role, context.botMaxPosition);
+    const attendanceRoles = discordRoleSyncAttendanceRoleNames().map(roleTargetForName);
+    const combatRoles = discordRoleSyncCombatRoleNames().map(roleTargetForName);
+    const currentAttendanceRoles = attendanceRoles.filter((target) => target.role?.id && currentRoleIds.has(target.role.id));
+    const currentCombatRoles = combatRoles.filter((target) => target.role?.id && currentRoleIds.has(target.role.id));
+    const desiredAttendance = roleTargetForName(candidate.rankRoleName);
+    const desiredCombat = candidate.combatRoleName ? roleTargetForName(candidate.combatRoleName) : null;
+    const attendanceRoleToAdd =
+      inGuild && desiredAttendance.role?.id && !currentRoleIds.has(desiredAttendance.role.id) && desiredAttendance.role.assignable
+        ? desiredAttendance
+        : null;
+    const attendanceRolesToRemove = inGuild
+      ? currentAttendanceRoles.filter(
+          (target) =>
+            target.name !== candidate.rankRoleName &&
+            target.role?.id &&
+            target.role.assignable
+        )
+      : [];
+    const combatRoleToAdd =
+      inGuild &&
+      desiredCombat?.role?.id &&
+      desiredCombat.role.assignable &&
+      currentCombatRoles.length === 0
+        ? desiredCombat
+        : null;
+    const desiredRoles = [desiredAttendance, desiredCombat].filter(Boolean).map((target) => {
       let status = "missing";
-      if (!member?.user?.id) {
-        status = "not-in-guild";
-      } else if (publicRole) {
-        if (currentRoleIds.has(publicRole.id)) status = "already";
-        else if (publicRole.managed) status = "managed";
-        else if (!publicRole.assignable) status = "unassignable";
+      if (!inGuild) status = "not-in-guild";
+      else if (target?.role?.id) {
+        if (currentRoleIds.has(target.role.id)) status = "already";
+        else if (target.role.managed) status = "managed";
+        else if (!target.role.assignable) status = "unassignable";
         else status = "will-add";
       }
-      return { name, role: publicRole, status };
+      return { name: target.name, role: target.role, status };
     });
+    if (inGuild && desiredAttendance.role?.id && !currentRoleIds.has(desiredAttendance.role.id) && !desiredAttendance.role.assignable) {
+      warnings.push(`Cannot add ${candidate.rankRoleName}: move bot role higher`);
+    }
+    if (inGuild && currentAttendanceRoles.some((target) => target.name !== candidate.rankRoleName && !target.role?.assignable)) {
+      warnings.push("Cannot remove one or more stale attendance roles: move bot role higher");
+    }
+    if (inGuild && desiredCombat?.role?.id && currentCombatRoles.length === 0 && !desiredCombat.role.assignable) {
+      warnings.push(`Cannot add ${candidate.combatRoleName}: move bot role higher`);
+    }
+    if (!inGuild) warnings.push("Discord member not found in guild");
     if (!candidate.combatRoleName) warnings.push("No combat role signal yet");
     return {
       ...candidate,
-      inGuild: Boolean(member?.user?.id),
+      inGuild,
       currentRoleIds: [...currentRoleIds],
+      currentAttendanceRoleNames: currentAttendanceRoles.map((target) => target.name),
+      currentCombatRoleNames: currentCombatRoles.map((target) => target.name),
       desiredRoles,
-      rolesToAdd: desiredRoles.filter((role) => role.status === "will-add"),
+      attendanceRoleToAdd,
+      attendanceRolesToRemove,
+      combatRoleToAdd,
+      rolesToAdd: [attendanceRoleToAdd, combatRoleToAdd].filter(Boolean),
+      rolesToRemove: attendanceRolesToRemove,
       warnings,
     };
   });
@@ -4771,7 +4821,7 @@ async function buildDiscordRoleSyncPreview() {
   }
   return {
     ok: true,
-    mode: "add-only",
+    mode: "attendance-override-combat-add-if-empty",
     guildId: context.guildId,
     botId: context.botId,
     botMaxPosition: context.botMaxPosition,
@@ -4780,15 +4830,19 @@ async function buildDiscordRoleSyncPreview() {
     rows,
     summary: {
       candidates: rows.length,
+      usersWithChanges: rows.filter((row) => row.rolesToAdd.length > 0 || row.rolesToRemove.length > 0).length,
       usersWithRolesToAdd: rows.filter((row) => row.rolesToAdd.length > 0).length,
       rolesToAdd: rows.reduce((sum, row) => sum + row.rolesToAdd.length, 0),
+      attendanceRolesToAdd: rows.filter((row) => row.attendanceRoleToAdd).length,
+      attendanceRolesToRemove: rows.reduce((sum, row) => sum + row.attendanceRolesToRemove.length, 0),
+      combatRolesToAdd: rows.filter((row) => row.combatRoleToAdd).length,
       missingRoleTargets: context.targetRoles.filter((target) => !target.exists).length,
       blockedRoleTargets: context.targetRoles.filter((target) => target.exists && !target.role?.assignable).length,
     },
   };
 }
 
-async function runDiscordRoleSyncAddOnly() {
+async function runDiscordRoleSyncHybrid() {
   const preview = await buildDiscordRoleSyncPreview();
   const results = [];
   for (const row of preview.rows) {
@@ -4800,9 +4854,16 @@ async function runDiscordRoleSyncAddOnly() {
           `/guilds/${encodeURIComponent(preview.guildId)}/members/${encodeURIComponent(row.userId)}/roles/${encodeURIComponent(roleId)}`,
           { method: "PUT" }
         );
-        results.push({ userId: row.userId, displayName: row.displayName, roleName: roleTarget.name, ok: true });
+        results.push({
+          action: roleTarget.name === row.combatRoleName ? "combat-add" : "attendance-add",
+          userId: row.userId,
+          displayName: row.displayName,
+          roleName: roleTarget.name,
+          ok: true,
+        });
       } catch (error) {
         results.push({
+          action: roleTarget.name === row.combatRoleName ? "combat-add" : "attendance-add",
           userId: row.userId,
           displayName: row.displayName,
           roleName: roleTarget.name,
@@ -4811,13 +4872,43 @@ async function runDiscordRoleSyncAddOnly() {
         });
       }
     }
+    for (const roleTarget of row.rolesToRemove || []) {
+      const roleId = String(roleTarget?.role?.id || "");
+      if (!roleId) continue;
+      try {
+        await discordBotApi(
+          `/guilds/${encodeURIComponent(preview.guildId)}/members/${encodeURIComponent(row.userId)}/roles/${encodeURIComponent(roleId)}`,
+          { method: "DELETE" }
+        );
+        results.push({
+          action: "attendance-remove",
+          userId: row.userId,
+          displayName: row.displayName,
+          roleName: roleTarget.name,
+          ok: true,
+        });
+      } catch (error) {
+        results.push({
+          action: "attendance-remove",
+          userId: row.userId,
+          displayName: row.displayName,
+          roleName: roleTarget.name,
+          ok: false,
+          error: error?.message || "Failed to remove role",
+        });
+      }
+    }
   }
   return {
     ok: true,
-    mode: "add-only",
+    mode: "attendance-override-combat-add-if-empty",
     previewSummary: preview.summary,
     results,
-    assigned: results.filter((row) => row.ok).length,
+    assigned: results.filter((row) => row.ok && /-add$/.test(String(row.action || ""))).length,
+    removed: results.filter((row) => row.ok && row.action === "attendance-remove").length,
+    attendanceAdded: results.filter((row) => row.ok && row.action === "attendance-add").length,
+    attendanceRemoved: results.filter((row) => row.ok && row.action === "attendance-remove").length,
+    combatAdded: results.filter((row) => row.ok && row.action === "combat-add").length,
     failed: results.filter((row) => !row.ok).length,
   };
 }
@@ -6961,7 +7052,7 @@ app.post("/api/admin/discord-role-sync/run", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    const payload = await runDiscordRoleSyncAddOnly();
+    const payload = await runDiscordRoleSyncHybrid();
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to run Discord role sync" });

@@ -2178,13 +2178,20 @@ function renderDiscordRoleSync(payload) {
     })
     .join("");
   const playerRows = rows
-    .filter((row) => Array.isArray(row.rolesToAdd) && row.rolesToAdd.length)
+    .filter(
+      (row) =>
+        (Array.isArray(row.rolesToAdd) && row.rolesToAdd.length) ||
+        (Array.isArray(row.rolesToRemove) && row.rolesToRemove.length)
+    )
     .slice(0, 250)
     .map((row) => {
       const desired = (Array.isArray(row.desiredRoles) ? row.desiredRoles : [])
         .map((role) => `${role.name}: ${roleSyncStatusLabel(role.status)}`)
         .join(", ");
-      const add = (row.rolesToAdd || []).map((role) => role.name).join(", ");
+      const attendanceAdd = row.attendanceRoleToAdd?.name || "";
+      const attendanceRemove = (row.attendanceRolesToRemove || []).map((role) => role.name).join(", ");
+      const combatAdd = row.combatRoleToAdd?.name || "";
+      const currentCombat = (row.currentCombatRoleNames || []).join(", ");
       const warnings = Array.isArray(row.warnings) && row.warnings.length ? row.warnings.join(", ") : "";
       return `<tr>
         <td>
@@ -2193,18 +2200,21 @@ function renderDiscordRoleSync(payload) {
         </td>
         <td>${esc(row.recentClass || "-")}</td>
         <td>${esc(row.recentSpec || "-")}</td>
-        <td>${esc(row.guildRole || "Peon")}</td>
-        <td>${esc(add || "-")}</td>
-        <td class="subtle">${esc(desired || warnings || "-")}</td>
+        <td>${esc(row.rankRoleName || "-")}</td>
+        <td>${esc(attendanceAdd || "-")}</td>
+        <td>${esc(attendanceRemove || "-")}</td>
+        <td>${esc(combatAdd || (currentCombat ? `Already has ${currentCombat}` : "-"))}</td>
+        <td class="subtle">${esc(warnings || desired || "-")}</td>
       </tr>`;
     })
     .join("");
   host.innerHTML = `
     <p class="subtle">
-      Mode: <strong>${esc(payload.mode || "add-only")}</strong> · Candidates:
-      <strong>${esc(String(summary.candidates || 0))}</strong> · Users with roles to add:
-      <strong>${esc(String(summary.usersWithRolesToAdd || 0))}</strong> · Total missing assignments:
-      <strong>${esc(String(summary.rolesToAdd || 0))}</strong>
+      Mode: <strong>Attendance override, combat add-if-empty</strong> · Candidates:
+      <strong>${esc(String(summary.candidates || 0))}</strong> · Users with changes:
+      <strong>${esc(String(summary.usersWithChanges || 0))}</strong> · Attendance add/remove:
+      <strong>${esc(String(summary.attendanceRolesToAdd || 0))}</strong>/<strong>${esc(String(summary.attendanceRolesToRemove || 0))}</strong> · Combat adds:
+      <strong>${esc(String(summary.combatRolesToAdd || 0))}</strong>
     </p>
     ${
       setupWarnings.length
@@ -2223,17 +2233,17 @@ function renderDiscordRoleSync(payload) {
         </table>
       </div>
     </details>
-    <details class="admin-rh-todo-block" ${Number(summary.usersWithRolesToAdd || 0) ? "open" : ""}>
-      <summary>Players needing role additions (${esc(String(summary.usersWithRolesToAdd || 0))})</summary>
+    <details class="admin-rh-todo-block" ${Number(summary.usersWithChanges || 0) ? "open" : ""}>
+      <summary>Players needing Discord role changes (${esc(String(summary.usersWithChanges || 0))})</summary>
       ${
         playerRows
           ? `<div class="admin-table-wrap role-alert-candidates-wrap">
               <table class="admin-table role-alert-candidates-table">
-                <thead><tr><th>Player</th><th>Class</th><th>Spec</th><th>Guild rank</th><th>Roles to add</th><th>Details</th></tr></thead>
+                <thead><tr><th>Player</th><th>Class</th><th>Spec</th><th>Website rank</th><th>Attendance add</th><th>Attendance remove</th><th>Combat add</th><th>Details</th></tr></thead>
                 <tbody>${playerRows}</tbody>
               </table>
             </div>`
-          : `<p class="subtle">No missing Discord role assignments in the current preview.</p>`
+          : `<p class="subtle">No Discord role changes in the current preview.</p>`
       }
     </details>
   `;
@@ -4114,11 +4124,13 @@ document.addEventListener("click", (event) => {
   if (roleSyncRunBtn) {
     runWithButtonFeedback(
       roleSyncRunBtn,
-      { idle: "Sync missing roles", loading: "Syncing...", success: "Synced", failure: "Failed" },
+      { idle: "Sync Discord roles", loading: "Syncing...", success: "Synced", failure: "Failed" },
       async () => getJson("/api/admin/discord-role-sync/run", { method: "POST" })
     )
       .then(async (payload) => {
-        status(`Discord role sync complete: ${Number(payload?.assigned || 0)} assigned, ${Number(payload?.failed || 0)} failed.`);
+        status(
+          `Discord role sync complete: ${Number(payload?.attendanceAdded || 0)} attendance added, ${Number(payload?.attendanceRemoved || 0)} attendance removed, ${Number(payload?.combatAdded || 0)} combat added, ${Number(payload?.failed || 0)} failed.`
+        );
         await loadDiscordRoleSyncPreview();
       })
       .catch((error) => status(error?.message || "Discord role sync failed"));
@@ -5537,7 +5549,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
         </table>`
       : `<p class="subtle">No unassigned Discord IDs are currently available in the Raid Helper cache.</p>`;
     overlay.innerHTML = `
-      <div style="width:min(920px,96vw);height:min(86vh,820px);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
+      <div data-discord-id-dialog>
         <h3 class="section-title" style="margin-top:0">${esc(title || "Select Discord ID")}</h3>
         <p class="subtle">Choose an unassigned Discord name to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}. If none is suitable, resolve this backlog item.</p>
         <label style="display:grid;gap:8px;margin:14px 0 12px;padding:12px;border:1px solid rgba(236,72,153,.38);border-radius:14px;background:rgba(236,72,153,.08);flex:0 0 auto">
@@ -5546,7 +5558,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
           <datalist id="discord-id-choice-suggestions">${suggestionOptions}</datalist>
           <span class="subtle">Suggestions include unassigned names and already connected Discord names, useful for linking alts/twinks.</span>
         </label>
-        <div data-discord-id-list-scroll tabindex="0" style="flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;margin:0 0 14px;border:1px solid rgba(168,85,247,.18);border-radius:12px">
+        <div data-discord-id-list-scroll tabindex="0">
           ${list}
         </div>
         <div class="admin-actions admin-actions--tight" style="justify-content:flex-end;flex:0 0 auto;margin-top:auto;padding-top:10px;border-top:1px solid rgba(168,85,247,.18)">
@@ -5612,6 +5624,16 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
     document.body.appendChild(overlay);
+    const scrollBox = overlay.querySelector("[data-discord-id-list-scroll]");
+    const dialog = overlay.firstElementChild;
+    if (dialog) {
+      dialog.style.cssText =
+        "width:min(920px,96vw);height:min(86vh,820px);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)";
+    }
+    if (scrollBox) {
+      scrollBox.style.cssText =
+        "flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;margin:0 0 14px;border:1px solid rgba(168,85,247,.18);border-radius:12px";
+    }
     overlay.querySelector("input,button")?.focus();
   });
 }
