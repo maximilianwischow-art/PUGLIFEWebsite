@@ -8054,6 +8054,170 @@ function identityBacklogAction(id, label, kind, payload = {}, danger = false) {
   return { id, label, kind, payload, danger: Boolean(danger) };
 }
 
+app.get("/api/admin/identity/unassigned-discord-ids", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureRhWclLinksStore();
+    await ensureDiscordIdToRhNameCacheLoaded();
+    const targetUserId = Number(req.query?.userId || 0);
+    const targetName = String(req.query?.q || "").trim();
+    const limit = Math.min(300, Math.max(20, Number(req.query?.limit || 100)));
+    return res.json({
+      ok: true,
+      ...identityUnassignedDiscordIdCandidates({ targetName, targetUserId, limit }),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "failed to load unassigned Discord IDs" });
+  }
+});
+
+function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId = 0, limit = 100 } = {}) {
+  const usedDiscordIds = new Set();
+  for (const user of identityUserListAll()) {
+    const id = sanitizeDiscordUserId(user?.discordUserId);
+    if (id) usedDiscordIds.add(id);
+  }
+  for (const link of rhWclLinksState?.links || []) {
+    const id = sanitizeDiscordUserId(link?.discordUserId);
+    if (id) usedDiscordIds.add(id);
+  }
+
+  let resolvedTargetName = String(targetName || "").trim();
+  const userId = Number(targetUserId);
+  if (!resolvedTargetName && Number.isInteger(userId) && userId > 0) {
+    const user = identityUserGetById(userId);
+    const characters = user ? identityCharactersGetByUserId(userId) : [];
+    resolvedTargetName =
+      user?.raidHelperName ||
+      user?.displayName ||
+      characters.find((character) => Number(character.id) === Number(user?.mainCharacterId))?.characterName ||
+      characters[0]?.characterName ||
+      "";
+  }
+  const targetKey = identityRhNameKey(resolvedTargetName);
+
+  const candidates = [];
+  for (const [discordUserIdRaw, entryRaw] of Object.entries(discordIdToRhNameState?.byUserId || {})) {
+    const discordUserId = sanitizeDiscordUserId(discordUserIdRaw);
+    if (!discordUserId || usedDiscordIds.has(discordUserId)) continue;
+    const entry = entryRaw && typeof entryRaw === "object" ? entryRaw : {};
+    const rhName = String(entry.rhName || entry.name || "").trim();
+    const rhKey = identityRhNameKey(rhName);
+    const lastSeenAt = Number(entry.lastSeenAt || 0);
+    let matchScore = 0;
+    if (targetKey && rhKey) {
+      if (targetKey === rhKey) matchScore = 100;
+      else if (targetKey.includes(rhKey) || rhKey.includes(targetKey)) matchScore = 65;
+    }
+    candidates.push({
+      discordUserId,
+      rhName,
+      lastSeenAt,
+      matchScore,
+      matched: matchScore >= 100,
+    });
+  }
+
+  candidates.sort((a, b) => {
+    const scoreDelta = Number(b.matchScore || 0) - Number(a.matchScore || 0);
+    if (scoreDelta) return scoreDelta;
+    const seenDelta = Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0);
+    if (seenDelta) return seenDelta;
+    return String(a.rhName || "").localeCompare(String(b.rhName || ""), undefined, { sensitivity: "base" });
+  });
+  return {
+    targetName: resolvedTargetName,
+    targetNameKey: targetKey,
+    candidates: candidates.slice(0, Math.max(1, Math.min(300, Number(limit) || 100))),
+    total: candidates.length,
+    cacheUpdatedAt: Number(discordIdToRhNameState?.updatedAt || 0),
+  };
+}
+
+function identityPrimaryNameKeyForUser(user, characters) {
+  const main =
+    (characters || []).find((char) => Number(char.id) === Number(user?.mainCharacterId)) ||
+    (characters || []).find((char) => char.isMain) ||
+    null;
+  const candidates = [
+    user?.displayName,
+    user?.raidHelperName,
+    main?.characterName,
+    (characters || [])[0]?.characterName,
+  ];
+  for (const candidate of candidates) {
+    const key = identityRhNameKey(candidate);
+    if (key) return key;
+  }
+  return "";
+}
+
+function identityAutoMergeTargetUser(candidates, charactersByUserId) {
+  return [...candidates].sort((a, b) => {
+    const score = (user) => {
+      const chars = charactersByUserId.get(Number(user?.id)) || [];
+      return (
+        (sanitizeDiscordUserId(user?.discordUserId) ? 1000 : 0) +
+        (Number(user?.isAuthenticated || 0) ? 500 : 0) +
+        (Number(user?.mainCharacterId || 0) ? 100 : 0) +
+        Math.min(50, chars.length) +
+        Math.min(99, Math.floor(Number(user?.lastSeenAt || 0) / 1_000_000_000))
+      );
+    };
+    const delta = score(b) - score(a);
+    if (delta) return delta;
+    return Number(a?.id || 0) - Number(b?.id || 0);
+  })[0] || null;
+}
+
+function autoMergeObviousDuplicateCharacterUsers({ source = "identity-auto-merge" } = {}) {
+  let merged = 0;
+  const users = identityUserListAll();
+  const characters = identityCharactersListAll();
+  const usersById = new Map(users.map((user) => [Number(user.id), user]));
+  const charactersByUserId = identityRowsByUserId(characters);
+  const characterOwners = new Map();
+  for (const character of characters) {
+    const key = identityRhNameKey(character.characterName);
+    if (!key) continue;
+    if (!characterOwners.has(key)) characterOwners.set(key, []);
+    characterOwners.get(key).push(character);
+  }
+
+  const mergedSourceIds = new Set();
+  for (const [characterKey, rows] of characterOwners) {
+    const ownerIds = [...new Set(rows.map((row) => Number(row.userId)).filter(Boolean))];
+    if (ownerIds.length <= 1) continue;
+    const ownerUsers = ownerIds.map((id) => usersById.get(id)).filter(Boolean);
+    if (ownerUsers.length !== ownerIds.length) continue;
+
+    const discordIds = [...new Set(ownerUsers.map((user) => sanitizeDiscordUserId(user.discordUserId)).filter(Boolean))];
+    if (discordIds.length > 1) continue;
+
+    const primaryKeys = ownerUsers
+      .map((user) => identityPrimaryNameKeyForUser(user, charactersByUserId.get(Number(user.id)) || []))
+      .filter(Boolean);
+    if (!primaryKeys.length || primaryKeys.some((key) => key !== characterKey)) continue;
+
+    const target = identityAutoMergeTargetUser(ownerUsers, charactersByUserId);
+    if (!target?.id) continue;
+    if (mergedSourceIds.has(Number(target.id))) continue;
+    for (const sourceUser of ownerUsers) {
+      if (Number(sourceUser.id) === Number(target.id)) continue;
+      if (mergedSourceIds.has(Number(sourceUser.id))) continue;
+      identityUserMergeInto({
+        sourceUserId: sourceUser.id,
+        targetUserId: target.id,
+        source,
+      });
+      mergedSourceIds.add(Number(sourceUser.id));
+      merged += 1;
+    }
+  }
+  return { merged };
+}
+
 app.get("/api/admin/identity-backlog", async (req, res) => {
   const session = requireAdminSession(req, res);
   if (!session) return;
@@ -8067,6 +8231,12 @@ app.get("/api/admin/identity-backlog", async (req, res) => {
     pruneExpiredRhWclRejections();
 
     const resolvedIds = new Set(Object.keys(identityBacklogResolvedState.resolved || {}));
+    const autoMerge = autoMergeObviousDuplicateCharacterUsers({
+      source: `admin:identity-backlog-auto:${session.user?.id || "unknown"}`,
+    });
+    if (autoMerge.merged > 0) {
+      await exportIdentityLinksToRhWclStore();
+    }
     const users = identityUserListAll();
     const characters = identityCharactersListAll();
     const usersById = new Map(users.map((user) => [Number(user.id), user]));
@@ -8176,9 +8346,23 @@ app.get("/api/admin/identity-backlog", async (req, res) => {
       });
     }
 
+    const missingDiscordIdentityKeys = new Set();
+    const rememberMissingDiscordIdentity = (user, linkedCharacters = []) => {
+      const candidates = [
+        user?.raidHelperNameKey,
+        identityRhNameKey(user?.displayName),
+        identityRhNameKey(user?.raidHelperName),
+        ...(linkedCharacters || []).map((character) => identityRhNameKey(character?.characterName)),
+      ];
+      for (const key of candidates) {
+        if (key) missingDiscordIdentityKeys.add(key);
+      }
+    };
+
     for (const user of users) {
       if (sanitizeDiscordUserId(user.discordUserId)) continue;
       const linkedCharacters = charactersByUserId.get(Number(user.id)) || [];
+      rememberMissingDiscordIdentity(user, linkedCharacters);
       addItem({
         id: `missing-discord:${user.id}`,
         type: "missing-discord-id",
@@ -8200,6 +8384,7 @@ app.get("/api/admin/identity-backlog", async (req, res) => {
       const raidHelperName = String(link?.raidHelperName || "").trim();
       if (!raidHelperName || sanitizeDiscordUserId(link?.discordUserId)) continue;
       const key = identityRhNameKey(raidHelperName);
+      if (key && missingDiscordIdentityKeys.has(key)) continue;
       const matchedUser = key ? users.find((user) => user.raidHelperNameKey === key) : null;
       if (matchedUser && !sanitizeDiscordUserId(matchedUser.discordUserId)) continue;
       addItem({
@@ -8252,6 +8437,7 @@ app.get("/api/admin/identity-backlog", async (req, res) => {
       items: items.slice(0, 500),
       generatedAt: Date.now(),
       resolvedCount: resolvedIds.size,
+      autoMerge,
     };
     return res.json(payload);
   } catch (error) {
@@ -8771,7 +8957,8 @@ app.post("/api/admin/database/users/:userId/discord-id", async (req, res) => {
         error: `Discord ID already belongs to ${existing.displayName || existing.raidHelperName || `user #${existing.id}`}. Merge the accounts instead.`,
       });
     }
-    const updated = identityUserUpsert({
+    const updated = identityUserUpdateById({
+      userId,
       discordUserId,
       raidHelperName: user.raidHelperName || undefined,
       displayName: user.displayName || user.raidHelperName || undefined,

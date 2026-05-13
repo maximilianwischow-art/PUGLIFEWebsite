@@ -5117,10 +5117,15 @@ function renderIdentityBacklog(payload) {
   }
   const items = Array.isArray(payload.items) ? payload.items : [];
   identityBacklogState = items;
+  const mergedCount = Number(payload?.autoMerge?.merged || 0);
+  const autoMergeNote = mergedCount > 0
+    ? `<p class="subtle" style="margin-top:6px"><strong>${mergedCount}</strong> obvious duplicate account${mergedCount === 1 ? "" : "s"} auto-merged before review.</p>`
+    : "";
   if (!items.length) {
     host.innerHTML = `
       <h4 class="section-title" style="margin-top:8px">Review Backlog</h4>
       <p class="subtle">No identity items need admin review right now.</p>
+      ${autoMergeNote}
     `;
     return;
   }
@@ -5146,6 +5151,7 @@ function renderIdentityBacklog(payload) {
     .join("");
   host.innerHTML = `
     <h4 class="section-title" style="margin-top:8px">Review Backlog</h4>
+    ${autoMergeNote}
     <div class="admin-table-wrap">
       <table class="admin-table admin-rh-todo-table">
         <thead><tr><th>Priority</th><th>What needs review</th><th>Type</th><th>Actions</th></tr></thead>
@@ -5453,6 +5459,94 @@ async function adminClearProfilePictureForUser(userId) {
   }
 }
 
+async function resolveIdentityBacklogItem(itemId, note = "") {
+  await getJson("/api/admin/identity-backlog/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ itemId, note }),
+  });
+}
+
+function showDiscordIdChooserModal({ title, targetName, candidates }) {
+  return new Promise((resolve) => {
+    const rows = Array.isArray(candidates) ? candidates : [];
+    let selectedId = rows[0]?.discordUserId || "";
+    const overlay = document.createElement("div");
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(5,2,16,.72);backdrop-filter:blur(6px)";
+    const list = rows.length
+      ? rows
+          .map((row) => {
+            const checked = row.discordUserId === selectedId ? " checked" : "";
+            const score = Number(row.matchScore || 0);
+            const match = score >= 100 ? `<strong style="color:#a7f3d0">Exact name match</strong>` : score > 0 ? `Possible match (${score})` : "Known unassigned Discord ID";
+            return `<label style="display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid rgba(168,85,247,.28);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer">
+              <input type="radio" name="discord-id-choice" value="${esc(row.discordUserId)}"${checked} style="margin-top:4px" />
+              <span>
+                <strong>${esc(row.rhName || "Unknown Raid Helper name")}</strong>
+                <span class="subtle" style="display:block">${esc(row.discordUserId)} · ${match}</span>
+                ${row.lastSeenAt ? `<span class="subtle" style="display:block">Last seen ${esc(fmtTs(row.lastSeenAt))}</span>` : ""}
+              </span>
+            </label>`;
+          })
+          .join("")
+      : `<p class="subtle">No unassigned Discord IDs are currently available in the Raid Helper cache.</p>`;
+    overlay.innerHTML = `
+      <div style="width:min(720px,96vw);max-height:86vh;overflow:auto;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
+        <h3 class="section-title" style="margin-top:0">${esc(title || "Select Discord ID")}</h3>
+        <p class="subtle">Choose an unassigned Discord ID to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}. If none is suitable, resolve this backlog item.</p>
+        <div style="display:grid;gap:8px;margin:12px 0 16px">${list}</div>
+        <div class="admin-actions admin-actions--tight" style="justify-content:flex-end">
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-cancel>Cancel</button>
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-none>No suitable Discord ID found</button>
+          <button type="button" class="event-signup-btn" data-discord-id-choice-connect${rows.length ? "" : " disabled"}>Connect selected</button>
+        </div>
+      </div>`;
+    const cleanup = (value) => {
+      document.removeEventListener("keydown", onKeyDown);
+      overlay.remove();
+      resolve(value);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") cleanup(null);
+    };
+    overlay.addEventListener("change", (event) => {
+      const input = event.target.closest('input[name="discord-id-choice"]');
+      if (input) selectedId = String(input.value || "").trim();
+    });
+    overlay.querySelector("[data-discord-id-choice-cancel]")?.addEventListener("click", () => cleanup(null));
+    overlay.querySelector("[data-discord-id-choice-none]")?.addEventListener("click", () => cleanup({ kind: "resolve" }));
+    overlay.querySelector("[data-discord-id-choice-connect]")?.addEventListener("click", () => {
+      if (!selectedId) return;
+      cleanup({ kind: "connect", discordUserId: selectedId });
+    });
+    document.addEventListener("keydown", onKeyDown);
+    document.body.appendChild(overlay);
+    overlay.querySelector("input,button")?.focus();
+  });
+}
+
+async function chooseDiscordIdForBacklogItem(item, action) {
+  const kind = String(action?.kind || "");
+  const payload = action?.payload || {};
+  const row = payload.row || {};
+  const params = new URLSearchParams({ limit: "120" });
+  if (kind === "add-discord-id" && payload.userId) params.set("userId", String(payload.userId));
+  const targetName =
+    row.raidHelperName ||
+    item?.data?.user?.displayName ||
+    item?.data?.user?.raidHelperName ||
+    String(item?.title || "").replace(/^Missing Discord ID:\s*/i, "").trim();
+  if (targetName) params.set("q", targetName);
+  const payloadResult = await getJson(`/api/admin/identity/unassigned-discord-ids?${params.toString()}`);
+  return showDiscordIdChooserModal({
+    title: "Add Discord ID",
+    targetName: payloadResult.targetName || targetName,
+    candidates: payloadResult.candidates || [],
+  });
+}
+
 async function performIdentityBacklogAction(item, action) {
   const kind = String(action?.kind || "");
   const payload = action?.payload || {};
@@ -5494,11 +5588,17 @@ async function performIdentityBacklogAction(item, action) {
   }
   if (kind === "add-discord-id") {
     const userId = Number(payload.userId);
-    const discordUserId = window.prompt("Paste the Discord ID for this account:");
-    if (!discordUserId) {
+    const choice = await chooseDiscordIdForBacklogItem(item, action);
+    if (!choice) {
       status("Add Discord ID cancelled.");
       return;
     }
+    if (choice.kind === "resolve") {
+      await resolveIdentityBacklogItem(item?.id, "No suitable unassigned Discord ID found.");
+      status("Resolved backlog item without assigning a Discord ID.");
+      return;
+    }
+    const discordUserId = choice.discordUserId;
     await getJson(`/api/admin/database/users/${userId}/discord-id`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5509,11 +5609,17 @@ async function performIdentityBacklogAction(item, action) {
   }
   if (kind === "add-discord-id-row") {
     const row = payload.row || {};
-    const discordUserId = window.prompt(`Paste the Discord ID for ${row.raidHelperName || "this identity"}:`);
-    if (!discordUserId) {
+    const choice = await chooseDiscordIdForBacklogItem(item, action);
+    if (!choice) {
       status("Add Discord ID cancelled.");
       return;
     }
+    if (choice.kind === "resolve") {
+      await resolveIdentityBacklogItem(item?.id, "No suitable unassigned Discord ID found.");
+      status("Resolved backlog item without assigning a Discord ID.");
+      return;
+    }
+    const discordUserId = choice.discordUserId;
     await getJson("/api/admin/rh-wcl-links/row", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -5564,11 +5670,7 @@ async function performIdentityBacklogAction(item, action) {
   }
   if (kind === "resolve-backlog-item") {
     const itemId = String(payload.itemId || item?.id || "").trim();
-    await getJson("/api/admin/identity-backlog/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId }),
-    });
+    await resolveIdentityBacklogItem(itemId);
     status("Marked backlog item resolved.");
     return;
   }
