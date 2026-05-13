@@ -3629,20 +3629,28 @@ function canRunRaidHelperDmNotifier() {
 async function discordBotApi(pathname, { method = "GET", body } = {}) {
   const botToken = String(process.env.DISCORD_BOT_TOKEN || "").trim();
   if (!botToken) throw new Error("Missing DISCORD_BOT_TOKEN");
-  const res = await fetch(`${DISCORD_API_BASE}${pathname}`, {
-    method,
-    headers: {
-      Authorization: `Bot ${botToken}`,
-      "Content-Type": "application/json",
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = String(payload?.message || `Discord bot API failed (${res.status})`).slice(0, 180);
-    throw new Error(msg);
+  const attempts = Math.max(1, Math.min(4, Number(process.env.DISCORD_BOT_API_RETRIES || 3)));
+  let lastPayload = {};
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const res = await fetch(`${DISCORD_API_BASE}${pathname}`, {
+      method,
+      headers: {
+        Authorization: `Bot ${botToken}`,
+        "Content-Type": "application/json",
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok) return payload;
+    lastPayload = payload;
+    lastStatus = res.status;
+    if (res.status !== 429 || attempt >= attempts) break;
+    const retryAfterSec = Math.max(0.25, Math.min(5, Number(payload?.retry_after || res.headers.get("retry-after") || 1)));
+    await new Promise((resolve) => setTimeout(resolve, Math.ceil(retryAfterSec * 1000)));
   }
-  return payload;
+  const msg = String(lastPayload?.message || `Discord bot API failed (${lastStatus || "unknown"})`).slice(0, 180);
+  throw new Error(lastStatus === 429 ? `${msg} Retry shortly.` : msg);
 }
 
 async function fetchDiscordGuildRolesForNews() {
@@ -4179,6 +4187,53 @@ function discordRoleSyncCombatRoleName(candidate) {
   if (inferred === "Healers") return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Heal;
   if (inferred || candidate?.recentClass || candidate?.recentSpec) return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.DPS;
   return "";
+}
+
+const discordRoleSyncMemberCache = new Map();
+const DISCORD_ROLE_SYNC_MEMBER_CACHE_MS = 5 * 60_000;
+
+function discordRoleSyncMemberCacheKey(guildId, userId) {
+  return `${String(guildId || "").trim()}:${String(userId || "").trim()}`;
+}
+
+function discordRoleSyncMemberCacheGet(guildId, userId) {
+  const key = discordRoleSyncMemberCacheKey(guildId, userId);
+  const entry = discordRoleSyncMemberCache.get(key);
+  if (!entry || Date.now() - Number(entry.at || 0) > DISCORD_ROLE_SYNC_MEMBER_CACHE_MS) {
+    discordRoleSyncMemberCache.delete(key);
+    return null;
+  }
+  return entry.member || null;
+}
+
+function discordRoleSyncMemberCacheSet(guildId, userId, member) {
+  const key = discordRoleSyncMemberCacheKey(guildId, userId);
+  if (!guildId || !userId || !member?.user?.id) return;
+  discordRoleSyncMemberCache.set(key, { at: Date.now(), member });
+}
+
+async function discordRoleSyncFetchMember(guildId, userId) {
+  const cached = discordRoleSyncMemberCacheGet(guildId, userId);
+  if (cached) return { member: cached, cached: true };
+  const member = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}/members/${encodeURIComponent(userId)}`);
+  discordRoleSyncMemberCacheSet(guildId, userId, member);
+  return { member, cached: false };
+}
+
+function discordRoleSyncMemberCacheAddRole(guildId, userId, roleId) {
+  const member = discordRoleSyncMemberCacheGet(guildId, userId);
+  if (!member || !roleId) return;
+  const roles = new Set(Array.isArray(member.roles) ? member.roles.map((id) => String(id)) : []);
+  roles.add(String(roleId));
+  member.roles = [...roles];
+  discordRoleSyncMemberCacheSet(guildId, userId, member);
+}
+
+function discordRoleSyncMemberCacheRemoveRole(guildId, userId, roleId) {
+  const member = discordRoleSyncMemberCacheGet(guildId, userId);
+  if (!member || !roleId) return;
+  member.roles = (Array.isArray(member.roles) ? member.roles : []).map((id) => String(id)).filter((id) => id !== String(roleId));
+  discordRoleSyncMemberCacheSet(guildId, userId, member);
 }
 
 function compBlockerRowsFromPayload(compPayload, existingNamesLower = new Set()) {
@@ -4739,13 +4794,14 @@ async function buildDiscordRoleSyncPreview() {
     const role = roleByNameLower.get(String(name).toLowerCase()) || null;
     return { name, role: discordRoleSyncRolePublic(role, context.botMaxPosition) };
   };
-  const rows = await mapWithConcurrency(candidates, 4, async (candidate) => {
+  const rows = await mapWithConcurrency(candidates, 1, async (candidate) => {
     const warnings = [];
     let member = null;
+    let memberLookupCached = false;
     try {
-      member = await discordBotApi(
-        `/guilds/${encodeURIComponent(context.guildId)}/members/${encodeURIComponent(candidate.userId)}`
-      );
+      const lookup = await discordRoleSyncFetchMember(context.guildId, candidate.userId);
+      member = lookup.member;
+      memberLookupCached = lookup.cached;
     } catch (error) {
       warnings.push(error?.message || "Failed to load Discord member");
     }
@@ -4801,6 +4857,7 @@ async function buildDiscordRoleSyncPreview() {
     return {
       ...candidate,
       inGuild,
+      memberLookupCached,
       currentRoleIds: [...currentRoleIds],
       currentAttendanceRoleNames: currentAttendanceRoles.map((target) => target.name),
       currentCombatRoleNames: currentCombatRoles.map((target) => target.name),
@@ -4854,6 +4911,7 @@ async function runDiscordRoleSyncHybrid() {
           `/guilds/${encodeURIComponent(preview.guildId)}/members/${encodeURIComponent(row.userId)}/roles/${encodeURIComponent(roleId)}`,
           { method: "PUT" }
         );
+        discordRoleSyncMemberCacheAddRole(preview.guildId, row.userId, roleId);
         results.push({
           action: roleTarget.name === row.combatRoleName ? "combat-add" : "attendance-add",
           userId: row.userId,
@@ -4880,6 +4938,7 @@ async function runDiscordRoleSyncHybrid() {
           `/guilds/${encodeURIComponent(preview.guildId)}/members/${encodeURIComponent(row.userId)}/roles/${encodeURIComponent(roleId)}`,
           { method: "DELETE" }
         );
+        discordRoleSyncMemberCacheRemoveRole(preview.guildId, row.userId, roleId);
         results.push({
           action: "attendance-remove",
           userId: row.userId,
