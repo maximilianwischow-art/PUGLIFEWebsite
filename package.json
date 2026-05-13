@@ -12,6 +12,7 @@
     "build:tailwind": "tailwindcss -i ./src/tailwind.css -o ./public/tailwind.css --minify",
     "watch:tailwind": "tailwindcss -i ./src/tailwind.css -o ./public/tailwind.css --watch",
     "validate": "node --check server.js",
+    "generate:responsive-assets": "node scripts/generate-responsive-assets.mjs",
     "fetch-spec-icons": "node scripts/fetch-tbc-spec-icons.mjs",
     "guess-rh-wcl": "node scripts/guess-rh-wcl-links.mjs",
     "import-live-db": "node scripts/import-live-db-snapshot.mjs",
@@ -31,6 +32,7 @@
     "@tailwindcss/cli": "^4.2.4",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.14",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.2.4"
   }
 }

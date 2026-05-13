@@ -66,6 +66,7 @@ const statusEl = document.querySelector("#status");
 const dashboardPbRow = document.querySelector("#dashboardPbRow");
 const GUILD_ID = 817080;
 const IMAGE_ASSET_VERSION = "20260428f";
+const RESPONSIVE_ASSET_VERSION = "20260513resolution1";
 const DASHBOARD_REPORT_LIMIT = 25;
 const DASHBOARD_CALENDAR_LIMIT = 60;
 const potrRaidBanner = document.querySelector("#potrRaidBanner");
@@ -322,6 +323,21 @@ function versionedImagePath(path) {
   return `${path}?v=${IMAGE_ASSET_VERSION}`;
 }
 
+function responsiveAssetSrcset(sourcePath, widths) {
+  const cleanPath = String(sourcePath || "").split("?")[0];
+  const fileName = cleanPath.split("/").pop() || "";
+  const baseName = fileName.replace(/\.[^.]+$/u, "");
+  if (!baseName) return "";
+  return (widths || [])
+    .map((width) => `/responsive/${baseName}-${width}w.webp?v=${RESPONSIVE_ASSET_VERSION} ${width}w`)
+    .join(", ");
+}
+
+function responsiveImageAttrs(sourcePath, widths, sizes) {
+  const srcset = responsiveAssetSrcset(sourcePath, widths);
+  return srcset ? ` srcset="${escapeHtml(srcset)}" sizes="${escapeHtml(sizes)}" decoding="async"` : ` decoding="async"`;
+}
+
 /** Same normalization as voting page — WCL strings may use curly apostrophes. */
 function normalizedRaidBannerKey(s) {
   return String(s || "")
@@ -403,7 +419,7 @@ function renderDashboardOverview(raidSummary) {
       if (!raidHasEncounterBreakdown(raid.raidName)) {
         return `
         <article class="pb-tile">
-          <img class="pb-tile-banner" src="${escapeHtml(bannerSrc)}" alt="" loading="lazy" />
+          <img class="pb-tile-banner" src="${escapeHtml(bannerSrc)}" alt="" loading="lazy"${responsiveImageAttrs(bannerSrc, [480, 960, 1440], "(max-width: 720px) 92vw, (max-width: 1200px) 45vw, 360px")} />
           <div class="pb-tile-body">
             <h3 class="pb-tile-name">${escapeHtml(shortRaidName(raid.raidName))}</h3>
             <p class="pb-tile-time">${escapeHtml(dur)}</p>
@@ -421,7 +437,7 @@ function renderDashboardOverview(raidSummary) {
 
       return `
         <article class="pb-tile pb-tile--expandable">
-          <img class="pb-tile-banner" src="${escapeHtml(bannerSrc)}" alt="" loading="lazy" />
+          <img class="pb-tile-banner" src="${escapeHtml(bannerSrc)}" alt="" loading="lazy"${responsiveImageAttrs(bannerSrc, [480, 960, 1440], "(max-width: 720px) 92vw, (max-width: 1200px) 45vw, 360px")} />
           <details class="pb-tile-details">
             <summary class="pb-tile-summary" aria-label="${escapeHtml(ariaToggle)}">
               <div class="pb-tile-summary-main">
@@ -490,7 +506,7 @@ function buildRaidDayDetailRowHtml(e) {
   const recordClass = e.isBestClearInCalendar ? " raid-day-row--record" : "";
   return `
         <div class="raid-day-row${recordClass}">
-          <img src="${e.image}" alt="${escapeHtml(e.raidName)}" loading="lazy" />
+          <img src="${escapeHtml(e.image)}" alt="${escapeHtml(e.raidName)}" loading="lazy"${responsiveImageAttrs(e.image, [320, 640, 960], "(max-width: 720px) 28vw, 120px")} />
           <div>
             <h4>${escapeHtml(e.raidName)}</h4>
             <p class="subtle">${escapeHtml(e.title)}</p>
@@ -528,7 +544,7 @@ function buildRaidCalendarColumnRunHtml(e, raidKey, idx) {
   const dateLine = fmtDate(e.startTime);
   const rk = escapeHtml(raidKey);
   return `<button type="button" class="raid-cal-run raid-cal-run--column${recordClass}"${deltaTitle} data-cal-raid="${rk}" data-cal-i="${idx}">
-      <img src="${escapeHtml(e.image)}" alt="" loading="lazy" />
+      <img src="${escapeHtml(e.image)}" alt="" loading="lazy"${responsiveImageAttrs(e.image, [320, 640, 960], "(max-width: 720px) 22vw, 96px")} />
       <div class="raid-cal-run-body">
         <span class="raid-cal-run-meta">${escapeHtml(dateLine)}</span>
         <span class="raid-cal-run-time">${escapeHtml(timeLine)}</span>
@@ -551,7 +567,7 @@ function renderRaidCalendarColumns() {
     return `
       <div class="raid-cal-column">
         <div class="raid-cal-column-head">
-          <img src="${escapeHtml(raidListingImagePath(raidName))}" alt="" loading="lazy" />
+          <img src="${escapeHtml(raidListingImagePath(raidName))}" alt="" loading="lazy"${responsiveImageAttrs(raidListingImagePath(raidName), [320, 640, 960], "64px")} />
           <span class="raid-cal-column-title">${escapeHtml(shortRaidName(raidName))}</span>
         </div>
         <div class="raid-cal-column-body">${runsHtml}${empty}</div>

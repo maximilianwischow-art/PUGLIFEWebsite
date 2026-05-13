@@ -27,6 +27,21 @@ if (!plb) {
   function versionedImagePath(path) {
     return `${path}?v=${IMAGE_ASSET_VERSION}`;
   }
+
+  function responsiveAssetSrcset(sourcePath, widths) {
+    const cleanPath = String(sourcePath || "").split("?")[0];
+    const fileName = cleanPath.split("/").pop() || "";
+    const baseName = fileName.replace(/\.[^.]+$/u, "");
+    if (!baseName) return "";
+    return (widths || [])
+      .map((width) => `/responsive/${baseName}-${width}w.webp?v=${IMAGE_ASSET_VERSION} ${width}w`)
+      .join(", ");
+  }
+
+  function responsiveImageAttrs(sourcePath, widths, sizes) {
+    const srcset = responsiveAssetSrcset(sourcePath, widths);
+    return srcset ? ` srcset="${escapeHtml(srcset)}" sizes="${escapeHtml(sizes)}" decoding="async"` : ` decoding="async"`;
+  }
   
   function rosterCapacityForEvent(event) {
     const raids = detectEventRaids(event);
@@ -69,12 +84,12 @@ if (!plb) {
   function eventHeaderMarkup(event) {
     const raids = detectEventRaids(event);
     if (raids.length === 1) {
-      return `<div class="event-raid-header"><img src="${escapeHtml(raids[0].image)}" alt="" loading="lazy" decoding="async" /></div>`;
+      return `<div class="event-raid-header"><img src="${escapeHtml(raids[0].image)}" alt="" loading="lazy"${responsiveImageAttrs(raids[0].image, [480, 960, 1440], "(max-width: 760px) 92vw, 520px")} /></div>`;
     }
     return `
       <div class="event-raid-header event-raid-header--split">
-        <img src="${escapeHtml(raids[0].image)}" alt="" loading="lazy" decoding="async" />
-        <img src="${escapeHtml(raids[1].image)}" alt="" loading="lazy" decoding="async" />
+        <img src="${escapeHtml(raids[0].image)}" alt="" loading="lazy"${responsiveImageAttrs(raids[0].image, [480, 960, 1440], "(max-width: 760px) 46vw, 260px")} />
+        <img src="${escapeHtml(raids[1].image)}" alt="" loading="lazy"${responsiveImageAttrs(raids[1].image, [480, 960, 1440], "(max-width: 760px) 46vw, 260px")} />
       </div>
     `;
   }
