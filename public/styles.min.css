@@ -2086,7 +2086,7 @@ body.framework-bg-vivid {
  * Tune --guild-role-badge-zoom if a set of assets needs more/less crop (default ~1.72).
  */
 .raider-badge-slot--guild-role {
-  --guild-role-badge-zoom: 1.72;
+  --guild-role-badge-zoom: 1;
   position: relative;
   padding: 0;
   border-width: 0;
@@ -2094,7 +2094,9 @@ body.framework-bg-vivid {
   background: #000;
   overflow: hidden;
   vertical-align: top;
-  box-shadow: inset 0 0 0 2px rgba(168, 85, 247, 0.42);
+  line-height: 0;
+  box-shadow: inset 0 0 0 1px rgba(168, 85, 247, 0.42);
+  contain: paint;
 }
 
 .raider-badge-role-img {
@@ -2104,13 +2106,28 @@ body.framework-bg-vivid {
   object-fit: cover;
   object-position: center;
   border-radius: 0;
-  transform: scale(var(--guild-role-badge-zoom));
+  transform: none;
   transform-origin: center center;
 }
 
 /* Second slot for Core / PUG Lead / Raidlead: attendance PeonÔÇôVeteran (teal ring vs purple primary). */
 .raider-badge-slot--guild-role.raider-badge-slot--attendance-companion {
-  box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.45);
+}
+
+.raider-badge-slot--guild-role .achievement-badge-frame {
+  box-shadow: none;
+  transition: none;
+  transform: none;
+}
+
+.raider-badge-slot--guild-role:hover .achievement-badge-frame,
+.raider-badge-slot--guild-role:focus-visible .achievement-badge-frame {
+  transform: none;
+}
+
+.raider-badge-slot--guild-role .achievement-badge-glow {
+  display: none;
 }
 
 /*
@@ -7159,7 +7176,7 @@ html { -webkit-tap-highlight-color: transparent; }
   border-radius: 10px;
 }
 .role-badge-group-token .guild-role-token-img {
-  transform: scale(1.72);
+  transform: none;
 }
 .achievement-badge-frame {
   position: relative;
