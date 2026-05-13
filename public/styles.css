@@ -135,18 +135,6 @@ body.framework-bg-vivid {
   --bg-accent-opacity: 0.2;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  body::before {
-    background-attachment: fixed;
-  }
-}
-
-@media (max-width: 900px) {
-  body::before {
-    background-attachment: scroll;
-  }
-}
-
 .stars {
   position: fixed;
   inset: 0;
@@ -154,6 +142,7 @@ body.framework-bg-vivid {
   z-index: 0;
   overflow: hidden;
   display: block;
+  contain: paint;
 }
 
 .stars::before,
@@ -170,17 +159,21 @@ body.framework-bg-vivid {
     radial-gradient(ellipse at 50% 100%, rgba(159, 255, 98, 0.5) 0%, rgba(76, 255, 120, 0.26) 30%, transparent 68%),
     radial-gradient(ellipse at 35% 95%, rgba(120, 255, 170, 0.35) 0%, transparent 62%),
     radial-gradient(ellipse at 65% 92%, rgba(65, 255, 145, 0.28) 0%, transparent 58%);
-  animation: felFlamePulse 4.5s ease-in-out infinite, felFlameDrift 7s ease-in-out infinite;
+  transform: scaleX(var(--flame-scale-x, 1));
+  transform-origin: center bottom;
+  will-change: opacity, transform;
+  animation: felFlamePulse 5.5s ease-in-out infinite;
 }
 
 .stars::before {
   left: -2%;
+  --flame-scale-x: 1;
 }
 
 .stars::after {
   right: -2%;
-  transform: scaleX(-1);
-  animation-delay: 1.2s, 0.8s;
+  --flame-scale-x: -1;
+  animation-delay: 1.2s;
 }
 
 .star {
@@ -201,11 +194,11 @@ body.framework-bg-vivid {
   0%,
   100% {
     opacity: 0.52;
-    transform: translateY(0) scale(0.96);
+    transform: scaleX(var(--flame-scale-x, 1)) translateY(0) scale(0.96);
   }
   50% {
     opacity: 0.86;
-    transform: translateY(-2%) scale(1.06);
+    transform: scaleX(var(--flame-scale-x, 1)) translateY(-2%) scale(1.06);
   }
 }
 
@@ -298,15 +291,7 @@ body.framework-bg-vivid {
     0 0 48px rgba(236, 72, 153, 0.22),
     0 12px 40px rgba(0, 0, 0, 0.45),
     inset 0 0 1px rgba(255, 255, 255, 0.2);
-  filter: saturate(1.08) contrast(1.05) brightness(1.03)
-    drop-shadow(0 0 20px rgba(168, 85, 247, 0.25));
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hero-banner {
-    filter: saturate(1.06) contrast(1.04) brightness(1.02)
-      drop-shadow(0 0 14px rgba(168, 85, 247, 0.2));
-  }
+  filter: none;
 }
 
 .hero-sub {
@@ -515,8 +500,6 @@ body.framework-bg-vivid {
   margin: 0 auto;
   padding: var(--space-6) var(--space-4) 48px;
   flex: 1;
-  content-visibility: auto;
-  contain-intrinsic-size: 1200px 1200px;
 }
 
 .landing-page {
