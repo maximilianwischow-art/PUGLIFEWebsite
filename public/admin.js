@@ -5503,7 +5503,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     const overlay = document.createElement("div");
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
-    overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(5,2,16,.72);backdrop-filter:blur(6px)";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(5,2,16,.72);backdrop-filter:blur(6px);overflow:hidden;overscroll-behavior:contain";
     const suggestionOptions = rows
       .map((row) => String(row.rhName || "").trim())
       .filter(Boolean)
@@ -5537,7 +5537,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
         </table>`
       : `<p class="subtle">No unassigned Discord IDs are currently available in the Raid Helper cache.</p>`;
     overlay.innerHTML = `
-      <div style="width:min(920px,96vw);max-height:86vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
+      <div style="width:min(920px,96vw);height:min(86vh,820px);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
         <h3 class="section-title" style="margin-top:0">${esc(title || "Select Discord ID")}</h3>
         <p class="subtle">Choose an unassigned Discord name to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}. If none is suitable, resolve this backlog item.</p>
         <label style="display:grid;gap:8px;margin:14px 0 12px;padding:12px;border:1px solid rgba(236,72,153,.38);border-radius:14px;background:rgba(236,72,153,.08);flex:0 0 auto">
@@ -5546,7 +5546,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
           <datalist id="discord-id-choice-suggestions">${suggestionOptions}</datalist>
           <span class="subtle">Suggestions include unassigned names and already connected Discord names, useful for linking alts/twinks.</span>
         </label>
-        <div style="min-height:160px;max-height:min(48vh,520px);overflow:auto;margin:0 0 14px;border:1px solid rgba(168,85,247,.18);border-radius:12px">
+        <div data-discord-id-list-scroll tabindex="0" style="flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;margin:0 0 14px;border:1px solid rgba(168,85,247,.18);border-radius:12px">
           ${list}
         </div>
         <div class="admin-actions admin-actions--tight" style="justify-content:flex-end;flex:0 0 auto;margin-top:auto;padding-top:10px;border-top:1px solid rgba(168,85,247,.18)">
@@ -5557,6 +5557,8 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
       </div>`;
     const cleanup = (value) => {
       document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
       overlay.remove();
       resolve(value);
     };
@@ -5580,6 +5582,14 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     overlay.querySelector("[data-discord-id-manual-input]")?.addEventListener("input", (event) => {
       manualValue = String(event.target.value || "");
     });
+    overlay.addEventListener("wheel", (event) => {
+      const scroller = event.target.closest("[data-discord-id-list-scroll]");
+      if (!scroller) {
+        event.preventDefault();
+        return;
+      }
+      event.stopPropagation();
+    }, { passive: false });
     overlay.querySelector("[data-discord-id-choice-cancel]")?.addEventListener("click", () => cleanup(null));
     overlay.querySelector("[data-discord-id-choice-none]")?.addEventListener("click", () => cleanup({ kind: "resolve" }));
     overlay.querySelector("[data-discord-id-choice-connect]")?.addEventListener("click", () => {
@@ -5597,6 +5607,10 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
       cleanup({ kind: "connect", discordUserId });
     });
     document.addEventListener("keydown", onKeyDown);
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     document.body.appendChild(overlay);
     overlay.querySelector("input,button")?.focus();
   });
