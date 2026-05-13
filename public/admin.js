@@ -5504,32 +5504,49 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(5,2,16,.72);backdrop-filter:blur(6px)";
+    const suggestionOptions = rows
+      .map((row) => String(row.rhName || "").trim())
+      .filter(Boolean)
+      .filter((name, index, names) => names.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
+      .map((name) => `<option value="${esc(name)}"></option>`)
+      .join("");
     const list = rows.length
-      ? rows
-          .map((row) => {
-            const checked = row.discordUserId === selectedId ? " checked" : "";
-            const score = Number(row.matchScore || 0);
-            const match = score >= 100 ? "Exact match" : score > 0 ? `Possible match (${score})` : "Available";
-            const source = row.source === "identity-placeholder" ? "Discord placeholder" : "Raid Helper cache";
-            return `<label style="display:grid;grid-template-columns:24px minmax(160px,1fr) minmax(130px,auto) minmax(130px,auto);gap:10px;align-items:center;padding:10px;border:1px solid rgba(168,85,247,.28);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer">
-              <input type="radio" name="discord-id-choice" value="${esc(row.discordUserId)}"${checked} />
-              <strong>${esc(row.rhName || "Unknown Discord name")}</strong>
-              <span class="subtle">${esc(match)}</span>
-              <span class="subtle">${esc(source)}</span>
-            </label>`;
-          })
-          .join("")
+      ? `<table class="admin-table" style="margin:12px 0 16px;width:100%">
+          <thead>
+            <tr>
+              <th style="width:44px">Pick</th>
+              <th>Name</th>
+              <th style="width:170px">Match</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows
+              .map((row) => {
+                const checked = row.discordUserId === selectedId ? " checked" : "";
+                const score = Number(row.matchScore || 0);
+                const match = score >= 100 ? "Exact match" : score > 0 ? `Possible match (${score})` : "Available";
+                const name = row.rhName || "Unknown Discord name";
+                return `<tr data-discord-id-row="${esc(row.discordUserId)}" style="cursor:pointer">
+                  <td><input type="radio" name="discord-id-choice" value="${esc(row.discordUserId)}"${checked} aria-label="Select ${esc(name)}" /></td>
+                  <td><strong>${esc(name)}</strong></td>
+                  <td><span class="subtle">${esc(match)}</span></td>
+                </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>`
       : `<p class="subtle">No unassigned Discord IDs are currently available in the Raid Helper cache.</p>`;
     overlay.innerHTML = `
       <div style="width:min(920px,96vw);max-height:86vh;overflow:auto;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
         <h3 class="section-title" style="margin-top:0">${esc(title || "Select Discord ID")}</h3>
-        <p class="subtle">Choose an unassigned Discord name to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}, or type a Discord name/ID directly. If none is suitable, resolve this backlog item.</p>
-        <label style="display:grid;gap:6px;margin:12px 0">
-          <span class="subtle">Type Discord name or ID</span>
-          <input type="text" data-discord-id-manual-input placeholder="Example: RamiEx or 427557178455490585" style="width:100%;box-sizing:border-box;border:1px solid rgba(168,85,247,.35);border-radius:12px;background:rgba(255,255,255,.06);color:inherit;padding:10px 12px" />
+        <p class="subtle">Choose an unassigned Discord name to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}. If none is suitable, resolve this backlog item.</p>
+        <label style="display:grid;gap:8px;margin:14px 0 16px;padding:12px;border:1px solid rgba(236,72,153,.38);border-radius:14px;background:rgba(236,72,153,.08)">
+          <strong>Type Discord name or ID</strong>
+          <input type="text" data-discord-id-manual-input list="discord-id-choice-suggestions" placeholder="Start typing a Discord name, or paste the Discord ID" style="width:100%;box-sizing:border-box;border:1px solid rgba(236,72,153,.55);border-radius:12px;background:rgba(255,255,255,.08);color:inherit;padding:12px 14px;font-weight:700" />
+          <datalist id="discord-id-choice-suggestions">${suggestionOptions}</datalist>
+          <span class="subtle">Suggestions come from unassigned Discord names in the identity database/cache.</span>
         </label>
-        ${rows.length ? `<div class="subtle" style="display:grid;grid-template-columns:24px minmax(160px,1fr) minmax(130px,auto) minmax(130px,auto);gap:10px;padding:0 10px 6px"><span></span><strong>Name</strong><strong>Match</strong><strong>Source</strong></div>` : ""}
-        <div style="display:grid;gap:8px;margin:12px 0 16px">${list}</div>
+        ${list}
         <div class="admin-actions admin-actions--tight" style="justify-content:flex-end">
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-cancel>Cancel</button>
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-none>No suitable Discord ID found</button>
@@ -5547,6 +5564,16 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     overlay.addEventListener("change", (event) => {
       const input = event.target.closest('input[name="discord-id-choice"]');
       if (input) selectedId = String(input.value || "").trim();
+    });
+    overlay.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-discord-id-row]");
+      if (!row) return;
+      const id = String(row.getAttribute("data-discord-id-row") || "").trim();
+      const input = row.querySelector('input[name="discord-id-choice"]');
+      if (id && input) {
+        selectedId = id;
+        input.checked = true;
+      }
     });
     overlay.querySelector("[data-discord-id-manual-input]")?.addEventListener("input", (event) => {
       manualValue = String(event.target.value || "");
