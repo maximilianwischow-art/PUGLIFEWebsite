@@ -30,6 +30,48 @@ let badgeTooltipsRowsState = [];
 const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
 const ROLE_ALERT_DEFAULT_TARGETS = { Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 };
 const BADGE_RARITIES = ["common", "rare", "epic", "legendary"];
+const ADMIN_TBC_SPEC_ICONS_JSON_VER = "20260511b";
+const ADMIN_ZAM_ICON_LARGE = "https://wow.zamimg.com/images/wow/icons/large";
+const ADMIN_WOW_CLASS_COLORS = {
+  Warrior: "#C79C6E",
+  Paladin: "#F58CBA",
+  Hunter: "#ABD473",
+  Rogue: "#FFF569",
+  Priest: "#FFFFFF",
+  Shaman: "#0070DD",
+  Mage: "#69CCF0",
+  Warlock: "#9482C9",
+  Druid: "#FF7D0A",
+};
+const ADMIN_SPEC_ICON_TEXTURE_FALLBACK = {
+  warrior_arms: "ability_warrior_savageblow",
+  warrior_fury: "spell_nature_bloodlust",
+  warrior_protection: "ability_warrior_defensivestance",
+  paladin_holy: "spell_holy_holybolt",
+  paladin_protection: "spell_holy_sealofprotection",
+  paladin_retribution: "spell_holy_auraoflight",
+  hunter_beastmastery: "ability_hunter_beasttaming",
+  hunter_marksmanship: "ability_marksmanship",
+  hunter_survival: "ability_hunter_swiftstrike",
+  rogue_assassination: "ability_rogue_eviscerate",
+  rogue_combat: "ability_backstab",
+  rogue_subtlety: "ability_stealth",
+  priest_discipline: "spell_holy_powerwordshield",
+  priest_holy: "spell_holy_heal02",
+  priest_shadow: "spell_shadow_shadowwordpain",
+  shaman_elemental: "spell_nature_lightning",
+  shaman_enhancement: "spell_nature_lightningshield",
+  shaman_restoration: "spell_nature_magicimmunity",
+  mage_arcane: "spell_holy_magicalsentry",
+  mage_fire: "spell_fire_firebolt02",
+  mage_frost: "spell_frost_frostbolt02",
+  warlock_affliction: "spell_shadow_deathcoil",
+  warlock_demonology: "spell_shadow_metamorphosis",
+  warlock_destruction: "spell_shadow_rainoffire",
+  druid_balance: "spell_nature_starfall",
+  druid_feralcombat: "ability_druid_catform",
+  druid_restoration: "spell_nature_healingtouch",
+};
 
 /** Same guild as Leaderboard (/) / Events attendance (`VOTING_GUILD_ID` / `public/app.js`). */
 const ADMIN_WCL_GUILD_ID = 817080;
@@ -4642,6 +4684,8 @@ let identityAccountsLoadPromise = null;
 let identityAuditLoadPromise = null;
 let identityJourneyLoadPromise = null;
 let identityReviewDetailsLoadPromise = null;
+let adminTbcSpecIconByKey = null;
+let adminTbcSpecIconLoadPromise = null;
 
 function fmtBytes(bytes) {
   const n = Number(bytes);
@@ -4846,6 +4890,104 @@ function identityRoleSelectHtml(current) {
   ).join("")}</select>`;
 }
 
+function adminIdentitySlug(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function adminIdentityClassDisplay(className) {
+  const slug = adminIdentitySlug(className);
+  const labels = {
+    warrior: "Warrior",
+    paladin: "Paladin",
+    hunter: "Hunter",
+    rogue: "Rogue",
+    priest: "Priest",
+    shaman: "Shaman",
+    mage: "Mage",
+    warlock: "Warlock",
+    druid: "Druid",
+  };
+  return labels[slug] || String(className || "").trim();
+}
+
+function adminIdentityClassColor(className) {
+  const label = adminIdentityClassDisplay(className);
+  return ADMIN_WOW_CLASS_COLORS[label] || "var(--text)";
+}
+
+function adminIdentitySpecKey(character) {
+  const cls = adminIdentitySlug(character?.wowClass);
+  const rawSpec = adminIdentitySlug(character?.wowSpec);
+  if (!cls || !rawSpec) return "";
+  const aliases = {
+    prot: "protection",
+    protection: "protection",
+    holy: "holy",
+    ret: "retribution",
+    retribution: "retribution",
+    bm: "beastmastery",
+    beastmastery: "beastmastery",
+    marksmanship: "marksmanship",
+    survival: "survival",
+    assassination: "assassination",
+    combat: "combat",
+    subtlety: "subtlety",
+    disc: "discipline",
+    discipline: "discipline",
+    shadow: "shadow",
+    elemental: "elemental",
+    enhancement: "enhancement",
+    resto: "restoration",
+    restoration: "restoration",
+    arcane: "arcane",
+    fire: "fire",
+    frost: "frost",
+    affliction: "affliction",
+    demonology: "demonology",
+    destruction: "destruction",
+    balance: "balance",
+    feral: "feralcombat",
+    feralcombat: "feralcombat",
+    guardian: "feralcombat",
+    arms: "arms",
+    fury: "fury",
+  };
+  const spec = aliases[rawSpec] || rawSpec;
+  return `${cls}_${spec}`;
+}
+
+function adminIdentitySpecIconUrl(character) {
+  const key = adminIdentitySpecKey(character);
+  if (!key) return "";
+  const fromJson = adminTbcSpecIconByKey?.[key]?.iconUrl;
+  if (/^https?:\/\//i.test(String(fromJson || ""))) return String(fromJson);
+  const texture = ADMIN_SPEC_ICON_TEXTURE_FALLBACK[key];
+  return texture ? `${ADMIN_ZAM_ICON_LARGE}/${texture}.jpg` : "";
+}
+
+function loadAdminTbcSpecIconMap() {
+  if (adminTbcSpecIconByKey) return Promise.resolve(adminTbcSpecIconByKey);
+  if (adminTbcSpecIconLoadPromise) return adminTbcSpecIconLoadPromise;
+  adminTbcSpecIconLoadPromise = getJson(`/tbc-spec-icons.json?v=${ADMIN_TBC_SPEC_ICONS_JSON_VER}`)
+    .then((data) => {
+      adminTbcSpecIconByKey = data?.byKey && typeof data.byKey === "object" ? data.byKey : {};
+      return adminTbcSpecIconByKey;
+    })
+    .catch(() => {
+      adminTbcSpecIconByKey = {};
+      return adminTbcSpecIconByKey;
+    })
+    .finally(() => {
+      adminTbcSpecIconLoadPromise = null;
+    });
+  return adminTbcSpecIconLoadPromise;
+}
+
 function identityCharacterSpecText(character) {
   if (!character) return "";
   const cls = String(character.wowClass || "").trim();
@@ -4935,13 +5077,33 @@ function identityAltChipHtml(character, idx) {
   const name = String(character?.characterName || "").trim();
   if (!name) return "";
   const specText = identityCharacterSpecText(character);
-  return `<span class="admin-identity-alt-chip" data-identity-alt-chip="${idx}">
-    <span>
-      <strong>${esc(name)}</strong>
-      ${specText ? `<span class="subtle"> · ${esc(specText)}</span>` : `<span class="subtle"> · spec auto-pulls on save</span>`}
+  const iconUrl = adminIdentitySpecIconUrl(character);
+  const color = adminIdentityClassColor(character?.wowClass);
+  return `<span class="admin-identity-alt-chip admin-identity-char-line" data-identity-alt-chip="${idx}" title="${esc(specText || "Spec auto-pulls on save")}">
+    <span class="admin-identity-char-main">
+      ${iconUrl ? `<img class="admin-identity-spec-icon" src="${esc(iconUrl)}" alt="" loading="lazy" decoding="async" />` : `<span class="admin-identity-spec-icon admin-identity-spec-icon--empty" aria-hidden="true"></span>`}
+      <strong class="admin-identity-char-name" style="color:${esc(color)}">${esc(name)}</strong>
     </span>
     <button type="button" class="admin-mini-btn admin-mini-btn--icon" data-identity-alt-remove="${idx}" title="Remove this alt from the Discord identity" aria-label="Remove ${esc(name)} from this identity">-</button>
   </span>`;
+}
+
+function identityMainCharacterEditorHtml(main) {
+  const character = main || {};
+  const iconUrl = adminIdentitySpecIconUrl(character);
+  const color = adminIdentityClassColor(character?.wowClass);
+  const name = String(character.characterName || "").trim();
+  const specText = identityCharacterSpecText(character);
+  return `<div class="admin-identity-main-editor">
+    <div class="admin-identity-char-line admin-identity-char-line--main" title="${esc(specText || "Class/spec auto-pulls on save")}">
+      <span class="admin-identity-char-main">
+        ${iconUrl ? `<img class="admin-identity-spec-icon" src="${esc(iconUrl)}" alt="" loading="lazy" decoding="async" />` : `<span class="admin-identity-spec-icon admin-identity-spec-icon--empty" aria-hidden="true"></span>`}
+        <input class="admin-input admin-identity-char-name-input" data-identity-main="characterName" value="${esc(name)}" placeholder="Main character" style="color:${esc(color)}" />
+      </span>
+    </div>
+    <input type="hidden" data-identity-main="wowClass" value="${esc(character.wowClass || "")}" />
+    <input type="hidden" data-identity-main="wowSpec" value="${esc(character.wowSpec || "")}" />
+  </div>`;
 }
 
 function identityAltRowsFromStore(store) {
@@ -5105,20 +5267,13 @@ function renderIdentityAccountsTable(accounts) {
       const activityLabel = activity.label ? `<div class="subtle">${esc(activity.label)}</div>` : "";
       return `<tr data-identity-account-row="${account.id}">
         <td>
-          <input class="admin-input" data-identity-k="discordUserId" value="${esc(account.discordUserId || "")}" placeholder="Discord ID" inputmode="numeric" />
+          <input class="admin-input admin-identity-id-input" data-identity-k="discordUserId" value="${esc(account.discordUserId || "")}" placeholder="Discord ID" inputmode="numeric" />
+          <input class="admin-input admin-identity-name-input" data-identity-k="displayName" value="${esc(account.storedDisplayName || account.raidHelperName || account.displayName || "")}" placeholder="Discord/RH name" />
+          <div class="subtle">Discord/Raid Helper name</div>
+          ${identityRoleSelectHtml(account.guildRole)}
         </td>
         <td>
-          <input class="admin-input" data-identity-k="displayName" value="${esc(account.displayName || "")}" placeholder="Main character name" />
-          <div class="subtle">Leaderboard/profile display</div>
-        </td>
-        <td>${identityRoleSelectHtml(account.guildRole)}</td>
-        <td>
-          <div class="admin-actions admin-actions--tight" style="align-items:flex-start">
-            <input class="admin-input" data-identity-main="characterName" value="${esc(main.characterName || "")}" placeholder="Main character" />
-            <input class="admin-input" data-identity-main="wowClass" value="${esc(main.wowClass || "")}" placeholder="Class" />
-            <input class="admin-input" data-identity-main="wowSpec" value="${esc(main.wowSpec || "")}" placeholder="Spec" />
-          </div>
-          <div class="subtle" style="margin-top:4px">Realm fixed to Thunderstrike.</div>
+          ${identityMainCharacterEditorHtml(main)}
         </td>
         <td>
           <div data-identity-alt-cell>
@@ -5132,11 +5287,14 @@ function renderIdentityAccountsTable(accounts) {
               <input class="admin-input" data-identity-alt-name placeholder="Character name" />
               <button type="button" class="event-signup-btn event-signup-btn--softres" data-identity-alt-add>Add alt</button>
             </div>
-            <div class="subtle"><span data-identity-alt-count>${(account.altCharacters || []).length} alt${(account.altCharacters || []).length === 1 ? "" : "s"}</span> · class/spec auto-pulls on save</div>
+            <div class="subtle"><span data-identity-alt-count>${(account.altCharacters || []).length} alt${(account.altCharacters || []).length === 1 ? "" : "s"}</span></div>
           </div>
         </td>
-        <td>${esc(activityText)}${activityLabel}</td>
-        <td>${renderIdentityLatestRaidParse(account.latestRaidParse)}</td>
+        <td>
+          <div>${esc(activityText)}</div>
+          ${activityLabel}
+          <div class="admin-identity-parse-inline">${renderIdentityLatestRaidParse(account.latestRaidParse)}</div>
+        </td>
         <td class="admin-rh-actions-cell">
           <button type="button" class="event-signup-btn" data-identity-account-save="${account.id}">Save</button>
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-admin-database-user-detail="${account.id}">Details</button>
@@ -5146,17 +5304,14 @@ function renderIdentityAccountsTable(accounts) {
     })
     .join("");
   host.innerHTML = `
-    <div class="admin-table-wrap">
-      <table class="admin-table">
+    <div class="admin-table-wrap admin-identity-table-wrap">
+      <table class="admin-table admin-identity-accounts-table">
         <thead>
           <tr>
-            <th>${identitySortButton("discordUserId", "Discord ID")}</th>
-            <th>${identitySortButton("displayName", "Display Name")}</th>
-            <th>${identitySortButton("guildRole", "Role")}</th>
+            <th>${identitySortButton("displayName", "Discord / Role")}</th>
             <th>${identitySortButton("mainCharacter", "Main Char with Spec")}</th>
             <th>${identitySortButton("altCharacters", "Alt Chars with Spec")}</th>
-            <th>${identitySortButton("lastActivity", "Last Activity")}</th>
-            <th>${identitySortButton("latestRaidParse", "Highest Parse Last Raid")}</th>
+            <th>${identitySortButton("lastActivity", "Activity / Parse")}</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -5172,6 +5327,18 @@ function renderIdentityAccountsTable(accounts) {
       input.closest("[data-identity-account-row]")?.setAttribute("data-identity-dirty", "1");
     });
   });
+  host.querySelector(".admin-identity-table-wrap")?.addEventListener(
+    "wheel",
+    (event) => {
+      const box = event.currentTarget;
+      if (!(box instanceof HTMLElement)) return;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      if (box.scrollWidth <= box.clientWidth) return;
+      box.scrollLeft += event.deltaY;
+      event.preventDefault();
+    },
+    { passive: false }
+  );
 }
 
 function readIdentityAccountRow(tr) {
@@ -5190,13 +5357,43 @@ function readIdentityAccountRow(tr) {
   };
 }
 
+async function saveIdentityAccountRow(tr, { button = null, successMessage = "" } = {}) {
+  const userId = Number(tr?.getAttribute("data-identity-account-row"));
+  if (!Number.isInteger(userId) || userId <= 0 || !tr) return null;
+  const payload = readIdentityAccountRow(tr);
+  if (!payload.mainCharacter.characterName) {
+    status("Enter a main character before saving this identity.");
+    return null;
+  }
+  if (button) button.disabled = true;
+  try {
+    const result = await getJson(`/api/admin/identity/accounts/${userId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    tr.removeAttribute("data-identity-dirty");
+    status(successMessage || `Saved identity for ${payload.displayName || payload.mainCharacter.characterName}.`);
+    await refreshIdentityManagement({ silent: true });
+    return result;
+  } catch (error) {
+    status(error?.message || "Identity save failed");
+    return null;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function loadIdentityAccounts({ silent = false } = {}) {
   if (identityAccountsLoadPromise) return identityAccountsLoadPromise;
   identityAccountsLoadPromise = (async () => {
   const host = document.getElementById("identityAccountsTableHost");
   if (!silent && host) host.innerHTML = `<p class="subtle">Loading identities…</p>`;
   const q = identityAccountsSearchValue ? `?q=${encodeURIComponent(identityAccountsSearchValue)}` : "";
-  const payload = await getJson(`/api/admin/identity/accounts${q}`);
+  const [payload] = await Promise.all([
+    getJson(`/api/admin/identity/accounts${q}`),
+    loadAdminTbcSpecIconMap(),
+  ]);
   syncIdentityActivityCutoffFromPayload(payload);
   identityAccountsState = Array.isArray(payload?.accounts) ? payload.accounts : [];
   renderIdentityAccountsSummary(payload);
@@ -5991,7 +6188,11 @@ document.addEventListener("click", async (event) => {
     if (input) input.value = "";
     identityRenderAltChipsForCell(cell);
     tr.setAttribute("data-identity-dirty", "1");
-    status(`Added alt ${characterName}. Save the row to pull class/spec.`);
+    status(`Adding alt ${characterName} and pulling class/spec...`);
+    await saveIdentityAccountRow(tr, {
+      button: identityAltAddBtn,
+      successMessage: `Added alt ${characterName}.`,
+    });
     return;
   }
 
@@ -6008,7 +6209,11 @@ document.addEventListener("click", async (event) => {
     identityWriteAltRowsToStore(store, rows);
     identityRenderAltChipsForCell(cell);
     tr.setAttribute("data-identity-dirty", "1");
-    status("Removed alt. Save the row to apply.");
+    status("Removing alt...");
+    await saveIdentityAccountRow(tr, {
+      button: identityAltRemoveBtn,
+      successMessage: "Removed alt from identity.",
+    });
     return;
   }
 
@@ -6031,29 +6236,8 @@ document.addEventListener("click", async (event) => {
   const identitySaveBtn = event.target.closest("[data-identity-account-save]");
   if (identitySaveBtn) {
     event.preventDefault();
-    const userId = Number(identitySaveBtn.getAttribute("data-identity-account-save"));
     const tr = identitySaveBtn.closest("[data-identity-account-row]");
-    if (!Number.isInteger(userId) || userId <= 0 || !tr) return;
-    const payload = readIdentityAccountRow(tr);
-    if (!payload.mainCharacter.characterName) {
-      status("Enter a main character before saving this identity.");
-      return;
-    }
-    identitySaveBtn.disabled = true;
-    try {
-      await getJson(`/api/admin/identity/accounts/${userId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      tr.removeAttribute("data-identity-dirty");
-      status(`Saved identity for ${payload.displayName || payload.mainCharacter.characterName}.`);
-      await refreshIdentityManagement({ silent: true });
-    } catch (error) {
-      status(error?.message || "Identity save failed");
-    } finally {
-      identitySaveBtn.disabled = false;
-    }
+    await saveIdentityAccountRow(tr, { button: identitySaveBtn });
     return;
   }
   const identityActionBtn = event.target.closest("[data-identity-backlog-action]");
