@@ -7102,10 +7102,9 @@ html { -webkit-tap-highlight-color: transparent; }
   overflow: hidden;
   border-radius: 8px;
   background: #000;
-  box-shadow:
-    0 0 0 1px var(--achievement-rarity-color, rgba(251, 191, 36, 0.55)),
-    0 0 12px color-mix(in srgb, var(--achievement-glow-color, #fbbf24) 30%, transparent);
+  box-shadow: 0 0 0 1px var(--achievement-rarity-color, rgba(251, 191, 36, 0.55));
   cursor: help;
+  contain: paint;
 }
 .guild-role-token-frame::after {
   content: "";
@@ -7131,7 +7130,7 @@ html { -webkit-tap-highlight-color: transparent; }
 }
 .guild-role-token:hover .guild-role-token-frame,
 .guild-role-token:focus-visible .guild-role-token-frame {
-  transform: scale(1.06);
+  transform: none;
 }
 .role-badge-group {
   display: flex;
@@ -7205,6 +7204,10 @@ html { -webkit-tap-highlight-color: transparent; }
 .guild-role-token:focus-visible .achievement-badge-glow {
   opacity: 1;
 }
+
+.guild-role-token .achievement-badge-glow {
+  display: none;
+}
 .achievement-tooltip {
   position: absolute;
   bottom: calc(100% + 12px);
@@ -7255,6 +7258,10 @@ html { -webkit-tap-highlight-color: transparent; }
   line-height: 1.2;
   font-weight: 700;
   filter: drop-shadow(0 0 10px currentColor);
+}
+
+.guild-role-token .achievement-name {
+  filter: none;
 }
 .achievement-description {
   color: #d1d5db;
@@ -7338,9 +7345,7 @@ html { -webkit-tap-highlight-color: transparent; }
 }
 
 .leaderboard-player-badges .raider-badge-slot--guild-role {
-  box-shadow:
-    inset 0 0 0 1px var(--achievement-rarity-color, rgba(168, 85, 247, 0.45)),
-    0 0 12px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 28%, transparent);
+  box-shadow: inset 0 0 0 1px var(--achievement-rarity-color, rgba(168, 85, 247, 0.45));
 }
 .leaderboard-player-badges .raider-badge-slot--achievement-earned {
   box-shadow:
