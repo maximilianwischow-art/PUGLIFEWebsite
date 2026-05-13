@@ -8145,15 +8145,12 @@ app.get("/api/admin/identity/unassigned-discord-ids", async (req, res) => {
 
 function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId = 0, limit = 100 } = {}) {
   const charactersByUserId = identityRowsByUserId(identityCharactersListAll());
+  const users = identityUserListAll();
   const usedDiscordIds = new Set();
-  for (const user of identityUserListAll()) {
+  for (const user of users) {
     const id = sanitizeDiscordUserId(user?.discordUserId);
     const hasCharacters = (charactersByUserId.get(Number(user?.id)) || []).length > 0;
     if (id && hasCharacters) usedDiscordIds.add(id);
-  }
-  for (const link of rhWclLinksState?.links || []) {
-    const id = sanitizeDiscordUserId(link?.discordUserId);
-    if (id) usedDiscordIds.add(id);
   }
 
   let resolvedTargetName = String(targetName || "").trim();
@@ -8171,6 +8168,35 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
   const targetKey = identityRhNameKey(resolvedTargetName);
 
   const candidates = [];
+  const candidateDiscordIds = new Set();
+  const pushCandidate = (candidate) => {
+    const discordUserId = sanitizeDiscordUserId(candidate?.discordUserId);
+    if (!discordUserId || usedDiscordIds.has(discordUserId) || candidateDiscordIds.has(discordUserId)) return;
+    candidateDiscordIds.add(discordUserId);
+    candidates.push({ ...candidate, discordUserId });
+  };
+  for (const user of users) {
+    const discordUserId = sanitizeDiscordUserId(user?.discordUserId);
+    if (!discordUserId) continue;
+    const hasCharacters = (charactersByUserId.get(Number(user?.id)) || []).length > 0;
+    if (hasCharacters) continue;
+    const rhName = String(user?.raidHelperName || user?.displayName || "").trim();
+    const rhKey = identityRhNameKey(rhName);
+    let matchScore = 0;
+    if (targetKey && rhKey) {
+      if (targetKey === rhKey) matchScore = 100;
+      else if (targetKey.includes(rhKey) || rhKey.includes(targetKey)) matchScore = 65;
+    }
+    pushCandidate({
+      discordUserId,
+      rhName,
+      userId: Number(user.id) || null,
+      lastSeenAt: Number(user.lastSeenAt || 0),
+      matchScore,
+      matched: matchScore >= 100,
+      source: "identity-placeholder",
+    });
+  }
   for (const [discordUserIdRaw, entryRaw] of Object.entries(discordIdToRhNameState?.byUserId || {})) {
     const discordUserId = sanitizeDiscordUserId(discordUserIdRaw);
     if (!discordUserId || usedDiscordIds.has(discordUserId)) continue;
@@ -8183,12 +8209,13 @@ function identityUnassignedDiscordIdCandidates({ targetName = "", targetUserId =
       if (targetKey === rhKey) matchScore = 100;
       else if (targetKey.includes(rhKey) || rhKey.includes(targetKey)) matchScore = 65;
     }
-    candidates.push({
+    pushCandidate({
       discordUserId,
       rhName,
       lastSeenAt,
       matchScore,
       matched: matchScore >= 100,
+      source: "raid-helper-cache",
     });
   }
 
