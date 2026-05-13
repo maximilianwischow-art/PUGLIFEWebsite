@@ -348,10 +348,15 @@
       hideLabel: true,
       className: "role-badge-group-token profile-role-badge-token",
     });
+    const crafterRoleBadges = window.plbEventsRoster.rosterPugMasterCrafterBadgesHtml
+      ? window.plbEventsRoster.rosterPugMasterCrafterBadgesHtml(player, {
+          className: "role-badge-group-token profile-role-badge-token",
+        })
+      : "";
     els.roleBadgeHost.innerHTML = `
       <div class="role-badge-group profile-role-badge-group">
         <span class="role-badge-group-label">Role</span>
-        <div class="role-badge-group-items">${roleBadge}</div>
+        <div class="role-badge-group-items">${roleBadge}${crafterRoleBadges}</div>
       </div>`;
     els.roleBadgeHost.hidden = false;
   }

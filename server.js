@@ -10044,6 +10044,9 @@ const BADGE_CATALOG = [
       { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance", description: "Attendance rank for consistently joining tracked guild raids." },
       { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance", description: "Attendance rank for regular participation in tracked guild raids." },
       { id: "peon", name: "Peon", icon: "/images/guild-roles/peon.png", tier: "attendance", description: "Starting guild rank for new or low-attendance raiders." },
+      { id: "master-crafter-tailoring", name: "PUG Master Crafter: Tailoring", icon: "/images/guild-roles/tailoring.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Tailoring." },
+      { id: "master-crafter-leatherworking", name: "PUG Master Crafter: Leatherworking", icon: "/images/guild-roles/leatherworking.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Leatherworking." },
+      { id: "master-crafter-blacksmithing", name: "PUG Master Crafter: Blacksmithing", icon: "/images/guild-roles/blacksmithing.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Blacksmithing." },
     ],
   },
   {
@@ -10094,12 +10097,26 @@ const BADGE_CATALOG = [
   },
 ];
 
-const GUILD_ROLE_BADGE_IDS = new Set(["guildlead", "raidlead", "dpslead", "heallead", "core", "veteran", "grunt", "peon"]);
+const GUILD_ROLE_BADGE_IDS = new Set([
+  "guildlead",
+  "raidlead",
+  "dpslead",
+  "heallead",
+  "core",
+  "veteran",
+  "grunt",
+  "peon",
+  "master-crafter-tailoring",
+  "master-crafter-leatherworking",
+  "master-crafter-blacksmithing",
+]);
 
 function badgeCatalogRarityForCategory(categoryId, badge) {
   const cat = String(categoryId || "");
   if (cat === "event-awards") return "legendary";
   if (cat === "achievements" || cat === "first-clears" || cat === "raid-milestones") return "epic";
+  const explicitTier = sanitizeBadgeTooltipRarity(badge?.tier);
+  if (explicitTier) return explicitTier;
   return String(badge?.tier || "") === "officer" ? "rare" : "common";
 }
 

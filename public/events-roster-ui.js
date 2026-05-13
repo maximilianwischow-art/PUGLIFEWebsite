@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260507aoe-cleave1";
+const IMAGE_ASSET_VERSION = "20260513master-crafters1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -33,6 +33,29 @@ const GUILD_ROLE_BADGE_SLUGS = new Set([
 const MANUAL_ONLY_GUILD_ROLES = new Set(["Core", "Puglead", "Guildlead", "Raidlead", "Dpslead", "Heallead"]);
 const GUILD_ROLE_SORT_ORDER = ["Puglead", "Raidlead", "Heallead", "Dpslead", "Core", "Veteran", "Grunt", "Peon"];
 const ROLE_ORDER = ["Tanks", "Healers", "Melee", "Ranged"];
+const PUG_MASTER_CRAFTER_ROLE_BADGES = [
+  {
+    badgeId: "master-crafter-tailoring",
+    slug: "tailoring",
+    name: "PUG Master Crafter: Tailoring",
+    description: "Legendary role badge for a trusted PUG master crafter in Tailoring.",
+    characterKeys: new Set(["mightyboom"]),
+  },
+  {
+    badgeId: "master-crafter-leatherworking",
+    slug: "leatherworking",
+    name: "PUG Master Crafter: Leatherworking",
+    description: "Legendary role badge for a trusted PUG master crafter in Leatherworking.",
+    characterKeys: new Set(["gerning"]),
+  },
+  {
+    badgeId: "master-crafter-blacksmithing",
+    slug: "blacksmithing",
+    name: "PUG Master Crafter: Blacksmithing",
+    description: "Legendary role badge for a trusted PUG master crafter in Blacksmithing.",
+    characterKeys: new Set(["grandmadeath"]),
+  },
+];
 /** @type {Map<string, { name: string, raidsAttended: number, attendanceRate: number }>} */
 let attendanceLeaderboardByKey = new Map();
 let attendanceConsideredRaids = 0;
@@ -1811,6 +1834,46 @@ function rosterRoleIconHtml(player, opts = {}) {
   </span>`;
 }
 
+function playerEarnedPugMasterCrafterBadge(player, badgeId) {
+  const cfg = PUG_MASTER_CRAFTER_ROLE_BADGES.find((badge) => badge.badgeId === String(badgeId || "").trim());
+  if (!cfg) return false;
+  for (const name of attendanceLookupNameCandidates(player)) {
+    const key = rosterNameKey(name);
+    if (key && cfg.characterKeys.has(key)) return true;
+  }
+  for (const name of Array.isArray(player?.wclCharacters) ? player.wclCharacters : []) {
+    const key = rosterNameKey(name);
+    if (key && cfg.characterKeys.has(key)) return true;
+  }
+  return false;
+}
+
+function rosterPugMasterCrafterBadgesHtml(player, opts = {}) {
+  return PUG_MASTER_CRAFTER_ROLE_BADGES
+    .filter((badge) => playerEarnedPugMasterCrafterBadge(player, badge.badgeId))
+    .map((badge) => {
+      const meta = badgeTooltipMeta(badge.badgeId, badge.name, badge.description, "legendary");
+      const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
+      const src = escapeHtml(`/images/guild-roles/${badge.slug}.png?v=${IMAGE_ASSET_VERSION}`);
+      const classes = [
+        "guild-role-token",
+        "guild-role-token--assigned",
+        `guild-role-token--${escapeHtml(badge.badgeId)}`,
+        opts?.className ? String(opts.className) : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `<span class="${escapeHtml(classes)}" aria-label="${escapeHtml(title)}">
+        <span class="guild-role-token-frame achievement-badge-frame--${escapeHtml(meta.rarity)}">
+          <img class="guild-role-token-img" src="${src}" alt="${escapeHtml(badge.name)}" width="34" height="34" loading="lazy" decoding="async" />
+          <span class="achievement-badge-glow" aria-hidden="true"></span>
+        </span>
+        ${achievementTooltipHtml(meta)}
+      </span>`;
+    })
+    .join("");
+}
+
 /** Back-compat alias for old call sites; new layouts should use `rosterRoleIconHtml`. */
 function rosterGuildRoleBadgeHtml(player) {
   return rosterRoleIconHtml(player, { hideLabel: true });
@@ -1997,6 +2060,8 @@ window.plbEventsRoster = {
   effectiveGuildRole,
   primaryGuildRankLabel,
   rosterRoleIconHtml,
+  rosterPugMasterCrafterBadgesHtml,
+  playerEarnedPugMasterCrafterBadge,
   rosterAchievementBadgeRowHtml,
   rosterBucketRoleName,
   eventsRosterCharacterLabel,

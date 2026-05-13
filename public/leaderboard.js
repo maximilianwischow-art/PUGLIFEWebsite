@@ -539,6 +539,10 @@ function renderLeaderboardTable() {
       const roleBadge = plb.rosterRoleIconHtml
         ? plb.rosterRoleIconHtml(p, { hideLabel: true, className: "role-badge-group-token leaderboard-role-badge-token" })
         : "";
+      const crafterRoleBadges = plb.rosterPugMasterCrafterBadgesHtml
+        ? plb.rosterPugMasterCrafterBadgesHtml(p, { className: "role-badge-group-token leaderboard-role-badge-token" })
+        : "";
+      const roleBadges = `${roleBadge}${crafterRoleBadges}`;
       /* Prefer the bundle-provided count over `_lootItems.length`, since
          loot items are now lazy-loaded on row expand and the items array
          stays empty until the user actually opens that row. */
@@ -564,7 +568,7 @@ function renderLeaderboardTable() {
           <td class="leaderboard-td-player">${playerCell}</td>
           <td class="leaderboard-td-badges">
             <div class="leaderboard-player-badges role-separated-badges">
-              ${roleBadge ? `<div class="role-badge-group"><span class="role-badge-group-label">Role</span><div class="role-badge-group-items">${roleBadge}</div></div>` : ""}
+              ${roleBadges ? `<div class="role-badge-group"><span class="role-badge-group-label">Role</span><div class="role-badge-group-items">${roleBadges}</div></div>` : ""}
               <div class="achievement-badge-group">
                 <span class="role-badge-group-label">Achievements</span>
                 <div class="raider-badges">${badges || `<span class="subtle">—</span>`}</div>
