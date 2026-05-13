@@ -2180,6 +2180,20 @@ body.framework-bg-vivid {
   transform: scale(1.08);
 }
 
+.raider-badge-slot--guild-role .achievement-badge-frame {
+  transition: none;
+  transform: none;
+}
+
+.raider-badge-slot--guild-role .achievement-badge-frame::after {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--achievement-rarity-color, rgba(163, 53, 238, 0.7)) 82%, transparent);
+}
+
+.raider-badge-slot--guild-role:hover .achievement-badge-frame,
+.raider-badge-slot--guild-role:focus-visible .achievement-badge-frame {
+  transform: none;
+}
+
 .achievement-badge-glow {
   position: absolute;
   inset: 0;
