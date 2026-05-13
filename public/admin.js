@@ -750,9 +750,8 @@ function renderRhWclTodo(payload) {
       const charHtml = chars
         .map((char) => {
           const name = String(char?.name || "");
-          const realm = String(char?.realm || "");
           const url = String(char?.url || "");
-          const label = realm ? `${name}-${realm}` : name;
+          const label = name;
           return url
             ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>`
             : `<strong>${esc(label)}</strong>`;
