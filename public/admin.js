@@ -5332,6 +5332,8 @@ function renderIdentityAccountsTable(accounts) {
     (event) => {
       const box = event.currentTarget;
       if (!(box instanceof HTMLElement)) return;
+      const middleMouseHeld = (Number(event.buttons || 0) & 4) === 4;
+      if (!middleMouseHeld) return;
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
       if (box.scrollWidth <= box.clientWidth) return;
       box.scrollLeft += event.deltaY;
