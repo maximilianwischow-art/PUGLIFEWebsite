@@ -49,6 +49,7 @@ import {
   getItemNeedsDbPath,
   rhNameKey as identityRhNameKey,
   userUpsert as identityUserUpsert,
+  userUpdateById as identityUserUpdateById,
   characterUpsert as identityCharacterUpsert,
   charactersGetByUserId as identityCharactersGetByUserId,
   charactersListAll as identityCharactersListAll,
@@ -58,6 +59,11 @@ import {
   userGetByRaidHelperKey as identityUserGetByRaidHelperKey,
   userGetByCharacterName as identityUserGetByCharacterName,
   userCount as identityUserCount,
+  characterOwnersByName as identityCharacterOwnersByName,
+  characterMoveToUser as identityCharacterMoveToUser,
+  userReplaceCharacters as identityUserReplaceCharacters,
+  userSetMainCharacter as identityUserSetMainCharacter,
+  userMergeInto as identityUserMergeInto,
   identityListLinkedCharacterNames,
   identityResolveProfilesByCharacterNames,
   identityResolveDiscordIdsByRhKey,
@@ -100,6 +106,8 @@ import {
   parseSummaryReplaceAll,
   parseSummaryGetByUserId,
   parseSummaryGetByMainCharacterIds,
+  latestRaidParseSummaryReplaceAll,
+  latestRaidParseSummaryGetAll,
   lootAwardsReplaceAll,
   lootAwardsGetAll,
   lootAwardsListRaids,
@@ -311,6 +319,7 @@ app.use("/api", async (req, res, next) => {
   if (!shouldUsePublicSnapshot(req)) return next();
   try {
     await ensurePublicDataSnapshotStore();
+    await ensureIdentityPublicSettingsStore();
     const key = publicSnapshotKeyFromRequest(req);
     const hit = publicDataSnapshotState.byKey?.[key];
     if (hit && Object.prototype.hasOwnProperty.call(hit, "payload")) {
@@ -602,10 +611,13 @@ const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
 const analyticsStorePath = path.join(dataDir, "site-analytics.json");
+const identityPublicSettingsPath = path.join(dataDir, "identity-public-settings.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
 const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
 /** Low-confidence proposals from `runSyncAccountAssignment` awaiting human Accept/Reject in the Account Assignment to-do panel. */
 const rhWclProposalsPath = path.join(dataDir, "rh-wcl-pending-proposals.json");
+/** Admin-hidden identity backlog items. This is only a UI resolution log; canonical data stays in SQLite. */
+const identityBacklogResolvedPath = path.join(dataDir, "identity-backlog-resolved.json");
 /** Rejected proposals are remembered for 30 days so a subsequent sync doesn't re-suggest the same WCL name immediately after the admin dismissed it. */
 const RH_WCL_PROPOSAL_REJECTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const apiCacheDir = path.join(dataDir, "cache");
@@ -640,10 +652,13 @@ let publicDataSnapshotReady = null;
 let publicDataSnapshotWriteChain = Promise.resolve();
 let analyticsStoreReady = null;
 let analyticsWriteChain = Promise.resolve();
+let identityPublicSettingsReady = null;
+let identityPublicSettingsWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
 let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let analyticsStoreState = { events: [] };
+let identityPublicSettingsState = { lastActivityCutoff: "" };
 let badgeTooltipsState = { byBadgeId: {} };
 let roleAlertSettingsState = { byEventId: {} };
 let discordNewsNotificationsState = { sentByKey: {}, recent: [] };
@@ -661,6 +676,9 @@ let rhWclProposalsState = {
   unassignedWclNames: [],
 };
 let rhWclProposalsWriteChain = Promise.resolve();
+let identityBacklogResolvedReady = null;
+let identityBacklogResolvedWriteChain = Promise.resolve();
+let identityBacklogResolvedState = { resolved: {} };
 const DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE = Object.freeze({ Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 });
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
@@ -1255,6 +1273,40 @@ async function ensureAnalyticsStore() {
     }
   })();
   return analyticsStoreReady;
+}
+
+function sanitizeIdentityPublicActivityCutoff(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+  const ms = new Date(`${raw}T00:00:00`).getTime();
+  return Number.isFinite(ms) ? raw : "";
+}
+
+async function persistIdentityPublicSettingsStore() {
+  const tmpPath = `${identityPublicSettingsPath}.tmp`;
+  const json = JSON.stringify(identityPublicSettingsState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, identityPublicSettingsPath);
+}
+
+async function ensureIdentityPublicSettingsStore() {
+  if (identityPublicSettingsReady) return identityPublicSettingsReady;
+  identityPublicSettingsReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(identityPublicSettingsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      identityPublicSettingsState = {
+        lastActivityCutoff: sanitizeIdentityPublicActivityCutoff(parsed?.lastActivityCutoff),
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      identityPublicSettingsState = { lastActivityCutoff: "" };
+      await persistIdentityPublicSettingsStore();
+    }
+  })();
+  return identityPublicSettingsReady;
 }
 
 async function appendAnalyticsEvent(event) {
@@ -1863,6 +1915,7 @@ function rhPrimarySignupTotalForRosterRow(rhSignupResult, attRow, stripped) {
 }
 
 async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top = 250, maxRhPastEvents = 0 } = {}) {
+  await ensureIdentityPublicSettingsStore();
   const rhSignupCounts = await countRaidHelperPrimarySignupsPerRhKey(maxRhPastEvents);
   await ensureRhWclLinksStore();
 
@@ -2163,14 +2216,36 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
     };
   });
 
-  players.sort((a, b) =>
+  const publicVisibility = identityPublicVisibilitySettingsPublic();
+  const cutoffMs = Number(publicVisibility.lastActivityCutoffMs || 0);
+  let visiblePlayers = players;
+  if (cutoffMs > 0) {
+    const usersById = new Map(identityUserListAll().map((u) => [Number(u.id), u]));
+    const charactersByUserId = identityRowsByUserId(
+      identityCharactersListAll().map(identityCharacterAdminPublic).filter(Boolean)
+    );
+    const recentWclByUserId = recentWclActivityByUserId();
+    visiblePlayers = players.filter((player) => {
+      const user = usersById.get(Number(player?.dbUserId));
+      if (!user) return false;
+      return identityUserPassesPublicActivityCutoff(
+        user,
+        charactersByUserId.get(Number(user.id)) || [],
+        recentWclByUserId
+      );
+    });
+  }
+
+  visiblePlayers.sort((a, b) =>
     String(a?.characterName || a?.name || "").localeCompare(String(b?.characterName || b?.name || ""))
   );
 
   return {
     guildId,
     consideredRaids: linkedPayload.consideredRaids,
-    activeCount: players.length,
+    activeCount: visiblePlayers.length,
+    unfilteredActiveCount: players.length,
+    publicVisibility,
     raids: attendanceSnapshots.map((raid) => ({ reportCode: raid.reportCode, startTime: raid.startTime })),
     attendanceScope: {
       only25PlayerRaids: true,
@@ -2205,7 +2280,7 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       note:
         "wclEventCount: distinct WCL guild raid reports each canonical user appeared in, scoped to `gargulLootState.selectedReportCodes` (admin Event Management). The rank pill (Peon/Grunt/Veteran) is now driven from the same set so the column and the badge always agree. Falls back to the Raid Helper signup count for one release if `raid_appearances` is empty.",
     },
-    players,
+    players: visiblePlayers,
   };
 }
 
@@ -3592,6 +3667,72 @@ async function fetchDiscordGuildRolesForNews() {
     .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
 }
 
+async function fetchDiscordGuildRolesRaw() {
+  const guildId = raidHelperDiscordGuildId();
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+    throw new Error("DISCORD_BOT_TOKEN is required to sync Discord roles");
+  }
+  if (!guildId) {
+    throw new Error("DISCORD_GUILD_ID or RAID_HELPER_SERVER_ID is required to sync Discord roles");
+  }
+  const roles = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}/roles`);
+  return Array.isArray(roles) ? roles : [];
+}
+
+function discordRoleSyncTargetRoleNames() {
+  return [
+    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Tank,
+    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Heal,
+    DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.DPS,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Core,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Veteran,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Grunt,
+    DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Peon,
+  ];
+}
+
+function discordRoleSyncRolePublic(role, botMaxPosition = 0) {
+  if (!role) return null;
+  const position = Number(role?.position || 0);
+  return {
+    id: String(role?.id || ""),
+    name: String(role?.name || ""),
+    position,
+    managed: Boolean(role?.managed),
+    assignable: !role?.managed && position > 0 && position < Number(botMaxPosition || 0),
+  };
+}
+
+async function discordRoleSyncRoleContext() {
+  const guildId = raidHelperDiscordGuildId();
+  const roles = await fetchDiscordGuildRolesRaw();
+  const me = await discordBotApi("/users/@me");
+  const botId = String(me?.id || "").trim();
+  const botMember = botId
+    ? await discordBotApi(`/guilds/${encodeURIComponent(guildId)}/members/${encodeURIComponent(botId)}`)
+    : null;
+  const botRoleIds = new Set(Array.isArray(botMember?.roles) ? botMember.roles.map((id) => String(id)) : []);
+  const botMaxPosition = roles.reduce((max, role) => {
+    const id = String(role?.id || "");
+    if (!botRoleIds.has(id)) return max;
+    return Math.max(max, Number(role?.position || 0));
+  }, 0);
+  const byNameLower = new Map();
+  for (const role of roles) {
+    const name = String(role?.name || "").trim();
+    if (name) byNameLower.set(name.toLowerCase(), role);
+  }
+  const targetRoles = discordRoleSyncTargetRoleNames().map((name) => {
+    const role = byNameLower.get(String(name).toLowerCase()) || null;
+    return {
+      name,
+      exists: Boolean(role),
+      role: discordRoleSyncRolePublic(role, botMaxPosition),
+    };
+  });
+  return { guildId, botId, botMaxPosition, roles, byNameLower, targetRoles };
+}
+
 function formatRaidHelperEventStartForDm(startTimeSec) {
   const sec = Number(startTimeSec || 0);
   if (!Number.isFinite(sec) || sec <= 0) return "unknown time";
@@ -3980,6 +4121,38 @@ function inferRoleFromClassSpecName(classNameRaw, specNameRaw, nameRaw) {
     )
   )
     return "Ranged";
+  return "";
+}
+
+const DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES = Object.freeze({
+  Tank: "Tank",
+  Heal: "Heal",
+  DPS: "DPS",
+});
+const DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES = Object.freeze({
+  Core: "PLB CORE",
+  Veteran: "PLB Veteran",
+  Grunt: "PLB Grunt",
+  Peon: "PLB Peon",
+});
+const DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES = new Set(["Pug Lead", "Raid Lead", "Heal Lead", "DPS Lead", "Core"]);
+
+function discordRoleSyncGuildRoleName(guildRoleRaw) {
+  const role = normalizeRhWclGuildRole(guildRoleRaw);
+  if (DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES.has(role)) return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Core;
+  if (role === "Veteran") return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Veteran;
+  if (role === "Grunt") return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Grunt;
+  return DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES.Peon;
+}
+
+function discordRoleSyncCombatRoleName(candidate) {
+  const roles = Array.isArray(candidate?.roles) ? candidate.roles.map((r) => normalizeNeedRoleKey(r)).filter(Boolean) : [];
+  if (roles.includes("Tanks")) return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Tank;
+  if (roles.includes("Healers")) return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Heal;
+  const inferred = inferRoleFromClassSpecName(candidate?.recentClass || "", candidate?.recentSpec || "", candidate?.displayName || "");
+  if (inferred === "Tanks") return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Tank;
+  if (inferred === "Healers") return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.Heal;
+  if (inferred || candidate?.recentClass || candidate?.recentSpec) return DISCORD_ROLE_SYNC_COMBAT_ROLE_NAMES.DPS;
   return "";
 }
 
@@ -4444,6 +4617,211 @@ async function buildCustomDmCandidates(maxPastEvents = 120) {
   return { candidates, subscribedById };
 }
 
+async function buildDiscordRoleSyncCandidates() {
+  await ensureRhWclLinksStore();
+  const byDiscordId = new Map();
+  const upsertCandidate = (discordUserIdRaw, patch = {}) => {
+    const discordUserId = sanitizeDiscordUserId(discordUserIdRaw);
+    if (!discordUserId) return null;
+    const prev =
+      byDiscordId.get(discordUserId) || {
+        userId: discordUserId,
+        displayName: "",
+        raidHelperName: "",
+        recentClass: "",
+        recentSpec: "",
+        roles: [],
+        guildRole: "Peon",
+        raidsSeen: 0,
+        sources: [],
+      };
+    const next = { ...prev };
+    for (const key of ["displayName", "raidHelperName", "recentClass", "recentSpec"]) {
+      if (!next[key] && patch[key]) next[key] = String(patch[key] || "").trim();
+    }
+    if (patch.guildRole && (!next.guildRole || next.guildRole === "Peon")) {
+      next.guildRole = normalizeRhWclGuildRole(patch.guildRole);
+    }
+    if (Array.isArray(patch.roles) && patch.roles.length) {
+      next.roles = [...new Set([...(next.roles || []), ...patch.roles.map((r) => normalizeNeedRoleKey(r)).filter(Boolean)])];
+    }
+    if (Number(patch.raidsSeen || 0) > Number(next.raidsSeen || 0)) next.raidsSeen = Number(patch.raidsSeen || 0);
+    if (patch.source) next.sources = [...new Set([...(next.sources || []), String(patch.source)])];
+    byDiscordId.set(discordUserId, next);
+    return next;
+  };
+
+  for (const link of rhWclLinksState.links || []) {
+    upsertCandidate(link?.discordUserId, {
+      displayName: link?.raidHelperName || "",
+      raidHelperName: link?.raidHelperName || "",
+      guildRole: link?.guildRole || "Peon",
+      source: "account-assignment",
+    });
+  }
+
+  try {
+    const users = identityUserListAll();
+    const characters = identityCharactersListAll({});
+    const charsByUserId = new Map();
+    for (const character of characters) {
+      const list = charsByUserId.get(Number(character.userId)) || [];
+      list.push(character);
+      charsByUserId.set(Number(character.userId), list);
+    }
+    for (const user of users) {
+      const discordUserId = sanitizeDiscordUserId(user?.discordUserId);
+      if (!discordUserId) continue;
+      const chars = charsByUserId.get(Number(user.id)) || [];
+      const preferredChar =
+        chars.find((char) => Number(char.id) === Number(user.mainCharacterId)) ||
+        chars.find((char) => char.wowSpec || char.wowClass) ||
+        chars[0] ||
+        null;
+      upsertCandidate(discordUserId, {
+        displayName: user.displayName || user.raidHelperName || preferredChar?.characterName || "",
+        raidHelperName: user.raidHelperName || "",
+        guildRole: user.guildRole || "Peon",
+        recentClass: preferredChar?.wowClass || "",
+        recentSpec: preferredChar?.wowSpec || "",
+        source: "identity-db",
+      });
+    }
+  } catch (error) {
+    console.warn("[discord-role-sync] identity candidate load failed:", error?.message || error);
+  }
+
+  try {
+    const { candidates } = await buildCustomDmCandidates(120);
+    for (const row of candidates || []) {
+      upsertCandidate(row?.userId, {
+        displayName: row?.displayName || "",
+        guildRole: row?.guildRole || "Peon",
+        recentClass: row?.recentClass || "",
+        recentSpec: row?.recentSpec || "",
+        roles: row?.roles || [],
+        raidsSeen: row?.raidsSeen || 0,
+        source: "raid-helper-history",
+      });
+    }
+  } catch (error) {
+    console.warn("[discord-role-sync] Raid Helper candidate load failed:", error?.message || error);
+  }
+
+  return [...byDiscordId.values()]
+    .map((row) => {
+      const combatRoleName = discordRoleSyncCombatRoleName(row);
+      const rankRoleName = discordRoleSyncGuildRoleName(row.guildRole);
+      return {
+        ...row,
+        displayName: row.displayName || row.raidHelperName || row.userId,
+        guildRole: normalizeRhWclGuildRole(row.guildRole),
+        combatRoleName,
+        rankRoleName,
+        desiredRoleNames: [...new Set([combatRoleName, rankRoleName].filter(Boolean))],
+      };
+    })
+    .sort((a, b) => String(a.displayName || "").localeCompare(String(b.displayName || "")));
+}
+
+async function buildDiscordRoleSyncPreview() {
+  const context = await discordRoleSyncRoleContext();
+  const candidates = await buildDiscordRoleSyncCandidates();
+  const roleByNameLower = context.byNameLower;
+  const rows = await mapWithConcurrency(candidates, 4, async (candidate) => {
+    const warnings = [];
+    let member = null;
+    try {
+      member = await discordBotApi(
+        `/guilds/${encodeURIComponent(context.guildId)}/members/${encodeURIComponent(candidate.userId)}`
+      );
+    } catch (error) {
+      warnings.push(error?.message || "Failed to load Discord member");
+    }
+    const currentRoleIds = new Set(Array.isArray(member?.roles) ? member.roles.map((id) => String(id)) : []);
+    const desiredRoles = candidate.desiredRoleNames.map((name) => {
+      const role = roleByNameLower.get(String(name).toLowerCase()) || null;
+      const publicRole = discordRoleSyncRolePublic(role, context.botMaxPosition);
+      let status = "missing";
+      if (!member?.user?.id) {
+        status = "not-in-guild";
+      } else if (publicRole) {
+        if (currentRoleIds.has(publicRole.id)) status = "already";
+        else if (publicRole.managed) status = "managed";
+        else if (!publicRole.assignable) status = "unassignable";
+        else status = "will-add";
+      }
+      return { name, role: publicRole, status };
+    });
+    if (!candidate.combatRoleName) warnings.push("No combat role signal yet");
+    return {
+      ...candidate,
+      inGuild: Boolean(member?.user?.id),
+      currentRoleIds: [...currentRoleIds],
+      desiredRoles,
+      rolesToAdd: desiredRoles.filter((role) => role.status === "will-add"),
+      warnings,
+    };
+  });
+  const setupWarnings = [];
+  for (const target of context.targetRoles) {
+    if (!target.exists) setupWarnings.push(`Missing Discord role: ${target.name}`);
+    else if (target.role?.managed) setupWarnings.push(`Discord role is managed and cannot be assigned: ${target.name}`);
+    else if (!target.role?.assignable) setupWarnings.push(`Move the bot role above Discord role: ${target.name}`);
+  }
+  return {
+    ok: true,
+    mode: "add-only",
+    guildId: context.guildId,
+    botId: context.botId,
+    botMaxPosition: context.botMaxPosition,
+    targetRoles: context.targetRoles,
+    setupWarnings,
+    rows,
+    summary: {
+      candidates: rows.length,
+      usersWithRolesToAdd: rows.filter((row) => row.rolesToAdd.length > 0).length,
+      rolesToAdd: rows.reduce((sum, row) => sum + row.rolesToAdd.length, 0),
+      missingRoleTargets: context.targetRoles.filter((target) => !target.exists).length,
+      blockedRoleTargets: context.targetRoles.filter((target) => target.exists && !target.role?.assignable).length,
+    },
+  };
+}
+
+async function runDiscordRoleSyncAddOnly() {
+  const preview = await buildDiscordRoleSyncPreview();
+  const results = [];
+  for (const row of preview.rows) {
+    for (const roleTarget of row.rolesToAdd || []) {
+      const roleId = String(roleTarget?.role?.id || "");
+      if (!roleId) continue;
+      try {
+        await discordBotApi(
+          `/guilds/${encodeURIComponent(preview.guildId)}/members/${encodeURIComponent(row.userId)}/roles/${encodeURIComponent(roleId)}`,
+          { method: "PUT" }
+        );
+        results.push({ userId: row.userId, displayName: row.displayName, roleName: roleTarget.name, ok: true });
+      } catch (error) {
+        results.push({
+          userId: row.userId,
+          displayName: row.displayName,
+          roleName: roleTarget.name,
+          ok: false,
+          error: error?.message || "Failed to assign role",
+        });
+      }
+    }
+  }
+  return {
+    ok: true,
+    mode: "add-only",
+    previewSummary: preview.summary,
+    results,
+    assigned: results.filter((row) => row.ok).length,
+    failed: results.filter((row) => !row.ok).length,
+  };
+}
+
 async function isDiscordGuildMemberViaBot(userId, guildId) {
   const botToken = String(process.env.DISCORD_BOT_TOKEN || "").trim();
   if (!botToken || !guildId || !userId) return null;
@@ -4587,9 +4965,16 @@ function publicSnapshotKeyFromRequest(req) {
   const params = new URLSearchParams(req.query || {});
   params.delete("live");
   params.delete("snapshot_refresh");
+  const path = snapshotOriginalPath(req);
+  const cutoff = sanitizeIdentityPublicActivityCutoff(identityPublicSettingsState?.lastActivityCutoff);
+  if (
+    cutoff &&
+    (path === "/api/leaderboard" || /^\/api\/wcl\/guild\/\d+\/active-roster$/.test(path))
+  ) {
+    params.set("_identityActivityCutoff", cutoff);
+  }
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
-  const path = snapshotOriginalPath(req);
   return query ? `${path}?${query}` : path;
 }
 
@@ -4633,6 +5018,24 @@ async function upsertPublicSnapshotForKey(key, payload) {
   publicDataSnapshotWriteChain = publicDataSnapshotWriteChain
     .then(() => persistPublicDataSnapshotStore())
     .catch((error) => console.error("[public-snapshot] persist failed:", error?.message || error));
+  await publicDataSnapshotWriteChain;
+}
+
+async function invalidatePublicIdentityVisibilitySnapshots() {
+  await ensurePublicDataSnapshotStore();
+  let changed = false;
+  for (const key of Object.keys(publicDataSnapshotState.byKey || {})) {
+    const keyPath = String(key || "").split("?")[0];
+    if (keyPath === "/api/leaderboard" || /^\/api\/wcl\/guild\/\d+\/active-roster$/.test(keyPath)) {
+      delete publicDataSnapshotState.byKey[key];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  publicDataSnapshotState.updatedAt = Date.now();
+  publicDataSnapshotWriteChain = publicDataSnapshotWriteChain
+    .then(() => persistPublicDataSnapshotStore())
+    .catch((error) => console.error("[public-snapshot] invalidate failed:", error?.message || error));
   await publicDataSnapshotWriteChain;
 }
 
@@ -4707,6 +5110,14 @@ async function ensureRhWclLinksStore() {
       const tmpPath = `${rhWclCharacterLinksPath}.tmp`;
       await writeFile(tmpPath, JSON.stringify(rhWclLinksState, null, 2), "utf8");
       await rename(tmpPath, rhWclCharacterLinksPath);
+    }
+    try {
+      const canonicalLinks = identityLinkRowsFromDb();
+      if (canonicalLinks.length) {
+        rhWclLinksState = { links: canonicalLinks };
+      }
+    } catch (error) {
+      console.warn("[identity] failed to hydrate legacy link export from SQLite:", error?.message || error);
     }
   })();
   return rhWclLinksReady;
@@ -4804,6 +5215,45 @@ async function persistRhWclProposalsStore() {
   const json = JSON.stringify(rhWclProposalsState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, rhWclProposalsPath);
+}
+
+function sanitizeIdentityBacklogResolvedState(raw) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const resolved = {};
+  const source = input.resolved && typeof input.resolved === "object" ? input.resolved : {};
+  const entries = Object.entries(source).slice(-1000);
+  for (const [idRaw, rowRaw] of entries) {
+    const id = String(idRaw || "").trim().slice(0, 160);
+    if (!id) continue;
+    const row = rowRaw && typeof rowRaw === "object" ? rowRaw : {};
+    resolved[id] = {
+      resolvedAt: Number(row.resolvedAt || 0) || Date.now(),
+      resolvedBy: String(row.resolvedBy || "").trim().slice(0, 100),
+      note: String(row.note || "").trim().slice(0, 240),
+    };
+  }
+  return { resolved };
+}
+
+async function ensureIdentityBacklogResolvedStore() {
+  if (identityBacklogResolvedReady) return identityBacklogResolvedReady;
+  identityBacklogResolvedReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(identityBacklogResolvedPath, "utf8");
+      identityBacklogResolvedState = sanitizeIdentityBacklogResolvedState(JSON.parse(raw));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      identityBacklogResolvedState = sanitizeIdentityBacklogResolvedState({});
+    }
+  })();
+  return identityBacklogResolvedReady;
+}
+
+async function persistIdentityBacklogResolvedStore() {
+  const tmpPath = `${identityBacklogResolvedPath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(identityBacklogResolvedState, null, 2), "utf8");
+  await rename(tmpPath, identityBacklogResolvedPath);
 }
 
 function discordProfileIngestProposalId(discordUserId, characters) {
@@ -4985,6 +5435,7 @@ function dualWriteRhWclLinksToIdentityDb(links) {
     const raidHelperName = String(link?.raidHelperName || "").trim();
     if (!raidHelperName) continue;
     const discordUserId = sanitizeDiscordUserId(link?.discordUserId);
+    if (!discordUserId) continue;
     const guildRole = link?.guildRole ? String(link.guildRole).trim() : null;
     const wclCharacterNames = Array.isArray(link?.wclCharacterNames)
       ? link.wclCharacterNames.map((n) => String(n || "").trim()).filter(Boolean)
@@ -5009,10 +5460,137 @@ function dualWriteRhWclLinksToIdentityDb(links) {
   }
 }
 
+function identityLinkRowsFromDb() {
+  const users = identityUserListAll();
+  return sortRhWclLinkRows(
+    users
+      .map((user) => {
+        const characters = identityCharactersGetByUserId(user.id);
+        const mainCharacter = characters.find((char) => Number(char.id) === Number(user.mainCharacterId)) || null;
+        return {
+          discordUserId: user.discordUserId || "",
+          raidHelperName: user.raidHelperName || user.displayName || mainCharacter?.characterName || "",
+          guildRole: normalizeRhWclGuildRole(user.guildRole || "Peon"),
+          mainCharacterName: mainCharacter?.characterName || "",
+          wclCharacterNames: characters.map((char) => char.characterName).filter(Boolean),
+          wclSources: characters.map((char) => char.discoveredVia || "identity-db"),
+          wclGuessConfidence: characters.map(() => null),
+        };
+      })
+      .filter((row) => row.raidHelperName || row.discordUserId || row.wclCharacterNames.length)
+  );
+}
+
+async function exportIdentityLinksToRhWclStore() {
+  const links = identityLinkRowsFromDb();
+  rhWclLinksState = { links };
+  const tmpPath = `${rhWclCharacterLinksPath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(rhWclLinksState, null, 2), "utf8");
+  await rename(tmpPath, rhWclCharacterLinksPath);
+  return links;
+}
+
+function assertIdentityCharacterOwnership(characterNames, targetUserId) {
+  const target = Number(targetUserId);
+  for (const characterName of characterNames) {
+    const owners = identityCharacterOwnersByName(characterName);
+    const conflicting = owners.filter((row) => Number(row.userId) !== target);
+    if (conflicting.length) {
+      const owner = conflicting[0]?.owner || {};
+      throw new Error(
+        `Character ${characterName} is already assigned to ${owner.displayName || owner.raidHelperName || owner.discordUserId || `user ${owner.id}`}`
+      );
+    }
+  }
+}
+
+function discordIdFromRaidHelperNameCache(raidHelperName) {
+  const targetKey = normalizeRaidHelperDisplayKey(raidHelperName);
+  if (!targetKey) return "";
+  for (const [discordUserId, entry] of Object.entries(discordIdToRhNameState?.byUserId || {})) {
+    const id = sanitizeDiscordUserId(discordUserId);
+    if (!id) continue;
+    const key = normalizeRaidHelperDisplayKey(String(entry?.rhName || ""));
+    if (key && key === targetKey) return id;
+  }
+  return "";
+}
+
+function upsertIdentityFromRhWclRow(row, { source = "identity:account-assignment", requireDiscordId = true } = {}) {
+  const raidHelperName = String(row?.raidHelperName || "").trim();
+  const discordUserId = sanitizeDiscordUserId(row?.discordUserId) || discordIdFromRaidHelperNameCache(raidHelperName);
+  if (requireDiscordId && !discordUserId) {
+    throw new Error(`Discord ID is required for ${raidHelperName || "identity row"}`);
+  }
+  const characterNames = Array.isArray(row?.wclCharacterNames)
+    ? row.wclCharacterNames.map((name) => String(name || "").trim()).filter(Boolean)
+    : [];
+  const user = identityUserUpsert({
+    discordUserId: discordUserId || null,
+    raidHelperName: raidHelperName || characterNames[0] || null,
+    displayName: raidHelperName || characterNames[0] || discordUserId || null,
+    guildRole: normalizeRhWclGuildRole(row?.guildRole || "Peon"),
+    source,
+  });
+  assertIdentityCharacterOwnership(characterNames, user.id);
+  const characters = identityUserReplaceCharacters({
+    userId: user.id,
+    characters: characterNames.map((characterName) => ({
+      characterName,
+      discoveredVia: "account-assignment",
+    })),
+    source,
+  });
+  const mainRaw = String(row?.mainCharacterName || "").trim();
+  if (mainRaw) {
+    const main = characters.find((char) => char.characterName.toLowerCase() === mainRaw.toLowerCase());
+    if (main) {
+      // Main-character metadata is handled by the profile APIs; preserving the
+      // row flag here keeps Account Assignment imports aligned when present.
+      identityCharacterUpsert({
+        userId: user.id,
+        characterName: main.characterName,
+        isMain: true,
+        source,
+      });
+    }
+  }
+  return user;
+}
+
+async function replaceIdentityFromRhWclRows(rows, { source = "identity:account-assignment", requireDiscordId = true } = {}) {
+  const sanitized = sanitizeRhWclLinksPayload(rows);
+  const seenDiscordIds = new Set();
+  const seenCharacters = new Map();
+  for (const row of sanitized.links) {
+    const discordUserId = sanitizeDiscordUserId(row.discordUserId);
+    if (requireDiscordId && !discordUserId) throw new Error(`Discord ID is required for ${row.raidHelperName}`);
+    if (discordUserId) {
+      if (seenDiscordIds.has(discordUserId)) throw new Error(`Duplicate Discord ID in payload: ${discordUserId}`);
+      seenDiscordIds.add(discordUserId);
+    }
+    for (const characterName of row.wclCharacterNames || []) {
+      const key = identityRhNameKey(characterName);
+      if (!key) continue;
+      if (seenCharacters.has(key)) throw new Error(`Character ${characterName} appears on multiple identity rows`);
+      seenCharacters.set(key, row.raidHelperName);
+    }
+  }
+  for (const row of sanitized.links) {
+    upsertIdentityFromRhWclRow(row, { source, requireDiscordId });
+  }
+  return exportIdentityLinksToRhWclStore();
+}
+
 /** Canonical character roster rows (sorted: unassigned first). Single source with attendance + public `/api/wcl/guild/.../characters`. */
 async function getGuildCharacterLinkRows() {
-  await ensureRhWclLinksStore();
-  return sortRhWclLinkRows(rhWclLinksState.links || []);
+  try {
+    return identityLinkRowsFromDb();
+  } catch (error) {
+    console.warn("[identity] canonical link rows failed, falling back to legacy export:", error?.message || error);
+    await ensureRhWclLinksStore();
+    return sortRhWclLinkRows(rhWclLinksState.links || []);
+  }
 }
 
 /**
@@ -6308,6 +6886,28 @@ app.get("/api/admin/custom-dm/candidates", async (req, res) => {
   }
 });
 
+app.get("/api/admin/discord-role-sync/preview", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const payload = await buildDiscordRoleSyncPreview();
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to preview Discord role sync" });
+  }
+});
+
+app.post("/api/admin/discord-role-sync/run", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const payload = await runDiscordRoleSyncAddOnly();
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to run Discord role sync" });
+  }
+});
+
 app.post("/api/admin/custom-dm/send", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
@@ -7312,6 +7912,638 @@ app.get("/api/admin/identity-diff", async (req, res) => {
   }
 });
 
+function identityRowsByUserId(rows) {
+  const out = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const userId = Number(row?.userId);
+    if (!Number.isInteger(userId) || userId <= 0) continue;
+    if (!out.has(userId)) out.set(userId, []);
+    out.get(userId).push(row);
+  }
+  return out;
+}
+
+app.get("/api/admin/identity-audit", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureRhWclLinksStore();
+    const users = identityUserListAll();
+    const characters = identityCharactersListAll();
+    const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+    const usersById = new Map(users.map((user) => [Number(user.id), user]));
+    const charactersByUserId = identityRowsByUserId(characters);
+
+    const byDiscord = new Map();
+    for (const user of users) {
+      const id = sanitizeDiscordUserId(user.discordUserId);
+      if (!id) continue;
+      if (!byDiscord.has(id)) byDiscord.set(id, []);
+      byDiscord.get(id).push(user);
+    }
+    const duplicateDiscordIds = [...byDiscord.entries()]
+      .filter(([, rows]) => rows.length > 1)
+      .map(([discordUserId, rows]) => ({ discordUserId, users: rows }));
+
+    const byCharacterKey = new Map();
+    for (const character of characters) {
+      const key = identityRhNameKey(character.characterName);
+      if (!key) continue;
+      if (!byCharacterKey.has(key)) byCharacterKey.set(key, []);
+      byCharacterKey.get(key).push(character);
+    }
+    const duplicateCharacterOwnership = [...byCharacterKey.entries()]
+      .filter(([, rows]) => new Set(rows.map((row) => Number(row.userId))).size > 1)
+      .map(([characterNameKey, rows]) => ({
+        characterNameKey,
+        characterName: rows[0]?.characterName || characterNameKey,
+        owners: rows.map((row) => {
+          const owner = usersById.get(Number(row.userId));
+          return {
+            character: row,
+            user: owner
+              ? {
+                  id: owner.id,
+                  discordUserId: owner.discordUserId || null,
+                  raidHelperName: owner.raidHelperName || null,
+                  displayName: owner.displayName || null,
+                }
+              : null,
+          };
+        }),
+      }));
+
+    const accountsWithoutDiscordId = users
+      .filter((user) => !sanitizeDiscordUserId(user.discordUserId))
+      .map((user) => ({
+        id: user.id,
+        raidHelperName: user.raidHelperName || null,
+        displayName: user.displayName || null,
+        guildRole: user.guildRole || null,
+        characters: (charactersByUserId.get(Number(user.id)) || []).map((row) => row.characterName),
+      }));
+
+    const charactersMissingSpec = characters
+      .filter((row) => !String(row.wowClass || "").trim() || !String(row.wowSpec || "").trim())
+      .map((row) => {
+        const user = usersById.get(Number(row.userId));
+        return {
+          ...row,
+          discordUserId: user?.discordUserId || null,
+          ownerName: user?.displayName || user?.raidHelperName || null,
+        };
+      });
+
+    const dbByDiscord = new Map(users.filter((user) => user.discordUserId).map((user) => [user.discordUserId, user]));
+    const dbByRhKey = new Map(users.filter((user) => user.raidHelperNameKey).map((user) => [user.raidHelperNameKey, user]));
+    const jsonVsSqliteDrift = [];
+    for (const link of links) {
+      const rhName = String(link?.raidHelperName || "").trim();
+      const rhKey = identityRhNameKey(rhName);
+      const discordUserId = sanitizeDiscordUserId(link?.discordUserId);
+      const dbUser = (discordUserId && dbByDiscord.get(discordUserId)) || (rhKey && dbByRhKey.get(rhKey)) || null;
+      if (!dbUser) {
+        jsonVsSqliteDrift.push({ kind: "missing-from-sqlite", link });
+        continue;
+      }
+      const dbCharacters = charactersByUserId.get(Number(dbUser.id)) || [];
+      const dbCharacterKeys = new Set(dbCharacters.map((row) => identityRhNameKey(row.characterName)).filter(Boolean));
+      const missingCharacters = (Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []).filter(
+        (name) => !dbCharacterKeys.has(identityRhNameKey(name))
+      );
+      const fields = {};
+      if ((discordUserId || null) !== (dbUser.discordUserId || null)) fields.discordUserId = { json: discordUserId || null, sqlite: dbUser.discordUserId || null };
+      if ((normalizeRhWclGuildRole(link?.guildRole) || null) !== (normalizeRhWclGuildRole(dbUser.guildRole) || null)) fields.guildRole = { json: link?.guildRole || null, sqlite: dbUser.guildRole || null };
+      if (missingCharacters.length) fields.missingCharacters = missingCharacters;
+      if (Object.keys(fields).length) jsonVsSqliteDrift.push({ kind: "field-drift", link, sqliteUserId: dbUser.id, fields });
+    }
+
+    const counts = {
+      users: users.length,
+      characters: characters.length,
+      duplicateDiscordIds: duplicateDiscordIds.length,
+      duplicateCharacterOwnership: duplicateCharacterOwnership.length,
+      accountsWithoutDiscordId: accountsWithoutDiscordId.length,
+      jsonVsSqliteDrift: jsonVsSqliteDrift.length,
+      charactersMissingSpec: charactersMissingSpec.length,
+    };
+    return res.json({
+      ok: true,
+      counts,
+      duplicateDiscordIds: duplicateDiscordIds.slice(0, 100),
+      duplicateCharacterOwnership: duplicateCharacterOwnership.slice(0, 100),
+      accountsWithoutDiscordId: accountsWithoutDiscordId.slice(0, 200),
+      jsonVsSqliteDrift: jsonVsSqliteDrift.slice(0, 200),
+      charactersMissingSpec: charactersMissingSpec.slice(0, 300),
+      checkedAt: Date.now(),
+    });
+  } catch (error) {
+    console.error("[identity-audit] failed:", error?.stack || error);
+    return res.status(500).json({ ok: false, error: error?.message || "identity audit failed" });
+  }
+});
+
+function identityBacklogItemId(parts) {
+  return createHash("sha1")
+    .update((Array.isArray(parts) ? parts : [parts]).map((part) => String(part ?? "")).join("|"))
+    .digest("hex")
+    .slice(0, 20);
+}
+
+function identityBacklogAction(id, label, kind, payload = {}, danger = false) {
+  return { id, label, kind, payload, danger: Boolean(danger) };
+}
+
+app.get("/api/admin/identity-backlog", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await Promise.all([
+      ensureRhWclLinksStore(),
+      ensureRhWclProposalsStore(),
+      ensureDiscordProfileIngestStore(),
+      ensureIdentityBacklogResolvedStore(),
+    ]);
+    pruneExpiredRhWclRejections();
+
+    const resolvedIds = new Set(Object.keys(identityBacklogResolvedState.resolved || {}));
+    const users = identityUserListAll();
+    const characters = identityCharactersListAll();
+    const usersById = new Map(users.map((user) => [Number(user.id), user]));
+    const charactersByUserId = identityRowsByUserId(characters);
+    const items = [];
+    const addItem = (item) => {
+      const id = String(item?.id || "").trim();
+      if (!id || resolvedIds.has(id)) return;
+      items.push({
+        priority: "medium",
+        source: "identity",
+        createdAt: 0,
+        actions: [],
+        ...item,
+        id,
+      });
+    };
+
+    for (const proposal of rhWclProposalsState.proposals || []) {
+      const wcl = String(proposal?.wclCharacterName || "").trim();
+      const rh = String(proposal?.suggestedRaidHelperName || "").trim();
+      if (!wcl || !rh) continue;
+      addItem({
+        id: `rh-wcl:${identityBacklogItemId([wcl, rh])}`,
+        type: "rh-wcl-proposal",
+        source: "WCL/Raid Helper",
+        priority: Number(proposal?.score || 0) >= 80 ? "medium" : "low",
+        title: `Review character match: ${wcl}`,
+        description: `Suggested account: ${rh}. Confidence ${Number.isFinite(Number(proposal?.score)) ? `${Math.round(Number(proposal.score))}%` : "unknown"}.`,
+        data: proposal,
+        actions: [
+          identityBacklogAction("accept", "Accept", "accept-rh-wcl-proposal", { wclCharacterName: wcl, raidHelperName: rh }),
+          identityBacklogAction("accept-verify", "Accept and verify", "accept-rh-wcl-proposal", { wclCharacterName: wcl, raidHelperName: rh, verify: true }),
+          identityBacklogAction("reject", "Reject", "reject-rh-wcl-proposal", { wclCharacterName: wcl }, true),
+        ],
+      });
+    }
+
+    const pendingProfileProposals = (discordProfileIngestState.proposals || []).filter(
+      (proposal) => String(proposal?.status || "pending") === "pending"
+    );
+    for (const proposal of pendingProfileProposals) {
+      const display = String(proposal.discordDisplayName || proposal.discordUsername || proposal.discordUserId || "").trim();
+      const characters = (proposal.characters || []).map((char) => String(char?.name || "").trim()).filter(Boolean);
+      addItem({
+        id: `discord-profile:${proposal.id}`,
+        type: "discord-profile-proposal",
+        source: "Discord profile posts",
+        priority: "high",
+        title: `Profile post from ${display || proposal.discordUserId}`,
+        description: characters.length ? `Link ${characters.join(", ")} to Discord ID ${proposal.discordUserId}.` : `Link profile post to Discord ID ${proposal.discordUserId}.`,
+        createdAt: Number(proposal.discoveredAt || proposal.postedAt || 0) || 0,
+        data: proposal,
+        actions: [
+          identityBacklogAction("accept", "Accept", "accept-discord-profile", { proposalId: proposal.id }),
+          identityBacklogAction("reject", "Reject", "reject-discord-profile", { proposalId: proposal.id }, true),
+        ],
+      });
+    }
+
+    const characterOwners = new Map();
+    for (const character of characters) {
+      const key = identityRhNameKey(character.characterName);
+      if (!key) continue;
+      if (!characterOwners.has(key)) characterOwners.set(key, []);
+      characterOwners.get(key).push(character);
+    }
+    for (const [key, rows] of characterOwners) {
+      const userIds = [...new Set(rows.map((row) => Number(row.userId)).filter(Boolean))];
+      if (userIds.length <= 1) continue;
+      addItem({
+        id: `duplicate-character:${key}`,
+        type: "duplicate-character",
+        source: "Identity audit",
+        priority: "high",
+        title: `Character belongs to multiple accounts: ${rows[0]?.characterName || key}`,
+        description: `Owners: ${userIds.map((id) => usersById.get(id)?.displayName || usersById.get(id)?.raidHelperName || `user #${id}`).join(", ")}.`,
+        data: { characterNameKey: key, owners: rows.map((row) => ({ character: row, user: usersById.get(Number(row.userId)) || null })) },
+        actions: [
+          identityBacklogAction("move", "Move character", "move-character", { characterId: rows[0]?.id || null }),
+          identityBacklogAction("resolve", "Mark resolved", "resolve-backlog-item", { itemId: `duplicate-character:${key}` }),
+        ],
+      });
+    }
+
+    const discordOwners = new Map();
+    for (const user of users) {
+      const discordUserId = sanitizeDiscordUserId(user.discordUserId);
+      if (!discordUserId) continue;
+      if (!discordOwners.has(discordUserId)) discordOwners.set(discordUserId, []);
+      discordOwners.get(discordUserId).push(user);
+    }
+    for (const [discordUserId, rows] of discordOwners) {
+      if (rows.length <= 1) continue;
+      addItem({
+        id: `duplicate-discord:${discordUserId}`,
+        type: "duplicate-discord",
+        source: "Identity audit",
+        priority: "high",
+        title: `Discord ID has multiple accounts: ${discordUserId}`,
+        description: rows.map((row) => row.displayName || row.raidHelperName || `user #${row.id}`).join(", "),
+        data: { discordUserId, users: rows },
+        actions: [
+          identityBacklogAction("merge", "Merge users", "merge-users", { sourceUserId: rows[1]?.id || null, targetUserId: rows[0]?.id || null }),
+          identityBacklogAction("resolve", "Mark resolved", "resolve-backlog-item", { itemId: `duplicate-discord:${discordUserId}` }),
+        ],
+      });
+    }
+
+    for (const user of users) {
+      if (sanitizeDiscordUserId(user.discordUserId)) continue;
+      const linkedCharacters = charactersByUserId.get(Number(user.id)) || [];
+      addItem({
+        id: `missing-discord:${user.id}`,
+        type: "missing-discord-id",
+        source: "Identity audit",
+        priority: "high",
+        title: `Missing Discord ID: ${user.displayName || user.raidHelperName || `User #${user.id}`}`,
+        description: linkedCharacters.length
+          ? `Characters: ${linkedCharacters.map((row) => row.characterName).join(", ")}.`
+          : "Add the Discord ID so this account can be pinged, DMed, and role-synced.",
+        data: { user, characters: linkedCharacters },
+        actions: [
+          identityBacklogAction("add-discord-id", "Add Discord ID", "add-discord-id", { userId: user.id }),
+          identityBacklogAction("resolve", "Mark resolved", "resolve-backlog-item", { itemId: `missing-discord:${user.id}` }),
+        ],
+      });
+    }
+
+    for (const link of rhWclLinksState.links || []) {
+      const raidHelperName = String(link?.raidHelperName || "").trim();
+      if (!raidHelperName || sanitizeDiscordUserId(link?.discordUserId)) continue;
+      const key = identityRhNameKey(raidHelperName);
+      const matchedUser = key ? users.find((user) => user.raidHelperNameKey === key) : null;
+      if (matchedUser && !sanitizeDiscordUserId(matchedUser.discordUserId)) continue;
+      addItem({
+        id: `missing-discord-link:${key || identityBacklogItemId(raidHelperName)}`,
+        type: "missing-discord-id",
+        source: "Automation backlog",
+        priority: "high",
+        title: `Missing Discord ID: ${raidHelperName}`,
+        description: "This automated match is waiting for a Discord ID before it can become a canonical account.",
+        data: { link },
+        actions: [
+          identityBacklogAction("add-discord-id", "Add Discord ID", "add-discord-id-row", { row: link }),
+          identityBacklogAction("resolve", "Mark resolved", "resolve-backlog-item", { itemId: `missing-discord-link:${key || identityBacklogItemId(raidHelperName)}` }),
+        ],
+      });
+    }
+
+    for (const character of characters) {
+      if (String(character.wowClass || "").trim() && String(character.wowSpec || "").trim()) continue;
+      const user = usersById.get(Number(character.userId));
+      addItem({
+        id: `missing-spec:${character.id}`,
+        type: "missing-spec",
+        source: "Spec enrichment",
+        priority: "low",
+        title: `Missing class/spec: ${character.characterName}`,
+        description: `Owner: ${user?.displayName || user?.raidHelperName || user?.discordUserId || `user #${character.userId}`}. Run spec sync or update after logs/profile data appear.`,
+        data: { character, user },
+        actions: [
+          identityBacklogAction("run-spec-sync", "Run spec sync", "run-sync-task", { taskId: "character-specs" }),
+          identityBacklogAction("resolve", "Mark resolved", "resolve-backlog-item", { itemId: `missing-spec:${character.id}` }),
+        ],
+      });
+    }
+
+    const counts = items.reduce(
+      (acc, item) => {
+        acc.total += 1;
+        acc.byPriority[item.priority] = (acc.byPriority[item.priority] || 0) + 1;
+        acc.byType[item.type] = (acc.byType[item.type] || 0) + 1;
+        return acc;
+      },
+      { total: 0, byPriority: {}, byType: {} }
+    );
+    const priorityRank = { high: 0, medium: 1, low: 2 };
+    items.sort((a, b) => (priorityRank[a.priority] ?? 9) - (priorityRank[b.priority] ?? 9) || Number(b.createdAt || 0) - Number(a.createdAt || 0) || String(a.title).localeCompare(String(b.title)));
+    const payload = {
+      ok: true,
+      counts,
+      items: items.slice(0, 500),
+      generatedAt: Date.now(),
+      resolvedCount: resolvedIds.size,
+    };
+    return res.json(payload);
+  } catch (error) {
+    console.error("[identity-backlog] failed:", error?.stack || error);
+    return res.status(500).json({ ok: false, error: error?.message || "identity backlog failed" });
+  }
+});
+
+app.post("/api/admin/identity-backlog/resolve", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const itemId = String(req.body?.itemId || "").trim().slice(0, 160);
+  if (!itemId) return res.status(400).json({ ok: false, error: "itemId is required" });
+  try {
+    await ensureIdentityBacklogResolvedStore();
+    const adminLabel = String(session.user?.globalName || session.user?.username || session.user?.id || "").trim();
+    identityBacklogResolvedState.resolved[itemId] = {
+      resolvedAt: Date.now(),
+      resolvedBy: adminLabel,
+      note: String(req.body?.note || "").trim().slice(0, 240),
+    };
+    identityBacklogResolvedWriteChain = identityBacklogResolvedWriteChain.then(() => persistIdentityBacklogResolvedStore());
+    await identityBacklogResolvedWriteChain;
+    return res.json({ ok: true, itemId });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "resolve failed" });
+  }
+});
+
+function identityActivityTimestamp(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n < 100_000_000_000 ? n * 1000 : n;
+}
+
+function identityCharacterAdminPublic(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.userId,
+    characterName: row.characterName,
+    wowClass: row.wowClass || "",
+    wowSpec: row.wowSpec || "",
+    realm: row.realm || "",
+    isMain: !!row.isMain,
+    lastSeenAt: row.lastSeenAt || 0,
+  };
+}
+
+function identityLastActivityForUser(user, characters, recentWclByUserId) {
+  const candidates = [];
+  const userLast = identityActivityTimestamp(user?.lastSeenAt);
+  if (userLast) candidates.push({ source: "Raid Helper", at: userLast, label: "Account updated" });
+  const cacheHit = user?.discordUserId ? discordIdToRhNameState?.byUserId?.[user.discordUserId] : null;
+  const discordLast = identityActivityTimestamp(cacheHit?.lastSeenAt);
+  if (discordLast) candidates.push({ source: "Discord/Raid Helper", at: discordLast, label: cacheHit?.rhName || "" });
+  for (const character of characters || []) {
+    const charLast = identityActivityTimestamp(character?.lastSeenAt);
+    if (charLast) candidates.push({ source: "Character", at: charLast, label: character.characterName || "" });
+  }
+  const wcl = recentWclByUserId?.get(Number(user?.id));
+  const wclLast = identityActivityTimestamp(wcl?.reportStartedAt || wcl?.computedAt);
+  if (wclLast) candidates.push({ source: "Warcraft Logs", at: wclLast, label: wcl?.characterName || wcl?.reportCode || "" });
+  candidates.sort((a, b) => b.at - a.at);
+  return candidates[0] || { source: "", at: 0, label: "" };
+}
+
+function identityPublicActivityCutoffMs() {
+  const cutoff = sanitizeIdentityPublicActivityCutoff(identityPublicSettingsState?.lastActivityCutoff);
+  if (!cutoff) return 0;
+  const ms = new Date(`${cutoff}T00:00:00`).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function identityPublicVisibilitySettingsPublic() {
+  const cutoff = sanitizeIdentityPublicActivityCutoff(identityPublicSettingsState?.lastActivityCutoff);
+  return {
+    lastActivityCutoff: cutoff,
+    lastActivityCutoffMs: identityPublicActivityCutoffMs(),
+  };
+}
+
+function recentWclActivityByUserId() {
+  const recentWclByUserId = new Map();
+  try {
+    for (const row of raidAppearancesRecent({ limit: 500 })) {
+      const userId = Number(row?.userId);
+      if (!Number.isInteger(userId) || userId <= 0 || recentWclByUserId.has(userId)) continue;
+      recentWclByUserId.set(userId, row);
+    }
+  } catch {
+    // WCL materialized activity is optional for visibility filtering.
+  }
+  return recentWclByUserId;
+}
+
+function identityUserPassesPublicActivityCutoff(user, characters, recentWclByUserId) {
+  const cutoffMs = identityPublicActivityCutoffMs();
+  if (!cutoffMs) return true;
+  const activity = identityLastActivityForUser(user, characters, recentWclByUserId);
+  return Number(activity?.at || 0) >= cutoffMs;
+}
+
+function buildIdentityAccountsPayload({ search = "" } = {}) {
+  const q = String(search || "").trim().toLowerCase();
+  const users = identityUserListAll();
+  const charactersByUserId = identityRowsByUserId(
+    identityCharactersListAll().map(identityCharacterAdminPublic).filter(Boolean)
+  );
+  const latestParseByUserId = new Map();
+  try {
+    for (const row of latestRaidParseSummaryGetAll()) {
+      latestParseByUserId.set(Number(row.userId), row);
+    }
+  } catch {
+    // Parse materialisation is optional for the admin table.
+  }
+  const recentWclByUserId = recentWclActivityByUserId();
+  const accounts = users.map((user) => {
+    const characters = charactersByUserId.get(Number(user.id)) || [];
+    const mainCharacter =
+      characters.find((char) => Number(char.id) === Number(user.mainCharacterId)) ||
+      characters.find((char) => char.isMain) ||
+      characters[0] ||
+      null;
+    const altCharacters = mainCharacter
+      ? characters.filter((char) => Number(char.id) !== Number(mainCharacter.id))
+      : characters.slice(1);
+    const displayName = mainCharacter?.characterName || user.displayName || user.raidHelperName || "";
+    const activity = identityLastActivityForUser(user, characters, recentWclByUserId);
+    return {
+      id: user.id,
+      discordUserId: user.discordUserId || "",
+      displayName,
+      storedDisplayName: user.displayName || "",
+      raidHelperName: user.raidHelperName || "",
+      guildRole: normalizeRhWclGuildRole(user.guildRole || "Peon"),
+      mainCharacter,
+      altCharacters,
+      characters,
+      lastActivity: activity,
+      latestRaidParse: latestParseByUserId.get(Number(user.id)) || null,
+      lastSeenAt: user.lastSeenAt || 0,
+    };
+  });
+  const filtered = !q
+    ? accounts
+    : accounts.filter((account) => {
+        const haystack = [
+          account.discordUserId,
+          account.displayName,
+          account.raidHelperName,
+          account.guildRole,
+          account.mainCharacter?.characterName,
+          ...(account.altCharacters || []).map((char) => char.characterName),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(q);
+      });
+  filtered.sort((a, b) => {
+    const activityDelta = Number(b.lastActivity?.at || 0) - Number(a.lastActivity?.at || 0);
+    if (activityDelta) return activityDelta;
+    return String(a.displayName || "").localeCompare(String(b.displayName || ""));
+  });
+  return {
+    ok: true,
+    total: accounts.length,
+    shown: filtered.length,
+    accounts: filtered,
+    publicVisibility: identityPublicVisibilitySettingsPublic(),
+    checkedAt: Date.now(),
+  };
+}
+
+app.get("/api/admin/identity/accounts", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureDiscordIdToRhNameCacheLoaded();
+    await ensureIdentityPublicSettingsStore();
+    const payload = buildIdentityAccountsPayload({ search: req.query?.q });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "identity accounts load failed" });
+  }
+});
+
+app.get("/api/admin/identity/public-visibility", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureIdentityPublicSettingsStore();
+    return res.json({ ok: true, publicVisibility: identityPublicVisibilitySettingsPublic() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "identity visibility settings load failed" });
+  }
+});
+
+app.put("/api/admin/identity/public-visibility", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureIdentityPublicSettingsStore();
+    const nextCutoff = sanitizeIdentityPublicActivityCutoff(req.body?.lastActivityCutoff);
+    identityPublicSettingsState = { lastActivityCutoff: nextCutoff };
+    identityPublicSettingsWriteChain = identityPublicSettingsWriteChain
+      .then(() => persistIdentityPublicSettingsStore())
+      .catch((error) => console.error("[identity-public-settings] persist failed:", error?.message || error));
+    await identityPublicSettingsWriteChain;
+    await invalidatePublicIdentityVisibilitySnapshots();
+    return res.json({ ok: true, publicVisibility: identityPublicVisibilitySettingsPublic() });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "identity visibility settings save failed" });
+  }
+});
+
+app.put("/api/admin/identity/accounts/:userId", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ ok: false, error: "userId must be a positive integer" });
+  }
+  try {
+    const existing = identityUserGetById(userId);
+    if (!existing) return res.status(404).json({ ok: false, error: "user not found" });
+    const discordUserIdRaw = req.body?.discordUserId != null ? String(req.body.discordUserId).trim() : "";
+    const discordUserId = discordUserIdRaw ? sanitizeDiscordUserId(discordUserIdRaw) : "";
+    if (discordUserIdRaw && !discordUserId) {
+      return res.status(400).json({ ok: false, error: "discordUserId must be a Discord snowflake" });
+    }
+    const mainInput = req.body?.mainCharacter && typeof req.body.mainCharacter === "object" ? req.body.mainCharacter : null;
+    const altInputs = Array.isArray(req.body?.altCharacters) ? req.body.altCharacters : [];
+    const desiredCharacters = [];
+    if (mainInput?.characterName) {
+      desiredCharacters.push({
+        characterName: String(mainInput.characterName || "").trim(),
+        wowClass: String(mainInput.wowClass || "").trim(),
+        wowSpec: String(mainInput.wowSpec || "").trim(),
+        realm: String(mainInput.realm || "").trim(),
+        isMain: true,
+        discoveredVia: "admin-identity-table",
+      });
+    }
+    for (const raw of altInputs) {
+      const characterName = String(raw?.characterName || "").trim();
+      if (!characterName) continue;
+      desiredCharacters.push({
+        characterName,
+        wowClass: String(raw?.wowClass || "").trim(),
+        wowSpec: String(raw?.wowSpec || "").trim(),
+        realm: String(raw?.realm || "").trim(),
+        isMain: false,
+        discoveredVia: "admin-identity-table",
+      });
+    }
+    assertIdentityCharacterOwnership(desiredCharacters.map((row) => row.characterName), userId);
+    const displayNameRaw = String(req.body?.displayName || "").trim();
+    const mainName = String(desiredCharacters.find((row) => row.isMain)?.characterName || "").trim();
+    const displayName = displayNameRaw || mainName || existing.displayName || existing.raidHelperName || "";
+    const updatedUser = identityUserUpdateById({
+      userId,
+      discordUserId: discordUserId || null,
+      raidHelperName: mainName || displayName || existing.raidHelperName || undefined,
+      displayName,
+      guildRole: normalizeRhWclGuildRole(req.body?.guildRole || existing.guildRole || "Peon"),
+      source: "admin:identity-table",
+    });
+    const characters = identityUserReplaceCharacters({
+      userId,
+      characters: desiredCharacters,
+      source: "admin:identity-table",
+    });
+    const mainCharacter = characters.find((char) => char.isMain) || characters.find((char) => char.characterName.toLowerCase() === mainName.toLowerCase()) || null;
+    identityUserSetMainCharacter({
+      userId,
+      characterId: mainCharacter?.id || null,
+      source: "admin:identity-table",
+    });
+    await exportIdentityLinksToRhWclStore();
+    return res.json({
+      ok: true,
+      user: updatedUser,
+      characters: identityCharactersGetByUserId(userId),
+      accounts: buildIdentityAccountsPayload({ search: req.query?.q }).accounts,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "identity account save failed" });
+  }
+});
+
 /* =============================================================================
  * POST /api/admin/db/backup
  *
@@ -7340,6 +8572,24 @@ app.post("/api/admin/db/backup", async (req, res) => {
     console.error("[db-backup] failed:", error?.stack || error);
     return res.status(500).json({ ok: false, error: error?.message || "backup failed" });
   }
+});
+
+app.get("/api/admin/db/backups/:filename/download", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const filename = path.basename(String(req.params.filename || ""));
+  if (!/^item-needs-[A-Za-z0-9_.-]+\.sqlite$/.test(filename)) {
+    return res.status(400).json({ ok: false, error: "invalid backup filename" });
+  }
+  const filePath = path.join(dataDir, "backups", filename);
+  return res.download(filePath, filename, (error) => {
+    if (!error || res.headersSent) return;
+    if (error?.code === "ENOENT") {
+      return res.status(404).json({ ok: false, error: "backup not found" });
+    }
+    console.error("[db-backup-download] failed:", error?.stack || error);
+    return res.status(500).json({ ok: false, error: "backup download failed" });
+  });
 });
 
 /* =============================================================================
@@ -7478,6 +8728,63 @@ app.get("/api/admin/database/users", async (req, res) => {
   }
 });
 
+app.post("/api/admin/database/users/merge", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const sourceUserId = Number(req.body?.sourceUserId);
+  const targetUserId = Number(req.body?.targetUserId);
+  if (!Number.isInteger(sourceUserId) || sourceUserId <= 0 || !Number.isInteger(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ ok: false, error: "sourceUserId and targetUserId must be positive integers" });
+  }
+  try {
+    const adminLabel = String(session.user?.globalName || session.user?.username || session.user?.id || "").trim();
+    const user = identityUserMergeInto({
+      sourceUserId,
+      targetUserId,
+      source: `admin:identity-merge:${adminLabel || "unknown"}`,
+    });
+    await exportIdentityLinksToRhWclStore();
+    return res.json({ ok: true, user });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "merge failed" });
+  }
+});
+
+app.post("/api/admin/database/users/:userId/discord-id", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const userId = Number(req.params.userId);
+  const discordUserId = sanitizeDiscordUserId(req.body?.discordUserId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ ok: false, error: "userId must be a positive integer" });
+  }
+  if (!discordUserId) {
+    return res.status(400).json({ ok: false, error: "discordUserId must be a Discord snowflake" });
+  }
+  try {
+    const user = identityUserGetById(userId);
+    if (!user) return res.status(404).json({ ok: false, error: "user not found" });
+    const existing = identityUserGetByDiscordId(discordUserId);
+    if (existing?.id && Number(existing.id) !== userId) {
+      return res.status(409).json({
+        ok: false,
+        error: `Discord ID already belongs to ${existing.displayName || existing.raidHelperName || `user #${existing.id}`}. Merge the accounts instead.`,
+      });
+    }
+    const updated = identityUserUpsert({
+      discordUserId,
+      raidHelperName: user.raidHelperName || undefined,
+      displayName: user.displayName || user.raidHelperName || undefined,
+      guildRole: user.guildRole || undefined,
+      source: "admin:identity-add-discord-id",
+    });
+    await exportIdentityLinksToRhWclStore();
+    return res.json({ ok: true, user: updated });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "failed to add Discord ID" });
+  }
+});
+
 app.get("/api/admin/database/users/:userId", async (req, res) => {
   const session = requireAdminSession(req, res);
   if (!session) return;
@@ -7522,6 +8829,28 @@ app.get("/api/admin/database/users/:userId", async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "database load failed" });
+  }
+});
+
+app.post("/api/admin/database/characters/:characterId/move", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  const characterId = Number(req.params.characterId);
+  const targetUserId = Number(req.body?.targetUserId);
+  if (!Number.isInteger(characterId) || characterId <= 0 || !Number.isInteger(targetUserId) || targetUserId <= 0) {
+    return res.status(400).json({ ok: false, error: "characterId and targetUserId must be positive integers" });
+  }
+  try {
+    const adminLabel = String(session.user?.globalName || session.user?.username || session.user?.id || "").trim();
+    const character = identityCharacterMoveToUser({
+      characterId,
+      targetUserId,
+      source: `admin:identity-character-move:${adminLabel || "unknown"}`,
+    });
+    await exportIdentityLinksToRhWclStore();
+    return res.json({ ok: true, character });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "character move failed" });
   }
 });
 
@@ -7684,20 +9013,17 @@ async function safeUnlinkProfilePicture(filename) {
 }
 
 /**
- * WoW characters this Discord user can pick as their "main". Pulls from the
- * Account Assignment table (`rh-wcl-character-links.json`) — we search by
- * Discord ID first (canonical) then fall back to the legacy display-name
- * match for rows that haven't been backfilled yet.
+ * WoW characters this Discord user can pick as their "main". Canonical source
+ * is the SQLite identity model; the legacy export is used only if the DB query
+ * fails during startup or local repair.
  */
 function listLinkedWowCharactersForDiscordUserId(userId, displayName) {
   const id = sanitizeDiscordUserId(userId);
-  if (materializeIdentityEnabled()) {
-    try {
-      const fromDb = identityListLinkedCharacterNames({ discordUserId: id, displayName });
-      if (Array.isArray(fromDb)) return fromDb;
-    } catch (error) {
-      console.warn("[identity-cutover] listLinkedWowCharactersForDiscordUserId fallback:", error?.message || error);
-    }
+  try {
+    const fromDb = identityListLinkedCharacterNames({ discordUserId: id, displayName });
+    if (Array.isArray(fromDb)) return fromDb;
+  } catch (error) {
+    console.warn("[identity-cutover] listLinkedWowCharactersForDiscordUserId fallback:", error?.message || error);
   }
   const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
   const out = [];
@@ -8940,15 +10266,11 @@ app.put("/api/admin/rh-wcl-links", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    const sanitized = sanitizeRhWclLinksPayload(req.body?.links);
-    const sorted = { links: sortRhWclLinkRows(sanitized.links) };
-    await ensureRhWclLinksStore();
-    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
-      rhWclLinksState = sorted;
-      await persistRhWclLinksStore();
+    const links = await replaceIdentityFromRhWclRows(req.body?.links, {
+      source: "admin:account-assignment:replace",
+      requireDiscordId: true,
     });
-    await rhWclLinksWriteChain;
-    return res.json({ ok: true, saved: sorted.links.length });
+    return res.json({ ok: true, saved: links.length, links });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save Raid Helper ↔ WCL links" });
   }
@@ -8959,13 +10281,10 @@ app.delete("/api/admin/rh-wcl-links", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    await ensureRhWclLinksStore();
-    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
-      rhWclLinksState = { links: [] };
-      await persistRhWclLinksStore();
+    return res.status(409).json({
+      ok: false,
+      error: "Identity Management is backed by canonical account data. Use merge/move cleanup tools instead of deleting the full export.",
     });
-    await rhWclLinksWriteChain;
-    return res.json({ ok: true, links: [], deleted: true });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to delete Raid Helper ↔ WCL links" });
   }
@@ -8976,33 +10295,17 @@ app.put("/api/admin/rh-wcl-links/row", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    await ensureRhWclLinksStore();
-
     const sanitized = sanitizeRhWclLinksPayload([req.body]);
     const row = sanitized.links[0];
     if (!row?.raidHelperName) {
       return res.status(400).json({ ok: false, error: "raidHelperName is required" });
     }
-
-    const newKey = normalizeRaidHelperDisplayKey(row.raidHelperName);
-    const prevRaw = String(req.body?.previousRaidHelperName ?? "").trim();
-    const prevKey = prevRaw ? normalizeRaidHelperDisplayKey(prevRaw) : "";
-
-    const keysToRemove = new Set([newKey]);
-    if (prevKey && prevKey !== newKey) keysToRemove.add(prevKey);
-
-    const prevLinks = rhWclLinksState.links || [];
-    const filtered = prevLinks.filter((r) => !keysToRemove.has(normalizeRaidHelperDisplayKey(r.raidHelperName)));
-    filtered.push(row);
-    const sortedLinks = sortRhWclLinkRows(filtered);
-
-    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
-      rhWclLinksState = { links: sortedLinks };
-      await persistRhWclLinksStore();
+    upsertIdentityFromRhWclRow(row, {
+      source: "admin:account-assignment:row",
+      requireDiscordId: true,
     });
-    await rhWclLinksWriteChain;
-
-    return res.json({ ok: true, links: sortRhWclLinkRows(rhWclLinksState.links || []) });
+    const links = await exportIdentityLinksToRhWclStore();
+    return res.json({ ok: true, links });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save row" });
   }
@@ -9135,15 +10438,16 @@ app.post("/api/admin/rh-wcl-links/proposals/accept", async (req, res) => {
     const targetKey = normalizeRaidHelperDisplayKey(rh);
     if (!targetKey) return res.status(400).json({ ok: false, error: "raidHelperName normalised to empty key" });
 
-    const links = Array.isArray(rhWclLinksState?.links) ? [...rhWclLinksState.links] : [];
+    const links = await getGuildCharacterLinkRows();
     let idx = links.findIndex((r) => normalizeRaidHelperDisplayKey(String(r?.raidHelperName || "")) === targetKey);
     if (idx === -1) {
-      // Row may not exist yet (rare but possible if the RH name was never
-      // saved). Create it on the fly so accepting always succeeds.
-      links.push({ raidHelperName: rh, wclCharacterNames: [], wclSources: [], wclGuessConfidence: [], guildRole: "Peon" });
+      links.push({ raidHelperName: rh, discordUserId: "", wclCharacterNames: [], wclSources: [], wclGuessConfidence: [], guildRole: "Peon" });
       idx = links.length - 1;
     }
     const row = { ...links[idx] };
+    if (!sanitizeDiscordUserId(row.discordUserId)) {
+      return res.status(400).json({ ok: false, error: "Accepting proposals requires the target identity to have a Discord ID." });
+    }
     const names = Array.isArray(row.wclCharacterNames) ? [...row.wclCharacterNames] : [];
     const sources = Array.isArray(row.wclSources) ? [...row.wclSources] : [];
     const confs = Array.isArray(row.wclGuessConfidence) ? [...row.wclGuessConfidence] : [];
@@ -9160,15 +10464,16 @@ app.post("/api/admin/rh-wcl-links/proposals/accept", async (req, res) => {
     row.wclGuessConfidence = confs;
     if (verify) row.verifiedAt = new Date().toISOString();
     links[idx] = row;
+    upsertIdentityFromRhWclRow(row, {
+      source: verify ? "admin:proposal:accept-verify" : "admin:proposal:accept",
+      requireDiscordId: true,
+    });
+    const exportedLinks = await exportIdentityLinksToRhWclStore();
 
     const remainingProposals = (rhWclProposalsState.proposals || []).filter(
       (p) => String(p.wclCharacterName || "").toLowerCase() !== wclLow
     );
 
-    rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
-      rhWclLinksState = { links: sortRhWclLinkRows(links) };
-      await persistRhWclLinksStore();
-    });
     rhWclProposalsWriteChain = rhWclProposalsWriteChain.then(async () => {
       rhWclProposalsState = {
         ...rhWclProposalsState,
@@ -9176,11 +10481,11 @@ app.post("/api/admin/rh-wcl-links/proposals/accept", async (req, res) => {
       };
       await persistRhWclProposalsStore();
     });
-    await Promise.all([rhWclLinksWriteChain, rhWclProposalsWriteChain]);
+    await rhWclProposalsWriteChain;
 
     return res.json({
       ok: true,
-      links: sortRhWclLinkRows(rhWclLinksState.links || []),
+      links: exportedLinks,
       proposals: rhWclProposalsState.proposals || [],
       accepted: { wclCharacterName: wclName, raidHelperName: rh, verified: verify, alreadyPresent: already },
     });
@@ -9889,6 +11194,7 @@ function pickGlobalBestParseRun(runs) {
     reportStartTime,
     wclCharacterName,
     metric,
+    bracket,
   } = best;
   return {
     value: percentile,
@@ -9899,6 +11205,7 @@ function pickGlobalBestParseRun(runs) {
       reportStartTime: Number(reportStartTime || 0),
       wclCharacterName: String(wclCharacterName || "").trim(),
       metric: String(metric || "").trim(),
+      bracket: String(bracket || "").trim(),
     },
   };
 }
@@ -9932,7 +11239,6 @@ function discordProfileIngestPayload() {
 
 async function scanDiscordProfileIngestChannel({ limit = DISCORD_PROFILE_INGEST_LOOKBACK_LIMIT, sinceLast = true } = {}) {
   await ensureDiscordProfileIngestStore();
-  await ensureRhWclLinksStore();
 
   const channelId = discordProfileIngestChannelId();
   if (!channelId) throw new Error("DISCORD_PROFILE_INGEST_CHANNEL_ID is required");
@@ -9947,7 +11253,7 @@ async function scanDiscordProfileIngestChannel({ limit = DISCORD_PROFILE_INGEST_
   }
   const messages = await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages?${params.toString()}`);
   const rows = Array.isArray(messages) ? messages.slice().reverse() : [];
-  const existingLinks = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  const existingLinks = await getGuildCharacterLinkRows();
   const existingProposalIds = new Set((discordProfileIngestState.proposals || []).map((proposal) => proposal.id));
   const rejectedIds = new Set(discordProfileIngestState.rejected || []);
   let created = 0;
@@ -10045,7 +11351,6 @@ function startDiscordProfileIngestPoller() {
 
 async function acceptDiscordProfileProposal(proposalId, adminLabel = "") {
   await ensureDiscordProfileIngestStore();
-  await ensureRhWclLinksStore();
   const id = String(proposalId || "").trim();
   const proposal = (discordProfileIngestState.proposals || []).find((row) => row.id === id);
   if (!proposal || proposal.status !== "pending") return null;
@@ -10054,7 +11359,7 @@ async function acceptDiscordProfileProposal(proposalId, adminLabel = "") {
   const characterNames = (proposal.characters || []).map((char) => String(char.name || "").trim()).filter(Boolean);
   if (!discordUserId || !characterNames.length) throw new Error("Proposal is missing Discord ID or characters");
 
-  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links.map((row) => ({ ...row })) : [];
+  const links = await getGuildCharacterLinkRows();
   const targetByDiscord = links.findIndex((row) => sanitizeDiscordUserId(row?.discordUserId) === discordUserId);
   const targetByCharacter = links.findIndex((row) => {
     const names = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : [];
@@ -10096,22 +11401,37 @@ async function acceptDiscordProfileProposal(proposalId, adminLabel = "") {
   target.wclSources = sources;
   target.wclGuessConfidence = confs;
   target.verifiedAt = target.verifiedAt || new Date().toISOString();
-  links[targetIdx] = target;
+  const user = identityUserUpsert({
+    discordUserId,
+    raidHelperName: target.raidHelperName || characterNames[0],
+    displayName: proposal.discordDisplayName || proposal.discordUsername || target.raidHelperName || characterNames[0],
+    guildRole: normalizeRhWclGuildRole(target.guildRole || "Peon"),
+    source: "admin:discord-profile-ingest:accept",
+  });
+  assertIdentityCharacterOwnership(characterNames, user.id);
+  for (const rawChar of proposal.characters || []) {
+    const characterName = String(rawChar?.name || "").trim();
+    if (!characterName) continue;
+    identityCharacterUpsert({
+      userId: user.id,
+      characterName,
+      realm: rawChar?.realm || null,
+      discoveredVia: "discord-profile-ingest",
+      source: "admin:discord-profile-ingest:accept",
+    });
+  }
 
   const now = Date.now();
   const proposals = (discordProfileIngestState.proposals || []).map((row) =>
     row.id === id ? { ...row, status: "accepted", decidedAt: now, decidedBy: adminLabel } : row
   );
 
-  rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
-    rhWclLinksState = { links: sortRhWclLinkRows(links) };
-    await persistRhWclLinksStore();
-  });
+  await exportIdentityLinksToRhWclStore();
   discordProfileIngestWriteChain = discordProfileIngestWriteChain.then(async () => {
     discordProfileIngestState = sanitizeDiscordProfileIngestState({ ...discordProfileIngestState, proposals });
     await persistDiscordProfileIngestStore();
   });
-  await Promise.all([rhWclLinksWriteChain, discordProfileIngestWriteChain]);
+  await discordProfileIngestWriteChain;
   return target;
 }
 
@@ -10164,13 +11484,13 @@ function summarizeParsesForLinkedGroup(group, raidRankingPayloads, wclDisplayByL
     const mergedHps = entry?.mergedHps;
 
     const td = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "tank", names);
-    if (td) tankRuns.push({ ...td, reportCode, reportStartTime });
+    if (td) tankRuns.push({ ...td, bracket: "tank", reportCode, reportStartTime });
 
     const dd = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "dps", names);
-    if (dd) dpsRuns.push({ ...dd, reportCode, reportStartTime });
+    if (dd) dpsRuns.push({ ...dd, bracket: "dps", reportCode, reportStartTime });
 
     const hd = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "heal", names);
-    if (hd) healRuns.push({ ...hd, reportCode, reportStartTime });
+    if (hd) healRuns.push({ ...hd, bracket: "heal", reportCode, reportStartTime });
   }
 
   const tankPick = pickGlobalBestParseRun(tankRuns);
@@ -10188,6 +11508,24 @@ function summarizeParsesForLinkedGroup(group, raidRankingPayloads, wclDisplayByL
     raidsDps: dpsRuns.length,
     raidsHeal: healRuns.length,
   };
+}
+
+function summarizeHighestParseForRaidRankingEntry(entry, names) {
+  if (!entry || !Array.isArray(names) || !names.length) {
+    return { value: null, source: null };
+  }
+  const reportCode = String(entry?.reportCode || "");
+  const reportStartTime = Number(entry?.startTime || 0);
+  const mergedDps = entry?.mergedDps;
+  const mergedHps = entry?.mergedHps;
+  const runs = [];
+  const tank = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "tank", names);
+  if (tank) runs.push({ ...tank, bracket: "tank", reportCode, reportStartTime });
+  const heal = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "heal", names);
+  if (heal) runs.push({ ...heal, bracket: "heal", reportCode, reportStartTime });
+  const dps = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "dps", names);
+  if (dps) runs.push({ ...dps, bracket: "dps", reportCode, reportStartTime });
+  return pickGlobalBestParseRun(runs);
 }
 
 /** WCL sometimes yields numeric strings; normalize before Math.max / comparisons. */
@@ -15706,10 +17044,14 @@ function buildLeaderboardBundlePayload(guildId) {
      mvpAwardCount, lootCount, specificEventBadges, mainCharacterName,
      and pre-resolved badge flags for first-clears / best-time / most-deaths. */
   const players = [];
+  const publicVisibility = identityPublicVisibilitySettingsPublic();
+  const cutoffMs = Number(publicVisibility.lastActivityCutoffMs || 0);
+  const recentWclByUserId = cutoffMs > 0 ? recentWclActivityByUserId() : new Map();
   for (const row of base.leaderboard) {
     const u = usersById.get(row.dbUserId);
     if (!u) continue;
     const chars = charactersByUserId.get(u.id) || [];
+    if (cutoffMs > 0 && !identityUserPassesPublicActivityCutoff(u, chars, recentWclByUserId)) continue;
     const main = chars.find((c) => c.isMain) || chars[0] || null;
     const className = String(main?.wowClass || "").trim();
     const specName = String(main?.wowSpec || "").trim();
@@ -15766,6 +17108,8 @@ function buildLeaderboardBundlePayload(guildId) {
     guildId,
     consideredRaids: base.consideredRaids,
     activeCount: players.length,
+    unfilteredActiveCount: base.leaderboard.length,
+    publicVisibility,
     attendanceScope: base.attendanceScope,
     parseScope: base.parseScope,
     parseCeilingMax: base.parseCeilingMax,
@@ -15781,11 +17125,12 @@ function buildLeaderboardBundlePayload(guildId) {
  * `/voting/hall-of-fame` + chunked `/wow-classic/items`) with a single
  * call. Cold P95 target: < 800ms TTFB.
  */
-app.get("/api/leaderboard", (req, res) => {
+app.get("/api/leaderboard", async (req, res) => {
   const requestedGuildId = Number(req.query.guildId);
   const guildId =
     Number.isInteger(requestedGuildId) && requestedGuildId > 0 ? requestedGuildId : votingGuildId;
   try {
+    await ensureIdentityPublicSettingsStore();
     const payload = buildLeaderboardBundlePayload(guildId);
     if (!payload) {
       return res.json({
@@ -16436,6 +17781,9 @@ async function runSyncAccountAssignment() {
 
   await ensureRhWclLinksStore();
   await ensureRhWclProposalsStore();
+  await refreshDiscordIdToRhNameCache().catch((error) => {
+    console.warn("[sync:account-assignment] Discord ID cache refresh failed:", error?.message || error);
+  });
   pruneExpiredRhWclRejections();
 
   let raidHelperNames = [];
@@ -16499,8 +17847,28 @@ async function runSyncAccountAssignment() {
   const finalLinks = split.autoApplyLinks.map((row) => {
     const k = normalizeRaidHelperDisplayKey(String(row.raidHelperName || ""));
     const verified = k ? verifiedRowsByKey.get(k) : null;
-    return verified ? { ...verified } : row;
+    const next = verified ? { ...verified } : { ...row };
+    if (!sanitizeDiscordUserId(next.discordUserId)) {
+      const cachedDiscordId = discordIdFromRaidHelperNameCache(next.raidHelperName);
+      if (cachedDiscordId) {
+        next.discordUserId = cachedDiscordId;
+        next.discordUserIdSource = next.discordUserIdSource || "rh-scan";
+      }
+    }
+    return next;
   });
+
+  for (const row of finalLinks) {
+    if (!sanitizeDiscordUserId(row?.discordUserId)) continue;
+    try {
+      upsertIdentityFromRhWclRow(row, {
+        source: "sync:account-assignment:auto",
+        requireDiscordId: true,
+      });
+    } catch (error) {
+      console.warn("[sync:account-assignment] auto identity apply failed:", error?.message || error);
+    }
+  }
 
   rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
     rhWclLinksState = { links: sortRhWclLinkRows(finalLinks) };
@@ -16846,18 +18214,22 @@ async function runSyncParses() {
   );
 
   let leaderboard = [];
+  let raidSnapshots = [];
+  let raidRankingPayloads = [];
   try {
     await ensureRhWclLinksStore();
-    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+    const bundle = await gatherAttendanceRaidSnapshots(
       guildId,
       reportLimit,
       { attendancePercentMetrics: true }
     );
+    raidSnapshots = Array.isArray(bundle?.raidSnapshots) ? bundle.raidSnapshots : [];
+    raidRankingPayloads = Array.isArray(bundle?.raidRankingPayloads) ? bundle.raidRankingPayloads : [];
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
       rhWclLinksState,
       Math.min(500, raidSnapshots.length ? 200 : 50),
-      wclDisplayByLower,
+      bundle?.wclDisplayByLower,
       raidRankingPayloads
     );
     leaderboard = Array.isArray(linkedPayload?.leaderboard) ? linkedPayload.leaderboard : [];
@@ -16867,6 +18239,7 @@ async function runSyncParses() {
   }
 
   const entries = [];
+  const latestRaidParseEntries = [];
   const seenCharacterIds = new Set();
 
   for (const row of leaderboard) {
@@ -16877,6 +18250,39 @@ async function runSyncParses() {
     const characters = identityCharactersGetByUserId(user.id);
     if (!characters.length) continue;
     const mainCharacter = characters.find((c) => c.isMain) || characters[0];
+
+    const latestRaidIndex = (Array.isArray(row?.attendanceHistory) ? row.attendanceHistory : []).findIndex(
+      (flag) => Number(flag) > 0
+    );
+    const latestRaid = latestRaidIndex >= 0 ? raidSnapshots[latestRaidIndex] : null;
+    const latestRanking = latestRaid?.reportCode
+      ? raidRankingPayloads.find((entry) => String(entry?.reportCode || "") === String(latestRaid.reportCode || ""))
+      : null;
+    if (latestRanking) {
+      const names = (Array.isArray(row?.wclCharacters) ? row.wclCharacters : [])
+        .map((name) => String(name || "").trim())
+        .filter(Boolean);
+      const latestPick = summarizeHighestParseForRaidRankingEntry(latestRanking, names);
+      if (latestPick?.value != null && latestPick?.source) {
+        const source = latestPick.source;
+        const parsedCharacter = String(source.wclCharacterName || "").trim();
+        const sourceCharacter =
+          (parsedCharacter && characters.find((char) => identityRhNameKey(char.characterName) === identityRhNameKey(parsedCharacter))) ||
+          mainCharacter;
+        latestRaidParseEntries.push({
+          userId: user.id,
+          characterId: sourceCharacter?.id || mainCharacter.id,
+          characterName: parsedCharacter || sourceCharacter?.characterName || mainCharacter.characterName || "",
+          reportCode: source.reportCode || latestRaid.reportCode,
+          reportStartedAt: source.reportStartTime || latestRaid.startTime || null,
+          bracket: source.bracket || "",
+          bestValue: latestPick.value,
+          bestEncounter: source.encounterName || null,
+          bestFightId: source.fightId != null ? Number(source.fightId) : null,
+          bestMetric: source.metric || null,
+        });
+      }
+    }
 
     const ps = row?.parseSummaries;
     if (!ps || typeof ps !== "object") continue;
@@ -16907,7 +18313,8 @@ async function runSyncParses() {
   }
 
   const result = parseSummaryReplaceAll({ entries });
-  return { rowsChanged: result?.rows || 0 };
+  const latestResult = latestRaidParseSummaryReplaceAll({ entries: latestRaidParseEntries });
+  return { rowsChanged: result?.rows || 0, latestRaidParseRows: latestResult?.rows || 0 };
 }
 
 registerSyncTask({

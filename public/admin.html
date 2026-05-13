@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/plb-hero-banner.png" imagesizes="(max-width: 960px) 100vw, 960px" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260511analytics-tooltip1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260513identity-table-max1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -44,8 +44,7 @@
             <nav class="admin-sidebar-nav" id="adminSidebarNav">
               <div class="admin-sidebar-group" data-admin-group="people">
                 <div class="admin-sidebar-group-label">People</div>
-                <button type="button" class="admin-sidebar-tool" data-admin-nav="rh-wcl">Account Assignment</button>
-                <button type="button" class="admin-sidebar-tool" data-admin-nav="database">Database</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="identity">Identity Management</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="badge-tooltips">Badge Management</button>
               </div>
@@ -64,6 +63,7 @@
                 <div class="admin-sidebar-group-label">Comms</div>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="role-alerts">Raid Roster Management</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="custom-dm">Custom Discord Messages</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="discord-role-sync">Discord Role Sync</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="discord-news-queue">News Queue</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="discord-news">News Notifications</button>
               </div>
@@ -76,73 +76,58 @@
           </aside>
 
           <div class="admin-content">
-            <section class="card admin-panel is-admin-panel-active" data-admin-panel="rh-wcl" id="admin-panel-rh-wcl">
-              <h3 class="section-title">Account Assignment</h3>
-              <details class="admin-details subtle">
-                <summary class="admin-details-summary">How this roster works</summary>
-                <p>
-                  Primary character database on disk: <code>rh-wcl-character-links.json</code> — same data as
-                  <code>GET /api/wcl/guild/:guildId/characters</code>.
-                  <strong>Attendance %</strong> uses the latest <code>WCL_ATTENDANCE_RECENT_RAIDS</code> logs (default 6), <strong>25-player raids only</strong> (Karazhan and Zul'Aman excluded); Events roster badges read that same leaderboard. Heuristic merge still scans broader logs via <code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>.
-                  For Raider.io class/spec on the Events roster, the server tries character names in order: <strong>first Warcraft Logs name</strong> (mapped main), then Raid Helper’s parsed character field, then the signup display name (realm stripped). The first name that returns a profile wins; <code>rioProfileLookupName</code> on the API reflects that hit.
-                  With Battle.net credentials set, it also reads <strong>Battle.net character profile</strong> for English class (and sometimes active spec) when Raid Helper’s class column is wrong or Raider.io misses.
-                  <strong>Column 1 is only Raid Helper signup names</strong> (not log names). Column 2 = Warcraft Logs names (main + alts), comma-separated, or use <strong>Add alt</strong> under that row to append one log name and save when the Raid Helper name is filled. If the log name matches the signup, column 2 can stay empty.
-                </p>
-                <p>
-                  <strong>Heuristic merge</strong> uses <strong>only Raid Helper signup names</strong> for column 1 (recent posted events; env <code>RH_WCL_LINK_RAID_HELPER_EVENTS</code>) and Warcraft Logs characters from recent reports (<code>RH_WCL_LINK_WCL_REPORT_DETAILS</code>). There is no “log names only” fallback — if Raid Helper returns no signups, fix API keys / events. Loose matches may appear as <em>Best-effort</em>. Review chips, then <strong>Save all rows</strong>.
-                </p>
-              </details>
-              <div class="admin-rh-toolbar">
-                <div class="admin-actions admin-actions--tight admin-rh-toolbar-actions">
-                  <button type="button" class="event-signup-btn" id="rhWclRefreshBtn" title="Run the Account Assignment sync now (pull RH signups + WCL log names, auto-save high-confidence matches, send low-confidence guesses to the to-do panel below)">
-                    Refresh now
-                  </button>
-                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclAddRowBtn" title="Append an empty row">
-                    Add row
-                  </button>
-                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="rhWclSaveLinksBtn" title="Write the whole table to disk">
-                    Save all rows
-                  </button>
-                </div>
-                <div class="admin-rh-toolbar-aside">
-                  <span id="rhWclRowCount" class="admin-rh-count subtle" aria-live="polite">—</span>
-                  <span id="rhWclLastSync" class="admin-rh-count subtle" aria-live="polite"></span>
-                  <button type="button" class="event-signup-btn admin-btn-danger" id="rhWclDeleteAllBtn" title="Remove every mapping from the server">
-                    Delete all…
-                  </button>
-                </div>
-              </div>
-              <p id="rhWclEmptyHint" class="admin-rh-empty-hint subtle" hidden>
-                <strong>No mappings yet.</strong> Click <em>Refresh now</em> to auto-fill from Raid Helper signups and recent Warcraft Logs reports, or use <em>Add row</em> to enter one manually.
-              </p>
-              <div id="rhWclTodoHost" class="admin-rh-todo">Loading to-do…</div>
-              <div id="rhWclLinksTableHost" class="admin-grid-note">Loading…</div>
-            </section>
-
-            <section class="card admin-panel" data-admin-panel="database" id="admin-panel-database">
-              <h3 class="section-title">Canonical user database</h3>
+            <section class="card admin-panel is-admin-panel-active" data-admin-panel="identity" id="admin-panel-identity">
+              <h3 class="section-title">Identity Management</h3>
               <p class="subtle">
-                Read-only browse of the SQLite identity tables (<code>users</code> + <code>user_characters</code>).
-                Every other admin tool ultimately writes here — this view shows the canonical row for spot-checking.
-                Background workers, public snapshot, cutover readiness, and database backup now live in
-                <strong>Data &amp; Ops → Sync Center</strong>.
+                One place to manage Discord accounts, character ownership, specs, and review work.
+                Automation fills high-confidence matches; anything uncertain lands in the backlog below.
               </p>
-              <div class="admin-actions admin-actions--tight">
-                <label class="subtle" for="adminDatabaseSearch">Filter users</label>
-                <input
-                  id="adminDatabaseSearch"
-                  class="admin-input"
-                  type="search"
-                  placeholder="Discord id, RH name, display name, role…"
-                  autocomplete="off"
-                />
-                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseReloadBtn">
-                  Reload
+              <div class="admin-actions admin-actions--tight" style="margin:8px 0 12px">
+                <button type="button" class="event-signup-btn" id="identityRunAutomationBtn">
+                  Run identity automation
+                </button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="identityScanProfilesBtn">
+                  Scan Discord profile posts
+                </button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="identityReloadBtn">
+                  Reload identity view
                 </button>
               </div>
-              <div id="adminDatabaseSummary" class="admin-grid-note">Loading users…</div>
-              <div id="adminDatabaseTableHost" class="admin-grid-note">Loading users…</div>
-              <div id="adminDatabaseDetailHost" class="admin-grid-note" hidden></div>
+              <div id="identityDashboardHost" class="admin-grid-note">Loading identity health…</div>
+              <div id="identityBacklogHost" class="admin-grid-note">Loading review backlog…</div>
+              <div class="admin-identity-table-block">
+                <h3 class="section-title">Accounts and Characters</h3>
+                <p class="subtle">
+                  Edit the public identity used by Leaderboard, profiles, Discord pings, and role sync.
+                  Display Name should be the main character name.
+                </p>
+                <div class="admin-actions admin-actions--tight">
+                  <label class="subtle" for="identityAccountsSearch">Filter identities</label>
+                  <input
+                    id="identityAccountsSearch"
+                    class="admin-input"
+                    type="search"
+                    placeholder="Discord id, display name, character, role…"
+                    autocomplete="off"
+                  />
+                  <label class="subtle" for="identityAccountsActivityCutoff">Website activity cutoff</label>
+                  <input
+                    id="identityAccountsActivityCutoff"
+                    class="admin-input"
+                    type="date"
+                    aria-label="Show identities publicly with last activity on or after this date"
+                  />
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="identityAccountsReloadBtn">
+                    Reload
+                  </button>
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="identityAccountsMaximizeBtn" aria-pressed="false">
+                    Maximize table
+                  </button>
+                </div>
+                <div id="adminIdentityAudit" class="admin-grid-note">Loading identity audit…</div>
+                <div id="identityAccountsSummary" class="admin-grid-note">Loading identities…</div>
+                <div id="identityAccountsTableHost" class="admin-grid-note">Loading identities…</div>
+              </div>
             </section>
 
             <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
@@ -239,7 +224,14 @@
                   <button type="button" class="event-signup-btn" id="adminDatabaseBackupBtn">
                     Backup database (VACUUM INTO)
                   </button>
+                  <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseDownloadBackupBtn">
+                    Download DB snapshot
+                  </button>
                 </div>
+                <p class="subtle">
+                  Use the download on live, then import the SQLite file locally with
+                  <code>npm run import-live-db -- --file=&lt;downloaded-file.sqlite&gt;</code>.
+                </p>
               </div>
             </section>
 
@@ -381,6 +373,23 @@
               <div id="customDmHost" class="admin-grid-note">Loading DM candidates...</div>
             </section>
 
+            <section class="card admin-panel" data-admin-panel="discord-role-sync" id="admin-panel-discord-role-sync">
+              <h3 class="section-title">Discord Role Sync</h3>
+              <p class="subtle">
+                Add missing Discord roles from website guild rank and recent class/spec signals. This is add-only:
+                existing Discord roles are never removed.
+              </p>
+              <div class="admin-actions admin-actions--tight">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="discordRoleSyncPreviewBtn">
+                  Reload preview
+                </button>
+                <button type="button" class="event-signup-btn" id="discordRoleSyncRunBtn">
+                  Sync missing roles
+                </button>
+              </div>
+              <div id="discordRoleSyncHost" class="admin-grid-note">Loading role sync preview...</div>
+            </section>
+
             <section class="card admin-panel" data-admin-panel="discord-news-queue" id="admin-panel-discord-news-queue">
               <h3 class="section-title">News Queue</h3>
               <p class="subtle">
@@ -472,7 +481,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260513discord-profile-bulk1"></script>
+    <script defer src="/admin.js?v=20260513identity-clean-chars1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

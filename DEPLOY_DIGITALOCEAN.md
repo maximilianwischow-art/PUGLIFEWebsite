@@ -32,6 +32,12 @@ Set these in App Platform:
 - `DISCORD_BOT_TOKEN` (secret, optional; enables the Admin → News role dropdown, role pings, and Discord profile-post scanning, using `RAID_HELPER_SERVER_ID` / `DISCORD_GUILD_ID`)
 - `DISCORD_PROFILE_INGEST_CHANNEL_ID` (optional; defaults to the current gear-check channel, set explicitly if the channel changes)
 
+For **Admin → Discord Role Sync**, the same `DISCORD_BOT_TOKEN` is used. The bot needs
+Discord's `Manage Roles` permission and its bot role must be higher than every role it
+should assign: `DPS`, `Heal`, `Tank`, `PLB CORE`, `PLB Veteran`, `PLB Grunt`, and
+`PLB Peon`. Create missing Discord roles before syncing; the website only assigns
+existing roles and never removes roles.
+
 ## 4) Add your custom domain
 
 In your app:

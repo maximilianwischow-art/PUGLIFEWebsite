@@ -43,6 +43,12 @@ In Render dashboard -> service -> Environment, set:
 - `DISCORD_PROFILE_INGEST_CHANNEL_ID` (optional; defaults to the current gear-check channel, set explicitly if the channel changes)
 - `PUBLIC_BASE_URL` (your Render service URL, e.g. `https://fallen-tacticians-api.onrender.com`)
 
+For **Admin → Discord Role Sync**, the same `DISCORD_BOT_TOKEN` is used. The bot needs
+Discord's `Manage Roles` permission and its bot role must be higher than every role it
+should assign: `DPS`, `Heal`, `Tank`, `PLB CORE`, `PLB Veteran`, `PLB Grunt`, and
+`PLB Peon`. Create missing Discord roles before syncing; the website only assigns
+existing roles and never removes roles.
+
 ### Persistent storage (Starter+)
 
 The canonical user database lives in **one SQLite file**, `data/item-needs.sqlite`, on

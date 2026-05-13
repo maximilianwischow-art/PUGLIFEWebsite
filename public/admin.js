@@ -66,10 +66,10 @@ function rhWclGuildRoleSelectHtml(current) {
 }
 
 const ADMIN_GROUPS = [
-  { id: "people", label: "People", tools: ["rh-wcl", "database", "hof-notes", "badge-tooltips"] },
+  { id: "people", label: "People", tools: ["identity", "hof-notes", "badge-tooltips"] },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
-  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-news-queue", "discord-news"] },
+  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
   { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "analytics"] },
 ];
 
@@ -78,6 +78,8 @@ const ADMIN_PANEL_IDS = ADMIN_GROUPS.flatMap((g) => g.tools);
 /** Hashes that used to point to a now-merged panel; redirected on hashchange + initial load. */
 const ADMIN_PANEL_HASH_ALIASES = {
   "data-sync": "sync-center",
+  "rh-wcl": "identity",
+  database: "identity",
 };
 
 const SYNC_CENTER_TAB_IDS = ["workers", "snapshot", "readiness", "backup"];
@@ -91,6 +93,7 @@ let customDmCandidatesState = [];
 let customDmSelectedUserIds = new Set();
 let customDmFilterState = { displayName: "", guildRole: "", recentClass: "", recentSpec: "", subscribed: "" };
 let customDmRoleTargets = new Set(["Tanks", "Healers", "Melee", "Ranged"]);
+let discordRoleSyncState = null;
 let discordNewsStatusState = null;
 let discordNewsRolesState = [];
 let discordNewsSelectedRoleIds = new Set();
@@ -117,6 +120,7 @@ function parseAdminHash() {
 function showAdminPanel(panelId, opts = {}) {
   const replaceHash = opts.replaceHash !== false;
   if (!panelId || !ADMIN_PANEL_IDS.includes(panelId)) return;
+  if (panelId !== "identity") setIdentityAccountsTableMaximized(false);
   document.querySelectorAll("[data-admin-panel]").forEach((el) => {
     const id = el.getAttribute("data-admin-panel");
     el.classList.toggle("is-admin-panel-active", id === panelId);
@@ -141,6 +145,7 @@ function showAdminPanel(panelId, opts = {}) {
   }
   closeAdminSidebarDrawer();
   if (panelId === "sync-center") showSyncCenterSubTab(opts.subTab || SYNC_CENTER_DEFAULT_TAB, { replaceHash });
+  if (panelId === "discord-role-sync" && !discordRoleSyncState) loadDiscordRoleSyncPreview().catch(() => {});
   if (replaceHash) {
     const sub = panelId === "sync-center" && opts.subTab ? `:${opts.subTab}` : "";
     const next = `#admin-${panelId}${sub}`;
@@ -181,7 +186,7 @@ function initialAdminPanelInfo() {
   } catch (_) {
     /* ignore */
   }
-  return { panelId: "rh-wcl", subTab: null };
+  return { panelId: "identity", subTab: null };
 }
 
 function closeAdminSidebarDrawer() {
@@ -680,7 +685,7 @@ function updateRhWclLinksChrome(list) {
   const countEl = document.getElementById("rhWclRowCount");
   if (countEl) {
     countEl.textContent =
-      dataCount === 0 ? "No saved mappings" : `${dataCount} mapping${dataCount === 1 ? "" : "s"}`;
+      dataCount === 0 ? "No saved identities" : `${dataCount} account${dataCount === 1 ? "" : "s"}`;
   }
   const hint = document.getElementById("rhWclEmptyHint");
   if (hint) {
@@ -762,7 +767,7 @@ function renderRhWclTodo(payload) {
         ? `Discord ID already has row: ${p.existing.linkedDiscordRow}`
         : existingRows.length
           ? `Character already found on: ${existingRows.join(", ")}`
-          : "No existing Account Assignment row found";
+          : "No existing identity found";
       const postedAt = Number(p?.postedAt || 0);
       const posted = postedAt ? new Date(postedAt).toLocaleString() : "unknown";
       const messageUrl = String(p?.messageUrl || "");
@@ -782,7 +787,7 @@ function renderRhWclTodo(payload) {
           <div class="subtle">${messageUrl ? `<a href="${esc(messageUrl)}" target="_blank" rel="noopener">Discord post</a>` : "Discord post"} · ${esc(posted)}</div>
         </td>
         <td class="admin-rh-todo-actions">
-          <button type="button" class="event-signup-btn" data-discord-profile-accept="${esc(id)}" title="Create or update the Account Assignment row and mirror it into the identity DB">Accept</button>
+          <button type="button" class="event-signup-btn" data-discord-profile-accept="${esc(id)}" title="Create or update the canonical identity">Accept</button>
           <button type="button" class="event-signup-btn admin-btn-danger" data-discord-profile-reject="${esc(id)}" title="Reject this Discord profile post proposal">Reject</button>
         </td>
       </tr>`;
@@ -828,7 +833,7 @@ function renderRhWclTodo(payload) {
         <td><strong>${esc(wcl)}</strong></td>
         <td>${esc(untilTxt)}</td>
         <td class="admin-rh-todo-actions">
-          <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-icebox-restore data-wcl="${esc(wcl)}" title="Remove from ICEBOX so sync can suggest this name again">Restore</button>
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-icebox-restore data-wcl="${esc(wcl)}" title="Restore this ignored suggestion so automation can propose it again">Restore</button>
         </td>
       </tr>`;
     })
@@ -927,25 +932,27 @@ function renderRhWclTodo(payload) {
       }
     </details>
     <details class="admin-rh-todo-block" data-rh-wcl-todo-block="icebox">
-      <summary>ICEBOX (${rejectedIcebox.length})</summary>
+      <summary>Ignored suggestions (${rejectedIcebox.length})</summary>
       ${
         rejectedIcebox.length
-          ? `<p class="subtle">Rejected WCL names are parked here until their TTL expires. Restore to allow suggestions again.</p>
+          ? `<p class="subtle">Rejected character names are ignored temporarily. Restore to allow suggestions again.</p>
              <div class="admin-table-wrap">
                <table class="admin-table admin-rh-todo-table">
                  <thead><tr><th>WCL character</th><th>Ignored until</th><th>Actions</th></tr></thead>
                  <tbody>${iceboxRows}</tbody>
                </table>
              </div>`
-          : `<p class="subtle">ICEBOX is empty.</p>`
+          : `<p class="subtle">No ignored suggestions.</p>`
       }
     </details>
   `;
 }
 
 async function loadRhWclTodo() {
+  if (identityReviewDetailsLoadPromise) return identityReviewDetailsLoadPromise;
+  identityReviewDetailsLoadPromise = (async () => {
   const host = document.getElementById("rhWclTodoHost");
-  if (host && !host.dataset.rhWclTodoLoaded) host.innerHTML = `<p class="subtle">Loading to-do…</p>`;
+  if (host && !host.dataset.rhWclTodoLoaded) host.innerHTML = `<p class="subtle">Loading review details…</p>`;
   try {
     const [todoResult, profileResult] = await Promise.allSettled([
       getJson("/api/admin/rh-wcl-links/proposals"),
@@ -960,8 +967,12 @@ async function loadRhWclTodo() {
     renderRhWclTodo(payload);
     if (host) host.dataset.rhWclTodoLoaded = "1";
   } catch (error) {
-    if (host) host.innerHTML = `<p class="subtle">Failed to load to-do: ${esc(error?.message || "")}</p>`;
+    if (host) host.innerHTML = `<p class="subtle">Failed to load review details: ${esc(error?.message || "")}</p>`;
   }
+  })().finally(() => {
+    identityReviewDetailsLoadPromise = null;
+  });
+  return identityReviewDetailsLoadPromise;
 }
 
 function renderRhWclLinksTable(rows) {
@@ -1047,7 +1058,7 @@ function renderRhWclLinksTable(rows) {
                 <div class="admin-rh-match-chips">${rhWclMatchChipsHtml(row)}</div>
               </td>
               <td class="admin-rh-actions-cell">
-                <button type="button" class="event-signup-btn" data-rh-wcl-save title="Save this row to disk">Save row</button>
+                <button type="button" class="event-signup-btn" data-rh-wcl-save title="Save this row to the identity database">Save row</button>
                 ${
                   row.verifiedAt
                     ? `<button type="button" class="event-signup-btn event-signup-btn--softres" data-rh-wcl-unverify="${esc(storedRh)}" title="Clear verified flag — heuristic merges may edit this row again">Unverify</button>`
@@ -2133,6 +2144,112 @@ async function loadCustomDmCandidates() {
   renderCustomDmPanel();
 }
 
+function roleSyncStatusLabel(status) {
+  if (status === "will-add") return "Will add";
+  if (status === "already") return "Already set";
+  if (status === "missing") return "Missing role";
+  if (status === "not-in-guild") return "Not in guild";
+  if (status === "unassignable") return "Move bot role higher";
+  if (status === "managed") return "Managed role";
+  return status || "-";
+}
+
+function renderDiscordRoleSync(payload) {
+  const host = document.getElementById("discordRoleSyncHost");
+  if (!host) return;
+  discordRoleSyncState = payload || null;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle" style="color:#c44">Failed to load role sync preview: ${esc(payload?.error || "")}</p>`;
+    return;
+  }
+  const summary = payload.summary || {};
+  const setupWarnings = Array.isArray(payload.setupWarnings) ? payload.setupWarnings : [];
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const roleRows = (Array.isArray(payload.targetRoles) ? payload.targetRoles : [])
+    .map((target) => {
+      const role = target?.role || {};
+      const status = !target?.exists ? "Missing" : role.assignable ? "Assignable" : "Blocked";
+      const tone = status === "Assignable" ? "color:#5b8a4a" : "color:#c44";
+      return `<tr>
+        <td><strong>${esc(target?.name || "")}</strong></td>
+        <td style="${tone}">${esc(status)}</td>
+        <td>${role.position != null ? esc(String(role.position)) : "—"}</td>
+      </tr>`;
+    })
+    .join("");
+  const playerRows = rows
+    .filter((row) => Array.isArray(row.rolesToAdd) && row.rolesToAdd.length)
+    .slice(0, 250)
+    .map((row) => {
+      const desired = (Array.isArray(row.desiredRoles) ? row.desiredRoles : [])
+        .map((role) => `${role.name}: ${roleSyncStatusLabel(role.status)}`)
+        .join(", ");
+      const add = (row.rolesToAdd || []).map((role) => role.name).join(", ");
+      const warnings = Array.isArray(row.warnings) && row.warnings.length ? row.warnings.join(", ") : "";
+      return `<tr>
+        <td>
+          <strong>${esc(row.displayName || row.userId)}</strong>
+          <div class="subtle"><code>${esc(row.userId || "")}</code></div>
+        </td>
+        <td>${esc(row.recentClass || "-")}</td>
+        <td>${esc(row.recentSpec || "-")}</td>
+        <td>${esc(row.guildRole || "Peon")}</td>
+        <td>${esc(add || "-")}</td>
+        <td class="subtle">${esc(desired || warnings || "-")}</td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <p class="subtle">
+      Mode: <strong>${esc(payload.mode || "add-only")}</strong> · Candidates:
+      <strong>${esc(String(summary.candidates || 0))}</strong> · Users with roles to add:
+      <strong>${esc(String(summary.usersWithRolesToAdd || 0))}</strong> · Total missing assignments:
+      <strong>${esc(String(summary.rolesToAdd || 0))}</strong>
+    </p>
+    ${
+      setupWarnings.length
+        ? `<div class="admin-grid-note" style="border-color:#c44">
+            <p class="subtle" style="color:#c44;margin-top:0"><strong>Setup needed before full sync:</strong></p>
+            <ul class="subtle">${setupWarnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul>
+          </div>`
+        : `<p class="subtle" style="color:#5b8a4a"><strong>Role setup looks assignable.</strong></p>`
+    }
+    <details class="admin-rh-todo-block" open>
+      <summary>Discord role mapping</summary>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Role</th><th>Status</th><th>Position</th></tr></thead>
+          <tbody>${roleRows || `<tr><td colspan="3" class="subtle">No target roles found.</td></tr>`}</tbody>
+        </table>
+      </div>
+    </details>
+    <details class="admin-rh-todo-block" ${Number(summary.usersWithRolesToAdd || 0) ? "open" : ""}>
+      <summary>Players needing role additions (${esc(String(summary.usersWithRolesToAdd || 0))})</summary>
+      ${
+        playerRows
+          ? `<div class="admin-table-wrap role-alert-candidates-wrap">
+              <table class="admin-table role-alert-candidates-table">
+                <thead><tr><th>Player</th><th>Class</th><th>Spec</th><th>Guild rank</th><th>Roles to add</th><th>Details</th></tr></thead>
+                <tbody>${playerRows}</tbody>
+              </table>
+            </div>`
+          : `<p class="subtle">No missing Discord role assignments in the current preview.</p>`
+      }
+    </details>
+  `;
+}
+
+async function loadDiscordRoleSyncPreview() {
+  const host = document.getElementById("discordRoleSyncHost");
+  if (host && !discordRoleSyncState) host.innerHTML = `<p class="subtle">Loading role sync preview...</p>`;
+  try {
+    const payload = await getJson("/api/admin/discord-role-sync/preview");
+    renderDiscordRoleSync(payload);
+  } catch (error) {
+    renderDiscordRoleSync({ ok: false, error: error?.message || "Failed to load preview" });
+  }
+}
+
 function renderDiscordNewsStatus(payload = discordNewsStatusState) {
   const host = document.getElementById("discordNewsStatus");
   if (!host) return;
@@ -2910,32 +3027,12 @@ async function loadPublicSnapshotStatus() {
   renderPublicSnapshotStatus(payload);
 }
 
-async function loadAdminData() {
-  const me = await getJson("/api/auth/me");
-  const rhHost = document.getElementById("rhWclLinksTableHost");
-  if (!me.authenticated || !me.isAdmin) {
-    status("Admin access required (HighBullet editor account).");
-    if (rhHost) {
-      rhHost.innerHTML = `<p class="subtle">Log in with an authorized admin account to edit Account Assignment mappings.</p>`;
-    }
-    return;
-  }
-  status(`Logged in as ${me?.user?.globalName || me?.user?.username || "Admin"}`);
+async function loadAdminSecondaryData() {
   const gargul = await getJson("/api/loot-history/gargul");
   const loot = await getJson("/api/loot-history?limit=25");
   const p2 = await getJson("/api/p2-preparation/materials");
   const joinNeeds = await getJson("/api/admin/join/current-needs");
   const roleAlertEvents = await getJson("/api/admin/role-alerts/events");
-  let rhLinks = [];
-  try {
-    const rh = await getJson("/api/admin/rh-wcl-links");
-    rhLinks = Array.isArray(rh?.links) ? rh.links : [];
-  } catch (error) {
-    status(
-      `Could not load saved Raid Helper links (${error?.message || "error"}). Add rows below and save — or redeploy latest server.`
-    );
-    rhLinks = [];
-  }
   allRaidsState = Array.isArray(loot?.allRaids) ? loot.allRaids : Array.isArray(loot?.raids) ? loot.raids : [];
   selectedReportCodesState = new Set(Array.isArray(gargul?.selectedReportCodes) ? gargul.selectedReportCodes : []);
   const entries = Array.isArray(gargul?.rows) ? gargul.rows : [];
@@ -2988,9 +3085,35 @@ async function loadAdminData() {
     renderDiscordNewsQueue({ queue: [] });
     status(`Discord news queue failed: ${error?.message || "Unknown error"}`);
   });
-  renderRhWclUnmatched(null);
-  renderRhWclLinksTable(rhLinks);
-  loadRhWclTodo().catch(() => {});
+}
+
+async function loadAdminData() {
+  const me = await getJson("/api/auth/me");
+  const rhHost = document.getElementById("rhWclLinksTableHost");
+  if (!me.authenticated || !me.isAdmin) {
+    status("Admin access required (HighBullet editor account).");
+    if (rhHost) {
+      rhHost.innerHTML = `<p class="subtle">Log in with an authorized admin account to edit identities.</p>`;
+    }
+    return;
+  }
+  status(`Logged in as ${me?.user?.globalName || me?.user?.username || "Admin"}`);
+
+  const activePanel = document.querySelector(".admin-panel.is-admin-panel-active")?.getAttribute("data-admin-panel") || "identity";
+  if (activePanel === "identity") {
+    await Promise.allSettled([loadIdentityAccounts({ silent: false }), loadIdentityJourney({ silent: false })]);
+    setTimeout(() => {
+      loadAdminSecondaryData().catch((error) => {
+        status(`Background admin data load failed: ${error?.message || "Unknown error"}`);
+      });
+    }, 0);
+    return;
+  }
+
+  await loadAdminSecondaryData();
+  if (activePanel === "identity") {
+    await Promise.allSettled([loadIdentityAccounts({ silent: true }), loadIdentityJourney({ silent: true })]);
+  }
 }
 
 async function importJsonFromTextarea() {
@@ -3110,12 +3233,64 @@ document.getElementById("rhWclAddRowBtn")?.addEventListener("click", () => {
   renderRhWclLinksTable(links);
 });
 
+document.getElementById("identityReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("identityReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload identity view", loading: "Reloading…", success: "Reloaded", failure: "Reload failed" },
+      async () => refreshIdentityManagement({ silent: false })
+    );
+    status("Identity view reloaded.");
+  } catch (error) {
+    status(error?.message || "Identity reload failed");
+  }
+});
+
+document.getElementById("identityScanProfilesBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("identityScanProfilesBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Scan Discord profile posts", loading: "Scanning…", success: "Scanned", failure: "Scan failed" },
+      async () => {
+        await getJson("/api/admin/discord-profile-ingest/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 50 }),
+        });
+        await refreshIdentityManagement({ silent: true });
+      }
+    );
+    status("Discord profile scan complete.");
+  } catch (error) {
+    status(error?.message || "Discord profile scan failed");
+  }
+});
+
+document.getElementById("identityRunAutomationBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("identityRunAutomationBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Run identity automation", loading: "Running…", success: "Done", failure: "Failed" },
+      async () => {
+        await getJson("/api/admin/sync/account-assignment", { method: "POST" });
+        await refreshIdentityManagement({ silent: true });
+      }
+    );
+    status("Identity automation finished. Review any remaining backlog items.");
+  } catch (error) {
+    status(error?.message || "Identity automation failed");
+  }
+});
+
 document.getElementById("rhWclRefreshBtn")?.addEventListener("click", async () => {
   const btn = document.getElementById("rhWclRefreshBtn");
   const dirty = document.querySelector("[data-rh-wcl-row][data-rh-wcl-dirty='1']");
   if (dirty) {
     const ok = window.confirm(
-      "There are unsaved row edits (e.g. drag-and-drop assignments). Refreshing will re-render the table from disk and discard them. Continue anyway?"
+      "There are unsaved row edits (e.g. drag-and-drop assignments). Running automation will reload the table and discard them. Continue anyway?"
     );
     if (!ok) {
       status("Refresh cancelled — Save row / Save all rows first to keep your changes.");
@@ -3131,12 +3306,13 @@ document.getElementById("rhWclRefreshBtn")?.addEventListener("click", async () =
         const refreshed = await getJson("/api/admin/rh-wcl-links");
         renderRhWclLinksTable(Array.isArray(refreshed?.links) ? refreshed.links : []);
         await loadRhWclTodo();
+        await loadIdentityJourney({ silent: true });
         const summary = result?.summary || result?.result || {};
         const auto = summary.autoApplied ?? "?";
         const proposals = summary.proposals ?? "?";
         const verified = summary.verifiedSkipped ?? 0;
         status(
-          `Account Assignment synced: ${auto} row(s) on disk, ${proposals} proposal(s) waiting, ${verified} verified row(s) hard-locked.`
+          `Identity automation finished: ${auto} account row(s) checked, ${proposals} suggestion(s) waiting, ${verified} verified row(s) protected.`
         );
       }
     );
@@ -3236,7 +3412,8 @@ document.getElementById("rhWclSaveLinksBtn")?.addEventListener("click", async ()
     } catch {
       renderRhWclLinksTable(links);
     }
-    status(`Saved ${links.length} mapping row(s) to disk (sorted: unassigned first).`);
+    await loadIdentityJourney({ silent: true }).catch(() => {});
+    status(`Saved ${links.length} identity row(s).`);
   } catch (error) {
     status(error?.message || "Save failed");
   }
@@ -3329,6 +3506,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify(payload),
       });
       renderRhWclLinksTable(Array.isArray(payloadOut.links) ? payloadOut.links : []);
+      await loadIdentityJourney({ silent: true }).catch(() => {});
       status(`Saved row “${row.raidHelperName}”.`);
     } catch (error) {
       status(error?.message || "Save row failed");
@@ -3400,6 +3578,7 @@ document.addEventListener("click", async (event) => {
       });
       renderRhWclLinksTable(Array.isArray(out?.links) ? out.links : []);
       await loadRhWclTodo();
+      await loadIdentityJourney({ silent: true });
       status(`Accepted “${wcl}” → ${rh}${verify ? " (verified)" : ""}.`);
     } catch (error) {
       status(error?.message || "Accept failed");
@@ -3421,6 +3600,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ wclCharacterName: wcl }),
       });
       await loadRhWclTodo();
+      await loadIdentityJourney({ silent: true });
       status(`Rejected “${wcl}”. Will not be re-suggested for 30 days.`);
     } catch (error) {
       status(error?.message || "Reject failed");
@@ -3442,9 +3622,10 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ wclCharacterName: wcl }),
       });
       await loadRhWclTodo();
-      status(`Restored “${wcl}” from ICEBOX. Sync can suggest it again.`);
+      await loadIdentityJourney({ silent: true });
+      status(`Restored “${wcl}”. Automation can suggest it again.`);
     } catch (error) {
-      status(error?.message || "Restore from ICEBOX failed");
+      status(error?.message || "Restore failed");
     } finally {
       restoreIceboxBtn.disabled = false;
     }
@@ -3461,6 +3642,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ limit: 50 }),
       });
       await loadRhWclTodo();
+      await loadIdentityJourney({ silent: true });
       const created = Number(out?.scan?.created || 0);
       status(`Discord profile scan complete. Created ${created} proposal${created === 1 ? "" : "s"}.`);
     } catch (error) {
@@ -3518,7 +3700,8 @@ document.addEventListener("click", async (event) => {
       const linksPayload = await getJson("/api/admin/rh-wcl-links");
       renderRhWclLinksTable(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
       await loadRhWclTodo();
-      status(`Accepted ${accepted} Discord profile proposal${accepted === 1 ? "" : "s"} into the Account Database.`);
+      await loadIdentityJourney({ silent: true });
+      status(`Accepted ${accepted} Discord profile proposal${accepted === 1 ? "" : "s"} into Identity Management.`);
     } catch (error) {
       status(error?.message || "Bulk accept Discord profile proposals failed");
       await loadRhWclTodo();
@@ -3541,7 +3724,8 @@ document.addEventListener("click", async (event) => {
       const linksPayload = await getJson("/api/admin/rh-wcl-links");
       renderRhWclLinksTable(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
       await loadRhWclTodo();
-      status("Discord profile proposal accepted and mirrored into the Account Database.");
+      await loadIdentityJourney({ silent: true });
+      status("Discord profile proposal accepted into Identity Management.");
     } catch (error) {
       status(error?.message || "Accept Discord profile proposal failed");
     } finally {
@@ -3560,6 +3744,7 @@ document.addEventListener("click", async (event) => {
         method: "POST",
       });
       await loadRhWclTodo();
+      await loadIdentityJourney({ silent: true });
       status("Discord profile proposal rejected.");
     } catch (error) {
       status(error?.message || "Reject Discord profile proposal failed");
@@ -3914,6 +4099,29 @@ document.addEventListener("click", (event) => {
       { idle: "Reload players", loading: "Loading...", success: "Loaded", failure: "Failed" },
       async () => loadCustomDmCandidates()
     ).catch((error) => status(error?.message || "Failed to reload DM candidates"));
+    return;
+  }
+  const roleSyncPreviewBtn = event.target.closest("#discordRoleSyncPreviewBtn");
+  if (roleSyncPreviewBtn) {
+    runWithButtonFeedback(
+      roleSyncPreviewBtn,
+      { idle: "Reload preview", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => loadDiscordRoleSyncPreview()
+    ).catch((error) => status(error?.message || "Failed to load Discord role sync preview"));
+    return;
+  }
+  const roleSyncRunBtn = event.target.closest("#discordRoleSyncRunBtn");
+  if (roleSyncRunBtn) {
+    runWithButtonFeedback(
+      roleSyncRunBtn,
+      { idle: "Sync missing roles", loading: "Syncing...", success: "Synced", failure: "Failed" },
+      async () => getJson("/api/admin/discord-role-sync/run", { method: "POST" })
+    )
+      .then(async (payload) => {
+        status(`Discord role sync complete: ${Number(payload?.assigned || 0)} assigned, ${Number(payload?.failed || 0)} failed.`);
+        await loadDiscordRoleSyncPreview();
+      })
+      .catch((error) => status(error?.message || "Discord role sync failed"));
     return;
   }
   const discordNewsSendBtn = event.target.closest("#discordNewsSendBtn");
@@ -4316,6 +4524,19 @@ let adminDatabaseUsersState = [];
 let adminDatabaseLoaded = false;
 let adminDatabaseSearchValue = "";
 let adminDatabaseExpandedUserId = null;
+let identityBacklogState = [];
+let identityBacklogLoaded = false;
+let identityAccountsState = [];
+let identityAccountsLoaded = false;
+let identityAccountsSearchValue = "";
+let identityAccountsActivityCutoffValue = "";
+let identityAccountsSortState = { key: "lastActivity", dir: "desc" };
+let identityAccountsTotal = 0;
+let identityAccountsServerShown = 0;
+let identityAccountsLoadPromise = null;
+let identityAuditLoadPromise = null;
+let identityJourneyLoadPromise = null;
+let identityReviewDetailsLoadPromise = null;
 
 function fmtBytes(bytes) {
   const n = Number(bytes);
@@ -4471,6 +4692,493 @@ function renderAdminDatabaseSummary(payload) {
   `;
 }
 
+function renderAdminIdentityAudit(payload) {
+  const host = document.getElementById("adminIdentityAudit");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Identity audit unavailable: ${esc(payload?.error || "")}</p>`;
+    return;
+  }
+  const counts = payload.counts || {};
+  const problems =
+    Number(counts.duplicateDiscordIds || 0) +
+    Number(counts.duplicateCharacterOwnership || 0) +
+    Number(counts.accountsWithoutDiscordId || 0) +
+    Number(counts.jsonVsSqliteDrift || 0) +
+    Number(counts.charactersMissingSpec || 0);
+  const badgeStyle = problems
+    ? "background:rgba(249,115,22,.16);border-color:rgba(249,115,22,.35)"
+    : "background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35)";
+  const sampleRows = [
+    ...(payload.duplicateCharacterOwnership || []).slice(0, 3).map((row) => `Duplicate character: ${row.characterName}`),
+    ...(payload.accountsWithoutDiscordId || []).slice(0, 3).map((row) => `Missing Discord ID: ${row.displayName || row.raidHelperName || `user #${row.id}`}`),
+    ...(payload.jsonVsSqliteDrift || []).slice(0, 3).map((row) => `JSON drift: ${row.link?.raidHelperName || row.kind}`),
+  ];
+  host.innerHTML = `
+    <div class="admin-kpi-grid">
+      <div class="admin-kpi-card" style="${badgeStyle}">
+        <strong>${problems}</strong>
+        <span>identity cleanup items</span>
+      </div>
+      <div class="admin-kpi-card"><strong>${Number(counts.duplicateDiscordIds || 0)}</strong><span>duplicate Discord IDs</span></div>
+      <div class="admin-kpi-card"><strong>${Number(counts.duplicateCharacterOwnership || 0)}</strong><span>duplicate character owners</span></div>
+      <div class="admin-kpi-card"><strong>${Number(counts.accountsWithoutDiscordId || 0)}</strong><span>accounts missing Discord ID</span></div>
+      <div class="admin-kpi-card"><strong>${Number(counts.charactersMissingSpec || 0)}</strong><span>characters missing class/spec</span></div>
+    </div>
+    ${
+      sampleRows.length
+        ? `<p class="subtle" style="margin-top:8px">${sampleRows.map(esc).join(" · ")}</p>`
+        : `<p class="subtle" style="margin-top:8px">No duplicate identity ownership found in the audit.</p>`
+    }
+  `;
+}
+
+function identityRoleSelectHtml(current) {
+  const normalized = normalizeGuildRoleValue(current);
+  const sel = ["Grunt", "Veteran"].includes(normalized) ? "Peon" : normalized;
+  return `<select class="admin-input" data-identity-k="guildRole" aria-label="Role">${RH_WCL_ASSIGNABLE_GUILD_ROLES.map(
+    (role) => `<option value="${esc(role)}"${role === sel ? " selected" : ""}>${esc(displayGuildRoleOptionLabel(role))}</option>`
+  ).join("")}</select>`;
+}
+
+function identityCharacterSpecText(character) {
+  if (!character) return "";
+  const cls = String(character.wowClass || "").trim();
+  const spec = String(character.wowSpec || "").trim();
+  return [cls, spec].filter(Boolean).join(" ");
+}
+
+function identityParseColor(value) {
+  const pct = Number(value);
+  if (!Number.isFinite(pct)) return { color: "#94a3b8", background: "rgba(148,163,184,.12)", border: "rgba(148,163,184,.28)" };
+  if (pct >= 100) return { color: "#e5cc80", background: "rgba(229,204,128,.18)", border: "rgba(229,204,128,.42)" };
+  if (pct >= 99) return { color: "#e268a8", background: "rgba(226,104,168,.18)", border: "rgba(226,104,168,.42)" };
+  if (pct >= 95) return { color: "#ff8000", background: "rgba(255,128,0,.18)", border: "rgba(255,128,0,.42)" };
+  if (pct >= 75) return { color: "#a335ee", background: "rgba(163,53,238,.18)", border: "rgba(163,53,238,.42)" };
+  if (pct >= 50) return { color: "#0070ff", background: "rgba(0,112,255,.18)", border: "rgba(0,112,255,.42)" };
+  if (pct >= 25) return { color: "#1eff00", background: "rgba(30,255,0,.16)", border: "rgba(30,255,0,.36)" };
+  return { color: "#9ca3af", background: "rgba(156,163,175,.12)", border: "rgba(156,163,175,.28)" };
+}
+
+function identityParseBracketLabel(bracket, metric) {
+  const b = String(bracket || "").toLowerCase();
+  if (b === "tank") return "Tank";
+  if (b === "heal") return "Heal";
+  if (b === "dps") return "DPS";
+  const m = String(metric || "").toLowerCase();
+  if (m === "hps") return "Heal";
+  if (m === "dps") return "DPS";
+  return "Parse";
+}
+
+function renderIdentityLatestRaidParse(parse) {
+  const value = Number(parse?.bestValue);
+  if (!parse || !Number.isFinite(value) || value <= 0) return "—";
+  const rounded = Math.round(value * 10) / 10;
+  const colors = identityParseColor(value);
+  const style = [
+    "display:inline-flex",
+    "align-items:center",
+    "gap:6px",
+    "padding:2px 8px",
+    "border-radius:999px",
+    `color:${colors.color}`,
+    `background:${colors.background}`,
+    `border:1px solid ${colors.border}`,
+    "font-weight:700",
+  ].join(";");
+  const reportCode = String(parse.reportCode || "").trim();
+  const fightId = Number(parse.bestFightId || 0);
+  const reportHref = reportCode
+    ? `https://classic.warcraftlogs.com/reports/${encodeURIComponent(reportCode)}${Number.isInteger(fightId) && fightId > 0 ? `#fight=${fightId}` : ""}`
+    : "";
+  const pill = `<span style="${style}">${esc(String(rounded))}</span>`;
+  const linkedPill = reportHref ? `<a href="${reportHref}" target="_blank" rel="noopener noreferrer">${pill}</a>` : pill;
+  const label = identityParseBracketLabel(parse.bracket, parse.bestMetric);
+  const details = [
+    parse.characterName,
+    label,
+    parse.bestEncounter,
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" · ");
+  const reportAt = Number(parse.reportStartedAt || 0);
+  return `
+    <div>${linkedPill}</div>
+    <div class="subtle">${esc(details || label)}</div>
+    ${reportAt ? `<div class="subtle">${esc(fmtTs(reportAt))}</div>` : ""}
+  `;
+}
+
+function identityAltTextareaValue(characters) {
+  return (Array.isArray(characters) ? characters : [])
+    .map((char) =>
+      [
+        String(char?.characterName || "").trim(),
+        String(char?.wowClass || "").trim(),
+        String(char?.wowSpec || "").trim(),
+      ]
+        .filter((value, idx) => idx === 0 || value)
+        .join(" | ")
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseIdentityAltTextarea(raw) {
+  return String(raw || "")
+    .split(/\r?\n|,/)
+    .map((line) => {
+      const parts = line.split("|").map((part) => part.trim());
+      const characterName = parts[0] || "";
+      if (!characterName) return null;
+      return {
+        characterName,
+        wowClass: parts[1] || "",
+        wowSpec: parts[2] || "",
+        realm: "Thunderstrike",
+      };
+    })
+    .filter(Boolean);
+}
+
+function identityActivityCutoffMs() {
+  const raw = String(identityAccountsActivityCutoffValue || "").trim();
+  if (!raw) return 0;
+  const dt = new Date(`${raw}T00:00:00`);
+  const ms = dt.getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function filterIdentityAccountsByActivity(accounts) {
+  const cutoffMs = identityActivityCutoffMs();
+  if (!cutoffMs) return Array.isArray(accounts) ? accounts : [];
+  return (Array.isArray(accounts) ? accounts : []).filter((account) => Number(account?.lastActivity?.at || 0) >= cutoffMs);
+}
+
+function syncIdentityActivityCutoffFromPayload(payload) {
+  const cutoff = String(payload?.publicVisibility?.lastActivityCutoff || "").trim();
+  if (cutoff === identityAccountsActivityCutoffValue) return;
+  identityAccountsActivityCutoffValue = cutoff;
+  const input = document.getElementById("identityAccountsActivityCutoff");
+  if (input && input.value !== cutoff) input.value = cutoff;
+}
+
+async function saveIdentityPublicVisibility() {
+  const payload = await getJson("/api/admin/identity/public-visibility", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lastActivityCutoff: identityAccountsActivityCutoffValue }),
+  });
+  syncIdentityActivityCutoffFromPayload(payload);
+  return payload;
+}
+
+function renderIdentityAccountsSummary(payload) {
+  const host = document.getElementById("identityAccountsSummary");
+  if (!host) return;
+  if (payload && payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Could not load identities.</p>`;
+    return;
+  }
+  if (payload) {
+    identityAccountsTotal = Number(payload.total || 0);
+    identityAccountsServerShown = Number(payload.shown || 0);
+  }
+  const cutoffMs = identityActivityCutoffMs();
+  const shownAfterCutoff = filterIdentityAccountsByActivity(identityAccountsState).length;
+  const cutoffText = cutoffMs
+    ? ` Public website cutoff: last activity on/after <strong>${esc(new Date(cutoffMs).toLocaleDateString())}</strong>; ${Math.max(0, identityAccountsServerShown - shownAfterCutoff)} hidden from public profile lists.`
+    : "";
+  host.innerHTML = `<p class="subtle"><strong>${shownAfterCutoff}</strong> of <strong>${identityAccountsTotal}</strong> identities shown.${cutoffText}</p>`;
+}
+
+function setIdentityAccountsTableMaximized(isMaximized) {
+  const block = document.querySelector(".admin-identity-table-block");
+  const btn = document.getElementById("identityAccountsMaximizeBtn");
+  if (!block) return;
+  block.classList.toggle("is-table-maximized", Boolean(isMaximized));
+  document.body.classList.toggle("is-admin-table-maximized", Boolean(isMaximized));
+  if (btn) {
+    btn.setAttribute("aria-pressed", isMaximized ? "true" : "false");
+    btn.textContent = isMaximized ? "Collapse table" : "Maximize table";
+  }
+}
+
+function identityAccountSortValue(account, key) {
+  if (!account) return "";
+  if (key === "discordUserId") return String(account.discordUserId || "");
+  if (key === "displayName") return String(account.displayName || account.raidHelperName || "");
+  if (key === "guildRole") return String(displayGuildRoleOptionLabel(account.guildRole || ""));
+  if (key === "mainCharacter") return String(account.mainCharacter?.characterName || "");
+  if (key === "altCharacters") return Array.isArray(account.altCharacters) ? account.altCharacters.length : 0;
+  if (key === "lastActivity") return Number(account.lastActivity?.at || 0);
+  if (key === "latestRaidParse") return Number(account.latestRaidParse?.bestValue || 0);
+  return String(account.displayName || "");
+}
+
+function sortIdentityAccounts(accounts) {
+  const key = String(identityAccountsSortState?.key || "lastActivity");
+  const dir = identityAccountsSortState?.dir === "asc" ? 1 : -1;
+  return [...(Array.isArray(accounts) ? accounts : [])].sort((a, b) => {
+    const av = identityAccountSortValue(a, key);
+    const bv = identityAccountSortValue(b, key);
+    let cmp = 0;
+    if (typeof av === "number" || typeof bv === "number") {
+      cmp = Number(av || 0) - Number(bv || 0);
+    } else {
+      cmp = String(av || "").localeCompare(String(bv || ""), undefined, { numeric: true, sensitivity: "base" });
+    }
+    if (!cmp && key !== "displayName") {
+      cmp = String(a?.displayName || "").localeCompare(String(b?.displayName || ""), undefined, { sensitivity: "base" });
+    }
+    return cmp * dir;
+  });
+}
+
+function identitySortIndicator(key) {
+  return identityAccountsSortState?.key === key ? (identityAccountsSortState?.dir === "desc" ? " ▼" : " ▲") : "";
+}
+
+function identitySortButton(key, label) {
+  return `<button type="button" class="admin-table-sort-btn" data-identity-account-sort="${esc(key)}">${esc(label)}${identitySortIndicator(key)}</button>`;
+}
+
+function renderIdentityAccountsTable(accounts) {
+  const host = document.getElementById("identityAccountsTableHost");
+  if (!host) return;
+  const visibleAccounts = filterIdentityAccountsByActivity(accounts);
+  renderIdentityAccountsSummary();
+  if (!visibleAccounts.length) {
+    host.innerHTML = `<p class="subtle">No identities match the current filter.</p>`;
+    return;
+  }
+  const sortedAccounts = sortIdentityAccounts(visibleAccounts);
+  const rows = sortedAccounts
+    .map((account) => {
+      const main = account.mainCharacter || {};
+      const activity = account.lastActivity || {};
+      const activityAt = Number(activity.at || 0);
+      const activityText = activityAt ? `${fmtTs(activityAt)} · ${activity.source || "Activity"}` : "—";
+      const activityLabel = activity.label ? `<div class="subtle">${esc(activity.label)}</div>` : "";
+      return `<tr data-identity-account-row="${account.id}">
+        <td>
+          <input class="admin-input" data-identity-k="discordUserId" value="${esc(account.discordUserId || "")}" placeholder="Discord ID" inputmode="numeric" />
+        </td>
+        <td>
+          <input class="admin-input" data-identity-k="displayName" value="${esc(account.displayName || "")}" placeholder="Main character name" />
+          <div class="subtle">Leaderboard/profile display</div>
+        </td>
+        <td>${identityRoleSelectHtml(account.guildRole)}</td>
+        <td>
+          <div class="admin-actions admin-actions--tight" style="align-items:flex-start">
+            <input class="admin-input" data-identity-main="characterName" value="${esc(main.characterName || "")}" placeholder="Main character" />
+            <input class="admin-input" data-identity-main="wowClass" value="${esc(main.wowClass || "")}" placeholder="Class" />
+            <input class="admin-input" data-identity-main="wowSpec" value="${esc(main.wowSpec || "")}" placeholder="Spec" />
+          </div>
+          <div class="subtle" style="margin-top:4px">Realm fixed to Thunderstrike.</div>
+        </td>
+        <td>
+          <textarea class="admin-input" data-identity-k="altCharacters" rows="3" placeholder="One per line: Name | Class | Spec">${esc(identityAltTextareaValue(account.altCharacters))}</textarea>
+          <div class="subtle">${(account.altCharacters || []).length} alt${(account.altCharacters || []).length === 1 ? "" : "s"}</div>
+        </td>
+        <td>${esc(activityText)}${activityLabel}</td>
+        <td>${renderIdentityLatestRaidParse(account.latestRaidParse)}</td>
+        <td class="admin-rh-actions-cell">
+          <button type="button" class="event-signup-btn" data-identity-account-save="${account.id}">Save</button>
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-admin-database-user-detail="${account.id}">Details</button>
+          <button type="button" class="event-signup-btn event-signup-btn--softres" data-admin-database-user-merge="${account.id}">Merge</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>${identitySortButton("discordUserId", "Discord ID")}</th>
+            <th>${identitySortButton("displayName", "Display Name")}</th>
+            <th>${identitySortButton("guildRole", "Role")}</th>
+            <th>${identitySortButton("mainCharacter", "Main Char with Spec")}</th>
+            <th>${identitySortButton("altCharacters", "Alt Chars with Spec")}</th>
+            <th>${identitySortButton("lastActivity", "Last Activity")}</th>
+            <th>${identitySortButton("latestRaidParse", "Highest Parse Last Raid")}</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+  host.querySelectorAll("[data-identity-k], [data-identity-main]").forEach((input) => {
+    input.addEventListener("input", () => {
+      input.closest("[data-identity-account-row]")?.setAttribute("data-identity-dirty", "1");
+    });
+    input.addEventListener("change", () => {
+      input.closest("[data-identity-account-row]")?.setAttribute("data-identity-dirty", "1");
+    });
+  });
+}
+
+function readIdentityAccountRow(tr) {
+  const read = (sel) => String(tr?.querySelector(sel)?.value || "").trim();
+  return {
+    discordUserId: read('[data-identity-k="discordUserId"]'),
+    displayName: read('[data-identity-k="displayName"]'),
+    guildRole: normalizeGuildRoleValue(read('[data-identity-k="guildRole"]')),
+    mainCharacter: {
+      characterName: read('[data-identity-main="characterName"]'),
+      wowClass: read('[data-identity-main="wowClass"]'),
+      wowSpec: read('[data-identity-main="wowSpec"]'),
+      realm: "Thunderstrike",
+    },
+    altCharacters: parseIdentityAltTextarea(read('[data-identity-k="altCharacters"]')),
+  };
+}
+
+async function loadIdentityAccounts({ silent = false } = {}) {
+  if (identityAccountsLoadPromise) return identityAccountsLoadPromise;
+  identityAccountsLoadPromise = (async () => {
+  const host = document.getElementById("identityAccountsTableHost");
+  if (!silent && host) host.innerHTML = `<p class="subtle">Loading identities…</p>`;
+  const q = identityAccountsSearchValue ? `?q=${encodeURIComponent(identityAccountsSearchValue)}` : "";
+  const payload = await getJson(`/api/admin/identity/accounts${q}`);
+  syncIdentityActivityCutoffFromPayload(payload);
+  identityAccountsState = Array.isArray(payload?.accounts) ? payload.accounts : [];
+  renderIdentityAccountsSummary(payload);
+  renderIdentityAccountsTable(identityAccountsState);
+  identityAccountsLoaded = true;
+  if (!identityAuditLoadPromise) {
+    identityAuditLoadPromise = getJson("/api/admin/identity-audit")
+      .catch((e) => ({ ok: false, error: e?.message }))
+      .then(renderAdminIdentityAudit)
+      .finally(() => {
+        identityAuditLoadPromise = null;
+      });
+  }
+  await identityAuditLoadPromise.catch(() => {});
+  return payload;
+  })().finally(() => {
+    identityAccountsLoadPromise = null;
+  });
+  return identityAccountsLoadPromise;
+}
+
+function identityPriorityLabel(priority) {
+  const p = String(priority || "medium");
+  if (p === "high") return "Needs admin";
+  if (p === "low") return "Low priority";
+  return "Review";
+}
+
+function renderIdentityDashboard(payload) {
+  const host = document.getElementById("identityDashboardHost");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Could not load identity health: ${esc(payload?.error || "")}</p>`;
+    return;
+  }
+  const counts = payload.counts || {};
+  const byPriority = counts.byPriority || {};
+  const total = Number(counts.total || 0);
+  host.innerHTML = `
+    <div class="admin-kpi-grid">
+      <div class="admin-kpi-card">
+        <strong>${total}</strong>
+        <span>backlog item${total === 1 ? "" : "s"}</span>
+      </div>
+      <div class="admin-kpi-card">
+        <strong>${Number(byPriority.high || 0)}</strong>
+        <span>need admin decision</span>
+      </div>
+      <div class="admin-kpi-card">
+        <strong>${Number(byPriority.medium || 0)}</strong>
+        <span>review suggestions</span>
+      </div>
+      <div class="admin-kpi-card">
+        <strong>${Number(byPriority.low || 0)}</strong>
+        <span>can wait</span>
+      </div>
+    </div>
+    <p class="subtle" style="margin-top:8px">
+      Last checked ${esc(fmtTs(payload.generatedAt))}. Automation applies confident links when a Discord ID is known; conflicts stay here for review.
+    </p>
+  `;
+}
+
+function renderIdentityBacklog(payload) {
+  const host = document.getElementById("identityBacklogHost");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">Could not load review backlog: ${esc(payload?.error || "")}</p>`;
+    return;
+  }
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  identityBacklogState = items;
+  if (!items.length) {
+    host.innerHTML = `
+      <h4 class="section-title" style="margin-top:8px">Review Backlog</h4>
+      <p class="subtle">No identity items need admin review right now.</p>
+    `;
+    return;
+  }
+  const rows = items
+    .slice(0, 100)
+    .map((item, idx) => {
+      const actions = (Array.isArray(item.actions) ? item.actions : [])
+        .map(
+          (action) => `<button type="button" class="event-signup-btn ${action.danger ? "admin-btn-danger" : "event-signup-btn--softres"}"
+            data-identity-backlog-action="${idx}"
+            data-identity-backlog-action-id="${esc(action.id || "")}">
+            ${esc(action.label || "Action")}
+          </button>`
+        )
+        .join("");
+      return `<tr>
+        <td><strong>${esc(identityPriorityLabel(item.priority))}</strong><div class="subtle">${esc(item.source || "")}</div></td>
+        <td><strong>${esc(item.title || "")}</strong><div class="subtle">${esc(item.description || "")}</div></td>
+        <td><code>${esc(item.type || "")}</code></td>
+        <td class="admin-rh-todo-actions">${actions}</td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <h4 class="section-title" style="margin-top:8px">Review Backlog</h4>
+    <div class="admin-table-wrap">
+      <table class="admin-table admin-rh-todo-table">
+        <thead><tr><th>Priority</th><th>What needs review</th><th>Type</th><th>Actions</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function loadIdentityJourney({ silent = false } = {}) {
+  if (identityJourneyLoadPromise) return identityJourneyLoadPromise;
+  identityJourneyLoadPromise = (async () => {
+  if (!silent) {
+    const dashboard = document.getElementById("identityDashboardHost");
+    const backlog = document.getElementById("identityBacklogHost");
+    if (dashboard) dashboard.innerHTML = `<p class="subtle">Loading identity health…</p>`;
+    if (backlog) backlog.innerHTML = `<p class="subtle">Loading review backlog…</p>`;
+  }
+  const payload = await getJson("/api/admin/identity-backlog");
+  renderIdentityDashboard(payload);
+  renderIdentityBacklog(payload);
+  identityBacklogLoaded = true;
+  return payload;
+  })().finally(() => {
+    identityJourneyLoadPromise = null;
+  });
+  return identityJourneyLoadPromise;
+}
+
+async function refreshIdentityManagement({ silent = true } = {}) {
+  await Promise.allSettled([loadIdentityAccounts({ silent }), loadIdentityJourney({ silent })]);
+}
+
 function renderAdminDatabaseUsersTable(users) {
   const host = document.getElementById("adminDatabaseTableHost");
   if (!host) return;
@@ -4567,6 +5275,12 @@ function renderAdminDatabaseDetail(payload, userId) {
         <td>${esc(c.discoveredVia || "")}</td>
         <td>${esc(fmtTs(c.firstSeenAt))}</td>
         <td>${esc(fmtTs(c.lastSeenAt))}</td>
+        <td>
+          <button type="button" class="event-signup-btn event-signup-btn--softres"
+            data-admin-database-character-move="${c.id}">
+            Move
+          </button>
+        </td>
       </tr>`
     )
     .join("");
@@ -4619,8 +5333,8 @@ function renderAdminDatabaseDetail(payload, userId) {
     </p>
     <h5 class="section-title">Linked characters (${characters.length})</h5>
     <table class="admin-table">
-      <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Spec</th><th>Realm</th><th>Discovered</th><th>First seen</th><th>Last seen</th></tr></thead>
-      <tbody>${charRows || `<tr><td colspan="8" class="subtle">No characters linked.</td></tr>`}</tbody>
+      <thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Spec</th><th>Realm</th><th>Discovered</th><th>First seen</th><th>Last seen</th><th></th></tr></thead>
+      <tbody>${charRows || `<tr><td colspan="9" class="subtle">No characters linked.</td></tr>`}</tbody>
     </table>
     <h5 class="section-title">Parse summary (materialised)</h5>
     <table class="admin-table">
@@ -4640,6 +5354,9 @@ function renderAdminDatabaseDetail(payload, userId) {
     <div class="admin-actions admin-actions--tight">
       <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminDatabaseDetailCloseBtn">
         Close detail
+      </button>
+      <button type="button" class="event-signup-btn event-signup-btn--softres" data-admin-database-user-merge="${user.id}">
+        Merge this user into another
       </button>
     </div>
   `;
@@ -4669,13 +5386,15 @@ async function loadAdminDatabasePanel({ silent = false } = {}) {
   }
   try {
     const q = adminDatabaseSearchValue ? `?q=${encodeURIComponent(adminDatabaseSearchValue)}` : "";
-    const [readiness, sync, users] = await Promise.all([
+    const [readiness, sync, audit, users] = await Promise.all([
       getJson("/api/admin/cutover-readiness").catch((e) => ({ ok: false, error: e?.message })),
       getJson("/api/admin/sync").catch((e) => ({ ok: false, error: e?.message })),
+      getJson("/api/admin/identity-audit").catch((e) => ({ ok: false, error: e?.message })),
       getJson(`/api/admin/database/users${q}`),
     ]);
     renderAdminDatabaseReadiness(readiness);
     renderAdminDatabaseSync(sync);
+    renderAdminIdentityAudit(audit);
     renderAdminDatabaseSummary(users);
     adminDatabaseUsersState = Array.isArray(users?.users) ? users.users : [];
     renderAdminDatabaseUsersTable(adminDatabaseUsersState);
@@ -4734,7 +5453,192 @@ async function adminClearProfilePictureForUser(userId) {
   }
 }
 
+async function performIdentityBacklogAction(item, action) {
+  const kind = String(action?.kind || "");
+  const payload = action?.payload || {};
+  if (kind === "accept-rh-wcl-proposal") {
+    await getJson("/api/admin/rh-wcl-links/proposals/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        wclCharacterName: payload.wclCharacterName,
+        raidHelperName: payload.raidHelperName,
+        verify: Boolean(payload.verify),
+      }),
+    });
+    status("Accepted character match.");
+    return;
+  }
+  if (kind === "reject-rh-wcl-proposal") {
+    await getJson("/api/admin/rh-wcl-links/proposals/reject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wclCharacterName: payload.wclCharacterName }),
+    });
+    status("Rejected character match.");
+    return;
+  }
+  if (kind === "accept-discord-profile") {
+    await getJson(`/api/admin/discord-profile-ingest/proposals/${encodeURIComponent(payload.proposalId)}/accept`, {
+      method: "POST",
+    });
+    status("Accepted Discord profile post.");
+    return;
+  }
+  if (kind === "reject-discord-profile") {
+    await getJson(`/api/admin/discord-profile-ingest/proposals/${encodeURIComponent(payload.proposalId)}/reject`, {
+      method: "POST",
+    });
+    status("Rejected Discord profile post.");
+    return;
+  }
+  if (kind === "add-discord-id") {
+    const userId = Number(payload.userId);
+    const discordUserId = window.prompt("Paste the Discord ID for this account:");
+    if (!discordUserId) {
+      status("Add Discord ID cancelled.");
+      return;
+    }
+    await getJson(`/api/admin/database/users/${userId}/discord-id`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ discordUserId }),
+    });
+    status(`Added Discord ID to user #${userId}.`);
+    return;
+  }
+  if (kind === "add-discord-id-row") {
+    const row = payload.row || {};
+    const discordUserId = window.prompt(`Paste the Discord ID for ${row.raidHelperName || "this identity"}:`);
+    if (!discordUserId) {
+      status("Add Discord ID cancelled.");
+      return;
+    }
+    await getJson("/api/admin/rh-wcl-links/row", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...row, discordUserId }),
+    });
+    status(`Added Discord ID to ${row.raidHelperName || "identity row"}.`);
+    return;
+  }
+  if (kind === "merge-users") {
+    const sourceDefault = payload.sourceUserId ? String(payload.sourceUserId) : "";
+    const targetDefault = payload.targetUserId ? String(payload.targetUserId) : "";
+    const sourceUserId = Number(window.prompt("Duplicate/source user ID to merge:", sourceDefault));
+    const targetUserId = Number(window.prompt("Surviving/target user ID:", targetDefault));
+    if (!Number.isInteger(sourceUserId) || !Number.isInteger(targetUserId) || sourceUserId <= 0 || targetUserId <= 0 || sourceUserId === targetUserId) {
+      status("Merge cancelled or invalid user IDs.");
+      return;
+    }
+    if (!window.confirm(`Merge user #${sourceUserId} into user #${targetUserId}?`)) return;
+    await getJson("/api/admin/database/users/merge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceUserId, targetUserId }),
+    });
+    status(`Merged user #${sourceUserId} into user #${targetUserId}.`);
+    return;
+  }
+  if (kind === "move-character") {
+    const characterId = Number(payload.characterId || window.prompt("Character row ID to move:"));
+    const targetUserId = Number(window.prompt("Move this character to which target user ID?"));
+    if (!Number.isInteger(characterId) || !Number.isInteger(targetUserId) || characterId <= 0 || targetUserId <= 0) {
+      status("Character move cancelled or invalid IDs.");
+      return;
+    }
+    await getJson(`/api/admin/database/characters/${characterId}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetUserId }),
+    });
+    status(`Moved character #${characterId} to user #${targetUserId}.`);
+    return;
+  }
+  if (kind === "run-sync-task") {
+    const taskId = String(payload.taskId || "").trim();
+    if (!taskId) throw new Error("Missing sync task ID");
+    await getJson(`/api/admin/sync/${encodeURIComponent(taskId)}`, { method: "POST" });
+    status(`Triggered sync task "${taskId}".`);
+    return;
+  }
+  if (kind === "resolve-backlog-item") {
+    const itemId = String(payload.itemId || item?.id || "").trim();
+    await getJson("/api/admin/identity-backlog/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId }),
+    });
+    status("Marked backlog item resolved.");
+    return;
+  }
+  throw new Error(`Unsupported action: ${kind || "unknown"}`);
+}
+
 document.addEventListener("click", async (event) => {
+  const identitySortBtn = event.target.closest("[data-identity-account-sort]");
+  if (identitySortBtn) {
+    const key = String(identitySortBtn.getAttribute("data-identity-account-sort") || "").trim();
+    if (!key) return;
+    if (identityAccountsSortState.key === key) {
+      identityAccountsSortState = { key, dir: identityAccountsSortState.dir === "asc" ? "desc" : "asc" };
+    } else {
+      identityAccountsSortState = {
+        key,
+        dir: key === "lastActivity" || key === "latestRaidParse" || key === "altCharacters" ? "desc" : "asc",
+      };
+    }
+    renderIdentityAccountsTable(identityAccountsState);
+    return;
+  }
+
+  const identitySaveBtn = event.target.closest("[data-identity-account-save]");
+  if (identitySaveBtn) {
+    event.preventDefault();
+    const userId = Number(identitySaveBtn.getAttribute("data-identity-account-save"));
+    const tr = identitySaveBtn.closest("[data-identity-account-row]");
+    if (!Number.isInteger(userId) || userId <= 0 || !tr) return;
+    const payload = readIdentityAccountRow(tr);
+    if (!payload.mainCharacter.characterName) {
+      status("Enter a main character before saving this identity.");
+      return;
+    }
+    identitySaveBtn.disabled = true;
+    try {
+      await getJson(`/api/admin/identity/accounts/${userId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      tr.removeAttribute("data-identity-dirty");
+      status(`Saved identity for ${payload.displayName || payload.mainCharacter.characterName}.`);
+      await refreshIdentityManagement({ silent: true });
+    } catch (error) {
+      status(error?.message || "Identity save failed");
+    } finally {
+      identitySaveBtn.disabled = false;
+    }
+    return;
+  }
+  const identityActionBtn = event.target.closest("[data-identity-backlog-action]");
+  if (identityActionBtn) {
+    event.preventDefault();
+    const idx = Number(identityActionBtn.getAttribute("data-identity-backlog-action"));
+    const actionId = String(identityActionBtn.getAttribute("data-identity-backlog-action-id") || "");
+    const item = identityBacklogState[idx];
+    const action = (Array.isArray(item?.actions) ? item.actions : []).find((row) => String(row?.id || "") === actionId);
+    if (!item || !action) return;
+    identityActionBtn.disabled = true;
+    try {
+      await performIdentityBacklogAction(item, action);
+      await refreshIdentityManagement({ silent: true });
+    } catch (error) {
+      status(error?.message || "Backlog action failed");
+    } finally {
+      identityActionBtn.disabled = false;
+    }
+    return;
+  }
   const uploadBtn = event.target.closest("[data-admin-database-user-upload]");
   if (uploadBtn) {
     event.preventDefault();
@@ -4775,6 +5679,58 @@ document.addEventListener("click", async (event) => {
       renderAdminDatabaseDetail(payload, userId);
     } catch (error) {
       if (host) host.innerHTML = `<p class="subtle">Failed to load user: ${esc(error?.message || "")}</p>`;
+    }
+    return;
+  }
+  const moveCharBtn = event.target.closest("[data-admin-database-character-move]");
+  if (moveCharBtn) {
+    event.preventDefault();
+    const characterId = Number(moveCharBtn.getAttribute("data-admin-database-character-move"));
+    const targetRaw = window.prompt("Move this character to which target user ID?");
+    const targetUserId = Number(targetRaw);
+    if (!Number.isInteger(characterId) || characterId <= 0 || !Number.isInteger(targetUserId) || targetUserId <= 0) {
+      status("Character move cancelled or invalid user ID.");
+      return;
+    }
+    try {
+      await getJson(`/api/admin/database/characters/${characterId}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetUserId }),
+      });
+      status(`Moved character #${characterId} to user #${targetUserId}.`);
+      await loadAdminDatabasePanel({ silent: true });
+    } catch (error) {
+      status(`Character move failed: ${error?.message || "Unknown error"}`);
+    }
+    return;
+  }
+  const mergeUserBtn = event.target.closest("[data-admin-database-user-merge]");
+  if (mergeUserBtn) {
+    event.preventDefault();
+    const sourceUserId = Number(mergeUserBtn.getAttribute("data-admin-database-user-merge"));
+    const targetRaw = window.prompt(`Merge user #${sourceUserId} into which surviving user ID?`);
+    const targetUserId = Number(targetRaw);
+    if (!Number.isInteger(sourceUserId) || sourceUserId <= 0 || !Number.isInteger(targetUserId) || targetUserId <= 0 || sourceUserId === targetUserId) {
+      status("User merge cancelled or invalid target user ID.");
+      return;
+    }
+    if (!window.confirm(`Merge user #${sourceUserId} into user #${targetUserId}? This moves characters and removes the duplicate user row.`)) return;
+    try {
+      await getJson("/api/admin/database/users/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceUserId, targetUserId }),
+      });
+      status(`Merged user #${sourceUserId} into user #${targetUserId}.`);
+      const detailHost = document.getElementById("adminDatabaseDetailHost");
+      if (detailHost) {
+        detailHost.hidden = true;
+        detailHost.innerHTML = "";
+      }
+      await loadAdminDatabasePanel({ silent: true });
+    } catch (error) {
+      status(`User merge failed: ${error?.message || "Unknown error"}`);
     }
     return;
   }
@@ -4835,6 +5791,64 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+  const identityReloadBtn = document.getElementById("identityAccountsReloadBtn");
+  if (identityReloadBtn) {
+    identityReloadBtn.addEventListener("click", async () => {
+      identityReloadBtn.disabled = true;
+      try {
+        await loadIdentityAccounts();
+      } finally {
+        identityReloadBtn.disabled = false;
+      }
+    });
+  }
+  const identitySearch = document.getElementById("identityAccountsSearch");
+  if (identitySearch) {
+    let identitySearchTimer = null;
+    identitySearch.addEventListener("input", () => {
+      identityAccountsSearchValue = String(identitySearch.value || "").trim();
+      if (identitySearchTimer) clearTimeout(identitySearchTimer);
+      identitySearchTimer = setTimeout(() => loadIdentityAccounts({ silent: true }), 250);
+    });
+  }
+  const identityActivityCutoff = document.getElementById("identityAccountsActivityCutoff");
+  if (identityActivityCutoff) {
+    let identityActivityCutoffSaveTimer = null;
+    const applyIdentityActivityCutoff = () => {
+      identityAccountsActivityCutoffValue = String(identityActivityCutoff.value || "").trim();
+      renderIdentityAccountsTable(identityAccountsState);
+    };
+    const scheduleIdentityActivityCutoffSave = () => {
+      if (identityActivityCutoffSaveTimer) clearTimeout(identityActivityCutoffSaveTimer);
+      identityActivityCutoffSaveTimer = setTimeout(async () => {
+        try {
+          await saveIdentityPublicVisibility();
+          status("Website activity cutoff saved.");
+        } catch (error) {
+          status(`Website activity cutoff save failed: ${error?.message || "Unknown error"}`);
+        }
+      }, 300);
+    };
+    identityActivityCutoff.addEventListener("change", () => {
+      applyIdentityActivityCutoff();
+      scheduleIdentityActivityCutoffSave();
+    });
+    identityActivityCutoff.addEventListener("input", () => {
+      applyIdentityActivityCutoff();
+    });
+  }
+  const identityMaximizeBtn = document.getElementById("identityAccountsMaximizeBtn");
+  if (identityMaximizeBtn) {
+    identityMaximizeBtn.addEventListener("click", () => {
+      const block = document.querySelector(".admin-identity-table-block");
+      setIdentityAccountsTableMaximized(!block?.classList.contains("is-table-maximized"));
+    });
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.body.classList.contains("is-admin-table-maximized")) {
+      setIdentityAccountsTableMaximized(false);
+    }
+  });
   const reloadBtn = document.getElementById("adminDatabaseReloadBtn");
   if (reloadBtn) {
     reloadBtn.addEventListener("click", async () => {
@@ -4863,6 +5877,25 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+  const downloadBackupBtn = document.getElementById("adminDatabaseDownloadBackupBtn");
+  if (downloadBackupBtn) {
+    downloadBackupBtn.addEventListener("click", async () => {
+      downloadBackupBtn.disabled = true;
+      const orig = downloadBackupBtn.textContent;
+      downloadBackupBtn.textContent = "Preparing download…";
+      try {
+        const r = await getJson("/api/admin/db/backup", { method: "POST" });
+        if (!r?.filename) throw new Error("Backup created without a filename.");
+        status(`Downloading DB snapshot: ${r.filename} (${fmtBytes(r.sizeBytes)})`);
+        window.location.href = `/api/admin/db/backups/${encodeURIComponent(r.filename)}/download`;
+      } catch (error) {
+        status(`DB snapshot download failed: ${error?.message || "Unknown error"}`);
+      } finally {
+        downloadBackupBtn.disabled = false;
+        downloadBackupBtn.textContent = orig || "Download DB snapshot";
+      }
+    });
+  }
   const search = document.getElementById("adminDatabaseSearch");
   if (search) {
     let t = null;
@@ -4877,9 +5910,19 @@ document.addEventListener("DOMContentLoaded", () => {
 const __origShowAdminPanel = showAdminPanel;
 showAdminPanel = function (panelId, opts) {
   __origShowAdminPanel(panelId, opts);
-  if ((panelId === "database" || panelId === "sync-center") && !adminDatabaseLoaded) {
+  if (panelId === "sync-center" && !adminDatabaseLoaded) {
     loadAdminDatabasePanel().catch((error) => {
       status(error?.message || "Failed to load database panel.");
+    });
+  }
+  if (panelId === "identity" && !identityAccountsLoaded) {
+    loadIdentityAccounts().catch((error) => {
+      status(error?.message || "Failed to load identity accounts.");
+    });
+  }
+  if (panelId === "identity" && !identityBacklogLoaded) {
+    loadIdentityJourney().catch((error) => {
+      status(error?.message || "Failed to load identity backlog.");
     });
   }
 };
@@ -4891,9 +5934,19 @@ loadAdminData().catch((error) => {
 (function kickInitialDatabaseLoadIfActive() {
   const activePanel = document.querySelector(".admin-panel.is-admin-panel-active");
   const id = activePanel?.getAttribute("data-admin-panel");
-  if ((id === "database" || id === "sync-center") && !adminDatabaseLoaded) {
+  if (id === "sync-center" && !adminDatabaseLoaded) {
     loadAdminDatabasePanel().catch((error) => {
       status(error?.message || "Failed to load database panel.");
+    });
+  }
+  if (id === "identity" && !identityAccountsLoaded) {
+    loadIdentityAccounts().catch((error) => {
+      status(error?.message || "Failed to load identity accounts.");
+    });
+  }
+  if (id === "identity" && !identityBacklogLoaded) {
+    loadIdentityJourney().catch((error) => {
+      status(error?.message || "Failed to load identity backlog.");
     });
   }
 })();
