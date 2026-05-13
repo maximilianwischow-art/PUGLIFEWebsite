@@ -4963,9 +4963,9 @@ body.is-admin-table-maximized {
 }
 
 .leaderboard-player-badges .raider-badge-slot--guild-role {
-  box-shadow:
-    inset 0 0 0 2px rgba(168, 85, 247, 0.45),
-    0 0 12px rgba(168, 85, 247, 0.2);
+  --guild-role-badge-size: 175%;
+  --guild-role-badge-offset: -37.5%;
+  box-shadow: inset 0 0 0 1px var(--achievement-rarity-color, rgba(168, 85, 247, 0.45));
 }
 
 .leaderboard-player-badges .raider-badge-slot {
@@ -4980,7 +4980,11 @@ body.is-admin-table-maximized {
 }
 
 .leaderboard-player-badges .raider-badge-slot--guild-role .raider-badge-role-img {
-  --role-badge-zoom: 1.75;
+  width: var(--guild-role-badge-size, 175%);
+  height: var(--guild-role-badge-size, 175%);
+  margin: var(--guild-role-badge-offset, -37.5%);
+  transform: none;
+  --role-badge-zoom: 1;
 }
 
 .leaderboard-player-badges .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
