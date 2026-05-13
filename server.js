@@ -8601,18 +8601,18 @@ app.get("/api/admin/identity-backlog", async (req, res) => {
     }
 
     for (const character of characters) {
-      if (String(character.wowClass || "").trim() && String(character.wowSpec || "").trim()) continue;
+      if (String(character.wowSpec || "").trim()) continue;
       const user = usersById.get(Number(character.userId));
       addItem({
         id: `missing-spec:${character.id}`,
         type: "missing-spec",
         source: "Spec enrichment",
         priority: "low",
-        title: `Missing class/spec: ${character.characterName}`,
-        description: `Owner: ${user?.displayName || user?.raidHelperName || user?.discordUserId || `user #${character.userId}`}. Run spec sync or update after logs/profile data appear.`,
+        title: `Missing spec: ${character.characterName}`,
+        description: `Owner: ${user?.displayName || user?.raidHelperName || user?.discordUserId || `user #${character.userId}`}. Run WCL/Raid Helper spec sync or update after logs/profile data appear.`,
         data: { character, user },
         actions: [
-          identityBacklogAction("run-spec-sync", "Run spec sync", "run-sync-task", { taskId: "character-specs" }),
+          identityBacklogAction("run-spec-sync", "Run spec sync", "run-sync-task", { taskId: "character-specs-from-guild" }),
           identityBacklogAction("resolve", "Mark resolved", "resolve-backlog-item", { itemId: `missing-spec:${character.id}` }),
         ],
       });
@@ -18471,18 +18471,26 @@ async function collectRecentRaidHelperEventsForSpecs(eventCap, throttleMs) {
     return [];
   }
   const nowSec = Math.floor(Date.now() / 1000);
-  const past = (Array.isArray(allEvents) ? allEvents : [])
+  const normalized = (Array.isArray(allEvents) ? allEvents : [])
     .map((event) => ({
       id: String(event.id || event.eventId || event.eventID || ""),
       startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+      title: String(event.title || event.name || event.description || ""),
     }))
-    .filter((e) => e.id && e.startTime > 0 && e.startTime <= nowSec)
+    .filter((e) => e.id && e.startTime > 0);
+  const past = normalized
+    .filter((e) => e.startTime <= nowSec)
     .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, eventCap);
+  const upcoming = normalized
+    .filter((e) => e.startTime > nowSec && trackedRaidNameFromEventTitle(e.title))
+    .sort((a, b) => a.startTime - b.startTime)
     .slice(0, eventCap);
 
   const out = [];
-  for (let i = 0; i < past.length; i += 1) {
-    const ev = past[i];
+  const selected = [...past, ...upcoming].filter((event, index, rows) => rows.findIndex((row) => row.id === event.id) === index);
+  for (let i = 0; i < selected.length; i += 1) {
+    const ev = selected[i];
     const detail = await fetchRaidHelperEventDetail(ev.id);
     if (detail) {
       out.push({
@@ -18491,7 +18499,7 @@ async function collectRecentRaidHelperEventsForSpecs(eventCap, throttleMs) {
         signUps: detail.signUps,
       });
     }
-    if (throttleMs > 0 && i < past.length - 1) {
+    if (throttleMs > 0 && i < selected.length - 1) {
       await new Promise((r) => setTimeout(r, throttleMs));
     }
   }
@@ -18565,11 +18573,30 @@ async function runSyncCharacterSpecsFromGuildSignals() {
       chosenSpec = fromRh.specName;
       chosenSource = "sync:rh-signup";
     }
+    let fallbackClass = "";
+    if (!chosenSpec && !String(row.wowSpec || "").trim()) {
+      try {
+        const out = await characterSpecResolver()({
+          characterName: row.characterName,
+          realm: row.realm || defaultWowRealmForRoster(),
+        });
+        if (out?.wowSpec) {
+          chosenSpec = out.wowSpec;
+          chosenSource = `sync:${out.source || "character-specs"}`;
+        }
+        if (out?.wowClass) fallbackClass = out.wowClass;
+      } catch (error) {
+        console.warn(
+          `[sync:character-specs-from-guild] fallback resolver failed for ${row.characterName}:`,
+          error?.message || error
+        );
+      }
+    }
     if (!chosenSpec) {
       noEvidence += 1;
       continue;
     }
-    if (chosenSpec === row.wowSpec) {
+    if (chosenSpec === row.wowSpec && (!fallbackClass || fallbackClass === row.wowClass)) {
       unchanged += 1;
       if (chosenSource === "sync:wcl-combat-type") wclWins += 1;
       else rhWins += 1;
@@ -18582,6 +18609,14 @@ async function runSyncCharacterSpecsFromGuildSignals() {
         wowSpec: chosenSpec,
         source: chosenSource,
       });
+      if (fallbackClass) {
+        identityCharacterUpsert({
+          userId: row.userId,
+          characterName: row.characterName,
+          wowClass: fallbackClass,
+          source: chosenSource,
+        });
+      }
       rowsChanged += 1;
       if (chosenSource === "sync:wcl-combat-type") wclWins += 1;
       else rhWins += 1;
