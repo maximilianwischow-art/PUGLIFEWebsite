@@ -2181,7 +2181,8 @@ function renderDiscordRoleSync(payload) {
     .filter(
       (row) =>
         (Array.isArray(row.rolesToAdd) && row.rolesToAdd.length) ||
-        (Array.isArray(row.rolesToRemove) && row.rolesToRemove.length)
+        (Array.isArray(row.rolesToRemove) && row.rolesToRemove.length) ||
+        row.nicknameToSet
     )
     .slice(0, 250)
     .map((row) => {
@@ -2192,6 +2193,11 @@ function renderDiscordRoleSync(payload) {
       const attendanceRemove = (row.attendanceRolesToRemove || []).map((role) => role.name).join(", ");
       const combatAdd = row.combatRoleToAdd?.name || "";
       const currentCombat = (row.currentCombatRoleNames || []).join(", ");
+      const nickname = row.nicknameToSet
+        ? `${row.currentNick || "-"} -> ${row.nicknameToSet}`
+        : row.desiredNick
+        ? "Already set"
+        : "-";
       const warnings = Array.isArray(row.warnings) && row.warnings.length ? row.warnings.join(", ") : "";
       return `<tr>
         <td>
@@ -2204,6 +2210,7 @@ function renderDiscordRoleSync(payload) {
         <td>${esc(attendanceAdd || "-")}</td>
         <td>${esc(attendanceRemove || "-")}</td>
         <td>${esc(combatAdd || (currentCombat ? `Already has ${currentCombat}` : "-"))}</td>
+        <td>${esc(nickname)}</td>
         <td class="subtle">${esc(warnings || desired || "-")}</td>
       </tr>`;
     })
@@ -2214,7 +2221,8 @@ function renderDiscordRoleSync(payload) {
       <strong>${esc(String(summary.candidates || 0))}</strong> · Users with changes:
       <strong>${esc(String(summary.usersWithChanges || 0))}</strong> · Attendance add/remove:
       <strong>${esc(String(summary.attendanceRolesToAdd || 0))}</strong>/<strong>${esc(String(summary.attendanceRolesToRemove || 0))}</strong> · Combat adds:
-      <strong>${esc(String(summary.combatRolesToAdd || 0))}</strong>
+      <strong>${esc(String(summary.combatRolesToAdd || 0))}</strong> · Nicknames:
+      <strong>${esc(String(summary.nicknamesToSet || 0))}</strong>
     </p>
     ${
       setupWarnings.length
@@ -2239,7 +2247,7 @@ function renderDiscordRoleSync(payload) {
         playerRows
           ? `<div class="admin-table-wrap role-alert-candidates-wrap">
               <table class="admin-table role-alert-candidates-table">
-                <thead><tr><th>Player</th><th>Class</th><th>Spec</th><th>Website rank</th><th>Attendance add</th><th>Attendance remove</th><th>Combat add</th><th>Details</th></tr></thead>
+                <thead><tr><th>Player</th><th>Class</th><th>Spec</th><th>Website rank</th><th>Attendance add</th><th>Attendance remove</th><th>Combat add</th><th>Server name</th><th>Details</th></tr></thead>
                 <tbody>${playerRows}</tbody>
               </table>
             </div>`
@@ -4129,7 +4137,7 @@ document.addEventListener("click", (event) => {
     )
       .then(async (payload) => {
         status(
-          `Discord role sync complete: ${Number(payload?.attendanceAdded || 0)} attendance added, ${Number(payload?.attendanceRemoved || 0)} attendance removed, ${Number(payload?.combatAdded || 0)} combat added, ${Number(payload?.failed || 0)} failed.`
+          `Discord sync complete: ${Number(payload?.attendanceAdded || 0)} attendance added, ${Number(payload?.attendanceRemoved || 0)} attendance removed, ${Number(payload?.combatAdded || 0)} combat added, ${Number(payload?.nicknamesSet || 0)} names updated, ${Number(payload?.failed || 0)} failed.`
         );
         await loadDiscordRoleSyncPreview();
       })

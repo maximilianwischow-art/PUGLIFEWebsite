@@ -4236,6 +4236,23 @@ function discordRoleSyncMemberCacheRemoveRole(guildId, userId, roleId) {
   discordRoleSyncMemberCacheSet(guildId, userId, member);
 }
 
+function discordRoleSyncMemberCacheSetNick(guildId, userId, nick) {
+  const member = discordRoleSyncMemberCacheGet(guildId, userId);
+  if (!member) return;
+  member.nick = String(nick || "").trim() || null;
+  discordRoleSyncMemberCacheSet(guildId, userId, member);
+}
+
+function discordRoleSyncCurrentDisplayName(member) {
+  return String(member?.nick || member?.user?.global_name || member?.user?.username || "").trim();
+}
+
+function discordRoleSyncNickNeedsUpdate(member, desiredNick) {
+  const desired = String(desiredNick || "").trim();
+  if (!desired) return false;
+  return discordRoleSyncCurrentDisplayName(member).toLowerCase() !== desired.toLowerCase();
+}
+
 function compBlockerRowsFromPayload(compPayload, existingNamesLower = new Set()) {
   const slots = Array.isArray(compPayload?.slots) ? compPayload.slots : [];
   const out = [];
@@ -4749,10 +4766,13 @@ async function buildDiscordRoleSyncCandidates() {
       const discordUserId = sanitizeDiscordUserId(user?.discordUserId);
       if (!discordUserId) return null;
       const chars = charsByUserId.get(Number(user.id)) || [];
-      const preferredChar =
+      const mainChar =
         chars.find((char) => Number(char.id) === Number(user.mainCharacterId)) ||
-        chars.find((char) => char.wowSpec || char.wowClass) ||
         chars[0] ||
+        null;
+      const preferredChar =
+        mainChar ||
+        chars.find((char) => char.wowSpec || char.wowClass) ||
         null;
       const attendance = attendanceByUserId.get(Number(user.id)) || {};
       const combatRoleName = discordRoleSyncCombatRoleName({
@@ -4769,6 +4789,7 @@ async function buildDiscordRoleSyncCandidates() {
         userId: discordUserId,
         displayName: user.displayName || user.raidHelperName || preferredChar?.characterName || discordUserId,
         raidHelperName: user.raidHelperName || "",
+        mainCharacterName: mainChar?.characterName || "",
         characterName: preferredChar?.characterName || "",
         recentClass: preferredChar?.wowClass || "",
         recentSpec: preferredChar?.wowSpec || "",
@@ -4832,6 +4853,12 @@ async function buildDiscordRoleSyncPreview() {
       currentCombatRoles.length === 0
         ? desiredCombat
         : null;
+    const desiredNick = String(candidate.mainCharacterName || "").trim();
+    const currentNick = inGuild ? discordRoleSyncCurrentDisplayName(member) : "";
+    const nicknameToSet =
+      inGuild && desiredNick && discordRoleSyncNickNeedsUpdate(member, desiredNick)
+        ? desiredNick
+        : "";
     const desiredRoles = [desiredAttendance, desiredCombat].filter(Boolean).map((target) => {
       let status = "missing";
       if (!inGuild) status = "not-in-guild";
@@ -4861,6 +4888,9 @@ async function buildDiscordRoleSyncPreview() {
       currentRoleIds: [...currentRoleIds],
       currentAttendanceRoleNames: currentAttendanceRoles.map((target) => target.name),
       currentCombatRoleNames: currentCombatRoles.map((target) => target.name),
+      currentNick,
+      desiredNick,
+      nicknameToSet,
       desiredRoles,
       attendanceRoleToAdd,
       attendanceRolesToRemove,
@@ -4887,12 +4917,13 @@ async function buildDiscordRoleSyncPreview() {
     rows,
     summary: {
       candidates: rows.length,
-      usersWithChanges: rows.filter((row) => row.rolesToAdd.length > 0 || row.rolesToRemove.length > 0).length,
+      usersWithChanges: rows.filter((row) => row.rolesToAdd.length > 0 || row.rolesToRemove.length > 0 || row.nicknameToSet).length,
       usersWithRolesToAdd: rows.filter((row) => row.rolesToAdd.length > 0).length,
       rolesToAdd: rows.reduce((sum, row) => sum + row.rolesToAdd.length, 0),
       attendanceRolesToAdd: rows.filter((row) => row.attendanceRoleToAdd).length,
       attendanceRolesToRemove: rows.reduce((sum, row) => sum + row.attendanceRolesToRemove.length, 0),
       combatRolesToAdd: rows.filter((row) => row.combatRoleToAdd).length,
+      nicknamesToSet: rows.filter((row) => row.nicknameToSet).length,
       missingRoleTargets: context.targetRoles.filter((target) => !target.exists).length,
       blockedRoleTargets: context.targetRoles.filter((target) => target.exists && !target.role?.assignable).length,
     },
@@ -4903,6 +4934,31 @@ async function runDiscordRoleSyncHybrid() {
   const preview = await buildDiscordRoleSyncPreview();
   const results = [];
   for (const row of preview.rows) {
+    if (row.nicknameToSet) {
+      try {
+        await discordBotApi(
+          `/guilds/${encodeURIComponent(preview.guildId)}/members/${encodeURIComponent(row.userId)}`,
+          { method: "PATCH", body: { nick: row.nicknameToSet } }
+        );
+        discordRoleSyncMemberCacheSetNick(preview.guildId, row.userId, row.nicknameToSet);
+        results.push({
+          action: "nickname-set",
+          userId: row.userId,
+          displayName: row.displayName,
+          nickname: row.nicknameToSet,
+          ok: true,
+        });
+      } catch (error) {
+        results.push({
+          action: "nickname-set",
+          userId: row.userId,
+          displayName: row.displayName,
+          nickname: row.nicknameToSet,
+          ok: false,
+          error: error?.message || "Failed to update nickname",
+        });
+      }
+    }
     for (const roleTarget of row.rolesToAdd || []) {
       const roleId = String(roleTarget?.role?.id || "");
       if (!roleId) continue;
@@ -4968,6 +5024,7 @@ async function runDiscordRoleSyncHybrid() {
     attendanceAdded: results.filter((row) => row.ok && row.action === "attendance-add").length,
     attendanceRemoved: results.filter((row) => row.ok && row.action === "attendance-remove").length,
     combatAdded: results.filter((row) => row.ok && row.action === "combat-add").length,
+    nicknamesSet: results.filter((row) => row.ok && row.action === "nickname-set").length,
     failed: results.filter((row) => !row.ok).length,
   };
 }
