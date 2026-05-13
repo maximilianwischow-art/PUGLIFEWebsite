@@ -768,6 +768,11 @@ function renderRhWclTodo(payload) {
       const messageUrl = String(p?.messageUrl || "");
       return `<tr data-discord-profile-proposal-row>
         <td>
+          <label class="subtle" title="Mark this profile proposal for bulk accept">
+            <input type="checkbox" data-discord-profile-select value="${esc(id)}" />
+          </label>
+        </td>
+        <td>
           <strong>${esc(display || userId)}</strong>
           <div class="subtle"><code>${esc(userId)}</code></div>
         </td>
@@ -858,6 +863,22 @@ function renderRhWclTodo(payload) {
         <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-profile-scan>
           Scan profile channel now
         </button>
+        ${
+          profileProposals.length
+            ? `<button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-profile-mark-all>
+                Mark all
+              </button>
+              <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-profile-unmark-all>
+                Unmark all
+              </button>
+              <button type="button" class="event-signup-btn" data-discord-profile-accept-marked>
+                Accept marked
+              </button>
+              <button type="button" class="event-signup-btn" data-discord-profile-accept-all>
+                Accept all
+              </button>`
+            : ""
+        }
       </div>
       ${
         profileProposals.length
@@ -865,6 +886,7 @@ function renderRhWclTodo(payload) {
               <table class="admin-table admin-rh-todo-table">
                 <thead>
                   <tr>
+                    <th>Mark</th>
                     <th>Discord user</th>
                     <th>Classic Armory characters</th>
                     <th>Match info</th>
@@ -3445,6 +3467,64 @@ document.addEventListener("click", async (event) => {
       status(error?.message || "Discord profile scan failed");
     } finally {
       profileScanBtn.disabled = false;
+    }
+    return;
+  }
+
+  const profileMarkAllBtn = event.target.closest("[data-discord-profile-mark-all]");
+  if (profileMarkAllBtn) {
+    const block = profileMarkAllBtn.closest("[data-rh-wcl-todo-block='discord-profiles']") || document;
+    block.querySelectorAll("[data-discord-profile-select]").forEach((checkbox) => {
+      checkbox.checked = true;
+    });
+    status("Marked all visible Discord profile proposals.");
+    return;
+  }
+
+  const profileUnmarkAllBtn = event.target.closest("[data-discord-profile-unmark-all]");
+  if (profileUnmarkAllBtn) {
+    const block = profileUnmarkAllBtn.closest("[data-rh-wcl-todo-block='discord-profiles']") || document;
+    block.querySelectorAll("[data-discord-profile-select]").forEach((checkbox) => {
+      checkbox.checked = false;
+    });
+    status("Unmarked all Discord profile proposals.");
+    return;
+  }
+
+  const profileBulkAcceptBtn = event.target.closest("[data-discord-profile-accept-marked], [data-discord-profile-accept-all]");
+  if (profileBulkAcceptBtn) {
+    const block = profileBulkAcceptBtn.closest("[data-rh-wcl-todo-block='discord-profiles']") || document;
+    const acceptAll = profileBulkAcceptBtn.hasAttribute("data-discord-profile-accept-all");
+    const checkboxes = [...block.querySelectorAll("[data-discord-profile-select]")];
+    const ids = checkboxes
+      .filter((checkbox) => acceptAll || checkbox.checked)
+      .map((checkbox) => String(checkbox.value || "").trim())
+      .filter(Boolean);
+    if (!ids.length) {
+      status("Mark at least one Discord profile proposal first.");
+      return;
+    }
+    profileBulkAcceptBtn.disabled = true;
+    const previousText = profileBulkAcceptBtn.textContent;
+    try {
+      let accepted = 0;
+      for (const id of ids) {
+        profileBulkAcceptBtn.textContent = `Accepting ${accepted + 1}/${ids.length}...`;
+        await getJson(`/api/admin/discord-profile-ingest/proposals/${encodeURIComponent(id)}/accept`, {
+          method: "POST",
+        });
+        accepted += 1;
+      }
+      const linksPayload = await getJson("/api/admin/rh-wcl-links");
+      renderRhWclLinksTable(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
+      await loadRhWclTodo();
+      status(`Accepted ${accepted} Discord profile proposal${accepted === 1 ? "" : "s"} into the Account Database.`);
+    } catch (error) {
+      status(error?.message || "Bulk accept Discord profile proposals failed");
+      await loadRhWclTodo();
+    } finally {
+      profileBulkAcceptBtn.textContent = previousText;
+      profileBulkAcceptBtn.disabled = false;
     }
     return;
   }
