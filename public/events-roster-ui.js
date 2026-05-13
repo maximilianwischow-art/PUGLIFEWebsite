@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260513master-crafters1";
+const IMAGE_ASSET_VERSION = "20260513master-crafters2";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -46,7 +46,7 @@ const PUG_MASTER_CRAFTER_ROLE_BADGES = [
     slug: "leatherworking",
     name: "PUG Master Crafter: Leatherworking",
     description: "Legendary role badge for a trusted PUG master crafter in Leatherworking.",
-    characterKeys: new Set(["gerning"]),
+    characterKeys: new Set(["gernig", "gerning"]),
   },
   {
     badgeId: "master-crafter-blacksmithing",
