@@ -5495,10 +5495,27 @@ async function resolveIdentityBacklogItem(itemId, note = "") {
 
 function showDiscordIdChooserModal({ title, targetName, candidates }) {
   return new Promise((resolve) => {
-    const rows = Array.isArray(candidates) ? candidates : [];
+    const rows = Array.isArray(candidates) ? [...candidates] : [];
+    const rowIds = new Set(rows.map((row) => String(row?.discordUserId || "").trim()).filter(Boolean));
     let selectedId = rows[0]?.discordUserId || "";
     let manualValue = "";
     const normalizeChoiceText = (value) => String(value || "").trim().toLowerCase();
+    const mergeSuggestionRows = (newRows) => {
+      for (const row of Array.isArray(newRows) ? newRows : []) {
+        const discordUserId = String(row?.discordUserId || "").trim();
+        if (!discordUserId || rowIds.has(discordUserId)) continue;
+        rowIds.add(discordUserId);
+        rows.push(row);
+      }
+    };
+    const renderSuggestionOptions = () =>
+      rows
+        .map((row) => String(row.rhName || row.nick || row.globalName || row.username || "").trim())
+        .filter(Boolean)
+        .filter((name, index, names) => names.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+        .map((name) => `<option value="${esc(name)}"></option>`)
+        .join("");
     const resolveManualChoice = () => {
       const value = String(manualValue || "").trim();
       if (!value) return "";
@@ -5516,12 +5533,6 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.style.cssText = "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(5,2,16,.72);backdrop-filter:blur(6px);overflow:hidden;overscroll-behavior:contain";
-    const suggestionOptions = rows
-      .map((row) => String(row.rhName || "").trim())
-      .filter(Boolean)
-      .filter((name, index, names) => names.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
-      .map((name) => `<option value="${esc(name)}"></option>`)
-      .join("");
     const list = rows.length
       ? `<table class="admin-table" style="margin:0;width:100%;min-width:0;table-layout:fixed">
           <thead>
@@ -5555,7 +5566,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
         <label style="display:grid;gap:8px;margin:14px 0 12px;padding:12px;border:1px solid rgba(236,72,153,.38);border-radius:14px;background:rgba(236,72,153,.08);flex:0 0 auto">
           <strong>Type Discord name or ID</strong>
           <input type="text" data-discord-id-manual-input list="discord-id-choice-suggestions" placeholder="Start typing a Discord name, or paste the Discord ID" style="width:100%;box-sizing:border-box;border:1px solid rgba(236,72,153,.55);border-radius:12px;background:rgba(255,255,255,.08);color:inherit;padding:12px 14px;font-weight:700" />
-          <datalist id="discord-id-choice-suggestions">${suggestionOptions}</datalist>
+          <datalist id="discord-id-choice-suggestions">${renderSuggestionOptions()}</datalist>
           <span class="subtle">Suggestions include unassigned names and already connected Discord names, useful for linking alts/twinks.</span>
         </label>
         <div data-discord-id-list-scroll tabindex="0">
@@ -5569,6 +5580,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
       </div>`;
     const cleanup = (value) => {
       document.removeEventListener("keydown", onKeyDown);
+      if (suggestionSearchTimer) window.clearTimeout(suggestionSearchTimer);
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousDocumentOverflow;
       overlay.remove();
@@ -5591,8 +5603,26 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
         input.checked = true;
       }
     });
+    const datalist = overlay.querySelector("#discord-id-choice-suggestions");
+    let suggestionSearchTimer = null;
+    let suggestionSearchSeq = 0;
     overlay.querySelector("[data-discord-id-manual-input]")?.addEventListener("input", (event) => {
       manualValue = String(event.target.value || "");
+      const query = manualValue.trim();
+      if (suggestionSearchTimer) window.clearTimeout(suggestionSearchTimer);
+      if (query.length < 2 || /^\d{15,25}$/.test(query)) return;
+      const seq = ++suggestionSearchSeq;
+      suggestionSearchTimer = window.setTimeout(async () => {
+        try {
+          const params = new URLSearchParams({ q: query, limit: "25", includeAssigned: "1" });
+          const payload = await getJson(`/api/admin/identity/search-discord-ids?${params.toString()}`);
+          if (seq !== suggestionSearchSeq) return;
+          mergeSuggestionRows(payload?.candidates || []);
+          if (datalist) datalist.innerHTML = renderSuggestionOptions();
+        } catch {
+          /* Manual Connect still performs an exact Discord search. */
+        }
+      }, 180);
     });
     overlay.addEventListener("wheel", (event) => {
       const scroller = event.target.closest("[data-discord-id-list-scroll]");

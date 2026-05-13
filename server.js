@@ -8329,6 +8329,36 @@ function identityDiscordCandidateNameMatches(candidate, query) {
   return names.some((name) => identityRhNameKey(name) === key);
 }
 
+function identityDiscordCandidateNameContains(candidate, query) {
+  const key = identityRhNameKey(query);
+  if (!key) return false;
+  const names = [candidate?.rhName, candidate?.username, candidate?.globalName, candidate?.nick, candidate?.discordDisplayName];
+  return names.some((name) => {
+    const nameKey = identityRhNameKey(name);
+    return nameKey && (nameKey.includes(key) || key.includes(nameKey));
+  });
+}
+
+function identityDiscordSearchCandidateFromMember(member) {
+  const discordUserId = sanitizeDiscordUserId(member?.user?.id);
+  if (!discordUserId) return null;
+  const username = String(member?.user?.username || "").trim();
+  const globalName = String(member?.user?.global_name || "").trim();
+  const nick = String(member?.nick || "").trim();
+  const rhName = nick || globalName || username || discordUserId;
+  const existingUser = identityUserGetByDiscordId(discordUserId);
+  const assigned = existingUser ? identityCharactersGetByUserId(Number(existingUser.id)).length > 0 : false;
+  return {
+    discordUserId,
+    rhName,
+    username,
+    globalName,
+    nick,
+    assigned,
+    source: "discord-guild-search",
+  };
+}
+
 async function resolveDiscordUserIdForAdminInput(query) {
   const q = String(query || "").trim();
   const direct = sanitizeDiscordUserId(q);
@@ -8366,6 +8396,41 @@ async function resolveDiscordUserIdForAdminInput(query) {
   return match ? { discordUserId: match.discordUserId, source: "discord-guild-search", candidate: match } : null;
 }
 
+async function searchDiscordUserIdsForAdminInput(query, { limit = 25, includeAssigned = true } = {}) {
+  const q = String(query || "").trim();
+  if (!q) return [];
+  const out = new Map();
+  const push = (candidate) => {
+    const discordUserId = sanitizeDiscordUserId(candidate?.discordUserId);
+    if (!discordUserId || out.has(discordUserId)) return;
+    out.set(discordUserId, { ...candidate, discordUserId });
+  };
+  const local = identityUnassignedDiscordIdCandidates({
+    targetName: q,
+    limit: 300,
+    includeAssigned,
+  }).candidates;
+  for (const candidate of local) {
+    if (identityDiscordCandidateNameContains(candidate, q)) push(candidate);
+  }
+  const guildId = raidHelperDiscordGuildId();
+  if (guildId && String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+    const params = new URLSearchParams({ query: q, limit: String(Math.max(1, Math.min(100, Number(limit) || 25))) });
+    try {
+      const payload = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}/members/search?${params.toString()}`);
+      for (const member of Array.isArray(payload) ? payload : []) {
+        const candidate = identityDiscordSearchCandidateFromMember(member);
+        if (candidate) push(candidate);
+      }
+    } catch (error) {
+      console.warn("[identity] Discord member suggestion search failed:", error?.message || error);
+    }
+  }
+  return [...out.values()]
+    .sort((a, b) => String(a.rhName || "").localeCompare(String(b.rhName || ""), undefined, { sensitivity: "base" }))
+    .slice(0, Math.max(1, Math.min(100, Number(limit) || 25)));
+}
+
 app.get("/api/admin/identity/resolve-discord-id", async (req, res) => {
   const session = requireAdminSession(req, res);
   if (!session) return;
@@ -8378,6 +8443,20 @@ app.get("/api/admin/identity/resolve-discord-id", async (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "failed to resolve Discord user" });
+  }
+});
+
+app.get("/api/admin/identity/search-discord-ids", async (req, res) => {
+  const session = requireAdminSession(req, res);
+  if (!session) return;
+  try {
+    await ensureDiscordIdToRhNameCacheLoaded();
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 25)));
+    const includeAssigned = String(req.query?.includeAssigned || "").trim() !== "0";
+    const candidates = await searchDiscordUserIdsForAdminInput(req.query?.q, { limit, includeAssigned });
+    return res.json({ ok: true, candidates });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "failed to search Discord users" });
   }
 });
 
