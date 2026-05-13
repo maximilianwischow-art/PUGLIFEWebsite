@@ -5511,7 +5511,7 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
       .map((name) => `<option value="${esc(name)}"></option>`)
       .join("");
     const list = rows.length
-      ? `<table class="admin-table" style="margin:12px 0 16px;width:100%">
+      ? `<table class="admin-table" style="margin:0;width:100%;min-width:0;table-layout:fixed">
           <thead>
             <tr>
               <th style="width:44px">Pick</th>
@@ -5537,17 +5537,19 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
         </table>`
       : `<p class="subtle">No unassigned Discord IDs are currently available in the Raid Helper cache.</p>`;
     overlay.innerHTML = `
-      <div style="width:min(920px,96vw);max-height:86vh;overflow:auto;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
+      <div style="width:min(920px,96vw);max-height:86vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
         <h3 class="section-title" style="margin-top:0">${esc(title || "Select Discord ID")}</h3>
         <p class="subtle">Choose an unassigned Discord name to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}. If none is suitable, resolve this backlog item.</p>
-        <label style="display:grid;gap:8px;margin:14px 0 16px;padding:12px;border:1px solid rgba(236,72,153,.38);border-radius:14px;background:rgba(236,72,153,.08)">
+        <label style="display:grid;gap:8px;margin:14px 0 12px;padding:12px;border:1px solid rgba(236,72,153,.38);border-radius:14px;background:rgba(236,72,153,.08);flex:0 0 auto">
           <strong>Type Discord name or ID</strong>
           <input type="text" data-discord-id-manual-input list="discord-id-choice-suggestions" placeholder="Start typing a Discord name, or paste the Discord ID" style="width:100%;box-sizing:border-box;border:1px solid rgba(236,72,153,.55);border-radius:12px;background:rgba(255,255,255,.08);color:inherit;padding:12px 14px;font-weight:700" />
           <datalist id="discord-id-choice-suggestions">${suggestionOptions}</datalist>
           <span class="subtle">Suggestions include unassigned names and already connected Discord names, useful for linking alts/twinks.</span>
         </label>
-        ${list}
-        <div class="admin-actions admin-actions--tight" style="justify-content:flex-end">
+        <div style="min-height:160px;max-height:min(48vh,520px);overflow:auto;margin:0 0 14px;border:1px solid rgba(168,85,247,.18);border-radius:12px">
+          ${list}
+        </div>
+        <div class="admin-actions admin-actions--tight" style="justify-content:flex-end;flex:0 0 auto;margin-top:auto;padding-top:10px;border-top:1px solid rgba(168,85,247,.18)">
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-cancel>Cancel</button>
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-none>No suitable Discord ID found</button>
           <button type="button" class="event-signup-btn" data-discord-id-choice-connect>Connect selected</button>
@@ -5811,7 +5813,13 @@ document.addEventListener("click", async (event) => {
     const item = identityBacklogState[idx];
     const action = (Array.isArray(item?.actions) ? item.actions : []).find((row) => String(row?.id || "") === actionId);
     if (!item || !action) return;
+    const originalText = identityActionBtn.textContent;
+    const isSpecSync = String(action?.kind || "") === "run-sync-task" && String(action?.payload?.taskId || "") === "character-specs-from-guild";
     identityActionBtn.disabled = true;
+    if (isSpecSync) {
+      identityActionBtn.textContent = "Syncing specs...";
+      status("Running WCL/Raid Helper spec sync. This can take a moment...");
+    }
     try {
       await performIdentityBacklogAction(item, action);
       await refreshIdentityManagement({ silent: true });
@@ -5819,6 +5827,7 @@ document.addEventListener("click", async (event) => {
       status(error?.message || "Backlog action failed");
     } finally {
       identityActionBtn.disabled = false;
+      identityActionBtn.textContent = originalText;
     }
     return;
   }
