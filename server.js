@@ -4406,6 +4406,18 @@ function summarizeEventNeedsFromDetail(detail, overridesMap = {}, extraRows = []
   };
 }
 
+function roleAlertDesiredByRoleFromSummary(summary) {
+  const desired = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    desired[role] = Math.max(0, Math.floor(Number(summary?.currentByRole?.[role] || 0)));
+  }
+  for (const row of Array.isArray(summary?.blockerRows) ? summary.blockerRows : []) {
+    const role = normalizeNeedRoleKey(row?.roleName);
+    if (role) desired[role] = Number(desired[role] || 0) + 1;
+  }
+  return desired;
+}
+
 function publicSpecNeedLabelFromBlockerRow(row) {
   let specLabel = normalizeProtectionSpecLabel(String(row?.specName || "").trim());
   const classLabel = normalizeNeedClassKey(row?.className);
@@ -6785,7 +6797,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
-    const desiredByRole = sanitizeRoleAlertDesiredByRole(req.body?.desiredByRole);
+    const desiredByRole = roleAlertDesiredByRoleFromSummary(summary);
     await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
     const missingByRole = {};
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
@@ -6873,8 +6885,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       ) {
         continue;
       }
-      const trustedAccountAssignment = Boolean(linkedDiscordUserId && linkedDiscordUserId === userId);
-      if (row.inGuild !== true && !trustedAccountAssignment) continue;
+      if (row.inGuild !== true) continue;
       const matchedRoles = defaultTargetRoles.filter((role) => sig.roles.has(role));
       if (!matchedRoles.length) continue;
       const signalSpecKeys = new Set([...(sig.specs || [])].map((spec) => normalizeSpecKey(spec)).filter(Boolean));
@@ -6910,7 +6921,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         raidsSeen: Number(sig.raidsSeen || 0),
         inGuild: row.inGuild === true,
         discordMembershipConfirmed: row.inGuild === true,
-        discordMembershipTrustedFromAccountAssignment: trustedAccountAssignment && row.inGuild !== true,
+        discordMembershipTrustedFromAccountAssignment: false,
       });
     }
     const reachableByRole = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
@@ -6981,7 +6992,7 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
-    const desiredByRole = sanitizeRoleAlertDesiredByRole(req.body?.desiredByRole);
+    const desiredByRole = roleAlertDesiredByRoleFromSummary(summary);
     await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
     const neededRoles = [];
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
@@ -7007,11 +7018,6 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
       await ensureRhWclLinksStore();
     } catch {
       rhWclLinksState = { links: [] };
-    }
-    const trustedRoleAlertUserIds = new Set();
-    for (const link of rhWclLinksState.links || []) {
-      const uid = String(link?.discordUserId || "").trim();
-      if (uid) trustedRoleAlertUserIds.add(uid);
     }
     const eventSignupExclusions = buildRoleAlertEventSignupExclusions(detail, rhWclLinksState.links);
     const signals = await collectPastParticipantSignals(80);
@@ -7044,34 +7050,35 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     for (const uidRaw of userIdsToProcess) {
       const uid = String(uidRaw || "").trim();
       if (!uid) continue;
+      const signal = signals.get(uid);
+      const displayName = String(signal?.displayName || uid);
       if (eventSignupExclusions.userIds.has(uid)) {
-        skipped.push({ userId: uid, reason: "User already has a signup for this event" });
+        skipped.push({ userId: uid, displayName, reason: "User already has a signup for this event" });
         continue;
       }
       const guildMember = await isDiscordGuildMemberViaBot(uid, guildId);
-      if (guildMember !== true && !trustedRoleAlertUserIds.has(uid)) {
-        skipped.push({ userId: uid, reason: "User is not confirmed as a Discord server member" });
+      if (guildMember !== true) {
+        skipped.push({ userId: uid, displayName, reason: "User is not confirmed as a Discord server member" });
         continue;
       }
-      const signal = signals.get(uid);
       if (!signal) {
-        skipped.push({ userId: uid, reason: "No historical role/class signal" });
+        skipped.push({ userId: uid, displayName, reason: "No historical role/class signal" });
         continue;
       }
       const rhKey = normalizeRaidHelperDisplayKey(String(signal.displayName || ""));
       if (rhKey && eventSignupExclusions.rhKeys.has(rhKey)) {
-        skipped.push({ userId: uid, reason: "User already has a signup for this event" });
+        skipped.push({ userId: uid, displayName, reason: "User already has a signup for this event" });
         continue;
       }
       const roleHit = targetRoles.some((role) => signal.roles.has(role));
       if (!roleHit) {
-        skipped.push({ userId: uid, reason: "No selected role match" });
+        skipped.push({ userId: uid, displayName, reason: "No selected role match" });
         continue;
       }
       const dm = await discordBotApi("/users/@me/channels", { method: "POST", body: { recipient_id: uid } });
       const channelId = String(dm?.id || "").trim();
       if (!channelId) {
-        skipped.push({ userId: uid, reason: "Failed to open DM channel" });
+        skipped.push({ userId: uid, displayName, reason: "Failed to open DM channel" });
         continue;
       }
       const msg = [
@@ -7093,9 +7100,9 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
           method: "POST",
           body: { content: msg, flags: 4 },
         });
-        delivered.push({ userId: uid, matchedRoles: [...signal.roles].filter((role) => neededRoles.includes(role)) });
+        delivered.push({ userId: uid, displayName, matchedRoles: [...signal.roles].filter((role) => neededRoles.includes(role)) });
       } catch (error) {
-        skipped.push({ userId: uid, reason: String(error?.message || "DM send failed") });
+        skipped.push({ userId: uid, displayName, reason: String(error?.message || "DM send failed") });
       }
     }
     if (delivered.length) {

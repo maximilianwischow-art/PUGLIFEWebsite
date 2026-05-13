@@ -13,6 +13,7 @@ let joinNeedsState = [];
 let roleAlertsEventsState = [];
 let roleAlertsSavedTargetsByEventId = new Map();
 let roleAlertsAnalysisState = null;
+let roleAlertsLastSendResult = null;
 let roleAlertsSelectedUserIds = new Set();
 let roleAlertsCandidateSortState = { key: "displayName", dir: "asc" };
 let roleAlertsCandidateFilterState = {
@@ -1644,12 +1645,26 @@ function roleAlertsReadManualRoleSpecNeeds() {
   return out;
 }
 
+function roleAlertsDesiredTotalFromInputs() {
+  return ROLE_ALERT_ROLES.reduce((sum, role) => {
+    const input = document.getElementById(`roleAlertsNeed${role}`);
+    const n = Number(input?.value || 0);
+    return sum + (Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0);
+  }, 0);
+}
+
+function roleAlertsUpdateDesiredTotal() {
+  const el = document.getElementById("roleAlertsDesiredTotal");
+  if (el) el.textContent = String(roleAlertsDesiredTotalFromInputs());
+}
+
 function roleAlertsCompositionRowsHtml(analysis) {
   const desired = analysis?.desiredByRole || {};
   const current = analysis?.currentByRole || {};
   const missing = analysis?.missingByRole || {};
   const reachable = analysis?.reachableByRole || {};
   const blockerSpecNeedsByRole = analysis?.blockerSpecNeedsByRole || {};
+  const desiredTotal = ROLE_ALERT_ROLES.reduce((sum, role) => sum + Math.max(0, Math.floor(Number(desired[role] || 0))), 0);
   const rows = ROLE_ALERT_ROLES
     .map((role) => {
       const need = Number(desired[role] || 0);
@@ -1677,6 +1692,13 @@ function roleAlertsCompositionRowsHtml(analysis) {
       <table class="admin-table">
         <thead><tr><th>Role</th><th>Desired</th><th>Current (real)</th><th>Missing</th><th>Reachable past raiders</th><th>Spec blockers</th></tr></thead>
         <tbody>${rows}</tbody>
+        <tfoot>
+          <tr>
+            <td><strong>Total</strong></td>
+            <td><strong id="roleAlertsDesiredTotal">${desiredTotal}</strong> <span class="subtle">/ 25</span></td>
+            <td colspan="4" class="subtle">Desired raid size check</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   `;
@@ -2001,6 +2023,49 @@ function roleAlertsCandidatesHtml(analysis) {
   `;
 }
 
+function roleAlertsDisplayNameForUserId(userId) {
+  const uid = String(userId || "").trim();
+  const row = (Array.isArray(roleAlertsAnalysisState?.candidateTargets) ? roleAlertsAnalysisState.candidateTargets : []).find(
+    (candidate) => String(candidate?.userId || "").trim() === uid
+  );
+  return String(row?.displayName || uid || "-");
+}
+
+function roleAlertsDmSendResultHtml() {
+  const result = roleAlertsLastSendResult;
+  if (!result || typeof result !== "object") return "";
+  const delivered = Array.isArray(result.delivered) ? result.delivered : [];
+  const skipped = Array.isArray(result.skipped) ? result.skipped : [];
+  const rowHtml = (row, statusLabel) => {
+    const name = String(row?.displayName || roleAlertsDisplayNameForUserId(row?.userId));
+    const matchedRoles = Array.isArray(row?.matchedRoles) ? row.matchedRoles.join(", ") : "";
+    return `<tr>
+      <td>${esc(statusLabel)}</td>
+      <td>${esc(name)}</td>
+      <td>${esc(matchedRoles || "-")}</td>
+      <td>${esc(row?.reason || "-")}</td>
+    </tr>`;
+  };
+  const deliveredRows = delivered.map((row) => rowHtml(row, "Delivered")).join("");
+  const skippedRows = skipped.map((row) => rowHtml(row, "Skipped")).join("");
+  const emptyRows =
+    deliveredRows || skippedRows
+      ? ""
+      : `<tr><td colspan="4" class="subtle">No send results returned.</td></tr>`;
+  return `
+    <h4 class="subtle" style="margin: 12px 0 6px">DM send results</h4>
+    <p class="subtle">Delivered: ${Number(result.deliveredCount || delivered.length || 0)} · Skipped: ${Number(
+      result.skippedCount || skipped.length || 0
+    )}</p>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Status</th><th>Raider</th><th>Matched roles</th><th>Reason</th></tr></thead>
+        <tbody>${deliveredRows}${skippedRows}${emptyRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderRoleAlertsAnalysis(analysis) {
   roleAlertsAnalysisState = analysis && typeof analysis === "object" ? analysis : null;
   if (roleAlertsAnalysisState) {
@@ -2033,6 +2098,7 @@ function renderRoleAlertsAnalysis(analysis) {
     ${roleAlertsCompositionRowsHtml(roleAlertsAnalysisState)}
     ${roleAlertsLfmMessageHtml(roleAlertsAnalysisState)}
     ${roleAlertsCandidatesHtml(roleAlertsAnalysisState)}
+    ${roleAlertsDmSendResultHtml()}
   `;
 }
 
@@ -3862,6 +3928,7 @@ document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async
             manualRoleSpecNeeds,
           }),
         });
+        roleAlertsLastSendResult = null;
         renderRoleAlertsAnalysis(payload);
       }
     );
@@ -3869,6 +3936,13 @@ document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async
   } catch (error) {
     status(error?.message || "Failed to analyze selected event");
   }
+});
+
+document.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (!/^roleAlertsNeed(?:Tanks|Healers|Melee|Ranged)$/.test(String(target.id || ""))) return;
+  roleAlertsUpdateDesiredTotal();
 });
 
 document.getElementById("roleAlertsSaveTargetsBtn")?.addEventListener("click", async () => {
@@ -3938,6 +4012,8 @@ async function sendRoleAlertsDms(btn) {
           }),
         })
     );
+    roleAlertsLastSendResult = payload;
+    if (roleAlertsAnalysisState) renderRoleAlertsAnalysis(roleAlertsAnalysisState);
     status(
       `Role alert sent. Delivered: ${Number(payload?.deliveredCount || 0)}, skipped: ${Number(
         payload?.skippedCount || 0
