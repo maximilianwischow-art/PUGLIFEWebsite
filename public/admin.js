@@ -5485,6 +5485,21 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
   return new Promise((resolve) => {
     const rows = Array.isArray(candidates) ? candidates : [];
     let selectedId = rows[0]?.discordUserId || "";
+    let manualValue = "";
+    const normalizeChoiceText = (value) => String(value || "").trim().toLowerCase();
+    const resolveManualChoice = () => {
+      const value = String(manualValue || "").trim();
+      if (!value) return "";
+      if (/^\d{15,25}$/.test(value)) return value;
+      const key = normalizeChoiceText(value);
+      const exact = rows.find((row) => normalizeChoiceText(row.rhName) === key);
+      if (exact?.discordUserId) return exact.discordUserId;
+      const partial = rows.find((row) => {
+        const name = normalizeChoiceText(row.rhName);
+        return name && (name.includes(key) || key.includes(name));
+      });
+      return partial?.discordUserId || "";
+    };
     const overlay = document.createElement("div");
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
@@ -5494,27 +5509,31 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
           .map((row) => {
             const checked = row.discordUserId === selectedId ? " checked" : "";
             const score = Number(row.matchScore || 0);
-            const match = score >= 100 ? `<strong style="color:#a7f3d0">Exact name match</strong>` : score > 0 ? `Possible match (${score})` : "Known unassigned Discord ID";
-            return `<label style="display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid rgba(168,85,247,.28);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer">
-              <input type="radio" name="discord-id-choice" value="${esc(row.discordUserId)}"${checked} style="margin-top:4px" />
-              <span>
-                <strong>${esc(row.rhName || "Unknown Raid Helper name")}</strong>
-                <span class="subtle" style="display:block">${esc(row.discordUserId)} · ${match}</span>
-                ${row.lastSeenAt ? `<span class="subtle" style="display:block">Last seen ${esc(fmtTs(row.lastSeenAt))}</span>` : ""}
-              </span>
+            const match = score >= 100 ? "Exact match" : score > 0 ? `Possible match (${score})` : "Available";
+            const source = row.source === "identity-placeholder" ? "Discord placeholder" : "Raid Helper cache";
+            return `<label style="display:grid;grid-template-columns:24px minmax(160px,1fr) minmax(130px,auto) minmax(130px,auto);gap:10px;align-items:center;padding:10px;border:1px solid rgba(168,85,247,.28);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer">
+              <input type="radio" name="discord-id-choice" value="${esc(row.discordUserId)}"${checked} />
+              <strong>${esc(row.rhName || "Unknown Discord name")}</strong>
+              <span class="subtle">${esc(match)}</span>
+              <span class="subtle">${esc(source)}</span>
             </label>`;
           })
           .join("")
       : `<p class="subtle">No unassigned Discord IDs are currently available in the Raid Helper cache.</p>`;
     overlay.innerHTML = `
-      <div style="width:min(720px,96vw);max-height:86vh;overflow:auto;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
+      <div style="width:min(920px,96vw);max-height:86vh;overflow:auto;border:1px solid rgba(168,85,247,.35);border-radius:18px;background:#120923;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.55)">
         <h3 class="section-title" style="margin-top:0">${esc(title || "Select Discord ID")}</h3>
-        <p class="subtle">Choose an unassigned Discord ID to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}. If none is suitable, resolve this backlog item.</p>
+        <p class="subtle">Choose an unassigned Discord name to connect${targetName ? ` to <strong>${esc(targetName)}</strong>` : ""}, or type a Discord name/ID directly. If none is suitable, resolve this backlog item.</p>
+        <label style="display:grid;gap:6px;margin:12px 0">
+          <span class="subtle">Type Discord name or ID</span>
+          <input type="text" data-discord-id-manual-input placeholder="Example: RamiEx or 427557178455490585" style="width:100%;box-sizing:border-box;border:1px solid rgba(168,85,247,.35);border-radius:12px;background:rgba(255,255,255,.06);color:inherit;padding:10px 12px" />
+        </label>
+        ${rows.length ? `<div class="subtle" style="display:grid;grid-template-columns:24px minmax(160px,1fr) minmax(130px,auto) minmax(130px,auto);gap:10px;padding:0 10px 6px"><span></span><strong>Name</strong><strong>Match</strong><strong>Source</strong></div>` : ""}
         <div style="display:grid;gap:8px;margin:12px 0 16px">${list}</div>
         <div class="admin-actions admin-actions--tight" style="justify-content:flex-end">
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-cancel>Cancel</button>
           <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-id-choice-none>No suitable Discord ID found</button>
-          <button type="button" class="event-signup-btn" data-discord-id-choice-connect${rows.length ? "" : " disabled"}>Connect selected</button>
+          <button type="button" class="event-signup-btn" data-discord-id-choice-connect>Connect selected</button>
         </div>
       </div>`;
     const cleanup = (value) => {
@@ -5529,11 +5548,19 @@ function showDiscordIdChooserModal({ title, targetName, candidates }) {
       const input = event.target.closest('input[name="discord-id-choice"]');
       if (input) selectedId = String(input.value || "").trim();
     });
+    overlay.querySelector("[data-discord-id-manual-input]")?.addEventListener("input", (event) => {
+      manualValue = String(event.target.value || "");
+    });
     overlay.querySelector("[data-discord-id-choice-cancel]")?.addEventListener("click", () => cleanup(null));
     overlay.querySelector("[data-discord-id-choice-none]")?.addEventListener("click", () => cleanup({ kind: "resolve" }));
     overlay.querySelector("[data-discord-id-choice-connect]")?.addEventListener("click", () => {
-      if (!selectedId) return;
-      cleanup({ kind: "connect", discordUserId: selectedId });
+      const manualId = resolveManualChoice();
+      const discordUserId = manualId || selectedId;
+      if (!discordUserId) {
+        status("Type a Discord ID or choose a known name from the list.");
+        return;
+      }
+      cleanup({ kind: "connect", discordUserId });
     });
     document.addEventListener("keydown", onKeyDown);
     document.body.appendChild(overlay);
