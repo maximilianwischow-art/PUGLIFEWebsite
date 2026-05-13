@@ -4406,6 +4406,70 @@ function summarizeEventNeedsFromDetail(detail, overridesMap = {}, extraRows = []
   };
 }
 
+function summarizeEventNeedsFromCompBoard(detail, compBoard) {
+  const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+  const primary = signUps.filter((entry) => String(entry?.status || "").toLowerCase() === "primary");
+  const slots = (Array.isArray(compBoard?.groups) ? compBoard.groups : []).flatMap((group) =>
+    Array.isArray(group?.slots) ? group.slots : []
+  );
+  const realRows = slots
+    .filter((slot) => slot?.isKnownSignup && !slot?.isBlocker)
+    .map((slot) => ({
+      signupId: Number(slot?.id || 0) || 0,
+      userId: "",
+      name: String(slot?.name || "").trim(),
+      roleName: normalizeRaidHelperRoleLabel(String(slot?.roleName || "").trim()),
+      className: englishWowClassDisplayFromRaidHelper(String(slot?.className || "").trim()),
+      specName: normalizeProtectionSpecLabel(String(slot?.specName || "").trim()),
+      isBlocker: false,
+    }));
+  const blockerRows = slots
+    .filter((slot) => slot?.isBlocker)
+    .map((slot) => ({
+      signupId: Number(slot?.id || 0) || 0,
+      userId: "",
+      name: String(slot?.name || "").trim(),
+      roleName: normalizeRaidHelperRoleLabel(String(slot?.roleName || "").trim()),
+      className: englishWowClassDisplayFromRaidHelper(String(slot?.className || "").trim()),
+      specName: normalizeProtectionSpecLabel(String(slot?.specName || "").trim()),
+      isBlocker: true,
+    }));
+  const currentByRole = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
+  const currentByClass = {};
+  const blockerSpecNeedsByRole = { Tanks: {}, Healers: {}, Melee: {}, Ranged: {} };
+  for (const row of realRows) {
+    const role = normalizeNeedRoleKey(row.roleName);
+    if (role) currentByRole[role] = Number(currentByRole[role] || 0) + 1;
+    const cls = normalizeNeedClassKey(row.className);
+    if (cls) currentByClass[cls] = Number(currentByClass[cls] || 0) + 1;
+  }
+  for (const row of blockerRows) {
+    const role = normalizeNeedRoleKey(row.roleName);
+    if (!role) continue;
+    let specLabel = String(row.specName || "").trim();
+    const cls = normalizeNeedClassKey(row.className);
+    if (!specLabel) {
+      const rawName = String(row.name || "").trim().toLowerCase();
+      if (rawName.includes("enh")) specLabel = "Enhancement";
+      else if (rawName.includes("combat")) specLabel = "Combat";
+      else if (rawName.includes("balance") || rawName.includes("boomkin") || rawName.includes("dreamstate")) specLabel = "Balance";
+      else if (rawName.includes("retri") || rawName.includes("ret")) specLabel = "Retribution";
+    }
+    if (!specLabel) continue;
+    if (specLabel.toLowerCase() === "balance" && cls === "Druid") specLabel = "Balance Druid";
+    blockerSpecNeedsByRole[role][specLabel] = Number(blockerSpecNeedsByRole[role][specLabel] || 0) + 1;
+  }
+  return {
+    signupsTotal: signUps.length,
+    primaryTotal: primary.length,
+    realRows,
+    blockerRows,
+    currentByRole,
+    currentByClass,
+    blockerSpecNeedsByRole,
+  };
+}
+
 function roleAlertDesiredByRoleFromSummary(summary) {
   const desired = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
   for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
@@ -6794,7 +6858,10 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       compBoard = null;
       compUsed = false;
     }
-    const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
+    const summary =
+      compUsed && compBoard
+        ? summarizeEventNeedsFromCompBoard(detail, compBoard)
+        : summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
     const desiredByRole = roleAlertDesiredByRoleFromSummary(summary);
@@ -6983,13 +7050,18 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
         .filter(Boolean)
     );
     let compBlockers = [];
+    let compBoard = null;
     try {
       const comp = await raidHelperRequest(`/comps/${encodeURIComponent(eventId)}`);
       compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+      compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
     } catch {
       compBlockers = [];
+      compBoard = null;
     }
-    const summary = summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
+    const summary = compBoard
+      ? summarizeEventNeedsFromCompBoard(detail, compBoard)
+      : summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
     const desiredByRole = roleAlertDesiredByRoleFromSummary(summary);
@@ -9204,6 +9276,34 @@ app.put("/api/admin/identity/public-visibility", async (req, res) => {
   }
 });
 
+async function enrichIdentityAdminCharacterInput(character) {
+  const characterName = String(character?.characterName || "").trim();
+  if (!characterName) return character;
+  const next = { ...character, realm: String(character?.realm || "").trim() || defaultWowRealmForRoster() || "Thunderstrike" };
+  if (String(next.wowClass || "").trim() && String(next.wowSpec || "").trim()) return next;
+
+  const existing = identityCharacterOwnersByName(characterName)
+    .find((row) => String(row?.wowClass || "").trim() || String(row?.wowSpec || "").trim());
+  if (existing) {
+    if (!String(next.wowClass || "").trim()) next.wowClass = String(existing.wowClass || "").trim();
+    if (!String(next.wowSpec || "").trim()) next.wowSpec = String(existing.wowSpec || "").trim();
+  }
+  if (String(next.wowClass || "").trim() && String(next.wowSpec || "").trim()) return next;
+
+  try {
+    const out = await characterSpecResolver()({
+      characterName,
+      realm: next.realm || defaultWowRealmForRoster(),
+    });
+    if (!String(next.wowClass || "").trim() && out?.wowClass) next.wowClass = out.wowClass;
+    if (!String(next.wowSpec || "").trim() && out?.wowSpec) next.wowSpec = out.wowSpec;
+    if (out?.source) next.discoveredVia = `admin-identity-table:${out.source}`;
+  } catch (error) {
+    console.warn(`[identity-admin] character enrichment failed for ${characterName}:`, error?.message || error);
+  }
+  return next;
+}
+
 app.put("/api/admin/identity/accounts/:userId", async (req, res) => {
   const session = requireAdminSession(req, res);
   if (!session) return;
@@ -9243,6 +9343,9 @@ app.put("/api/admin/identity/accounts/:userId", async (req, res) => {
         isMain: false,
         discoveredVia: "admin-identity-table",
       });
+    }
+    for (let i = 0; i < desiredCharacters.length; i += 1) {
+      desiredCharacters[i] = await enrichIdentityAdminCharacterInput(desiredCharacters[i]);
     }
     assertIdentityCharacterOwnership(desiredCharacters.map((row) => row.characterName), userId);
     const displayNameRaw = String(req.body?.displayName || "").trim();

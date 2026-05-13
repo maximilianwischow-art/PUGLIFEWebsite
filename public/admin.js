@@ -3945,6 +3945,15 @@ document.addEventListener("input", (event) => {
   roleAlertsUpdateDesiredTotal();
 });
 
+document.addEventListener("keydown", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (!target.matches("[data-identity-alt-name]")) return;
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  target.closest("[data-identity-alt-cell]")?.querySelector("[data-identity-alt-add]")?.click();
+});
+
 document.getElementById("roleAlertsSaveTargetsBtn")?.addEventListener("click", async () => {
   const btn = document.getElementById("roleAlertsSaveTargetsBtn");
   const eventId = roleAlertsSelectedEventId();
@@ -4922,6 +4931,42 @@ function identityAltTextareaValue(characters) {
     .join("\n");
 }
 
+function identityAltChipHtml(character, idx) {
+  const name = String(character?.characterName || "").trim();
+  if (!name) return "";
+  const specText = identityCharacterSpecText(character);
+  return `<span class="admin-identity-alt-chip" data-identity-alt-chip="${idx}">
+    <span>
+      <strong>${esc(name)}</strong>
+      ${specText ? `<span class="subtle"> · ${esc(specText)}</span>` : `<span class="subtle"> · spec auto-pulls on save</span>`}
+    </span>
+    <button type="button" class="admin-mini-btn admin-mini-btn--icon" data-identity-alt-remove="${idx}" title="Remove this alt from the Discord identity" aria-label="Remove ${esc(name)} from this identity">-</button>
+  </span>`;
+}
+
+function identityAltRowsFromStore(store) {
+  return parseIdentityAltTextarea(String(store?.value || ""));
+}
+
+function identityWriteAltRowsToStore(store, rows) {
+  if (!store) return;
+  store.value = identityAltTextareaValue(Array.isArray(rows) ? rows : []);
+}
+
+function identityRenderAltChipsForCell(cell) {
+  if (!cell) return;
+  const store = cell.querySelector('[data-identity-k="altCharacters"]');
+  const chips = cell.querySelector("[data-identity-alt-chips]");
+  const count = cell.querySelector("[data-identity-alt-count]");
+  const rows = identityAltRowsFromStore(store);
+  if (chips) {
+    chips.innerHTML = rows.length
+      ? rows.map(identityAltChipHtml).join("")
+      : `<span class="subtle">No alts linked.</span>`;
+  }
+  if (count) count.textContent = `${rows.length} alt${rows.length === 1 ? "" : "s"}`;
+}
+
 function parseIdentityAltTextarea(raw) {
   return String(raw || "")
     .split(/\r?\n|,/)
@@ -5076,8 +5121,19 @@ function renderIdentityAccountsTable(accounts) {
           <div class="subtle" style="margin-top:4px">Realm fixed to Thunderstrike.</div>
         </td>
         <td>
-          <textarea class="admin-input" data-identity-k="altCharacters" rows="3" placeholder="One per line: Name | Class | Spec">${esc(identityAltTextareaValue(account.altCharacters))}</textarea>
-          <div class="subtle">${(account.altCharacters || []).length} alt${(account.altCharacters || []).length === 1 ? "" : "s"}</div>
+          <div data-identity-alt-cell>
+            <textarea class="admin-input" data-identity-k="altCharacters" hidden>${esc(identityAltTextareaValue(account.altCharacters))}</textarea>
+            <div class="admin-identity-alt-chips" data-identity-alt-chips>
+              ${(account.altCharacters || []).length
+                ? (account.altCharacters || []).map(identityAltChipHtml).join("")
+                : `<span class="subtle">No alts linked.</span>`}
+            </div>
+            <div class="admin-identity-add-alt">
+              <input class="admin-input" data-identity-alt-name placeholder="Character name" />
+              <button type="button" class="event-signup-btn event-signup-btn--softres" data-identity-alt-add>Add alt</button>
+            </div>
+            <div class="subtle"><span data-identity-alt-count>${(account.altCharacters || []).length} alt${(account.altCharacters || []).length === 1 ? "" : "s"}</span> · class/spec auto-pulls on save</div>
+          </div>
         </td>
         <td>${esc(activityText)}${activityLabel}</td>
         <td>${renderIdentityLatestRaidParse(account.latestRaidParse)}</td>
@@ -5911,6 +5967,51 @@ async function performIdentityBacklogAction(item, action) {
 }
 
 document.addEventListener("click", async (event) => {
+  const identityAltAddBtn = event.target.closest("[data-identity-alt-add]");
+  if (identityAltAddBtn) {
+    event.preventDefault();
+    const tr = identityAltAddBtn.closest("[data-identity-account-row]");
+    const cell = identityAltAddBtn.closest("[data-identity-alt-cell]");
+    const input = cell?.querySelector("[data-identity-alt-name]");
+    const store = cell?.querySelector('[data-identity-k="altCharacters"]');
+    const characterName = String(input?.value || "").trim();
+    if (!tr || !cell || !store) return;
+    if (!characterName) {
+      status("Enter the alt character name.");
+      return;
+    }
+    const rows = identityAltRowsFromStore(store);
+    const exists = rows.some((row) => String(row?.characterName || "").trim().toLowerCase() === characterName.toLowerCase());
+    if (exists) {
+      status(`${characterName} is already linked as an alt.`);
+      return;
+    }
+    rows.push({ characterName, wowClass: "", wowSpec: "", realm: "Thunderstrike" });
+    identityWriteAltRowsToStore(store, rows);
+    if (input) input.value = "";
+    identityRenderAltChipsForCell(cell);
+    tr.setAttribute("data-identity-dirty", "1");
+    status(`Added alt ${characterName}. Save the row to pull class/spec.`);
+    return;
+  }
+
+  const identityAltRemoveBtn = event.target.closest("[data-identity-alt-remove]");
+  if (identityAltRemoveBtn) {
+    event.preventDefault();
+    const tr = identityAltRemoveBtn.closest("[data-identity-account-row]");
+    const cell = identityAltRemoveBtn.closest("[data-identity-alt-cell]");
+    const store = cell?.querySelector('[data-identity-k="altCharacters"]');
+    const idx = Number(identityAltRemoveBtn.getAttribute("data-identity-alt-remove"));
+    if (!tr || !cell || !store || !Number.isInteger(idx)) return;
+    const rows = identityAltRowsFromStore(store);
+    rows.splice(idx, 1);
+    identityWriteAltRowsToStore(store, rows);
+    identityRenderAltChipsForCell(cell);
+    tr.setAttribute("data-identity-dirty", "1");
+    status("Removed alt. Save the row to apply.");
+    return;
+  }
+
   const identitySortBtn = event.target.closest("[data-identity-account-sort]");
   if (identitySortBtn) {
     const key = String(identitySortBtn.getAttribute("data-identity-account-sort") || "").trim();

@@ -3831,6 +3831,61 @@ body.is-admin-table-maximized {
   max-width: 18rem;
 }
 
+.admin-identity-alt-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 14rem;
+}
+
+.admin-identity-alt-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(139, 92, 246, 0.24);
+  border-radius: 0.6rem;
+  background: rgba(15, 10, 30, 0.5);
+}
+
+.admin-identity-add-alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.admin-identity-add-alt .admin-input[data-identity-alt-name] {
+  flex: 1 1 10rem;
+  min-width: 8rem;
+}
+
+.admin-mini-btn {
+  border: 1px solid rgba(216, 180, 254, 0.28);
+  border-radius: 999px;
+  background: rgba(88, 28, 135, 0.24);
+  color: #e9d5ff;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.3rem 0.55rem;
+  cursor: pointer;
+}
+
+.admin-mini-btn--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.45rem;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
 .admin-rh-main-picker-note {
   margin-top: 6px;
   font-size: 11px;
