@@ -28,6 +28,10 @@ services:
         sync: false
       - key: DISCORD_NEWS_WEBHOOK_URL
         sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_PROFILE_INGEST_CHANNEL_ID
+        sync: false
       - key: WOW_GUILD_REALM
         sync: false
       - key: WOW_PROFILE_REGION

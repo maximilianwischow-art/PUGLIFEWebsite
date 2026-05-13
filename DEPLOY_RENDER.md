@@ -39,6 +39,8 @@ In Render dashboard -> service -> Environment, set:
 - `AUTH_SESSION_SECRET` (required in production)
 - `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (if voting login is enabled)
 - `DISCORD_NEWS_WEBHOOK_URL` (secret, optional; enables Admin → News Notifications and automated Discord news posts)
+- `DISCORD_BOT_TOKEN` (secret, optional; enables the Admin → News role dropdown, role pings, and Discord profile-post scanning, using `DISCORD_GUILD_ID` / `RAID_HELPER_SERVER_ID`)
+- `DISCORD_PROFILE_INGEST_CHANNEL_ID` (optional; defaults to the current gear-check channel, set explicitly if the channel changes)
 - `PUBLIC_BASE_URL` (your Render service URL, e.g. `https://fallen-tacticians-api.onrender.com`)
 
 ### Persistent storage (Starter+)

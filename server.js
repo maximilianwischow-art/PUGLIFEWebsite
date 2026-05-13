@@ -432,7 +432,24 @@ const discordClientSecret = process.env.DISCORD_CLIENT_SECRET?.trim() || "";
 const discordGuildId =
   process.env.DISCORD_GUILD_ID?.trim() || process.env.RAID_HELPER_SERVER_ID?.trim() || "";
 const discordNewsWebhookUrl = process.env.DISCORD_NEWS_WEBHOOK_URL?.trim() || "";
-const DISCORD_NEWS_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+const DISCORD_NEWS_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const DISCORD_PROFILE_INGEST_DEFAULT_CHANNEL_ID = "1479943093305217115";
+const DISCORD_PROFILE_INGEST_LOOKBACK_LIMIT = 50;
+
+function discordProfileIngestChannelId() {
+  return String(process.env.DISCORD_PROFILE_INGEST_CHANNEL_ID || DISCORD_PROFILE_INGEST_DEFAULT_CHANNEL_ID).trim();
+}
+
+function discordProfileIngestPollMs() {
+  const raw = Number(process.env.DISCORD_PROFILE_INGEST_POLL_MS || 2 * 60_000);
+  if (Number.isFinite(raw) && raw >= 60_000) return Math.min(60 * 60_000, Math.floor(raw));
+  return 2 * 60_000;
+}
+
+function discordProfileIngestEnabled() {
+  const raw = String(process.env.DISCORD_PROFILE_INGEST_ENABLED ?? "1").trim().toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+}
 
 /** Raid Helper’s “server id” is your Discord guild id — optional duplicate of {@link discordGuildId}. */
 function raidHelperDiscordGuildId() {
@@ -571,6 +588,7 @@ const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const discordNewsNotificationsPath = path.join(dataDir, "discord-news-notifications.json");
+const discordProfileIngestPath = path.join(dataDir, "discord-profile-ingest.json");
 const roleAlertDmLogPath = path.join(dataDir, "role-alert-dm-log.json");
 const roleAlertSettingsPath = path.join(dataDir, "role-alert-settings.json");
 const hofNotesPath = path.join(dataDir, "hof-notes.json");
@@ -603,6 +621,9 @@ let discordDmSubscribersReady = null;
 let discordDmSubscribersWriteChain = Promise.resolve();
 let discordNewsNotificationsReady = null;
 let discordNewsNotificationsWriteChain = Promise.resolve();
+let discordProfileIngestReady = null;
+let discordProfileIngestWriteChain = Promise.resolve();
+let discordProfileIngestPollTimer = null;
 let roleAlertDmLogReady = null;
 let roleAlertDmLogWriteChain = Promise.resolve();
 let roleAlertSettingsReady = null;
@@ -672,6 +693,7 @@ let p2MaterialsState = {
 };
 let joinNeedsState = { rows: DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
 let discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] };
+let discordProfileIngestState = { lastMessageId: "", lastScanAt: 0, lastError: "", proposals: [], rejected: [] };
 let roleAlertDmLogState = { byEventId: {} };
 let hofNotesState = { byWinnerRaidKey: {} };
 let raidHelperDmPollTimer = null;
@@ -2660,7 +2682,24 @@ function sanitizeDiscordNewsNotificationsState(raw) {
     .filter((row) => row.key && row.sentAt > 0)
     .sort((a, b) => b.sentAt - a.sentAt)
     .slice(0, 50);
-  return { sentByKey, recent };
+  const queueIn = Array.isArray(raw?.queue) ? raw.queue : [];
+  const seenIds = new Set();
+  const queue = queueIn
+    .map((row) => sanitizeDiscordNewsQueueDraft(row))
+    .filter((row) => {
+      if (!row?.id || seenIds.has(row.id)) return false;
+      seenIds.add(row.id);
+      return true;
+    })
+    .sort((a, b) => {
+      const statusWeight = { pending: 0, sent: 1, discarded: 2 };
+      return (
+        (statusWeight[a.status] ?? 9) - (statusWeight[b.status] ?? 9) ||
+        Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
+      );
+    })
+    .slice(0, 200);
+  return { sentByKey, recent, queue };
 }
 
 async function persistDiscordNewsNotificationsStore() {
@@ -2679,11 +2718,24 @@ async function ensureDiscordNewsNotificationsStore() {
       discordNewsNotificationsState = sanitizeDiscordNewsNotificationsState(JSON.parse(raw));
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
-      discordNewsNotificationsState = { sentByKey: {}, recent: [] };
+      discordNewsNotificationsState = { sentByKey: {}, recent: [], queue: [] };
       await persistDiscordNewsNotificationsStore();
     }
   })();
   return discordNewsNotificationsReady;
+}
+
+function discordNewsDraftIdFromKey(key) {
+  const raw = String(key || "").trim();
+  const base = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  if (!base) return `draft_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}`;
+  const hash = createHash("sha1").update(raw).digest("hex").slice(0, 8);
+  return `${base}_${hash}`;
 }
 
 function isConfiguredDiscordWebhookUrl(rawUrl) {
@@ -2719,6 +2771,59 @@ function truncateDiscordText(value, maxLen) {
   return `${s.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
 }
 
+function sanitizeDiscordRoleIds(values) {
+  const input = Array.isArray(values) ? values : [];
+  return [
+    ...new Set(
+      input
+        .map((value) => String(value || "").trim())
+        .filter((value) => /^\d{15,25}$/.test(value))
+    ),
+  ].slice(0, 20);
+}
+
+function discordRoleMentionContent(roleIds) {
+  const ids = sanitizeDiscordRoleIds(roleIds);
+  return ids.map((id) => `<@&${id}>`).join(" ");
+}
+
+function sanitizeDiscordNewsFields(fields) {
+  return (Array.isArray(fields) ? fields : [])
+    .map((field) => ({
+      name: truncateDiscordText(field?.name || "", 256),
+      value: truncateDiscordText(field?.value || "", 1024),
+      inline: field?.inline !== false,
+    }))
+    .filter((field) => field.name && field.value)
+    .slice(0, 10);
+}
+
+function sanitizeDiscordNewsQueueDraft(row) {
+  const raw = row && typeof row === "object" ? row : {};
+  const key = String(raw.key || "").trim().slice(0, 180);
+  const id = String(raw.id || discordNewsDraftIdFromKey(key)).trim().replace(/[^\w.-]+/g, "_").slice(0, 100);
+  const status = ["pending", "sent", "discarded"].includes(String(raw.status || "")) ? String(raw.status) : "pending";
+  const createdAt = Number(raw.createdAt || 0) > 0 ? Number(raw.createdAt) : Date.now();
+  const updatedAt = Number(raw.updatedAt || 0) > 0 ? Number(raw.updatedAt) : createdAt;
+  return {
+    id,
+    key,
+    kind: String(raw.kind || "news").trim().slice(0, 40) || "news",
+    status,
+    title: truncateDiscordText(raw.title || "PUG LIFE News", 256),
+    description: truncateDiscordText(raw.description || raw.message || "", 4000),
+    url: isPublicHttpUrl(raw.url) ? String(raw.url).trim() : "",
+    imageUrl: isPublicHttpUrl(raw.imageUrl) ? String(raw.imageUrl).trim() : "",
+    roleMentions: sanitizeDiscordRoleIds(raw.roleMentions || raw.roleIds),
+    fields: sanitizeDiscordNewsFields(raw.fields),
+    createdAt,
+    updatedAt,
+    sentAt: Number(raw.sentAt || 0) || 0,
+    discardedAt: Number(raw.discardedAt || 0) || 0,
+    messageId: String(raw.messageId || "").trim().slice(0, 80),
+  };
+}
+
 function sanitizeDiscordAttachmentName(filename, mime) {
   const base = String(filename || "news-image")
     .trim()
@@ -2743,7 +2848,7 @@ function decodeDiscordNewsImageUpload(raw) {
   }
   if (!buffer.length) return null;
   if (buffer.length > DISCORD_NEWS_IMAGE_MAX_BYTES) {
-    throw new Error("uploaded image is too large (max 6 MB)");
+    throw new Error("uploaded image is too large (max 5 MB)");
   }
   const detectedMime = detectImageMimeFromBytes(buffer);
   const declaredMime = String(raw.mime || "").trim().toLowerCase();
@@ -2773,6 +2878,9 @@ function discordNewsWebhookStatusPayload() {
     configured,
     valid,
     host,
+    queued: (Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : []).filter(
+      (row) => row?.status === "pending"
+    ).length,
     recent: Array.isArray(discordNewsNotificationsState.recent) ? discordNewsNotificationsState.recent.slice(0, 10) : [],
   };
 }
@@ -2784,6 +2892,7 @@ async function sendDiscordNewsWebhook({
   url = "",
   imageUrl = "",
   imageAttachment = null,
+  roleMentions = [],
   fields = [],
 } = {}) {
   if (!isConfiguredDiscordWebhookUrl(discordNewsWebhookUrl)) {
@@ -2812,11 +2921,15 @@ async function sendDiscordNewsWebhook({
     .slice(0, 10);
   if (safeFields.length) embed.fields = safeFields;
 
+  const roleIds = sanitizeDiscordRoleIds(roleMentions);
+  const content = discordRoleMentionContent(roleIds);
   const endpoint = discordNewsWebhookUrl.includes("?")
     ? `${discordNewsWebhookUrl}&wait=true`
     : `${discordNewsWebhookUrl}?wait=true`;
   const payloadJson = JSON.stringify({
     username: "PUG LIFE News",
+    ...(content ? { content } : {}),
+    allowed_mentions: { parse: [], roles: roleIds },
     embeds: [embed],
   });
   if (imageAttachment?.buffer?.length && imageAttachment?.filename) {
@@ -2889,6 +3002,145 @@ async function sendDiscordNewsWebhookOnce(key, payload) {
     messageId: message?.id || "",
   });
   return { sent: true, skipped: false, message };
+}
+
+async function queueDiscordNewsDraftOnce(key, payload = {}) {
+  const safeKey = String(key || "").trim().slice(0, 180);
+  if (!safeKey) return { queued: false, skipped: true, reason: "missing-key" };
+  await ensureDiscordNewsNotificationsStore();
+  if (discordNewsNotificationsState.sentByKey?.[safeKey]) {
+    return { queued: false, skipped: true, reason: "already-sent" };
+  }
+  const existing = (Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : []).find(
+    (row) => String(row?.key || "") === safeKey
+  );
+  if (existing) return { queued: false, skipped: true, reason: "already-queued", draft: existing };
+  const now = Date.now();
+  const draft = sanitizeDiscordNewsQueueDraft({
+    id: discordNewsDraftIdFromKey(safeKey),
+    key: safeKey,
+    kind: payload?.kind || "news",
+    status: "pending",
+    title: payload?.title || "PUG LIFE News",
+    description: payload?.description || payload?.message || "",
+    url: payload?.url || "",
+    imageUrl: payload?.imageUrl || "",
+    roleMentions: payload?.roleMentions || payload?.roleIds || [],
+    fields: payload?.fields || [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  discordNewsNotificationsWriteChain = discordNewsNotificationsWriteChain.catch(() => {}).then(async () => {
+    const queue = Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : [];
+    if (!queue.some((row) => String(row?.key || "") === safeKey)) {
+      discordNewsNotificationsState.queue = [draft, ...queue].slice(0, 200);
+      await persistDiscordNewsNotificationsStore();
+    }
+  });
+  await discordNewsNotificationsWriteChain;
+  return { queued: true, skipped: false, draft };
+}
+
+function queueDiscordNewsDraftOnceBestEffort(key, payload) {
+  queueDiscordNewsDraftOnce(key, payload).catch((error) => {
+    console.warn("[discord-news] queue failed:", error?.message || error);
+  });
+}
+
+function discordNewsQueuePayload() {
+  const rows = Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : [];
+  return {
+    ok: true,
+    queue: rows
+      .map((row) => sanitizeDiscordNewsQueueDraft(row))
+      .sort((a, b) => {
+        const statusWeight = { pending: 0, sent: 1, discarded: 2 };
+        return (
+          (statusWeight[a.status] ?? 9) - (statusWeight[b.status] ?? 9) ||
+          Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
+        );
+      }),
+  };
+}
+
+function sanitizeDiscordNewsAdminPayload(body = {}, fallback = {}) {
+  const title = String(body?.title ?? fallback.title ?? "").trim();
+  const description = String(body?.message ?? body?.description ?? fallback.description ?? "").trim();
+  const rawUrl = String(body?.url ?? fallback.url ?? "").trim();
+  const rawImageUrl = String(body?.imageUrl ?? fallback.imageUrl ?? "").trim();
+  const url = rawUrl.startsWith("/") ? absoluteUrlFromPublicBase(rawUrl) : rawUrl;
+  const imageUrl = rawImageUrl.startsWith("/") ? absoluteUrlFromPublicBase(rawImageUrl) : rawImageUrl;
+  const roleMentions = sanitizeDiscordRoleIds(body?.roleIds ?? body?.roleMentions ?? fallback.roleMentions);
+  if (!title) throw new Error("title is required");
+  if (!description) throw new Error("message is required");
+  if (title.length > 256) throw new Error("title is too long (max 256 chars)");
+  if (description.length > 4000) throw new Error("message is too long (max 4000 chars)");
+  if (url && !isPublicHttpUrl(url)) throw new Error("link must be a public http(s) URL");
+  if (imageUrl && !isPublicHttpUrl(imageUrl)) throw new Error("image URL must be a public http(s) URL");
+  return { title, description, url, imageUrl, roleMentions };
+}
+
+async function sendQueuedDiscordNewsDraft(id, editedPayload = {}) {
+  const draftId = String(id || "").trim();
+  if (!draftId) throw new Error("draft id is required");
+  await ensureDiscordNewsNotificationsStore();
+  const queue = Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : [];
+  const idx = queue.findIndex((row) => String(row?.id || "") === draftId);
+  if (idx < 0) throw new Error("Queued news draft not found");
+  const draft = sanitizeDiscordNewsQueueDraft(queue[idx]);
+  if (draft.status !== "pending") throw new Error("Queued news draft is not pending");
+  const cleaned = sanitizeDiscordNewsAdminPayload(editedPayload, draft);
+  const message = await sendDiscordNewsWebhook({
+    kind: draft.kind,
+    title: cleaned.title,
+    description: cleaned.description,
+    url: cleaned.url,
+    imageUrl: cleaned.imageUrl,
+    roleMentions: cleaned.roleMentions,
+    fields: draft.fields,
+  });
+  const now = Date.now();
+  const updatedDraft = {
+    ...draft,
+    ...cleaned,
+    roleMentions: cleaned.roleMentions,
+    status: "sent",
+    updatedAt: now,
+    sentAt: now,
+    messageId: String(message?.id || "").trim(),
+  };
+  discordNewsNotificationsWriteChain = discordNewsNotificationsWriteChain.catch(() => {}).then(async () => {
+    const currentQueue = Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : [];
+    discordNewsNotificationsState.queue = currentQueue.map((row) => (String(row?.id || "") === draftId ? updatedDraft : row));
+    await persistDiscordNewsNotificationsStore();
+  });
+  await discordNewsNotificationsWriteChain;
+  await markDiscordNewsNotificationSent(draft.key || `queue:${draftId}`, {
+    kind: draft.kind,
+    title: cleaned.title,
+    messageId: message?.id || "",
+  });
+  return { message, draft: updatedDraft };
+}
+
+async function discardQueuedDiscordNewsDraft(id) {
+  const draftId = String(id || "").trim();
+  if (!draftId) throw new Error("draft id is required");
+  await ensureDiscordNewsNotificationsStore();
+  const queue = Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : [];
+  const idx = queue.findIndex((row) => String(row?.id || "") === draftId);
+  if (idx < 0) throw new Error("Queued news draft not found");
+  const draft = sanitizeDiscordNewsQueueDraft(queue[idx]);
+  if (draft.status !== "pending") throw new Error("Queued news draft is not pending");
+  const now = Date.now();
+  const updatedDraft = { ...draft, status: "discarded", updatedAt: now, discardedAt: now };
+  discordNewsNotificationsWriteChain = discordNewsNotificationsWriteChain.catch(() => {}).then(async () => {
+    const currentQueue = Array.isArray(discordNewsNotificationsState.queue) ? discordNewsNotificationsState.queue : [];
+    discordNewsNotificationsState.queue = currentQueue.map((row) => (String(row?.id || "") === draftId ? updatedDraft : row));
+    await persistDiscordNewsNotificationsStore();
+  });
+  await discordNewsNotificationsWriteChain;
+  return updatedDraft;
 }
 
 function sendDiscordNewsWebhookOnceBestEffort(key, payload) {
@@ -3318,6 +3570,28 @@ async function discordBotApi(pathname, { method = "GET", body } = {}) {
   return payload;
 }
 
+async function fetchDiscordGuildRolesForNews() {
+  const guildId = raidHelperDiscordGuildId();
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+    throw new Error("DISCORD_BOT_TOKEN is required to fetch Discord roles");
+  }
+  if (!guildId) {
+    throw new Error("DISCORD_GUILD_ID or RAID_HELPER_SERVER_ID is required to fetch Discord roles");
+  }
+  const roles = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}/roles`);
+  return (Array.isArray(roles) ? roles : [])
+    .map((role) => ({
+      id: String(role?.id || "").trim(),
+      name: String(role?.name || "").trim(),
+      color: Number(role?.color || 0),
+      position: Number(role?.position || 0),
+      mentionable: Boolean(role?.mentionable),
+      managed: Boolean(role?.managed),
+    }))
+    .filter((role) => role.id && role.id !== guildId && role.name && role.name !== "@everyone" && !role.managed)
+    .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
+}
+
 function formatRaidHelperEventStartForDm(startTimeSec) {
   const sec = Number(startTimeSec || 0);
   if (!Number.isFinite(sec) || sec <= 0) return "unknown time";
@@ -3373,6 +3647,79 @@ function raidHelperDiscordEventPostUrl(eventDetail, fallbackEvent = "") {
   return "";
 }
 
+function discordEventNewsRoleStatusText(summary, desiredByRole) {
+  const parts = [];
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    const current = Number(summary?.currentByRole?.[role] || 0);
+    const desired = Number(desiredByRole?.[role] || 0);
+    parts.push(desired > 0 ? `${role} ${current}/${desired}` : `${role} ${current}`);
+  }
+  return parts.join(" · ");
+}
+
+function discordEventNewsSpecificNeedsText(summary) {
+  const byRole = summary?.blockerSpecNeedsByRole && typeof summary.blockerSpecNeedsByRole === "object" ? summary.blockerSpecNeedsByRole : {};
+  const lines = [];
+  for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
+    const needs = Object.entries(byRole[role] || {})
+      .filter(([, count]) => Number(count) > 0)
+      .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])))
+      .map(([spec, count]) => (Number(count) > 1 ? `${spec} x${Number(count)}` : spec));
+    if (needs.length) lines.push(`${role}: ${needs.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+async function buildDiscordEventNewsDraftPayload(eventRow, detail) {
+  const evId = String(eventRow?.id || eventRow?.eventId || eventRow?.eventID || detail?.id || "").trim();
+  const title = String(detail?.title || detail?.name || eventRow?.title || eventRow?.name || "New raid event").trim() || "New raid event";
+  const startTime = Number(detail?.startTime || detail?.time || eventRow?.startTime || eventRow?.time || 0);
+  const when = formatRaidHelperEventStartForDm(startTime);
+  const discordPostUrl = raidHelperDiscordEventPostUrl(detail, eventRow);
+  const signupUrl = discordPostUrl || (evId ? `https://raid-helper.xyz/events/${encodeURIComponent(evId)}` : joinUsPageUrl());
+  const linkParts = [
+    discordPostUrl ? `[Discord channel](${discordPostUrl})` : `[Raid Helper event](${signupUrl})`,
+    `[Join page](${joinUsPageUrl()})`,
+  ];
+  const summary = summarizeEventNeedsFromDetail(detail || {});
+  const desiredByRole = roleAlertDesiredByRoleForEvent(evId);
+  const raidStats = await raidStatsForEventTitle(title);
+  const roleStatus = discordEventNewsRoleStatusText(summary, desiredByRole);
+  const specificNeeds = discordEventNewsSpecificNeedsText(summary);
+  const rosterText = [
+    `${Number(summary.primaryTotal || 0)} primary signups`,
+    `${Number(summary.realRows?.length || 0)} confirmed raiders`,
+    `${Number(summary.blockerRows?.length || 0)} open placeholders`,
+  ].join(" · ");
+  const progressLines = [];
+  if (raidStats?.progressText) progressLines.push(`Progress: ${raidStats.progressText}`);
+  if (raidStats?.bestClearText) progressLines.push(`Best clear: ${raidStats.bestClearText}`);
+  const description = [
+    `A new raid signup is open for **${title}**.`,
+    "",
+    `**Start:** ${when}`,
+    discordPostUrl ? `**Discord channel:** ${discordPostUrl}` : `**Signup:** ${signupUrl}`,
+    "",
+    "Review the roster needs below and join if you can help fill the raid.",
+  ].join("\n");
+  const fields = [
+    { name: "Start time", value: when, inline: true },
+    { name: "Roster", value: rosterText, inline: false },
+    { name: "Needed roles", value: roleStatus || "No role data available yet.", inline: false },
+    ...(specificNeeds ? [{ name: "Specific needs", value: specificNeeds, inline: false }] : []),
+    ...(progressLines.length ? [{ name: "Raid progress", value: progressLines.join("\n"), inline: false }] : []),
+    { name: "Links", value: linkParts.join(" · "), inline: false },
+  ];
+  return {
+    kind: "event",
+    title: `New raid signup: ${title}`,
+    description,
+    url: signupUrl,
+    imageUrl: eventDmHeaderImageUrl(detail, title),
+    fields,
+  };
+}
+
 async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
   const evId = String(eventRow?.id || "");
   const title = String(eventRow?.title || "New raid event").trim() || "New raid event";
@@ -3410,25 +3757,17 @@ async function sendDiscordDmForRaidHelperEvent(userId, eventRow) {
 async function notifyDiscordNewsForRaidHelperEvent(eventRow) {
   const evId = String(eventRow?.id || "").trim();
   if (!evId) return;
-  const title = String(eventRow?.title || "New raid event").trim() || "New raid event";
   const detail = await fetchRaidHelperEventDetail(evId).catch(() => null);
-  const discordPostUrl = raidHelperDiscordEventPostUrl(detail, eventRow);
-  const startTime = Number(detail?.startTime || detail?.time || eventRow?.startTime || 0);
-  const when = formatRaidHelperEventStartForDm(startTime);
-  await sendDiscordNewsWebhookOnce(`event:${evId}`, {
-    kind: "event",
-    title: `New raid online: ${title}`,
-    description: `A new Raid Helper event is online.\n\n**${title}**\n${when}`,
-    url: discordPostUrl || `https://raid-helper.xyz/events/${encodeURIComponent(evId)}`,
-    imageUrl: eventDmHeaderImageUrl(detail, title),
-  });
+  await ensureRoleAlertSettingsStore().catch(() => {});
+  const payload = await buildDiscordEventNewsDraftPayload(eventRow, detail);
+  await queueDiscordNewsDraftOnce(`event:${evId}`, payload);
 }
 
 function notifyDiscordNewsForMvpVotingRound(voting) {
   const roundKey = String(voting?.roundKey || "").trim();
   if (!roundKey) return;
   const raidName = String(voting?.raidName || voting?.title || "latest raid").trim();
-  sendDiscordNewsWebhookOnceBestEffort(`mvp:${roundKey}`, {
+  queueDiscordNewsDraftOnceBestEffort(`mvp:${roundKey}`, {
     kind: "mvp",
     title: `MVP voting is open: ${raidName}`,
     description: "Vote for the player who made the biggest impact in the latest raid.",
@@ -4465,6 +4804,160 @@ async function persistRhWclProposalsStore() {
   const json = JSON.stringify(rhWclProposalsState, null, 2);
   await writeFile(tmpPath, json, "utf8");
   await rename(tmpPath, rhWclProposalsPath);
+}
+
+function discordProfileIngestProposalId(discordUserId, characters) {
+  const userId = String(discordUserId || "").trim();
+  const charKey = (Array.isArray(characters) ? characters : [])
+    .map((char) => `${String(char?.region || "").toLowerCase()}:${String(char?.realm || "").toLowerCase()}:${String(char?.name || "").toLowerCase()}`)
+    .filter(Boolean)
+    .sort()
+    .join("|");
+  const hash = createHash("sha1").update(`${userId}|${charKey}`).digest("hex").slice(0, 16);
+  return `discord-profile-${hash}`;
+}
+
+function sanitizeDiscordProfileCharacter(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const name = String(raw.name || "").trim().slice(0, 64);
+  const realm = String(raw.realm || "").trim().slice(0, 80);
+  const region = String(raw.region || "eu").trim().toLowerCase().slice(0, 16);
+  const version = String(raw.version || "tbc-anniversary").trim().toLowerCase().slice(0, 64);
+  const url = String(raw.url || "").trim().slice(0, 500);
+  if (!name) return null;
+  return { name, realm, region, version, url };
+}
+
+function sanitizeDiscordProfileProposal(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const discordUserId = sanitizeDiscordUserId(raw.discordUserId);
+  const characters = (Array.isArray(raw.characters) ? raw.characters : [])
+    .map(sanitizeDiscordProfileCharacter)
+    .filter(Boolean);
+  if (!discordUserId || characters.length === 0) return null;
+  const status = ["pending", "accepted", "rejected"].includes(String(raw.status || "pending"))
+    ? String(raw.status || "pending")
+    : "pending";
+  const id = String(raw.id || discordProfileIngestProposalId(discordUserId, characters)).trim().slice(0, 80);
+  return {
+    id,
+    status,
+    discordUserId,
+    discordUsername: String(raw.discordUsername || "").trim().slice(0, 100),
+    discordDisplayName: String(raw.discordDisplayName || "").trim().slice(0, 100),
+    messageId: String(raw.messageId || "").trim().slice(0, 40),
+    channelId: String(raw.channelId || "").trim().slice(0, 40),
+    messageUrl: String(raw.messageUrl || "").trim().slice(0, 300),
+    postedAt: Number(raw.postedAt || 0) || 0,
+    discoveredAt: Number(raw.discoveredAt || 0) || Date.now(),
+    decidedAt: Number(raw.decidedAt || 0) || 0,
+    decidedBy: String(raw.decidedBy || "").trim().slice(0, 80),
+    note: String(raw.note || "").trim().slice(0, 240),
+    characters,
+  };
+}
+
+function sanitizeDiscordProfileIngestState(raw) {
+  const parsed = raw && typeof raw === "object" ? raw : {};
+  const proposals = (Array.isArray(parsed.proposals) ? parsed.proposals : [])
+    .map(sanitizeDiscordProfileProposal)
+    .filter(Boolean)
+    .slice(-500);
+  const rejected = (Array.isArray(parsed.rejected) ? parsed.rejected : [])
+    .map((row) => String(row || "").trim())
+    .filter(Boolean)
+    .slice(-500);
+  return {
+    lastMessageId: String(parsed.lastMessageId || "").trim().slice(0, 40),
+    lastScanAt: Number(parsed.lastScanAt || 0) || 0,
+    lastError: String(parsed.lastError || "").trim().slice(0, 240),
+    proposals,
+    rejected,
+  };
+}
+
+async function ensureDiscordProfileIngestStore() {
+  if (discordProfileIngestReady) return discordProfileIngestReady;
+  discordProfileIngestReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(discordProfileIngestPath, "utf8");
+      discordProfileIngestState = sanitizeDiscordProfileIngestState(JSON.parse(raw));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      discordProfileIngestState = sanitizeDiscordProfileIngestState({});
+      const tmpPath = `${discordProfileIngestPath}.tmp`;
+      await writeFile(tmpPath, JSON.stringify(discordProfileIngestState, null, 2), "utf8");
+      await rename(tmpPath, discordProfileIngestPath);
+    }
+  })();
+  return discordProfileIngestReady;
+}
+
+async function persistDiscordProfileIngestStore() {
+  const tmpPath = `${discordProfileIngestPath}.tmp`;
+  const json = JSON.stringify(discordProfileIngestState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, discordProfileIngestPath);
+}
+
+function parseClassicArmoryProfileUrls(text) {
+  const input = String(text || "");
+  if (!input) return [];
+  const matches = input.match(/https?:\/\/classic-armory\.org\/character\/[^\s<>)\]]+/gi) || [];
+  const byKey = new Map();
+  for (const rawUrl of matches) {
+    try {
+      const url = new URL(rawUrl.replace(/[.,;!?]+$/g, ""));
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts[0] !== "character" || parts.length < 5) continue;
+      const [region, version, realm, ...nameParts] = parts.slice(1);
+      const name = decodeURIComponent(nameParts.join("/")).trim();
+      if (!name) continue;
+      const row = sanitizeDiscordProfileCharacter({
+        name,
+        realm: decodeURIComponent(realm || ""),
+        region: decodeURIComponent(region || "eu").toLowerCase(),
+        version: decodeURIComponent(version || "tbc-anniversary").toLowerCase(),
+        url: url.toString(),
+      });
+      if (!row) continue;
+      byKey.set(`${row.region}:${row.realm.toLowerCase()}:${row.name.toLowerCase()}`, row);
+    } catch {
+      // Ignore malformed URLs in Discord chat.
+    }
+  }
+  return [...byKey.values()];
+}
+
+function discordProfileMessageUrl(channelId, messageId) {
+  const guildId = raidHelperDiscordGuildId();
+  const chan = String(channelId || "").trim();
+  const msg = String(messageId || "").trim();
+  if (!guildId || !chan || !msg) return "";
+  return `https://discord.com/channels/${encodeURIComponent(guildId)}/${encodeURIComponent(chan)}/${encodeURIComponent(msg)}`;
+}
+
+function discordProfileExistingLinkMeta(discordUserId, characters, links) {
+  const userId = String(discordUserId || "").trim();
+  const rows = Array.isArray(links) ? links : [];
+  const charNames = (Array.isArray(characters) ? characters : []).map((c) => String(c?.name || "").toLowerCase()).filter(Boolean);
+  const byDiscord = rows.find((row) => sanitizeDiscordUserId(row?.discordUserId) === userId) || null;
+  const byCharacter = rows.filter((row) => {
+    const names = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : [];
+    return names.some((name) => charNames.includes(String(name || "").toLowerCase()));
+  });
+  return {
+    linkedDiscordRow: byDiscord ? String(byDiscord.raidHelperName || "") : "",
+    linkedCharacterRows: byCharacter.map((row) => String(row.raidHelperName || "")).filter(Boolean),
+    alreadyLinked:
+      Boolean(byDiscord) &&
+      charNames.every((name) =>
+        (Array.isArray(byDiscord.wclCharacterNames) ? byDiscord.wclCharacterNames : []).some(
+          (existing) => String(existing || "").toLowerCase() === name
+        )
+      ),
+  };
 }
 
 /** Drop expired rejection entries; mutates and returns the in-memory state. */
@@ -5925,27 +6418,62 @@ app.get("/api/admin/discord-news/status", async (req, res) => {
   }
 });
 
+app.get("/api/admin/discord-news/roles", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const roles = await fetchDiscordGuildRolesForNews();
+    return res.json({
+      ok: true,
+      guildId: raidHelperDiscordGuildId(),
+      roles,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, roles: [], error: error?.message || "Failed to load Discord roles" });
+  }
+});
+
+app.get("/api/admin/discord-news/queue", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureDiscordNewsNotificationsStore();
+    return res.json(discordNewsQueuePayload());
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Discord news queue" });
+  }
+});
+
+app.post("/api/admin/discord-news/queue/:id/send", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const { message, draft } = await sendQueuedDiscordNewsDraft(req.params.id, req.body || {});
+    return res.json({ ok: true, messageId: message?.id || null, draft });
+  } catch (error) {
+    const statusCode = /not found/i.test(String(error?.message || "")) ? 404 : 500;
+    return res.status(statusCode).json({ ok: false, error: error?.message || "Failed to send queued Discord news" });
+  }
+});
+
+app.post("/api/admin/discord-news/queue/:id/discard", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const draft = await discardQueuedDiscordNewsDraft(req.params.id);
+    return res.json({ ok: true, draft });
+  } catch (error) {
+    const statusCode = /not found/i.test(String(error?.message || "")) ? 404 : 500;
+    return res.status(statusCode).json({ ok: false, error: error?.message || "Failed to discard queued Discord news" });
+  }
+});
+
 app.post("/api/admin/discord-news/send", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    const title = String(req.body?.title || "").trim();
-    const description = String(req.body?.message || req.body?.description || "").trim();
-    const rawUrl = String(req.body?.url || "").trim();
-    const rawImageUrl = String(req.body?.imageUrl || "").trim();
     const imageAttachment = decodeDiscordNewsImageUpload(req.body?.imageUpload);
-    if (!title) return res.status(400).json({ ok: false, error: "title is required" });
-    if (!description) return res.status(400).json({ ok: false, error: "message is required" });
-    if (title.length > 256) return res.status(400).json({ ok: false, error: "title is too long (max 256 chars)" });
-    if (description.length > 4000) {
-      return res.status(400).json({ ok: false, error: "message is too long (max 4000 chars)" });
-    }
-    const url = rawUrl.startsWith("/") ? absoluteUrlFromPublicBase(rawUrl) : rawUrl;
-    const imageUrl = rawImageUrl.startsWith("/") ? absoluteUrlFromPublicBase(rawImageUrl) : rawImageUrl;
-    if (url && !isPublicHttpUrl(url)) return res.status(400).json({ ok: false, error: "link must be a public http(s) URL" });
-    if (imageUrl && !isPublicHttpUrl(imageUrl)) {
-      return res.status(400).json({ ok: false, error: "image URL must be a public http(s) URL" });
-    }
+    const { title, description, url, imageUrl, roleMentions } = sanitizeDiscordNewsAdminPayload(req.body || {});
     const message = await sendDiscordNewsWebhook({
       kind: "manual",
       title,
@@ -5953,6 +6481,7 @@ app.post("/api/admin/discord-news/send", async (req, res) => {
       url,
       imageUrl,
       imageAttachment,
+      roleMentions,
       fields: [{ name: "Posted by", value: session?.user?.globalName || session?.user?.username || "Admin" }],
     });
     await markDiscordNewsNotificationSent(`manual:${message?.id || Date.now()}`, {
@@ -8357,6 +8886,56 @@ app.get("/api/admin/rh-wcl-links", async (req, res) => {
   }
 });
 
+app.get("/api/admin/discord-profile-ingest", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureDiscordProfileIngestStore();
+    await ensureRhWclLinksStore();
+    return res.json(discordProfileIngestPayload());
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Discord profile ingest" });
+  }
+});
+
+app.post("/api/admin/discord-profile-ingest/scan", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const result = await scanDiscordProfileIngestChannel({ sinceLast: false, limit: req.body?.limit || 50 });
+    await ensureRhWclLinksStore();
+    return res.json({ ...discordProfileIngestPayload(), scan: result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to scan Discord profile posts" });
+  }
+});
+
+app.post("/api/admin/discord-profile-ingest/proposals/:id/accept", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const adminLabel = String(session.user?.globalName || session.user?.username || session.user?.id || "").trim();
+    const row = await acceptDiscordProfileProposal(req.params.id, adminLabel);
+    if (!row) return res.status(404).json({ ok: false, error: "Pending proposal not found" });
+    return res.json({ ...discordProfileIngestPayload(), accepted: row });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to accept Discord profile proposal" });
+  }
+});
+
+app.post("/api/admin/discord-profile-ingest/proposals/:id/reject", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const adminLabel = String(session.user?.globalName || session.user?.username || session.user?.id || "").trim();
+    const rejected = await rejectDiscordProfileProposal(req.params.id, adminLabel);
+    if (!rejected) return res.status(404).json({ ok: false, error: "Pending proposal not found" });
+    return res.json(discordProfileIngestPayload());
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to reject Discord profile proposal" });
+  }
+});
+
 app.put("/api/admin/rh-wcl-links", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
@@ -9322,6 +9901,236 @@ function pickGlobalBestParseRun(runs) {
       metric: String(metric || "").trim(),
     },
   };
+}
+
+function discordProfileIngestPayload() {
+  const channelId = discordProfileIngestChannelId();
+  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  const proposals = (Array.isArray(discordProfileIngestState?.proposals) ? discordProfileIngestState.proposals : [])
+    .map(sanitizeDiscordProfileProposal)
+    .filter(Boolean)
+    .map((proposal) => ({
+      ...proposal,
+      existing: discordProfileExistingLinkMeta(proposal.discordUserId, proposal.characters, links),
+    }))
+    .sort((a, b) => {
+      if (a.status !== b.status) return a.status === "pending" ? -1 : b.status === "pending" ? 1 : a.status.localeCompare(b.status);
+      return Number(b.discoveredAt || 0) - Number(a.discoveredAt || 0);
+    });
+  return {
+    ok: true,
+    enabled: discordProfileIngestEnabled(),
+    configured: Boolean(String(process.env.DISCORD_BOT_TOKEN || "").trim() && channelId),
+    channelId,
+    lastMessageId: discordProfileIngestState.lastMessageId || "",
+    lastScanAt: discordProfileIngestState.lastScanAt || 0,
+    lastError: discordProfileIngestState.lastError || "",
+    pendingCount: proposals.filter((p) => p.status === "pending").length,
+    proposals,
+  };
+}
+
+async function scanDiscordProfileIngestChannel({ limit = DISCORD_PROFILE_INGEST_LOOKBACK_LIMIT, sinceLast = true } = {}) {
+  await ensureDiscordProfileIngestStore();
+  await ensureRhWclLinksStore();
+
+  const channelId = discordProfileIngestChannelId();
+  if (!channelId) throw new Error("DISCORD_PROFILE_INGEST_CHANNEL_ID is required");
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+    throw new Error("DISCORD_BOT_TOKEN is required to scan Discord profile posts");
+  }
+
+  const requestedLimit = Math.max(1, Math.min(100, Number(limit || DISCORD_PROFILE_INGEST_LOOKBACK_LIMIT)));
+  const params = new URLSearchParams({ limit: String(requestedLimit) });
+  if (sinceLast && discordProfileIngestState.lastMessageId) {
+    params.set("after", discordProfileIngestState.lastMessageId);
+  }
+  const messages = await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages?${params.toString()}`);
+  const rows = Array.isArray(messages) ? messages.slice().reverse() : [];
+  const existingLinks = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links : [];
+  const existingProposalIds = new Set((discordProfileIngestState.proposals || []).map((proposal) => proposal.id));
+  const rejectedIds = new Set(discordProfileIngestState.rejected || []);
+  let created = 0;
+  let skippedAlreadyLinked = 0;
+  let lastMessageId = discordProfileIngestState.lastMessageId || "";
+
+  for (const message of rows) {
+    const messageId = String(message?.id || "").trim();
+    if (messageId) lastMessageId = messageId;
+    const discordUserId = sanitizeDiscordUserId(message?.author?.id);
+    if (!discordUserId) continue;
+    const characters = parseClassicArmoryProfileUrls(message?.content);
+    if (!characters.length) continue;
+
+    const id = discordProfileIngestProposalId(discordUserId, characters);
+    if (existingProposalIds.has(id) || rejectedIds.has(id)) continue;
+    const existing = discordProfileExistingLinkMeta(discordUserId, characters, existingLinks);
+    if (existing.alreadyLinked) {
+      skippedAlreadyLinked += 1;
+      continue;
+    }
+
+    const proposal = sanitizeDiscordProfileProposal({
+      id,
+      status: "pending",
+      discordUserId,
+      discordUsername: message?.author?.username || "",
+      discordDisplayName: message?.member?.nick || message?.author?.global_name || message?.author?.username || "",
+      messageId,
+      channelId,
+      messageUrl: discordProfileMessageUrl(channelId, messageId),
+      postedAt: message?.timestamp ? Date.parse(message.timestamp) || 0 : 0,
+      discoveredAt: Date.now(),
+      characters,
+    });
+    if (!proposal) continue;
+    discordProfileIngestState.proposals.push(proposal);
+    existingProposalIds.add(proposal.id);
+    created += 1;
+  }
+
+  discordProfileIngestState = sanitizeDiscordProfileIngestState({
+    ...discordProfileIngestState,
+    lastMessageId,
+    lastScanAt: Date.now(),
+    lastError: "",
+  });
+  discordProfileIngestWriteChain = discordProfileIngestWriteChain.then(() => persistDiscordProfileIngestStore());
+  await discordProfileIngestWriteChain;
+  return { ok: true, scanned: rows.length, created, skippedAlreadyLinked, lastMessageId };
+}
+
+async function scanDiscordProfileIngestChannelBestEffort(reason = "poll") {
+  if (!discordProfileIngestEnabled()) return null;
+  try {
+    return await scanDiscordProfileIngestChannel({ sinceLast: true });
+  } catch (error) {
+    try {
+      await ensureDiscordProfileIngestStore();
+      discordProfileIngestState = sanitizeDiscordProfileIngestState({
+        ...discordProfileIngestState,
+        lastScanAt: Date.now(),
+        lastError: String(error?.message || error).slice(0, 240),
+      });
+      discordProfileIngestWriteChain = discordProfileIngestWriteChain.then(() => persistDiscordProfileIngestStore());
+      await discordProfileIngestWriteChain;
+    } catch {
+      // Preserve the original warning if the state update also fails.
+    }
+    console.warn(`[discord-profile-ingest] ${reason} failed:`, error?.message || error);
+    return null;
+  }
+}
+
+function startDiscordProfileIngestPoller() {
+  if (discordProfileIngestPollTimer || !discordProfileIngestEnabled()) return;
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+    console.warn("[discord-profile-ingest] disabled. Set DISCORD_BOT_TOKEN to scan profile posts.");
+    return;
+  }
+  const channelId = discordProfileIngestChannelId();
+  if (!channelId) {
+    console.warn("[discord-profile-ingest] disabled. Set DISCORD_PROFILE_INGEST_CHANNEL_ID.");
+    return;
+  }
+  const intervalMs = discordProfileIngestPollMs();
+  setTimeout(() => {
+    scanDiscordProfileIngestChannelBestEffort("initial poll").catch(() => {});
+  }, 10_000);
+  discordProfileIngestPollTimer = setInterval(() => {
+    scanDiscordProfileIngestChannelBestEffort("poll").catch(() => {});
+  }, intervalMs);
+  console.log(`[discord-profile-ingest] polling channel ${channelId} every ${Math.round(intervalMs / 1000)}s.`);
+}
+
+async function acceptDiscordProfileProposal(proposalId, adminLabel = "") {
+  await ensureDiscordProfileIngestStore();
+  await ensureRhWclLinksStore();
+  const id = String(proposalId || "").trim();
+  const proposal = (discordProfileIngestState.proposals || []).find((row) => row.id === id);
+  if (!proposal || proposal.status !== "pending") return null;
+
+  const discordUserId = sanitizeDiscordUserId(proposal.discordUserId);
+  const characterNames = (proposal.characters || []).map((char) => String(char.name || "").trim()).filter(Boolean);
+  if (!discordUserId || !characterNames.length) throw new Error("Proposal is missing Discord ID or characters");
+
+  const links = Array.isArray(rhWclLinksState?.links) ? rhWclLinksState.links.map((row) => ({ ...row })) : [];
+  const targetByDiscord = links.findIndex((row) => sanitizeDiscordUserId(row?.discordUserId) === discordUserId);
+  const targetByCharacter = links.findIndex((row) => {
+    const names = Array.isArray(row?.wclCharacterNames) ? row.wclCharacterNames : [];
+    return names.some((name) => characterNames.some((char) => String(name || "").toLowerCase() === char.toLowerCase()));
+  });
+  let targetIdx = targetByDiscord >= 0 ? targetByDiscord : targetByCharacter;
+  if (targetIdx < 0) {
+    const displayName = String(proposal.discordDisplayName || proposal.discordUsername || characterNames[0]).trim();
+    links.push({
+      discordUserId,
+      raidHelperName: displayName,
+      wclCharacterNames: [],
+      wclSources: [],
+      wclGuessConfidence: [],
+      guildRole: "Peon",
+      verifiedAt: new Date().toISOString(),
+    });
+    targetIdx = links.length - 1;
+  }
+
+  const target = { ...links[targetIdx] };
+  target.discordUserId = discordUserId;
+  target.discordSource = "discord-profile-ingest";
+  if (!String(target.raidHelperName || "").trim()) {
+    target.raidHelperName = String(proposal.discordDisplayName || proposal.discordUsername || characterNames[0]).trim();
+  }
+  const names = Array.isArray(target.wclCharacterNames) ? [...target.wclCharacterNames] : [];
+  const sources = Array.isArray(target.wclSources) ? [...target.wclSources] : [];
+  const confs = Array.isArray(target.wclGuessConfidence) ? [...target.wclGuessConfidence] : [];
+  for (const characterName of characterNames) {
+    const already = names.some((existing) => String(existing || "").toLowerCase() === characterName.toLowerCase());
+    if (!already) {
+      names.push(characterName);
+      sources.push("manual:discord-profile");
+      confs.push(null);
+    }
+  }
+  target.wclCharacterNames = names;
+  target.wclSources = sources;
+  target.wclGuessConfidence = confs;
+  target.verifiedAt = target.verifiedAt || new Date().toISOString();
+  links[targetIdx] = target;
+
+  const now = Date.now();
+  const proposals = (discordProfileIngestState.proposals || []).map((row) =>
+    row.id === id ? { ...row, status: "accepted", decidedAt: now, decidedBy: adminLabel } : row
+  );
+
+  rhWclLinksWriteChain = rhWclLinksWriteChain.then(async () => {
+    rhWclLinksState = { links: sortRhWclLinkRows(links) };
+    await persistRhWclLinksStore();
+  });
+  discordProfileIngestWriteChain = discordProfileIngestWriteChain.then(async () => {
+    discordProfileIngestState = sanitizeDiscordProfileIngestState({ ...discordProfileIngestState, proposals });
+    await persistDiscordProfileIngestStore();
+  });
+  await Promise.all([rhWclLinksWriteChain, discordProfileIngestWriteChain]);
+  return target;
+}
+
+async function rejectDiscordProfileProposal(proposalId, adminLabel = "") {
+  await ensureDiscordProfileIngestStore();
+  const id = String(proposalId || "").trim();
+  const proposal = (discordProfileIngestState.proposals || []).find((row) => row.id === id);
+  if (!proposal || proposal.status !== "pending") return false;
+  const now = Date.now();
+  const proposals = (discordProfileIngestState.proposals || []).map((row) =>
+    row.id === id ? { ...row, status: "rejected", decidedAt: now, decidedBy: adminLabel } : row
+  );
+  const rejected = [...new Set([...(discordProfileIngestState.rejected || []), id])];
+  discordProfileIngestWriteChain = discordProfileIngestWriteChain.then(async () => {
+    discordProfileIngestState = sanitizeDiscordProfileIngestState({ ...discordProfileIngestState, proposals, rejected });
+    await persistDiscordProfileIngestStore();
+  });
+  await discordProfileIngestWriteChain;
+  return true;
 }
 
 /** Best encounter percentile per bracket across recent raids (max boss parse then max across logs). */
@@ -15128,7 +15937,7 @@ async function notifyDiscordNewsForBadgeSummary(newBadgeCounts, affectedUsers) {
     .slice(0, 6)
     .map(([badgeId, count]) => `**${badgeCatalogNameById(badgeId)}**: ${Number(count)} new`)
     .join("\n");
-  await sendDiscordNewsWebhookOnce(`badge:${day}:${fingerprint}`, {
+  await queueDiscordNewsDraftOnce(`badge:${day}:${fingerprint}`, {
     kind: "badge",
     title: "New achievement badges earned",
     description: `${total} new badge award${total === 1 ? "" : "s"} were detected for ${Number(affectedUsers || 0)} raider${
@@ -16359,6 +17168,11 @@ app.listen(port, () => {
     console.error("Failed to initialize role-alert DM log store:", error?.message || error);
   });
   startRaidHelperDmNotifier();
+  ensureDiscordProfileIngestStore()
+    .then(() => startDiscordProfileIngestPoller())
+    .catch((error) => {
+      console.error("Failed to initialize Discord profile ingest store:", error?.message || error);
+    });
   ensureGargulLootHistoryStore().catch((error) => {
     console.error("Failed to initialize Gargul loot history store:", error?.message || error);
   });

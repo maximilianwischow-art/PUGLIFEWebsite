@@ -29,6 +29,8 @@ Set these in App Platform:
 - `RAID_HELPER_SERVER_ID=711838953430319115`
 - `RAID_HELPER_DEFAULT_EVENT_ID` (optional)
 - `DISCORD_NEWS_WEBHOOK_URL` (secret, optional; enables Admin → News Notifications and automated Discord news posts)
+- `DISCORD_BOT_TOKEN` (secret, optional; enables the Admin → News role dropdown, role pings, and Discord profile-post scanning, using `RAID_HELPER_SERVER_ID` / `DISCORD_GUILD_ID`)
+- `DISCORD_PROFILE_INGEST_CHANNEL_ID` (optional; defaults to the current gear-check channel, set explicitly if the channel changes)
 
 ## 4) Add your custom domain
 

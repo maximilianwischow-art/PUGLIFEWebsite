@@ -43,3 +43,9 @@ services:
       - key: DISCORD_NEWS_WEBHOOK_URL
         scope: RUN_TIME
         type: SECRET
+      - key: DISCORD_BOT_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: DISCORD_PROFILE_INGEST_CHANNEL_ID
+        scope: RUN_TIME
+        value: "1479943093305217115"

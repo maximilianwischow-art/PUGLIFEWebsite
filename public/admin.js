@@ -69,7 +69,7 @@ const ADMIN_GROUPS = [
   { id: "people", label: "People", tools: ["rh-wcl", "database", "hof-notes", "badge-tooltips"] },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
-  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-news"] },
+  { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-news-queue", "discord-news"] },
   { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "analytics"] },
 ];
 
@@ -92,7 +92,10 @@ let customDmSelectedUserIds = new Set();
 let customDmFilterState = { displayName: "", guildRole: "", recentClass: "", recentSpec: "", subscribed: "" };
 let customDmRoleTargets = new Set(["Tanks", "Healers", "Melee", "Ranged"]);
 let discordNewsStatusState = null;
-const DISCORD_NEWS_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+let discordNewsRolesState = [];
+let discordNewsSelectedRoleIds = new Set();
+let discordNewsQueueState = [];
+const DISCORD_NEWS_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const DISCORD_NEWS_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 function parseAdminHash() {
@@ -706,6 +709,10 @@ function renderRhWclTodo(payload) {
     ? payload.unassignedWclNames.filter(Boolean)
     : [];
   const rejectedIcebox = Array.isArray(payload?.rejectedIcebox) ? payload.rejectedIcebox : [];
+  const profileIngest = payload?.profileIngest || null;
+  const profileProposals = Array.isArray(profileIngest?.proposals)
+    ? profileIngest.proposals.filter((p) => String(p?.status || "pending") === "pending")
+    : [];
   const generatedAt = payload?.generatedAt ? new Date(payload.generatedAt) : null;
   const lastEl = document.getElementById("rhWclLastSync");
   if (lastEl) {
@@ -733,6 +740,58 @@ function renderRhWclTodo(payload) {
       </tr>`;
     })
     .join("");
+
+  const profileProposalRows = profileProposals
+    .map((p) => {
+      const id = String(p?.id || "");
+      const display = String(p?.discordDisplayName || p?.discordUsername || p?.discordUserId || "");
+      const userId = String(p?.discordUserId || "");
+      const chars = Array.isArray(p?.characters) ? p.characters : [];
+      const charHtml = chars
+        .map((char) => {
+          const name = String(char?.name || "");
+          const realm = String(char?.realm || "");
+          const url = String(char?.url || "");
+          const label = realm ? `${name}-${realm}` : name;
+          return url
+            ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(label)}</a>`
+            : `<strong>${esc(label)}</strong>`;
+        })
+        .join(", ");
+      const existingRows = Array.isArray(p?.existing?.linkedCharacterRows) ? p.existing.linkedCharacterRows : [];
+      const existing = p?.existing?.linkedDiscordRow
+        ? `Discord ID already has row: ${p.existing.linkedDiscordRow}`
+        : existingRows.length
+          ? `Character already found on: ${existingRows.join(", ")}`
+          : "No existing Account Assignment row found";
+      const postedAt = Number(p?.postedAt || 0);
+      const posted = postedAt ? new Date(postedAt).toLocaleString() : "unknown";
+      const messageUrl = String(p?.messageUrl || "");
+      return `<tr data-discord-profile-proposal-row>
+        <td>
+          <strong>${esc(display || userId)}</strong>
+          <div class="subtle"><code>${esc(userId)}</code></div>
+        </td>
+        <td>${charHtml || "—"}</td>
+        <td>
+          <span class="subtle">${esc(existing)}</span>
+          <div class="subtle">${messageUrl ? `<a href="${esc(messageUrl)}" target="_blank" rel="noopener">Discord post</a>` : "Discord post"} · ${esc(posted)}</div>
+        </td>
+        <td class="admin-rh-todo-actions">
+          <button type="button" class="event-signup-btn" data-discord-profile-accept="${esc(id)}" title="Create or update the Account Assignment row and mirror it into the identity DB">Accept</button>
+          <button type="button" class="event-signup-btn admin-btn-danger" data-discord-profile-reject="${esc(id)}" title="Reject this Discord profile post proposal">Reject</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+
+  const profileIngestLastScan =
+    profileIngest?.lastScanAt && Number(profileIngest.lastScanAt)
+      ? new Date(Number(profileIngest.lastScanAt)).toLocaleString()
+      : "never";
+  const profileIngestSummary = profileIngest?.ok === false
+    ? `<p class="subtle" style="color:#c44">Could not load Discord profile scanner: ${esc(profileIngest.error || "")}</p>`
+    : `<p class="subtle">Scans channel <code>${esc(profileIngest?.channelId || "")}</code>. Last scan: ${esc(profileIngestLastScan)}.${profileIngest?.lastError ? ` Last error: ${esc(profileIngest.lastError)}` : ""}</p>`;
 
   const unassignedWclChips = unassignedWcl
     .map((name) => {
@@ -793,6 +852,32 @@ function renderRhWclTodo(payload) {
           : `<p class="subtle">No low-confidence guesses awaiting review.</p>`
       }
     </details>
+    <details class="admin-rh-todo-block" data-rh-wcl-todo-block="discord-profiles" ${profileProposals.length ? "open" : ""}>
+      <summary>Discord profile posts (${profileProposals.length})</summary>
+      ${profileIngestSummary}
+      <div class="admin-actions admin-actions--tight" style="margin:8px 0 12px">
+        <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-profile-scan>
+          Scan profile channel now
+        </button>
+      </div>
+      ${
+        profileProposals.length
+          ? `<div class="admin-table-wrap">
+              <table class="admin-table admin-rh-todo-table">
+                <thead>
+                  <tr>
+                    <th>Discord user</th>
+                    <th>Classic Armory characters</th>
+                    <th>Match info</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>${profileProposalRows}</tbody>
+              </table>
+            </div>`
+          : `<p class="subtle">No pending Classic Armory profile posts awaiting review.</p>`
+      }
+    </details>
     <details class="admin-rh-todo-block" data-rh-wcl-todo-block="missing" ${missing.length ? "open" : ""}>
       <summary>Missing data (${missing.length})</summary>
       ${
@@ -841,7 +926,16 @@ async function loadRhWclTodo() {
   const host = document.getElementById("rhWclTodoHost");
   if (host && !host.dataset.rhWclTodoLoaded) host.innerHTML = `<p class="subtle">Loading to-do…</p>`;
   try {
-    const payload = await getJson("/api/admin/rh-wcl-links/proposals");
+    const [todoResult, profileResult] = await Promise.allSettled([
+      getJson("/api/admin/rh-wcl-links/proposals"),
+      getJson("/api/admin/discord-profile-ingest"),
+    ]);
+    if (todoResult.status === "rejected") throw todoResult.reason;
+    const payload = todoResult.value || {};
+    payload.profileIngest =
+      profileResult.status === "fulfilled"
+        ? profileResult.value
+        : { ok: false, error: profileResult.reason?.message || "Discord profile scanner unavailable" };
     renderRhWclTodo(payload);
     if (host) host.dataset.rhWclTodoLoaded = "1";
   } catch (error) {
@@ -2042,7 +2136,9 @@ function renderDiscordNewsStatus(payload = discordNewsStatusState) {
         .join("")}</ul>`
     : `<p class="subtle">No news notifications recorded yet.</p>`;
   host.innerHTML = `
-    <p class="subtle"><strong>${esc(statusText)}</strong>${payload.host ? ` · ${esc(payload.host)}` : ""}</p>
+    <p class="subtle"><strong>${esc(statusText)}</strong>${payload.host ? ` · ${esc(payload.host)}` : ""}${
+      Number(payload.queued || 0) ? ` · ${Number(payload.queued || 0)} queued` : ""
+    }</p>
     ${recentHtml}
   `;
 }
@@ -2051,6 +2147,147 @@ async function loadDiscordNewsStatus() {
   const payload = await getJson("/api/admin/discord-news/status");
   discordNewsStatusState = payload;
   renderDiscordNewsStatus(payload);
+}
+
+function renderDiscordNewsRoles(payload = {}) {
+  const host = document.getElementById("discordNewsRolesHost");
+  if (!host) return;
+  if (!payload.ok) {
+    host.innerHTML = `<p class="subtle"><strong>Role pings unavailable.</strong> ${esc(
+      payload.error || "Configure DISCORD_BOT_TOKEN and DISCORD_GUILD_ID/RAID_HELPER_SERVER_ID to fetch roles."
+    )}</p>`;
+    return;
+  }
+  const roles = Array.isArray(payload.roles) ? payload.roles : discordNewsRolesState;
+  discordNewsRolesState = roles;
+  const validIds = new Set(roles.map((role) => String(role?.id || "")).filter(Boolean));
+  discordNewsSelectedRoleIds = new Set([...discordNewsSelectedRoleIds].filter((id) => validIds.has(id)));
+  const mentionable = roles.filter((role) => role?.mentionable);
+  const disabled = roles.filter((role) => !role?.mentionable);
+  const roleHtml = (role) => {
+    const id = String(role?.id || "");
+    const checked = discordNewsSelectedRoleIds.has(id) ? " checked" : "";
+    const disabledAttr = role?.mentionable ? "" : " disabled";
+    const color = Number(role?.color || 0);
+    const swatch = color > 0 ? `#${color.toString(16).padStart(6, "0")}` : "rgba(255,255,255,0.35)";
+    return `<label class="subtle" style="display:inline-flex;align-items:center;gap:6px;margin:0 10px 8px 0">
+      <input type="checkbox" data-discord-news-role-id="${esc(id)}"${checked}${disabledAttr} />
+      <span aria-hidden="true" style="width:10px;height:10px;border-radius:50%;background:${esc(swatch)};display:inline-block"></span>
+      ${esc(role?.name || id)}
+      ${role?.mentionable ? "" : " (not mentionable)"}
+    </label>`;
+  };
+  host.innerHTML = `
+    <p class="subtle"><strong>Role pings</strong> · Selected roles will be mentioned and pinged in the Discord message.</p>
+    <div>${mentionable.map(roleHtml).join("") || `<span class="subtle">No mentionable roles found.</span>`}</div>
+    ${disabled.length ? `<details class="admin-details subtle"><summary>Non-mentionable roles</summary><div>${disabled.map(roleHtml).join("")}</div></details>` : ""}
+  `;
+}
+
+async function loadDiscordNewsRoles() {
+  try {
+    const payload = await getJson("/api/admin/discord-news/roles");
+    renderDiscordNewsRoles(payload);
+  } catch (error) {
+    renderDiscordNewsRoles({ ok: false, error: error?.message || "Failed to load Discord roles" });
+  }
+}
+
+function discordNewsRoleCheckboxesHtml(selectedIds = [], attrName = "data-discord-news-queue-role-id") {
+  const selected = new Set((Array.isArray(selectedIds) ? selectedIds : []).map((id) => String(id || "").trim()).filter(Boolean));
+  const roles = Array.isArray(discordNewsRolesState) ? discordNewsRolesState : [];
+  const mentionable = roles.filter((role) => role?.mentionable);
+  if (!mentionable.length) return `<p class="subtle">No mentionable Discord roles loaded.</p>`;
+  return mentionable
+    .map((role) => {
+      const id = String(role?.id || "");
+      const checked = selected.has(id) ? " checked" : "";
+      return `<label class="subtle" style="display:inline-flex;align-items:center;gap:6px;margin:0 10px 8px 0">
+        <input type="checkbox" ${attrName}="${esc(id)}"${checked} />
+        ${esc(role?.name || id)}
+      </label>`;
+    })
+    .join("");
+}
+
+function renderDiscordNewsQueue(payload = {}) {
+  const host = document.getElementById("discordNewsQueueHost");
+  if (!host) return;
+  const rows = Array.isArray(payload.queue) ? payload.queue : discordNewsQueueState;
+  discordNewsQueueState = rows;
+  const pending = rows.filter((row) => row?.status === "pending");
+  const history = rows.filter((row) => row?.status !== "pending").slice(0, 12);
+  const draftHtml = (row) => {
+    const id = String(row?.id || "");
+    const roleIds = Array.isArray(row?.roleMentions) ? row.roleMentions : [];
+    const createdAt = Number(row?.createdAt || 0) ? new Date(Number(row.createdAt)).toLocaleString() : "";
+    const fields = Array.isArray(row?.fields) ? row.fields : [];
+    const fieldsHtml = fields.length
+      ? `<details class="admin-details subtle" open><summary>Discord embed fields preview</summary><dl>${fields
+          .map(
+            (field) => `<dt><strong>${esc(field?.name || "")}</strong></dt><dd>${esc(field?.value || "").replace(/\n/g, "<br>")}</dd>`
+          )
+          .join("")}</dl></details>`
+      : "";
+    return `<article class="admin-grid-note" data-discord-news-draft-id="${esc(id)}" style="margin:0 0 12px 0">
+      <p class="subtle"><strong>${esc(row?.kind || "news")}</strong>${createdAt ? ` · queued ${esc(createdAt)}` : ""}</p>
+      <label class="subtle">Title</label>
+      <input class="admin-input" data-discord-news-queue-title value="${esc(row?.title || "")}" maxlength="256" />
+      <label class="subtle">Message</label>
+      <textarea class="admin-textarea" data-discord-news-queue-description rows="5" maxlength="4000">${esc(
+        row?.description || ""
+      )}</textarea>
+      <label class="subtle">Optional link</label>
+      <input class="admin-input" data-discord-news-queue-url value="${esc(row?.url || "")}" />
+      <label class="subtle">Optional image URL</label>
+      <input class="admin-input" data-discord-news-queue-image-url value="${esc(row?.imageUrl || "")}" />
+      ${fieldsHtml}
+      <div class="admin-grid-note" style="margin-top:8px">${discordNewsRoleCheckboxesHtml(roleIds)}</div>
+      <div class="admin-actions admin-actions--tight">
+        <button type="button" class="event-signup-btn" data-discord-news-queue-send="${esc(id)}">Send to Discord</button>
+        <button type="button" class="event-signup-btn event-signup-btn--softres" data-discord-news-queue-discard="${esc(
+          id
+        )}">Discard</button>
+      </div>
+    </article>`;
+  };
+  const historyHtml = history.length
+    ? `<details class="admin-details subtle"><summary>Recent sent/discarded drafts</summary><ul>${history
+        .map((row) => {
+          const when = Number(row?.sentAt || row?.discardedAt || row?.updatedAt || 0)
+            ? new Date(Number(row.sentAt || row.discardedAt || row.updatedAt)).toLocaleString()
+            : "";
+          return `<li><strong>${esc(row?.status || "")}</strong> · ${esc(row?.title || row?.key || "Draft")}${
+            when ? ` · ${esc(when)}` : ""
+          }</li>`;
+        })
+        .join("")}</ul></details>`
+    : "";
+  host.innerHTML = `
+    <p class="subtle"><strong>${pending.length}</strong> pending draft${pending.length === 1 ? "" : "s"}.</p>
+    ${pending.length ? pending.map(draftHtml).join("") : `<p class="subtle">No queued news drafts waiting for review.</p>`}
+    ${historyHtml}
+  `;
+}
+
+async function loadDiscordNewsQueue() {
+  const payload = await getJson("/api/admin/discord-news/queue");
+  renderDiscordNewsQueue(payload);
+}
+
+function readDiscordNewsQueueDraftPayload(card) {
+  if (!card) return {};
+  const roleIds = [...card.querySelectorAll("[data-discord-news-queue-role-id]")]
+    .filter((el) => el.checked)
+    .map((el) => String(el.getAttribute("data-discord-news-queue-role-id") || "").trim())
+    .filter(Boolean);
+  return {
+    title: String(card.querySelector("[data-discord-news-queue-title]")?.value || "").trim(),
+    description: String(card.querySelector("[data-discord-news-queue-description]")?.value || "").trim(),
+    url: String(card.querySelector("[data-discord-news-queue-url]")?.value || "").trim(),
+    imageUrl: String(card.querySelector("[data-discord-news-queue-image-url]")?.value || "").trim(),
+    roleIds,
+  };
 }
 
 function renderPublicSnapshotStatus(payload) {
@@ -2725,6 +2962,11 @@ async function loadAdminData() {
     renderDiscordNewsStatus({ ok: false });
     status(`Discord news status failed: ${error?.message || "Unknown error"}`);
   }
+  await loadDiscordNewsRoles();
+  await loadDiscordNewsQueue().catch((error) => {
+    renderDiscordNewsQueue({ queue: [] });
+    status(`Discord news queue failed: ${error?.message || "Unknown error"}`);
+  });
   renderRhWclUnmatched(null);
   renderRhWclLinksTable(rhLinks);
   loadRhWclTodo().catch(() => {});
@@ -3188,6 +3430,66 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const profileScanBtn = event.target.closest("[data-discord-profile-scan]");
+  if (profileScanBtn) {
+    profileScanBtn.disabled = true;
+    try {
+      const out = await getJson("/api/admin/discord-profile-ingest/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 50 }),
+      });
+      await loadRhWclTodo();
+      const created = Number(out?.scan?.created || 0);
+      status(`Discord profile scan complete. Created ${created} proposal${created === 1 ? "" : "s"}.`);
+    } catch (error) {
+      status(error?.message || "Discord profile scan failed");
+    } finally {
+      profileScanBtn.disabled = false;
+    }
+    return;
+  }
+
+  const profileAcceptBtn = event.target.closest("[data-discord-profile-accept]");
+  if (profileAcceptBtn) {
+    const id = profileAcceptBtn.getAttribute("data-discord-profile-accept");
+    if (!id) return;
+    profileAcceptBtn.disabled = true;
+    try {
+      await getJson(`/api/admin/discord-profile-ingest/proposals/${encodeURIComponent(id)}/accept`, {
+        method: "POST",
+      });
+      const linksPayload = await getJson("/api/admin/rh-wcl-links");
+      renderRhWclLinksTable(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
+      await loadRhWclTodo();
+      status("Discord profile proposal accepted and mirrored into the Account Database.");
+    } catch (error) {
+      status(error?.message || "Accept Discord profile proposal failed");
+    } finally {
+      profileAcceptBtn.disabled = false;
+    }
+    return;
+  }
+
+  const profileRejectBtn = event.target.closest("[data-discord-profile-reject]");
+  if (profileRejectBtn) {
+    const id = profileRejectBtn.getAttribute("data-discord-profile-reject");
+    if (!id) return;
+    profileRejectBtn.disabled = true;
+    try {
+      await getJson(`/api/admin/discord-profile-ingest/proposals/${encodeURIComponent(id)}/reject`, {
+        method: "POST",
+      });
+      await loadRhWclTodo();
+      status("Discord profile proposal rejected.");
+    } catch (error) {
+      status(error?.message || "Reject Discord profile proposal failed");
+    } finally {
+      profileRejectBtn.disabled = false;
+    }
+    return;
+  }
+
   const rm = event.target.closest("[data-rh-wcl-remove]");
   if (!rm) return;
   const idx = Number(rm.getAttribute("data-rh-wcl-remove"));
@@ -3412,7 +3714,7 @@ async function discordNewsImageUploadPayload() {
     throw new Error("Uploaded image must be PNG, JPEG, WebP, or GIF.");
   }
   if (file.size > DISCORD_NEWS_IMAGE_MAX_BYTES) {
-    throw new Error("Uploaded image is too large (max 6 MB).");
+    throw new Error("Uploaded image is too large (max 5 MB).");
   }
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
@@ -3433,6 +3735,7 @@ async function sendDiscordNews(btn) {
   const message = String(document.getElementById("discordNewsMessageInput")?.value || "").trim();
   const url = String(document.getElementById("discordNewsUrlInput")?.value || "").trim();
   const imageUrl = String(document.getElementById("discordNewsImageUrlInput")?.value || "").trim();
+  const roleIds = [...discordNewsSelectedRoleIds];
   if (!title || !message) {
     status("Enter a Discord news title and message first.");
     return false;
@@ -3446,7 +3749,7 @@ async function sendDiscordNews(btn) {
         getJson("/api/admin/discord-news/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message, url, imageUrl, imageUpload }),
+          body: JSON.stringify({ title, message, url, imageUrl, imageUpload, roleIds }),
         })
     );
     status(`Discord news sent${payload?.messageId ? ` (${payload.messageId})` : ""}.`);
@@ -3539,6 +3842,57 @@ document.addEventListener("click", (event) => {
     sendDiscordNews(discordNewsSendBtn);
     return;
   }
+  const discordNewsQueueReloadBtn = event.target.closest("#discordNewsQueueReloadBtn");
+  if (discordNewsQueueReloadBtn) {
+    runWithButtonFeedback(
+      discordNewsQueueReloadBtn,
+      { idle: "Reload queue", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => {
+        await loadDiscordNewsRoles();
+        await loadDiscordNewsQueue();
+      }
+    ).catch((error) => status(error?.message || "Failed to reload Discord news queue"));
+    return;
+  }
+  const discordNewsQueueSendBtn = event.target.closest("[data-discord-news-queue-send]");
+  if (discordNewsQueueSendBtn) {
+    const id = String(discordNewsQueueSendBtn.getAttribute("data-discord-news-queue-send") || "").trim();
+    const card = discordNewsQueueSendBtn.closest("[data-discord-news-draft-id]");
+    const body = readDiscordNewsQueueDraftPayload(card);
+    runWithButtonFeedback(
+      discordNewsQueueSendBtn,
+      { idle: "Send to Discord", loading: "Sending...", success: "Sent", failure: "Failed" },
+      async () =>
+        getJson(`/api/admin/discord-news/queue/${encodeURIComponent(id)}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+    )
+      .then(async (payload) => {
+        status(`Queued news sent${payload?.messageId ? ` (${payload.messageId})` : ""}.`);
+        await loadDiscordNewsStatus().catch(() => {});
+        await loadDiscordNewsQueue().catch(() => {});
+      })
+      .catch((error) => status(error?.message || "Failed to send queued news"));
+    return;
+  }
+  const discordNewsQueueDiscardBtn = event.target.closest("[data-discord-news-queue-discard]");
+  if (discordNewsQueueDiscardBtn) {
+    const id = String(discordNewsQueueDiscardBtn.getAttribute("data-discord-news-queue-discard") || "").trim();
+    runWithButtonFeedback(
+      discordNewsQueueDiscardBtn,
+      { idle: "Discard", loading: "Discarding...", success: "Discarded", failure: "Failed" },
+      async () => getJson(`/api/admin/discord-news/queue/${encodeURIComponent(id)}/discard`, { method: "POST" })
+    )
+      .then(async () => {
+        status("Queued news draft discarded.");
+        await loadDiscordNewsStatus().catch(() => {});
+        await loadDiscordNewsQueue().catch(() => {});
+      })
+      .catch((error) => status(error?.message || "Failed to discard queued news"));
+    return;
+  }
   const discordNewsTestBtn = event.target.closest("#discordNewsTestBtn");
   if (discordNewsTestBtn) {
     sendDiscordNewsTest(discordNewsTestBtn);
@@ -3549,8 +3903,21 @@ document.addEventListener("click", (event) => {
     runWithButtonFeedback(
       discordNewsReloadBtn,
       { idle: "Reload status", loading: "Loading...", success: "Loaded", failure: "Failed" },
-      async () => loadDiscordNewsStatus()
+      async () => {
+        await loadDiscordNewsStatus();
+        await loadDiscordNewsRoles();
+        await loadDiscordNewsQueue();
+      }
     ).catch((error) => status(error?.message || "Failed to reload Discord news status"));
+    return;
+  }
+  const discordNewsRoleCb = event.target.closest("[data-discord-news-role-id]");
+  if (discordNewsRoleCb) {
+    const id = String(discordNewsRoleCb.getAttribute("data-discord-news-role-id") || "").trim();
+    if (id) {
+      if (discordNewsRoleCb.checked) discordNewsSelectedRoleIds.add(id);
+      else discordNewsSelectedRoleIds.delete(id);
+    }
     return;
   }
   const customMarkAll = event.target.closest("#customDmMarkAllBtn");
