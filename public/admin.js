@@ -5118,8 +5118,22 @@ function renderIdentityBacklog(payload) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   identityBacklogState = items;
   const mergedCount = Number(payload?.autoMerge?.merged || 0);
-  const autoMergeNote = mergedCount > 0
-    ? `<p class="subtle" style="margin-top:6px"><strong>${mergedCount}</strong> obvious duplicate account${mergedCount === 1 ? "" : "s"} auto-merged before review.</p>`
+  const profileCount = Number(payload?.autoProfile?.accepted || 0);
+  const discordCache = payload?.autoDiscordCache || payload?.preflight?.discordCache || {};
+  const cacheUserCount = Number(discordCache.usersLinked || 0);
+  const cachePlaceholderCount = Number(discordCache.placeholdersMerged || 0);
+  const cacheRowCount = Number(discordCache.rhWclRowsFilled || 0);
+  const cacheConflictCount = Array.isArray(discordCache.conflicts) ? discordCache.conflicts.length : 0;
+  const autoNotes = [
+    mergedCount > 0 ? `<strong>${mergedCount}</strong> obvious duplicate account${mergedCount === 1 ? "" : "s"} auto-merged` : "",
+    profileCount > 0 ? `<strong>${profileCount}</strong> gear-check profile post${profileCount === 1 ? "" : "s"} auto-linked` : "",
+    cacheUserCount > 0 ? `<strong>${cacheUserCount}</strong> Discord ID${cacheUserCount === 1 ? "" : "s"} filled from Raid Helper cache` : "",
+    cachePlaceholderCount > 0 ? `<strong>${cachePlaceholderCount}</strong> character account${cachePlaceholderCount === 1 ? "" : "s"} merged into Discord placeholders` : "",
+    cacheRowCount > 0 ? `<strong>${cacheRowCount}</strong> RH/WCL row${cacheRowCount === 1 ? "" : "s"} backfilled from Discord cache` : "",
+    cacheConflictCount > 0 ? `<strong>${cacheConflictCount}</strong> Discord cache conflict${cacheConflictCount === 1 ? "" : "s"} left for review` : "",
+  ].filter(Boolean);
+  const autoMergeNote = autoNotes.length
+    ? `<p class="subtle" style="margin-top:6px">${autoNotes.join("; ")} before review.</p>`
     : "";
   if (!items.length) {
     host.innerHTML = `
