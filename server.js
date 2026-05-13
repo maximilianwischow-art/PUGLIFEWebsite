@@ -4138,7 +4138,7 @@ const DISCORD_ROLE_SYNC_GUILD_ROLE_NAMES = Object.freeze({
   Grunt: "PLB Grunt",
   Peon: "PLB Peon",
 });
-const DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES = new Set(["Pug Lead", "Raid Lead", "Heal Lead", "DPS Lead", "Core"]);
+const DISCORD_ROLE_SYNC_CORE_EQUIVALENT_ROLES = new Set(["Puglead", "Raidlead", "Heallead", "Dpslead", "Core"]);
 
 function discordRoleSyncAttendanceRoleNames() {
   return [
