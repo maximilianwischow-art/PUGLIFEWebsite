@@ -3249,7 +3249,10 @@ async function loadPublicSnapshotStatus() {
 
 async function loadAdminSecondaryData() {
   const gargul = await getJson("/api/loot-history/gargul");
-  const loot = await getJson("/api/loot-history?limit=25");
+  // Live WCL guild reports for Event Management — materialised `/api/loot-history`
+  // only knows reports already in `loot_awards` / `raid_appearances` after sync, so
+  // new uploads would be missing from the checkbox list until `refresh=1`.
+  const loot = await getJson("/api/loot-history?limit=40&refresh=1");
   const p2 = await getJson("/api/p2-preparation/materials");
   const joinNeeds = await getJson("/api/admin/join/current-needs");
   const roleAlertEvents = await getJson("/api/admin/role-alerts/events");

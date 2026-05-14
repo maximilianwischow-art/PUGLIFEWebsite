@@ -197,6 +197,7 @@ const port = Number(process.env.PORT || 8787);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
+
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
 // Badge workflow helper: any PNG dropped into `public/images/achievements` gets a same-name SVG generated.
@@ -16532,9 +16533,10 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
     );
     const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
     const selectedRankByCode = new Map(selectedReportCodes.map((code, idx) => [code, idx]));
+    // Empty Event Management selection must not zero out the calendar; use all filtered WCL reports.
     const scopedReports = selectedSet
       ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
-      : [];
+      : reports;
     const entries = buildRecentRaidCalendarEntries(scopedReports, {
       selectedRankByCode,
     });
