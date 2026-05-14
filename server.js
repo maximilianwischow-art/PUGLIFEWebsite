@@ -13816,6 +13816,17 @@ function reportMatchesRequiredRaidPlayers(report) {
      Raid / Hall of Fame for hours after upload. */
   const minRanked = wclGuildRaidMinRankedFallback();
   if (minRanked > 0 && names.size >= minRanked) return true;
+  /* WCL sometimes returns rankedCharacters empty right after upload (or for
+     certain parses) even when boss kills exist — do not drop the report. */
+  if (names.size === 0) {
+    let trackedKillFights = 0;
+    for (const fight of report.fights || []) {
+      if (!fight?.kill || Number(fight?.encounterID || 0) <= 0) continue;
+      const key = resolvedTrackedRaidForFight(fight, report);
+      if (key && TRACKED_RAIDS[key]) trackedKillFights += 1;
+    }
+    if (trackedKillFights >= 2) return true;
+  }
   return false;
 }
 
