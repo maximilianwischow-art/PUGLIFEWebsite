@@ -2590,6 +2590,7 @@ const ANALYTICS_CHART_MOUNT_IDS = [
   "adminAnalyticsChartConversionsDaily",
   "adminAnalyticsChartFunnel",
   "adminAnalyticsChartCtaDonut",
+  "adminAnalyticsChartDiscordMembers",
   "adminAnalyticsChartTopPages",
   "adminAnalyticsChartReferrers",
 ];
@@ -2642,6 +2643,16 @@ function analyticsDateSeries(rows, key) {
   });
 }
 
+function analyticsDiscordDaySeries(daily, key) {
+  return (Array.isArray(daily) ? daily : []).map((row, index) => {
+    const ms = analyticsDayMs(row?.day);
+    const raw = row?.[key];
+    const num = Number(raw);
+    const y = raw == null || !Number.isFinite(num) ? null : num;
+    return { x: ms ?? index, y };
+  });
+}
+
 function destroyAnalyticsChartByMountId(mountId) {
   const chart = analyticsChartInstances.get(mountId);
   if (!chart) return;
@@ -2669,6 +2680,18 @@ function adminAnalyticsClearMountMessage(mountId, html) {
   destroyAnalyticsChartByMountId(mountId);
   const el = document.getElementById(mountId);
   if (el) el.innerHTML = html;
+}
+
+function clearAdminAnalyticsDiscordMembersLegend() {
+  const leg = document.getElementById("adminAnalyticsDiscordLegend");
+  if (!leg) return;
+  leg.hidden = true;
+  leg.innerHTML = "";
+}
+
+function adminAnalyticsDiscordMembersClearMount(html) {
+  clearAdminAnalyticsDiscordMembersLegend();
+  adminAnalyticsClearMountMessage("adminAnalyticsChartDiscordMembers", html);
 }
 
 function analyticsFmtPctDelta(cur, prev) {
@@ -2726,10 +2749,12 @@ function renderAnalyticsDashboard(payload) {
       const node = document.getElementById(id);
       if (node) node.innerHTML = "";
     }
+    clearAdminAnalyticsDiscordMembersLegend();
     setKpi("pageviews", "—", "vs prior period");
     setKpi("sessions", "—", "vs prior period");
     setKpi("avgday", "—", "vs prior period");
     setKpi("subscriberate", "—", "success ÷ join visits · vs prior");
+    setKpi("discordmembers", "—", "Discord approximate counts");
     return;
   }
 
@@ -2761,6 +2786,29 @@ function renderAnalyticsDashboard(payload) {
     esc(analyticsFmtSubscribeRate(joinPv, subSucc)),
     analyticsSubscribeRateDeltaPP(joinPv, subSucc, prevJoin, prevSubSucc)
   );
+
+  const dm = payload.discordMembers || {};
+  const dCur = dm.current;
+  const dOn = dm.online;
+  const dAt = Number(dm.sampledAt || 0);
+  const dNote = String(dm.note || "").trim();
+  if (Number.isFinite(dCur) && dCur >= 0) {
+    const onlineBit =
+      Number.isFinite(dOn) && dOn >= 0 ? `${esc(String(dOn))} approx. online · ` : "";
+    setKpi(
+      "discordmembers",
+      esc(String(dCur)),
+      `${onlineBit}sampled ${dAt ? esc(fmtWhen(dAt)) : "—"} (UTC)`
+    );
+  } else if (dNote) {
+    setKpi("discordmembers", "—", esc(dNote.slice(0, 220)));
+  } else {
+    setKpi(
+      "discordmembers",
+      "—",
+      "No samples in store yet; counts update on reload (throttled, ~6h)."
+    );
+  }
 
   const fore = adminAnalyticsCssVar("--text", "#eceaf3");
   const muted = adminAnalyticsCssVar("--text-muted", "#b9afc8");
@@ -2887,6 +2935,52 @@ function renderAnalyticsDashboard(payload) {
       },
       tooltip: { theme: "dark" },
     });
+  }
+
+  const discordDaily = Array.isArray(dm.daily) ? dm.daily : [];
+  const discordDayLabels = discordDaily.map((r) => String(r.day || ""));
+  const discordMemberSeries = analyticsDiscordDaySeries(discordDaily, "members");
+  const discordHasMembers = discordMemberSeries.some((pt) => pt.y != null);
+  const discordOnlineSeries = analyticsDiscordDaySeries(discordDaily, "online");
+  const discordHasOnline = discordOnlineSeries.some((pt) => pt.y != null);
+  if (!discordHasMembers) {
+    adminAnalyticsDiscordMembersClearMount(
+      `<p class="subtle">No member samples in this date range yet. Samples are taken when you open this panel (throttled, about every 6 hours).</p>`
+    );
+  } else {
+    const discordSeries = [{ name: "Members (approx.)", data: discordMemberSeries }];
+    if (discordHasOnline) {
+      discordSeries.push({ name: "Online (approx.)", data: discordOnlineSeries });
+    }
+    clearAdminAnalyticsDiscordMembersLegend();
+    mountAnalyticsChart("adminAnalyticsChartDiscordMembers", {
+      ...baseChart,
+      chart: { ...baseChart.chart, type: "line", height: 280 },
+      colors: discordHasOnline ? ["#b79cff", "#5fd4c8"] : ["#b79cff"],
+      stroke: { curve: "smooth", width: discordHasOnline ? [2, 2] : [2] },
+      series: discordSeries,
+      legend: { ...baseChart.legend, show: false },
+      xaxis: {
+        type: "datetime",
+        tickAmount: Math.min(7, Math.max(2, discordDayLabels.length)),
+        labels: {
+          datetimeUTC: true,
+          format: "MM-dd",
+          rotate: 0,
+          hideOverlappingLabels: true,
+          maxHeight: 32,
+        },
+      },
+      yaxis: { labels: { style: { colors: muted } } },
+      tooltip: { theme: "dark", shared: true, intersect: false },
+    });
+    if (discordHasOnline) {
+      const leg = document.getElementById("adminAnalyticsDiscordLegend");
+      if (leg) {
+        leg.hidden = false;
+        leg.innerHTML = `<span><span class="admin-dash-chart-legend-dot" style="background:#b79cff"></span>Members (approx.)</span><span><span class="admin-dash-chart-legend-dot" style="background:#5fd4c8"></span>Online (approx.)</span>`;
+      }
+    }
   }
 
   const topPages = Array.isArray(payload.topPages) ? payload.topPages.slice(0, 12) : [];

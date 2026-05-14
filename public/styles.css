@@ -3775,6 +3775,36 @@ button.raid-cal-run.raid-cal-run--column:hover {
   font-size: 12px;
 }
 
+/* Apex built-in legend often mispositions markers on datetime line charts; use this for manual keys. */
+.admin-dash-chart-custom-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+  align-items: center;
+  margin: 2px 0 8px;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.admin-dash-chart-custom-legend[hidden] {
+  display: none !important;
+}
+
+.admin-dash-chart-custom-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.admin-dash-chart-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
 .admin-dash-chart-mount {
   width: 100%;
   min-height: 260px;

@@ -31,6 +31,7 @@ const LEGACY_FILES = [
   "hof-notes.json",
   "gargul-loot-history.json",
   "site-analytics.json",
+  "discord-member-samples.json",
 ];
 
 function parseArgs(argv) {

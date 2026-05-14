@@ -611,6 +611,8 @@ const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
 const analyticsStorePath = path.join(dataDir, "site-analytics.json");
+/** Throttled approximate guild member counts for admin analytics timeline (Discord `with_counts`). */
+const discordMemberSamplesPath = path.join(dataDir, "discord-member-samples.json");
 const identityPublicSettingsPath = path.join(dataDir, "identity-public-settings.json");
 /** Primary on-disk guild character roster: Raid Helper signup identity ↔ Warcraft Logs names (mains + alts). Drives attendance linking, Events name resolution, and admin tooling. */
 const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json");
@@ -652,6 +654,11 @@ let publicDataSnapshotReady = null;
 let publicDataSnapshotWriteChain = Promise.resolve();
 let analyticsStoreReady = null;
 let analyticsWriteChain = Promise.resolve();
+let discordMemberSamplesReady = null;
+let discordMemberSamplesWriteChain = Promise.resolve();
+/** @type {{ samples: { at: number, members: number, online: number | null }[] }} */
+let discordMemberSamplesState = { samples: [] };
+const DISCORD_MEMBER_SAMPLES_MAX = 4000;
 let identityPublicSettingsReady = null;
 let identityPublicSettingsWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
@@ -1320,6 +1327,111 @@ async function appendAnalyticsEvent(event) {
     await persistAnalyticsStore();
   });
   await analyticsWriteChain;
+}
+
+async function persistDiscordMemberSamplesStore() {
+  const tmpPath = `${discordMemberSamplesPath}.tmp`;
+  const json = JSON.stringify(discordMemberSamplesState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, discordMemberSamplesPath);
+}
+
+async function ensureDiscordMemberSamplesStore() {
+  if (discordMemberSamplesReady) return discordMemberSamplesReady;
+  discordMemberSamplesReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(discordMemberSamplesPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const samples = Array.isArray(parsed?.samples) ? parsed.samples : [];
+      discordMemberSamplesState = {
+        samples: samples
+          .map((s) => ({
+            at: Number(s?.at || 0),
+            members: Number(s?.members),
+            online: s?.online == null || s?.online === "" ? null : Number(s.online),
+          }))
+          .filter((s) => s.at > 0 && Number.isFinite(s.members) && s.members >= 0)
+          .sort((a, b) => a.at - b.at)
+          .slice(-DISCORD_MEMBER_SAMPLES_MAX),
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      discordMemberSamplesState = { samples: [] };
+      await persistDiscordMemberSamplesStore();
+    }
+  })();
+  return discordMemberSamplesReady;
+}
+
+async function appendDiscordMemberSample({ at, members, online }) {
+  await ensureDiscordMemberSamplesStore();
+  discordMemberSamplesWriteChain = discordMemberSamplesWriteChain.then(async () => {
+    discordMemberSamplesState.samples.push({
+      at: Number(at || 0),
+      members: Number(members),
+      online: online == null ? null : Number(online),
+    });
+    discordMemberSamplesState.samples.sort((a, b) => a.at - b.at);
+    if (discordMemberSamplesState.samples.length > DISCORD_MEMBER_SAMPLES_MAX) {
+      discordMemberSamplesState.samples = discordMemberSamplesState.samples.slice(-DISCORD_MEMBER_SAMPLES_MAX);
+    }
+    await persistDiscordMemberSamplesStore();
+  });
+  await discordMemberSamplesWriteChain;
+}
+
+function buildDiscordMemberAnalyticsForAdmin(days) {
+  const safeDays = Math.max(1, Math.min(365, Math.floor(Number(days) || 30)));
+  const dayMs = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const todayStart = Date.UTC(
+    new Date(now).getUTCFullYear(),
+    new Date(now).getUTCMonth(),
+    new Date(now).getUTCDate()
+  );
+  const since = todayStart - (safeDays - 1) * dayMs;
+
+  const samples = Array.isArray(discordMemberSamplesState.samples)
+    ? [...discordMemberSamplesState.samples].sort((a, b) => a.at - b.at)
+    : [];
+
+  const notes = [];
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) {
+    notes.push("Set DISCORD_BOT_TOKEN to record live member counts.");
+  } else if (!raidHelperDiscordGuildId()) {
+    notes.push("Set DISCORD_GUILD_ID or RAID_HELPER_SERVER_ID for the guild id.");
+  }
+
+  let latest = null;
+  for (const s of samples) {
+    if (s.at <= now && Number.isFinite(s.members)) latest = s;
+  }
+
+  const daily = [];
+  for (let i = 0; i < safeDays; i += 1) {
+    const dayStart = since + i * dayMs;
+    const day = new Date(dayStart).toISOString().slice(0, 10);
+    const dayEnd = dayStart + dayMs - 1;
+    let dayLast = null;
+    for (const s of samples) {
+      if (s.at <= dayEnd && Number.isFinite(s.members)) dayLast = s;
+      else if (s.at > dayEnd) break;
+    }
+    daily.push({
+      day,
+      members: dayLast ? dayLast.members : null,
+      online: dayLast && dayLast.online != null && Number.isFinite(dayLast.online) ? dayLast.online : null,
+    });
+  }
+
+  return {
+    current: latest ? latest.members : null,
+    online: latest && latest.online != null && Number.isFinite(latest.online) ? latest.online : null,
+    sampledAt: latest ? latest.at : null,
+    daily,
+    note: notes.join(" "),
+  };
 }
 
 function analyticsReferrerSelfHosts() {
@@ -3651,6 +3763,43 @@ async function discordBotApi(pathname, { method = "GET", body } = {}) {
   }
   const msg = String(lastPayload?.message || `Discord bot API failed (${lastStatus || "unknown"})`).slice(0, 180);
   throw new Error(lastStatus === 429 ? `${msg} Retry shortly.` : msg);
+}
+
+async function fetchDiscordGuildApproximateCounts() {
+  const guildId = raidHelperDiscordGuildId();
+  if (!guildId) return null;
+  const g = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}?with_counts=true`);
+  const members = Number(g?.approximate_member_count);
+  const onlineRaw = g?.approximate_presence_count;
+  const online = onlineRaw == null ? null : Number(onlineRaw);
+  if (!Number.isFinite(members) || members < 0) return null;
+  return {
+    members,
+    online: Number.isFinite(online) ? online : null,
+  };
+}
+
+async function maybeRecordDiscordMemberSample() {
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) return;
+  const guildId = raidHelperDiscordGuildId();
+  if (!guildId) return;
+  const minMsRaw = Number(process.env.DISCORD_MEMBER_SAMPLE_MIN_MS ?? 6 * 60 * 60 * 1000);
+  const minMs =
+    Number.isFinite(minMsRaw) && minMsRaw >= 60_000
+      ? Math.min(7 * 24 * 60 * 60 * 1000, Math.floor(minMsRaw))
+      : 6 * 60 * 60 * 1000;
+  await ensureDiscordMemberSamplesStore();
+  const now = Date.now();
+  const samples = discordMemberSamplesState.samples;
+  const lastAt = samples.length ? samples[samples.length - 1].at : 0;
+  if (lastAt && now - lastAt < minMs) return;
+  try {
+    const row = await fetchDiscordGuildApproximateCounts();
+    if (!row) return;
+    await appendDiscordMemberSample({ at: now, members: row.members, online: row.online });
+  } catch (error) {
+    console.warn("[discord-member-samples]", error?.message || error);
+  }
 }
 
 async function fetchDiscordGuildRolesForNews() {
@@ -7600,7 +7749,11 @@ app.get("/api/admin/analytics/summary", async (req, res) => {
     if (!session) return;
     await ensureAnalyticsStore();
     const days = Number(req.query.days || 30);
-    return res.json(analyticsSummary({ days }));
+    await ensureDiscordMemberSamplesStore();
+    await maybeRecordDiscordMemberSample();
+    const summary = analyticsSummary({ days });
+    const discordMembers = buildDiscordMemberAnalyticsForAdmin(summary.days);
+    return res.json({ ...summary, discordMembers });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load analytics summary" });
   }

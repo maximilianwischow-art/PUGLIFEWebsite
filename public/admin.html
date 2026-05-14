@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260513role-badge-stable2" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260514discord-legend-fix1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -275,6 +275,11 @@
                   <div class="admin-dash-kpi-value">—</div>
                   <div class="admin-dash-kpi-delta subtle">success ÷ join visits · vs prior</div>
                 </div>
+                <div class="admin-dash-kpi" data-admin-dash-kpi="discordmembers">
+                  <div class="admin-dash-kpi-label">Discord members</div>
+                  <div class="admin-dash-kpi-value">—</div>
+                  <div class="admin-dash-kpi-delta subtle">approximate counts from Discord</div>
+                </div>
               </div>
 
               <div class="admin-dash-charts admin-dash-charts--two">
@@ -300,6 +305,18 @@
                   <h4 class="admin-dash-chart-title">Subscribe CTA placement</h4>
                   <p class="subtle admin-dash-chart-hint">Breakdown of subscribe_click by label.</p>
                   <div id="adminAnalyticsChartCtaDonut" class="admin-dash-chart-mount"></div>
+                </div>
+              </div>
+
+              <div class="admin-dash-charts">
+                <div class="admin-dash-chart">
+                  <h4 class="admin-dash-chart-title">Discord member count</h4>
+                  <p class="subtle admin-dash-chart-hint">
+                    Approximate member and presence totals from Discord. History grows as throttled samples are recorded (UTC
+                    days; values carry forward when a day has no new sample).
+                  </p>
+                  <div id="adminAnalyticsDiscordLegend" class="admin-dash-chart-custom-legend" hidden></div>
+                  <div id="adminAnalyticsChartDiscordMembers" class="admin-dash-chart-mount"></div>
                 </div>
               </div>
 
@@ -481,7 +498,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260513identity-table-redesign1"></script>
+    <script defer src="/admin.js?v=20260514discord-legend-fix1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
