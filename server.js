@@ -460,11 +460,11 @@ function discordProfileIngestEnabled() {
   return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
 }
 
-/** Raid Helper’s “server id” is your Discord guild id — optional duplicate of {@link discordGuildId}. */
+/** Raid Helper’s “server id” is your Discord guild id — same resolution order as {@link discordGuildId}. */
 function raidHelperDiscordGuildId() {
   return (
-    String(process.env.RAID_HELPER_SERVER_ID || "").trim() ||
     String(process.env.DISCORD_GUILD_ID || "").trim() ||
+    String(process.env.RAID_HELPER_SERVER_ID || "").trim() ||
     ""
   );
 }
@@ -1381,7 +1381,7 @@ async function appendDiscordMemberSample({ at, members, online }) {
   await discordMemberSamplesWriteChain;
 }
 
-function buildDiscordMemberAnalyticsForAdmin(days) {
+function buildDiscordMemberAnalyticsForAdmin(days, liveOverlay = null, fetchError = null) {
   const safeDays = Math.max(1, Math.min(365, Math.floor(Number(days) || 30)));
   const dayMs = 24 * 60 * 60 * 1000;
   const now = Date.now();
@@ -1391,6 +1391,7 @@ function buildDiscordMemberAnalyticsForAdmin(days) {
     new Date(now).getUTCDate()
   );
   const since = todayStart - (safeDays - 1) * dayMs;
+  const todayIso = new Date(todayStart).toISOString().slice(0, 10);
 
   const samples = Array.isArray(discordMemberSamplesState.samples)
     ? [...discordMemberSamplesState.samples].sort((a, b) => a.at - b.at)
@@ -1402,6 +1403,7 @@ function buildDiscordMemberAnalyticsForAdmin(days) {
   } else if (!raidHelperDiscordGuildId()) {
     notes.push("Set DISCORD_GUILD_ID or RAID_HELPER_SERVER_ID for the guild id.");
   }
+  if (fetchError) notes.push(fetchError);
 
   let latest = null;
   for (const s of samples) {
@@ -1425,12 +1427,32 @@ function buildDiscordMemberAnalyticsForAdmin(days) {
     });
   }
 
+  let current = latest ? latest.members : null;
+  let online = latest && latest.online != null && Number.isFinite(latest.online) ? latest.online : null;
+  let sampledAt = latest ? latest.at : null;
+
+  if (liveOverlay && Number.isFinite(liveOverlay.members) && liveOverlay.members >= 0) {
+    current = liveOverlay.members;
+    online =
+      liveOverlay.online != null && Number.isFinite(liveOverlay.online) ? liveOverlay.online : null;
+    sampledAt = Number(liveOverlay.sampledAt) || now;
+    for (const row of daily) {
+      if (row.day === todayIso) {
+        row.members = liveOverlay.members;
+        if (liveOverlay.online != null && Number.isFinite(liveOverlay.online)) {
+          row.online = liveOverlay.online;
+        }
+        break;
+      }
+    }
+  }
+
   return {
-    current: latest ? latest.members : null,
-    online: latest && latest.online != null && Number.isFinite(latest.online) ? latest.online : null,
-    sampledAt: latest ? latest.at : null,
+    current,
+    online,
+    sampledAt,
     daily,
-    note: notes.join(" "),
+    note: notes.filter(Boolean).join(" "),
   };
 }
 
@@ -3769,7 +3791,10 @@ async function fetchDiscordGuildApproximateCounts() {
   const guildId = raidHelperDiscordGuildId();
   if (!guildId) return null;
   const g = await discordBotApi(`/guilds/${encodeURIComponent(guildId)}?with_counts=true`);
-  const members = Number(g?.approximate_member_count);
+  let members = Number(g?.approximate_member_count);
+  if (!Number.isFinite(members) || members < 0) {
+    members = Number(g?.member_count);
+  }
   const onlineRaw = g?.approximate_presence_count;
   const online = onlineRaw == null ? null : Number(onlineRaw);
   if (!Number.isFinite(members) || members < 0) return null;
@@ -3779,27 +3804,51 @@ async function fetchDiscordGuildApproximateCounts() {
   };
 }
 
-async function maybeRecordDiscordMemberSample() {
-  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) return;
+/**
+ * One GET /guilds/:id per admin analytics load when bot token + guild id exist.
+ * Returns live counts for the JSON payload (KPI + today on chart) even when disk samples are empty
+ * (e.g. multi-instance hosting). Persists a new sample only on the throttle interval.
+ */
+async function syncDiscordMemberCountsForAnalyticsSummary() {
+  const out = { live: null, fetchError: null };
+  if (!String(process.env.DISCORD_BOT_TOKEN || "").trim()) return out;
   const guildId = raidHelperDiscordGuildId();
-  if (!guildId) return;
+  if (!guildId) return out;
+
+  await ensureDiscordMemberSamplesStore();
+  let row;
+  try {
+    row = await fetchDiscordGuildApproximateCounts();
+  } catch (error) {
+    out.fetchError = String(error?.message || error).slice(0, 220);
+    console.warn("[discord-member-samples]", out.fetchError);
+    return out;
+  }
+  if (!row) {
+    out.fetchError = "Discord returned no usable member count for this guild.";
+    return out;
+  }
+
   const minMsRaw = Number(process.env.DISCORD_MEMBER_SAMPLE_MIN_MS ?? 6 * 60 * 60 * 1000);
   const minMs =
     Number.isFinite(minMsRaw) && minMsRaw >= 60_000
       ? Math.min(7 * 24 * 60 * 60 * 1000, Math.floor(minMsRaw))
       : 6 * 60 * 60 * 1000;
-  await ensureDiscordMemberSamplesStore();
   const now = Date.now();
   const samples = discordMemberSamplesState.samples;
   const lastAt = samples.length ? samples[samples.length - 1].at : 0;
-  if (lastAt && now - lastAt < minMs) return;
-  try {
-    const row = await fetchDiscordGuildApproximateCounts();
-    if (!row) return;
-    await appendDiscordMemberSample({ at: now, members: row.members, online: row.online });
-  } catch (error) {
-    console.warn("[discord-member-samples]", error?.message || error);
+  if (!lastAt || now - lastAt >= minMs) {
+    try {
+      await appendDiscordMemberSample({ at: now, members: row.members, online: row.online });
+    } catch (error) {
+      const msg = String(error?.message || error).slice(0, 220);
+      console.warn("[discord-member-samples] persist", msg);
+      out.fetchError = `Could not save sample: ${msg}`;
+    }
   }
+
+  out.live = { members: row.members, online: row.online, sampledAt: now };
+  return out;
 }
 
 async function fetchDiscordGuildRolesForNews() {
@@ -7750,9 +7799,13 @@ app.get("/api/admin/analytics/summary", async (req, res) => {
     await ensureAnalyticsStore();
     const days = Number(req.query.days || 30);
     await ensureDiscordMemberSamplesStore();
-    await maybeRecordDiscordMemberSample();
+    const discordSync = await syncDiscordMemberCountsForAnalyticsSummary();
     const summary = analyticsSummary({ days });
-    const discordMembers = buildDiscordMemberAnalyticsForAdmin(summary.days);
+    const discordMembers = buildDiscordMemberAnalyticsForAdmin(
+      summary.days,
+      discordSync.live,
+      discordSync.fetchError
+    );
     return res.json({ ...summary, discordMembers });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load analytics summary" });
