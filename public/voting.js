@@ -482,6 +482,7 @@ function buildMockHallOfFamePreviewRows() {
 
 function renderHallOfFame(payload) {
   const host = document.getElementById("votingHallOfFame");
+  const plb = window.plbEventsRoster;
   const apiRows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
   const rowsUnsorted = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
   const rows = [...rowsUnsorted].sort((a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0));
