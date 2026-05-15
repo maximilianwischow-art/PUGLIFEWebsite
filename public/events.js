@@ -244,9 +244,12 @@ if (!plb) {
       ]);
       const isAuthenticated = Boolean(me?.authenticated);
   
-      const rows = (payload?.events || []).filter(
-        (event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids"
-      );
+      const nowSec = Math.floor(Date.now() / 1000);
+      const rows = (payload?.events || []).filter((event) => {
+        if (String(event?.title || "").trim().toLowerCase() === "p2 raids") return false;
+        const start = Number(event?.startTime || 0);
+        return start > nowSec;
+      });
       if (!rows.length) {
         eventsList.innerHTML = `<article class="card"><h2>No upcoming events.</h2></article>`;
         return;

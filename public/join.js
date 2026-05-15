@@ -462,17 +462,22 @@ function joinNonP2RaidHelperEvents(events) {
   return (events || []).filter((event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids");
 }
 
+function joinUpcomingRaidHelperEvents(events, nowSec = Math.floor(Date.now() / 1000)) {
+  const now = Number(nowSec);
+  return joinNonP2RaidHelperEvents(events)
+    .filter((e) => {
+      const start = Number(e?.startTime || 0);
+      return start > 0 && start > now;
+    })
+    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+}
+
 /** Next hero capsule: earliest upcoming **25-player** raid (Gruul/Mag/SSC/TK/…); avoids Kara/ZA 10-player rows when a Thu raid exists. */
 function joinPickHeroNextRaidEvent(events) {
-  const now = Math.floor(Date.now() / 1000);
-  const rows = joinNonP2RaidHelperEvents(events)
-    .filter((e) => Number(e?.startTime || 0) > 0)
-    .sort((a, b) => Number(a.startTime) - Number(b.startTime));
+  const rows = joinUpcomingRaidHelperEvents(events);
   if (!rows.length) return null;
-  const upcoming = rows.filter((e) => Number(e.startTime) >= now);
-  const timeline = upcoming.length ? upcoming : rows;
-  const preferred25 = timeline.filter((e) => joinRosterCapacityForEvent(e) === 25);
-  return preferred25.length ? preferred25[0] : timeline[0];
+  const preferred25 = rows.filter((e) => joinRosterCapacityForEvent(e) === 25);
+  return preferred25.length ? preferred25[0] : rows[0];
 }
 
 function joinRoleCompositionTargets(capacity, roleTargets) {
@@ -849,10 +854,10 @@ function joinRenderUpcomingEventCard(event, isAuthenticated) {
 
 function joinRenderFutureEvents(events, isAuthenticated) {
   const host = document.getElementById("joinEventsList");
-  joinRenderHeroNextRaidCapsule(events);
+  const rows = joinUpcomingRaidHelperEvents(events);
+  joinRenderHeroNextRaidCapsule(rows);
   if (!host) return;
 
-  const rows = (events || []).filter((event) => String(event?.title || "").trim().toLowerCase() !== "p2 raids");
   if (!rows.length) {
     host.innerHTML = `<p class="subtle join-events-empty">No upcoming events right now. Check Discord for the latest announcements.</p>`;
     return;

@@ -326,7 +326,12 @@ app.use("/api", async (req, res, next) => {
     if (hit && Object.prototype.hasOwnProperty.call(hit, "payload")) {
       if (!publicSnapshotPayloadLooksPoisoned(key, hit.payload)) {
         res.setHeader("x-plb-public-snapshot", "hit");
-        return res.json(hit.payload);
+        const keyPath = String(key || "").split("?")[0];
+        const body =
+          keyPath === "/api/raid-helper/future-events"
+            ? applyFutureEventsTimeFilterToPayload(hit.payload)
+            : hit.payload;
+        return res.json(body);
       }
       delete publicDataSnapshotState.byKey[key];
     }
@@ -5441,6 +5446,22 @@ function snapshotOriginalPath(req) {
   const original = String(req?.originalUrl || rest);
   const qIdx = original.indexOf("?");
   return qIdx >= 0 ? original.slice(0, qIdx) : original;
+}
+
+/** Raid Helper `startTime` is Unix seconds; drop events that already started. */
+function filterRaidHelperEventsAfterNow(events, nowSec = Math.floor(Date.now() / 1000)) {
+  const now = Number(nowSec);
+  return (Array.isArray(events) ? events : []).filter((event) => {
+    const id = String(event?.id || event?.eventId || event?.eventID || "").trim();
+    const startTime = Number(event?.startTime || event?.timestamp || event?.time || event?.start || 0);
+    return id && Number.isFinite(startTime) && startTime > now;
+  });
+}
+
+function applyFutureEventsTimeFilterToPayload(payload, nowSec = Math.floor(Date.now() / 1000)) {
+  if (!payload || typeof payload !== "object") return payload;
+  const events = filterRaidHelperEventsAfterNow(payload.events, nowSec);
+  return { ...payload, count: events.length, events };
 }
 
 function publicSnapshotKeyFromRequest(req) {
@@ -15911,8 +15932,8 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
 
   try {
     const events = await fetchRaidHelperServerEvents(serverId);
-    const future = events
-      .map((event) => ({
+    const future = filterRaidHelperEventsAfterNow(
+      events.map((event) => ({
         id: String(event.id || event.eventId || event.eventID || ""),
         title: String(event.title || "Unnamed Event"),
         description: String(event.description || ""),
@@ -15923,8 +15944,9 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         leaderName: String(event.leaderName || ""),
         softresId: String(event.softresId || ""),
         channelName: String(event.channelName || ""),
-      }))
-      .filter((event) => event.id && event.startTime > nowSec)
+      })),
+      nowSec
+    )
       .sort((a, b) => a.startTime - b.startTime)
       .slice(0, 20);
 
