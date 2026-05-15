@@ -13766,29 +13766,32 @@ function reportWeekdayNormalizedInCalendarZone(startTimeRaw) {
 }
 
 /** Gruul/Mag → Thursday; Karazhan → Sunday (per report `startTime` in {@link wclCalendarTimeZone}). */
-function trackedRaidAllowedOnCalendarWeekday(raidName, weekdayNorm) {
+function trackedRaidAllowedOnCalendarWeekday(raidName, weekdayNorm, options = {}) {
   if (!raidName || !Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, raidName)) return false;
-  if (raidName === "Karazhan") return weekdayNorm === "sunday";
+  if (raidName === "Karazhan") {
+    if (options.relaxKaraSchedule) return true;
+    return weekdayNorm === "sunday";
+  }
   if (raidName === "Gruul's Lair" || raidName === "Magtheridon's Lair") return weekdayNorm === "thursday";
   return false;
 }
 
 /** Drops fights from other instances or wrong raid night; empty reports are removed downstream. */
-function filterReportFightsForRaidNightSchedule(report) {
+function filterReportFightsForRaidNightSchedule(report, options = {}) {
   const wd = reportWeekdayNormalizedInCalendarZone(report?.startTime);
   if (!wd) return { ...report, fights: [] };
   const fights = (report.fights || []).filter((fight) => {
     if (Number(fight?.encounterID || 0) <= 0) return false;
     const raidName = resolvedTrackedRaidForFight(fight, report);
     if (!raidName || !TRACKED_RAIDS[raidName]) return false;
-    return trackedRaidAllowedOnCalendarWeekday(raidName, wd);
+    return trackedRaidAllowedOnCalendarWeekday(raidName, wd, options);
   });
   return { ...report, fights };
 }
 
-function filterReportsForRaidNightSchedule(reports) {
+function filterReportsForRaidNightSchedule(reports, options = {}) {
   return (reports || [])
-    .map((report) => filterReportFightsForRaidNightSchedule(report))
+    .map((report) => filterReportFightsForRaidNightSchedule(report, options))
     .filter((report) => (report.fights || []).length > 0);
 }
 
@@ -13858,9 +13861,31 @@ function filterReportsForRequiredRaidPlayers(reports) {
 }
 
 /** Gruul/Mag on Thu, Kara on Sun + required roster characters. */
-function filterGuildRaidReports(reports) {
-  const scheduled = filterReportsForRaidNightSchedule(reports || []);
+function filterGuildRaidReports(reports, options = {}) {
+  const scheduled = filterReportsForRaidNightSchedule(reports || [], options);
   return filterReportsForRequiredRaidPlayers(scheduled);
+}
+
+/**
+ * Homepage raid calendar + best-time tiles: honour Event Management for 25-man
+ * raids, but always fold in Karazhan reports from the WCL window so Kara columns
+ * are not empty when only Gruul/Mag codes are curated.
+ */
+function wclReportsForHomeDashboard(reports, selectedSet) {
+  const list = Array.isArray(reports) ? reports : [];
+  if (!selectedSet || selectedSet.size === 0) return list;
+  const byCode = new Map();
+  for (const report of list) {
+    const code = String(report?.code || "").trim();
+    if (!code || byCode.has(code)) continue;
+    if (selectedSet.has(code)) byCode.set(code, report);
+  }
+  for (const report of list) {
+    const code = String(report?.code || "").trim();
+    if (!code || byCode.has(code) || selectedSet.has(code)) continue;
+    if (collectTrackedRaidZonesFromReport(report).has("Karazhan")) byCode.set(code, report);
+  }
+  return [...byCode.values()];
 }
 
 const RH_SIGNUP_EXCLUDED_CLASSES = new Set(["Absence", "Bench", "Tentative", "Late"]);
@@ -15169,10 +15194,11 @@ const filteredGuildReportsCache = new Map();
 /** When the dashboard fires many endpoints at once, reuse the same in-flight WCL pull. */
 const filteredGuildReportsInflight = new Map();
 
-async function getFilteredGuildReportsForGuild(guildId, sliceLimit) {
+async function getFilteredGuildReportsForGuild(guildId, sliceLimit, options = {}) {
   const maxL = wclMaxGuildReportsLimit();
   const want = Math.min(maxL, Math.max(1, Number(sliceLimit) || maxL));
-  const key = `${guildId}:${maxL}`;
+  const relaxKara = Boolean(options.relaxKaraSchedule);
+  const key = `${guildId}:${maxL}${relaxKara ? ":rk" : ""}`;
   const ttl = wclGuildReportsCacheTtlMs();
   const now = Date.now();
 
@@ -15186,7 +15212,7 @@ async function getFilteredGuildReportsForGuild(guildId, sliceLimit) {
     inflight = (async () => {
       try {
         const data = await queryWcl(GUILD_REPORTS_QUERY_DASHBOARD, { guildId, limit: maxL });
-        return filterGuildRaidReports(data?.reportData?.reports?.data || []);
+        return filterGuildRaidReports(data?.reportData?.reports?.data || [], { relaxKaraSchedule: relaxKara });
       } finally {
         filteredGuildReportsInflight.delete(key);
       }
@@ -16385,7 +16411,7 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
   try {
     // Ensure Event Management selection is loaded before we scope reports.
     await ensureGargulLootHistoryStore();
-    const reports = await getFilteredGuildReportsForGuild(guildId, limit);
+    const reports = await getFilteredGuildReportsForGuild(guildId, limit, { relaxKaraSchedule: true });
     const selectedReportCodes = Array.from(
       new Set(
         (gargulLootState?.selectedReportCodes || [])
@@ -16394,19 +16420,8 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
       )
     );
     const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
-    // Keep dashboard raid stats aligned with leaderboard/Event Management:
-    // when the admin curated events, only those report codes are considered.
-    const scopedReports = selectedSet
-      ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
-      : [];
-    /** Join Us trust strip only: when curation is empty, allow unscoped guild reports so localhost / fresh installs still show proof. */
+    const effectiveReports = wclReportsForHomeDashboard(reports, selectedSet);
     const joinPublicScope = String(req.query.scope || "").toLowerCase() === "public";
-    const effectiveReports =
-      scopedReports.length > 0
-        ? scopedReports
-        : joinPublicScope && reports.length > 0
-          ? reports
-          : scopedReports;
 
     const raidSummary = Object.entries(TRACKED_RAIDS).map(([raidName, bosses]) => {
       const bestByBoss = new Map();
@@ -16525,10 +16540,10 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
       raidSummary,
       rosterInfo: {
         source:
-          scopedReports.length > 0
-            ? "event_management"
-            : effectiveReports.length > 0 && joinPublicScope
-              ? "join_public_fallback"
+          selectedSet && selectedSet.size > 0
+            ? "event_management_plus_kara"
+            : effectiveReports.length > 0
+              ? "all_filtered_reports"
               : "event_management_empty_selection",
         selectedReportCodes,
         requiredRaidPlayers: requiredRaidPlayersList,
@@ -16558,7 +16573,7 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
   try {
     // Ensure Event Management selection is loaded before we scope reports.
     await ensureGargulLootHistoryStore();
-    const reports = await getFilteredGuildReportsForGuild(guildId, limit);
+    const reports = await getFilteredGuildReportsForGuild(guildId, limit, { relaxKaraSchedule: true });
     const selectedReportCodes = Array.from(
       new Set(
         (gargulLootState?.selectedReportCodes || [])
@@ -16568,18 +16583,15 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
     );
     const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
     const selectedRankByCode = new Map(selectedReportCodes.map((code, idx) => [code, idx]));
-    // Empty Event Management selection must not zero out the calendar; use all filtered WCL reports.
-    const scopedReports = selectedSet
-      ? reports.filter((r) => selectedSet.has(String(r?.code || "")))
-      : reports;
-    const entries = buildRecentRaidCalendarEntries(scopedReports, {
+    const calendarReports = wclReportsForHomeDashboard(reports, selectedSet);
+    const entries = buildRecentRaidCalendarEntries(calendarReports, {
       selectedRankByCode,
     });
     return res.json({
       guildId,
       limit,
       count: entries.length,
-      source: selectedSet ? "event_management" : "event_management_empty_selection",
+      source: selectedSet ? "event_management_plus_kara" : "all_filtered_reports",
       selectedReportCodes,
       calendarTimeZone: wclCalendarTimeZone(),
       raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
