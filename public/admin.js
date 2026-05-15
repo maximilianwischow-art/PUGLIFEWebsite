@@ -3101,7 +3101,10 @@ function renderHofNotesTable(payload) {
         <tbody>
           ${rows
             .map(
-              (row) => `<tr data-hof-note-row="${esc(String(row.winnerRaidKey || ""))}">
+              (row) => `<tr data-hof-note-row="${esc(String(row.winnerRaidKey || ""))}"
+                data-hof-note-round-key="${esc(String(row.roundKey || ""))}"
+                data-hof-note-raid-code="${esc(String(row.raidCode || ""))}"
+                data-hof-note-winner-name="${esc(String(row.winnerName || ""))}">
                 <td>${esc(String(row.winnerName || "-"))}</td>
                 <td>${esc(String(row.raidName || row.raidCode || "-"))}</td>
                 <td>${esc(fmtWhen(row.raidStartTime))}</td>
@@ -4692,7 +4695,13 @@ document.addEventListener("click", async (event) => {
         await getJson("/api/admin/hof-notes", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ winnerRaidKey, quote }),
+          body: JSON.stringify({
+            winnerRaidKey,
+            quote,
+            roundKey: String(row?.getAttribute("data-hof-note-round-key") || "").trim(),
+            raidCode: String(row?.getAttribute("data-hof-note-raid-code") || "").trim(),
+            winnerName: String(row?.getAttribute("data-hof-note-winner-name") || "").trim(),
+          }),
         });
       }
     );

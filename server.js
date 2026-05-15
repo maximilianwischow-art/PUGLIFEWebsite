@@ -2512,6 +2512,7 @@ function sortHallOfFameRowsByRaidStartDesc(list) {
 async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureVotingStore();
   await ensureHofNotesStore();
+  await reloadHofNotesStateFromPersistence();
   const voting = await getCurrentVotingRoundCached(guildId);
   const currentRoundKey = voting?.roundKey || "";
   let identityRows = votingHallOfFame(currentRoundKey, limit);
@@ -3386,29 +3387,152 @@ function sanitizeRoleAlertDmLogState(raw) {
   return { byEventId };
 }
 
-function normalizeHofWinnerRaidKey(raidCode, winnerName) {
-  const code = String(raidCode || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9_-]+/g, "");
-  const winner = String(winnerName || "")
+function normalizeHofWinnerNamePart(winnerName) {
+  return String(winnerName || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9 _-]+/g, "")
     .replace(/\s+/g, "-")
     .slice(0, 80);
+}
+
+/** Strip `Name-Realm` suffix so quotes saved for `Gernig` match `Gernig-Thunderstrike` rows. */
+function stripWowRealmFromCharacterName(name) {
+  const s = String(name || "").trim();
+  const idx = s.lastIndexOf("-");
+  if (idx <= 0) return s;
+  const suffix = s.slice(idx + 1);
+  if (/^[a-z][a-z0-9]{2,15}$/i.test(suffix)) return s.slice(0, idx);
+  return s;
+}
+
+function normalizeHofWinnerRaidKey(raidCode, winnerName) {
+  const code = String(raidCode || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, "");
+  const winner = normalizeHofWinnerNamePart(winnerName);
   if (!code || !winner) return "";
   return `${code}::${winner}`;
+}
+
+/** Candidate storage keys for one HoF winner (raid code variants + realm-stripped name). */
+function hofNoteLookupKeysForRow(row) {
+  const keys = [];
+  const push = (key) => {
+    const k = String(key || "").trim();
+    if (k && !keys.includes(k)) keys.push(k);
+  };
+  push(normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName));
+  const bareRealm = stripWowRealmFromCharacterName(row?.winnerName);
+  if (bareRealm !== String(row?.winnerName || "").trim()) {
+    push(normalizeHofWinnerRaidKey(row?.raidCode, bareRealm));
+  }
+  const roundKey = String(row?.roundKey || "").trim();
+  if (roundKey) {
+    const codeFromRound = roundKey.split(":")[0];
+    push(normalizeHofWinnerRaidKey(codeFromRound, row?.winnerName));
+    if (bareRealm !== String(row?.winnerName || "").trim()) {
+      push(normalizeHofWinnerRaidKey(codeFromRound, bareRealm));
+    }
+  }
+  return keys;
+}
+
+function mergeHofNotesByWinnerRaidKey(...sources) {
+  const byWinnerRaidKey = {};
+  for (const source of sources) {
+    const map = source?.byWinnerRaidKey && typeof source.byWinnerRaidKey === "object" ? source.byWinnerRaidKey : {};
+    for (const [keyRaw, noteRaw] of Object.entries(map)) {
+      const key = String(keyRaw || "").trim();
+      if (!key) continue;
+      const note = noteRaw && typeof noteRaw === "object" ? noteRaw : {};
+      const incoming = {
+        quote: String(note.quote || ""),
+        updatedAt: Number.isFinite(Number(note.updatedAt)) ? Number(note.updatedAt) : 0,
+        updatedBy: String(note.updatedBy || "").trim(),
+      };
+      const existing = byWinnerRaidKey[key];
+      if (!existing || incoming.updatedAt >= existing.updatedAt) {
+        byWinnerRaidKey[key] = incoming;
+      }
+    }
+  }
+  return sanitizeHofNotesState({ byWinnerRaidKey });
+}
+
+function lookupHofNoteForRow(row) {
+  const map =
+    hofNotesState?.byWinnerRaidKey && typeof hofNotesState.byWinnerRaidKey === "object"
+      ? hofNotesState.byWinnerRaidKey
+      : {};
+  const keys = hofNoteLookupKeysForRow(row);
+  let best = null;
+  for (const key of keys) {
+    const note = map[key];
+    if (!note) continue;
+    if (!best || Number(note.updatedAt || 0) >= Number(best.updatedAt || 0)) best = note;
+  }
+  return { note: best, keys };
+}
+
+async function readHofNotesStateFromJsonFile() {
+  try {
+    const raw = await readFile(hofNotesPath, "utf8");
+    return sanitizeHofNotesState(JSON.parse(raw));
+  } catch (error) {
+    if (error?.code === "ENOENT") return sanitizeHofNotesState({ byWinnerRaidKey: {} });
+    throw error;
+  }
+}
+
+function readHofNotesStateFromSqlite() {
+  const rows = hofNotesGetAll();
+  const byWinnerRaidKey = {};
+  if (!Array.isArray(rows)) return sanitizeHofNotesState({ byWinnerRaidKey });
+  for (const r of rows) {
+    const key = String(r?.winnerRaidKey || "").trim();
+    if (!key) continue;
+    byWinnerRaidKey[key] = {
+      quote: String(r?.quote || ""),
+      updatedAt: Number(r?.updatedAt || 0),
+      updatedBy: String(r?.updatedBy || ""),
+    };
+  }
+  return sanitizeHofNotesState({ byWinnerRaidKey });
+}
+
+/** Re-read quotes from disk/SQLite so every instance sees admin saves immediately. */
+async function reloadHofNotesStateFromPersistence() {
+  await mkdir(dataDir, { recursive: true });
+  const sources = [];
+  if (materializePhase3Enabled()) {
+    try {
+      sources.push(readHofNotesStateFromSqlite());
+    } catch (error) {
+      console.warn("[hof-notes] SQLite reload failed:", error?.message || error);
+    }
+  }
+  try {
+    sources.push(await readHofNotesStateFromJsonFile());
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("[hof-notes] JSON reload failed:", error?.message || error);
+    }
+  }
+  if (!sources.length) {
+    hofNotesState = sanitizeHofNotesState({ byWinnerRaidKey: {} });
+    return hofNotesState;
+  }
+  hofNotesState = mergeHofNotesByWinnerRaidKey(...sources);
+  return hofNotesState;
 }
 
 function applyHofNotesToHallOfFameRows(rows) {
   if (!Array.isArray(rows)) return rows;
   return rows.map((row) => {
-    const winnerRaidKey = normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
-    const note =
-      winnerRaidKey && hofNotesState.byWinnerRaidKey && typeof hofNotesState.byWinnerRaidKey === "object"
-        ? hofNotesState.byWinnerRaidKey[winnerRaidKey]
-        : null;
+    const { note, keys } = lookupHofNoteForRow(row);
+    const winnerRaidKey = keys[0] || normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
     return {
       ...row,
       winnerRaidKey,
@@ -3557,38 +3681,8 @@ async function persistHofNotesStore() {
 async function ensureHofNotesStore() {
   if (hofNotesReady) return hofNotesReady;
   hofNotesReady = (async () => {
-    await mkdir(dataDir, { recursive: true });
-    if (materializePhase3Enabled()) {
-      try {
-        const rows = hofNotesGetAll();
-        if (Array.isArray(rows) && rows.length > 0) {
-          const byWinnerRaidKey = {};
-          for (const r of rows) {
-            const key = String(r?.winnerRaidKey || "").trim();
-            if (!key) continue;
-            byWinnerRaidKey[key] = {
-              quote: String(r?.quote || ""),
-              updatedAt: Number(r?.updatedAt || 0),
-              updatedBy: String(r?.updatedBy || ""),
-            };
-          }
-          hofNotesState = sanitizeHofNotesState({ byWinnerRaidKey });
-          return;
-        }
-      } catch (error) {
-        console.warn(
-          "[hof-notes] SQLite hydrate failed, falling back to JSON:",
-          error?.message || error
-        );
-      }
-    }
-    try {
-      const raw = await readFile(hofNotesPath, "utf8");
-      const parsed = JSON.parse(raw);
-      hofNotesState = sanitizeHofNotesState(parsed);
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      hofNotesState = { byWinnerRaidKey: {} };
+    await reloadHofNotesStateFromPersistence();
+    if (!Object.keys(hofNotesState.byWinnerRaidKey || {}).length) {
       await persistHofNotesStore();
     }
   })();
@@ -7867,14 +7961,16 @@ app.get("/api/admin/hof-notes", async (req, res) => {
     const session = requireAdminSession(req, res);
     if (!session) return;
     await ensureHofNotesStore();
+    await reloadHofNotesStateFromPersistence();
     const hallOfFame = await getHallOfFameForGuild(votingGuildId, 24);
     let rows = hallOfFame.map((row) => {
       const winnerName = String(row?.winnerName || "").trim();
       const raidCode = String(row?.raidCode || "").trim();
-      const winnerRaidKey = normalizeHofWinnerRaidKey(raidCode, winnerName);
-      const note = winnerRaidKey ? hofNotesState.byWinnerRaidKey[winnerRaidKey] : null;
+      const { note, keys } = lookupHofNoteForRow(row);
+      const winnerRaidKey = keys[0] || normalizeHofWinnerRaidKey(raidCode, winnerName);
       return {
         winnerRaidKey,
+        roundKey: String(row?.roundKey || "").trim(),
         winnerName,
         raidCode,
         raidName: String(row?.raidName || row?.raidCode || "").trim(),
@@ -7933,18 +8029,25 @@ app.put("/api/admin/hof-notes", async (req, res) => {
       return res.status(400).json({ ok: false, error: "winnerRaidKey is required" });
     }
     await ensureHofNotesStore();
+    await reloadHofNotesStateFromPersistence();
     const actor =
       String(session?.user?.globalName || "").trim() || String(session?.user?.username || "").trim() || "admin";
+    const aliasRow = {
+      raidCode: String(req.body?.raidCode || "").trim(),
+      winnerName: String(req.body?.winnerName || "").trim(),
+      roundKey: String(req.body?.roundKey || "").trim(),
+    };
+    const keysToWrite = new Set([winnerRaidKey, ...hofNoteLookupKeysForRow(aliasRow)]);
     hofNotesWriteChain = hofNotesWriteChain.catch(() => {}).then(async () => {
-      hofNotesState.byWinnerRaidKey[winnerRaidKey] = {
-        quote,
-        updatedAt: Date.now(),
-        updatedBy: actor,
-      };
+      const note = { quote, updatedAt: Date.now(), updatedBy: actor };
+      for (const key of keysToWrite) {
+        if (!key) continue;
+        hofNotesState.byWinnerRaidKey[key] = note;
+      }
       await persistHofNotesStore();
     });
     await hofNotesWriteChain;
-    return res.json({ ok: true, winnerRaidKey, quote });
+    return res.json({ ok: true, winnerRaidKey, quote, keysWritten: [...keysToWrite] });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save hall of fame note" });
   }
@@ -11801,7 +11904,8 @@ app.get("/api/admin/wcl-attendee-names", async (req, res) => {
 
 app.get("/api/voting/hall-of-fame", async (_req, res) => {
   try {
-    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 10);
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 24);
     return res.json({ ok: true, hallOfFame });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame" });
