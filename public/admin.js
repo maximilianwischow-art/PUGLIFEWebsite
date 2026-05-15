@@ -15,6 +15,7 @@ let roleAlertsSavedTargetsByEventId = new Map();
 let roleAlertsAnalysisState = null;
 let roleAlertsLastSendResult = null;
 let roleAlertsSelectedUserIds = new Set();
+let roleAlertsAnalyzeSeq = 0;
 let roleAlertsCandidateSortState = { key: "displayName", dir: "asc" };
 let roleAlertsCandidateFilterState = {
   displayName: "",
@@ -1639,6 +1640,43 @@ function renderRoleAlertsEventSelect(events) {
   }
 }
 
+async function runRoleAlertsAnalyzeFromSelect() {
+  const eventId = roleAlertsSelectedEventId();
+  const host = document.getElementById("roleAlertsHost");
+  if (!eventId) {
+    roleAlertsAnalyzeSeq += 1;
+    roleAlertsSelectedUserIds = new Set();
+    renderRoleAlertsAnalysis(null);
+    return;
+  }
+  const seq = (roleAlertsAnalyzeSeq += 1);
+  if (host) host.innerHTML = `<p class="subtle">Loading roster…</p>`;
+  roleAlertsSelectedUserIds = new Set();
+  try {
+    const payload = await getJson("/api/admin/role-alerts/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventId,
+        overrides: roleAlertsReadOverrides(),
+        desiredByRole: roleAlertsReadDesiredByRole(),
+        manualRoleSpecNeeds: roleAlertsReadManualRoleSpecNeeds(),
+      }),
+    });
+    if (seq !== roleAlertsAnalyzeSeq) return;
+    roleAlertsLastSendResult = null;
+    renderRoleAlertsAnalysis(payload);
+    status("Role-alert analysis updated.");
+  } catch (error) {
+    if (seq !== roleAlertsAnalyzeSeq) return;
+    roleAlertsAnalysisState = null;
+    if (host) {
+      host.innerHTML = `<p class="subtle">Could not load roster: ${esc(error?.message || "Unknown error")}</p>`;
+    }
+    status(error?.message || "Failed to analyze selected event");
+  }
+}
+
 function roleAlertsReadOverrides() {
   const out = {};
   document.querySelectorAll("[data-role-alert-signup-id]").forEach((el) => {
@@ -1807,6 +1845,60 @@ function roleAlertsManualSpecNeedsHtml(analysis) {
   return `<h4 class="subtle" style="margin: 12px 0 6px">Manual spec blocker needs</h4>${sections}`;
 }
 
+/** Warcraft Logs–style parse pill (same breakpoints as voting / leaderboard). */
+function roleAlertPeakParseTierClass(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "leaderboard-peak-parse--empty";
+  if (n >= 100) return "leaderboard-peak-parse--wcl100";
+  if (n >= 99) return "leaderboard-peak-parse--wcl99";
+  if (n >= 95) return "leaderboard-peak-parse--wcl95";
+  if (n >= 75) return "leaderboard-peak-parse--wcl75";
+  if (n >= 50) return "leaderboard-peak-parse--wcl50";
+  if (n >= 25) return "leaderboard-peak-parse--wcl25";
+  return "leaderboard-peak-parse--wcl0";
+}
+
+/** Min/max parse % and GS across all comp-board slots (shown roster). */
+function collectRoleAlertCompBoardHeatmapStats(groups) {
+  let gsMin = Infinity;
+  let gsMax = -Infinity;
+  let peakMin = Infinity;
+  let peakMax = -Infinity;
+  let gsCount = 0;
+  let peakCount = 0;
+  for (const group of groups || []) {
+    for (const slot of Array.isArray(group?.slots) ? group.slots : []) {
+      const gs = Number(slot?.gearScore);
+      if (Number.isFinite(gs) && gs > 0) {
+        gsMin = Math.min(gsMin, gs);
+        gsMax = Math.max(gsMax, gs);
+        gsCount += 1;
+      }
+      const pk = Number(slot?.peakParse);
+      if (Number.isFinite(pk) && pk >= 0) {
+        peakMin = Math.min(peakMin, pk);
+        peakMax = Math.max(peakMax, pk);
+        peakCount += 1;
+      }
+    }
+  }
+  return {
+    gsMin: gsCount ? gsMin : NaN,
+    gsMax: gsCount ? gsMax : NaN,
+    peakMin: peakCount ? peakMin : NaN,
+    peakMax: peakCount ? peakMax : NaN,
+  };
+}
+
+/** Map a value into 0–100 using roster min/max; flat roster → 50 (mid band). */
+function rosterRelativeHeatmapPct(value, minV, maxV) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return NaN;
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return NaN;
+  if (maxV <= minV) return 50;
+  return Math.max(0, Math.min(100, ((v - minV) / (maxV - minV)) * 100));
+}
+
 function roleAlertsCompBoardHtml(analysis) {
   const board = analysis?.compBoard;
   if (!board || typeof board !== "object") {
@@ -1821,6 +1913,7 @@ function roleAlertsCompBoardHtml(analysis) {
     (role) => `<span class="role-alert-chip"><strong>${esc(role)}</strong> ${Number(roleCounts[role] || 0)}</span>`
   ).join("");
   const groups = Array.isArray(board.groups) ? board.groups : [];
+  const heatStats = collectRoleAlertCompBoardHeatmapStats(groups);
   const groupHtml = groups
     .map((group) => {
       const slots = Array.isArray(group?.slots) ? group.slots : [];
@@ -1838,11 +1931,67 @@ function roleAlertsCompBoardHtml(analysis) {
                 : "";
               const specIcon = emoteUrl(slot?.specEmoteId);
               const classIcon = emoteUrl(slot?.classEmoteId);
-              const title = `${String(slot?.className || "-")} · ${String(slot?.specName || "-")} · ${
+              const peakN = Number(slot?.peakParse);
+              const peakTxt =
+                Number.isFinite(peakN) && peakN >= 0
+                  ? peakN.toFixed(1)
+                  : "—";
+              const peakHasRosterRange =
+                Number.isFinite(heatStats.peakMin) && Number.isFinite(heatStats.peakMax);
+              const peakVirt = peakHasRosterRange
+                ? rosterRelativeHeatmapPct(peakN, heatStats.peakMin, heatStats.peakMax)
+                : NaN;
+              const peakTier = peakHasRosterRange
+                ? roleAlertPeakParseTierClass(Number.isFinite(peakVirt) ? peakVirt : NaN)
+                : roleAlertPeakParseTierClass(Number.isFinite(peakN) ? peakN : NaN);
+              const bracket = String(slot?.peakParseBracket || "").trim();
+              const src = String(slot?.peakParseSource || "").trim();
+              const star =
+                src === "guild_recent"
+                  ? `<span class="role-alert-slot-peak-star" title="Parse from another recent guild log (not limited to Event Management).">*</span>`
+                  : "";
+              const peakTitleBase = Number.isFinite(peakN)
+                ? `${src === "guild_recent" ? "Parse from wider guild report window. " : ""}Best single-boss percentile for this slot's role (${bracket || "DPS / tank / heal"}) in recent Warcraft Logs reports for this guild: ${peakN.toFixed(1)}. Does not include logs from other guilds.`
+                : "No rank in recent guild Warcraft Logs for this name (or not linked in Account Assignment). Parses only cover logs uploaded to your guild — other guilds’ public logs are not queried.";
+              const peakRelNote = peakHasRosterRange
+                ? " Color on this board is scaled to the min/max parse of everyone shown on this comp."
+                : "";
+              const peakTitle = peakTitleBase + peakRelNote;
+              const rhTitle = `${String(slot?.className || "-")} · ${String(slot?.specName || "-")} · ${
                 slot?.isBlocker ? "Blocker" : "Raider"
               }`;
-              return `<div class="${cls}" title="${esc(title)}"${leftBorder}>
-                <span class="role-alert-slot-main">
+              const disp = String(slot?.displayCharacterName || slot?.name || "").trim() || "-";
+              const rhLabel = String(slot?.name || "").trim();
+              const nameTitle = esc(
+                rhLabel && disp && rhLabel !== disp ? `${disp} (Raid Helper: ${rhLabel})` : disp
+              );
+              const rhSub =
+                rhLabel && disp && rhLabel !== disp
+                  ? `<span class="role-alert-slot-rh-name">${esc(rhLabel)}</span>`
+                  : "";
+              const gsN = Number(slot?.gearScore);
+              const gsTxt = Number.isFinite(gsN) && gsN > 0 ? String(Math.round(gsN)) : "—";
+              const armoryUrl = String(slot?.classicArmoryCharacterUrl || "").trim();
+              const gsHasRosterRange = Number.isFinite(heatStats.gsMin) && Number.isFinite(heatStats.gsMax);
+              const gsVirt =
+                Number.isFinite(gsN) && gsN > 0
+                  ? gsHasRosterRange
+                    ? rosterRelativeHeatmapPct(gsN, heatStats.gsMin, heatStats.gsMax)
+                    : gearScoreToRosterHeatmapPct(gsN)
+                  : NaN;
+              const gsTierClass = roleAlertPeakParseTierClass(gsVirt);
+              const gsTitle =
+                Number.isFinite(gsN) && gsN > 0
+                  ? gsHasRosterRange
+                    ? "Classic Armory GearScore. Color on this board is scaled to min/max GS of everyone shown on this comp (not the WCL parse number)."
+                    : "Classic Armory GearScore. Colors use fixed GS bands (no spread on this board). Not the WCL parse number."
+                  : "Classic Armory GearScore. The WCL parse is the colored number to the left. Fill GS via character-specs sync or refresh after API loads.";
+              const gsInner = `<span class="role-alert-slot-gs-pill leaderboard-peak-parse ${gsTierClass}" title="${esc(gsTitle)}">GS ${esc(gsTxt)}</span>`;
+              const gsBlock = armoryUrl
+                ? `<a class="role-alert-slot-gs" href="${esc(armoryUrl)}" target="_blank" rel="noopener noreferrer">${gsInner}</a>`
+                : gsInner;
+              return `<div class="${cls} role-alert-slot--layout"${leftBorder}>
+                <div class="role-alert-slot-row role-alert-slot-row--primary" title="${esc(rhTitle)}">
                   ${
                     specIcon || classIcon
                       ? `<span class="role-alert-slot-icons">
@@ -1851,9 +2000,18 @@ function roleAlertsCompBoardHtml(analysis) {
                       </span>`
                       : ""
                   }
-                  <span class="role-alert-slot-name">${esc(slot?.name || "-")}</span>
-                </span>
-                <span class="role-alert-slot-meta">${esc(slot?.specName || slot?.className || "")}</span>
+                  <span class="role-alert-slot-name-stack" title="${nameTitle}">
+                    <span class="role-alert-slot-name">${esc(disp)}</span>${rhSub}
+                  </span>
+                </div>
+                <div class="role-alert-slot-row role-alert-slot-row--meta">
+                  <span class="role-alert-slot-meta">${esc(slot?.specName || slot?.className || "")}</span>
+                  <span class="role-alert-slot-peak-line">
+                    ${star}
+                    <span class="role-alert-slot-peak leaderboard-peak-parse ${peakTier}" title="${esc(peakTitle)}">${esc(peakTxt)}</span>
+                  </span>
+                  <span class="role-alert-slot-gear-line">${gsBlock}</span>
+                </div>
               </div>`;
             })
             .join("")
@@ -1866,6 +2024,13 @@ function roleAlertsCompBoardHtml(analysis) {
     .join("");
   return `
     <h4 class="subtle" style="margin: 12px 0 6px">Comp board preview (${esc(board.title || "Raid-Helper")})</h4>
+    <p class="subtle" style="margin: 0 0 8px">
+      Peaks are from your guild’s recent Warcraft Logs (boss percentiles). Official Event Management reports are preferred;
+      <span class="role-alert-slot-peak-star" style="display:inline">*</span> means a higher parse came from another recent guild log outside that selection.
+      Other guilds’ public logs are not queried — a dash means we have no matching rank in your guild logs.
+      Names show the WCL-linked in-game character when known (Account Assignment); the Raid Helper comp label appears in small italics under the name when it differs.
+      Parse and GearScore colors on this board use <strong>roster-relative</strong> heatmaps (min→max among everyone shown); if there is no spread, fixed bands apply for GS.
+    </p>
     <div class="role-alert-chips">${chips}</div>
     <div class="role-alert-groups">${groupHtml}</div>
   `;
@@ -2125,7 +2290,7 @@ function renderRoleAlertsAnalysis(analysis) {
   const host = document.getElementById("roleAlertsHost");
   if (!host) return;
   if (!roleAlertsAnalysisState) {
-    host.innerHTML = "Choose an event, then click Analyze event.";
+    host.innerHTML = "Choose a raid event above to load the roster.";
     return;
   }
   host.innerHTML = `
@@ -4036,6 +4201,7 @@ document.getElementById("roleAlertsReloadBtn")?.addEventListener("click", async 
       async () => {
         const payload = await getJson("/api/admin/role-alerts/events");
         renderRoleAlertsEventSelect(Array.isArray(payload?.events) ? payload.events : []);
+        if (roleAlertsSelectedEventId()) void runRoleAlertsAnalyzeFromSelect();
       }
     );
     status("Role-alert event list reloaded.");
@@ -4044,40 +4210,8 @@ document.getElementById("roleAlertsReloadBtn")?.addEventListener("click", async 
   }
 });
 
-document.getElementById("roleAlertsAnalyzeBtn")?.addEventListener("click", async () => {
-  const btn = document.getElementById("roleAlertsAnalyzeBtn");
-  const eventId = roleAlertsSelectedEventId();
-  if (!eventId) {
-    status("Select a raid event first.");
-    return;
-  }
-  try {
-    await runWithButtonFeedback(
-      btn,
-      { idle: "Analyze event", loading: "Analyzing...", success: "Analyzed", failure: "Failed" },
-      async () => {
-        roleAlertsSelectedUserIds = new Set();
-        const desiredByRole = roleAlertsReadDesiredByRole();
-        const manualRoleSpecNeeds = roleAlertsReadManualRoleSpecNeeds();
-        const overrides = roleAlertsReadOverrides();
-        const payload = await getJson("/api/admin/role-alerts/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            eventId,
-            overrides,
-            desiredByRole,
-            manualRoleSpecNeeds,
-          }),
-        });
-        roleAlertsLastSendResult = null;
-        renderRoleAlertsAnalysis(payload);
-      }
-    );
-    status("Role-alert analysis updated.");
-  } catch (error) {
-    status(error?.message || "Failed to analyze selected event");
-  }
+document.getElementById("roleAlertsEventSelect")?.addEventListener("change", () => {
+  void runRoleAlertsAnalyzeFromSelect();
 });
 
 document.addEventListener("input", (event) => {
@@ -5111,6 +5245,17 @@ function identityParseColor(value) {
   if (pct >= 50) return { color: "#0070ff", background: "rgba(0,112,255,.18)", border: "rgba(0,112,255,.42)" };
   if (pct >= 25) return { color: "#1eff00", background: "rgba(30,255,0,.16)", border: "rgba(30,255,0,.36)" };
   return { color: "#9ca3af", background: "rgba(156,163,175,.12)", border: "rgba(156,163,175,.28)" };
+}
+
+/** Classic Armory GS → 0–100 pseudo parse % so `identityParseColor` matches Admin roster parse pill colors (WoW-style tiers). */
+function gearScoreToRosterHeatmapPct(gs) {
+  const n = Number(gs);
+  if (!Number.isFinite(n) || n <= 0) return NaN;
+  const minGs = 1050;
+  const maxGs = 2100;
+  if (n >= maxGs) return 100;
+  if (n <= minGs) return Math.max(0, (n / minGs) * 25);
+  return 25 + ((n - minGs) / (maxGs - minGs)) * 75;
 }
 
 function identityParseBracketLabel(bracket, metric) {

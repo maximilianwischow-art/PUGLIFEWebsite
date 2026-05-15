@@ -5257,41 +5257,45 @@ body.is-admin-table-maximized {
 
 .role-alert-groups {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(5, minmax(152px, 1fr));
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .role-alert-group {
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 8px;
+  padding: 10px;
   background: rgba(0, 0, 0, 0.18);
 }
 
 .role-alert-group-title {
   font-family: "Bebas Neue", sans-serif;
   letter-spacing: 0.08em;
-  font-size: 0.98rem;
-  margin-bottom: 6px;
+  font-size: 1.05rem;
+  margin-bottom: 8px;
 }
 
 .role-alert-group-slots {
   display: grid;
-  gap: 4px;
+  gap: 6px;
 }
 
 .role-alert-slot {
-  padding: 5px 7px;
-  border-radius: 7px;
+  padding: 8px 10px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(14, 12, 26, 0.9);
-  font-size: 11px;
+  font-size: 12px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
+}
+
+.role-alert-slot--layout {
+  /* comp board: two-row card */
 }
 
 .role-alert-slot--known {
@@ -5312,6 +5316,10 @@ body.is-admin-table-maximized {
   text-shadow: 0 0 10px rgba(251, 191, 36, 0.22);
 }
 
+.role-alert-slot--blocker .role-alert-slot-rh-name {
+  color: rgba(255, 215, 138, 0.78);
+}
+
 .role-alert-slot--blocker .role-alert-slot-meta {
   color: #e8c177;
 }
@@ -5323,34 +5331,75 @@ body.is-admin-table-maximized {
   filter: saturate(1.12) brightness(1.06);
 }
 
-.role-alert-slot-main {
-  display: inline-flex;
+.role-alert-slot-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  flex: 1 1 auto;
+}
+
+.role-alert-slot-row--primary {
+  font-weight: 700;
+}
+
+.role-alert-slot-row--meta {
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .role-alert-slot-icons {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .role-alert-slot-icon {
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   border-radius: 3px;
   object-fit: cover;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
+.role-alert-slot-name-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.2;
+}
+
+.role-alert-slot-name-stack .role-alert-slot-name {
+  flex: 0 1 auto;
+}
+
 .role-alert-slot-name {
   font-weight: 700;
   min-width: 0;
+  flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.2;
+}
+
+.role-alert-slot-rh-name {
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.15;
+  opacity: 0.92;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .role-alert-slot-meta {
@@ -5358,12 +5407,94 @@ body.is-admin-table-maximized {
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 44%;
-  flex: 0 1 44%;
-  text-align: right;
+  white-space: nowrap;
+}
+
+.role-alert-slot-peak-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.role-alert-slot-peak-star {
+  color: #fbbf24;
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1;
+  cursor: help;
+}
+
+.role-alert-slot-peak {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1.1;
+}
+
+/*
+ * GearScore pill on Role Alerts comp board — must live in the stylesheet (not inline styles)
+ * so CSP `style-src` allows it. Text colors use `.leaderboard-peak-parse--wcl*` (+ --empty).
+ */
+.role-alert-slot-gs {
+  text-decoration: none;
+  color: inherit;
+}
+
+.role-alert-slot-gs-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--empty {
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl0 {
+  background: rgba(156, 163, 175, 0.12);
+  border-color: rgba(156, 163, 175, 0.28);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl25 {
+  background: rgba(30, 255, 0, 0.16);
+  border-color: rgba(30, 255, 0, 0.36);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl50 {
+  background: rgba(0, 112, 255, 0.18);
+  border-color: rgba(0, 112, 255, 0.42);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl75 {
+  background: rgba(163, 53, 238, 0.18);
+  border-color: rgba(163, 53, 238, 0.42);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl95 {
+  background: rgba(255, 128, 0, 0.18);
+  border-color: rgba(255, 128, 0, 0.42);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl99 {
+  background: rgba(226, 104, 168, 0.18);
+  border-color: rgba(226, 104, 168, 0.42);
+}
+
+.role-alert-slot-gs-pill.leaderboard-peak-parse--wcl100 {
+  background: rgba(229, 204, 128, 0.18);
+  border-color: rgba(229, 204, 128, 0.42);
 }
 
 @media (max-width: 1500px) {
@@ -5381,11 +5512,6 @@ body.is-admin-table-maximized {
 @media (max-width: 680px) {
   .role-alert-groups {
     grid-template-columns: 1fr;
-  }
-
-  .role-alert-slot-meta {
-    max-width: 38%;
-    flex-basis: 38%;
   }
 }
 

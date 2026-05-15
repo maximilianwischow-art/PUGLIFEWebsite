@@ -71,7 +71,7 @@ function resolveDataDir(explicit) {
   console.log("== Character class+spec backfill ==");
   console.log(`data dir   : ${dataDir}`);
   console.log(`mode       : ${args.dryRun ? "dry-run" : "write"}`);
-  console.log(`scope      : ${args.force ? "every row" : "rows missing class or spec"}`);
+  console.log(`scope      : ${args.force ? "every row" : "rows missing class/spec or GearScore"}`);
   console.log(`limit      : ${args.limit > 0 ? args.limit : "no cap"}`);
   console.log(`throttleMs : ${throttleMs}`);
   console.log("");
@@ -108,11 +108,13 @@ function resolveDataDir(explicit) {
     raiderIoApiBase,
     raiderIoRegion,
     defaultRealm,
+    includeClassicArmoryGearScore:
+      String(process.env.CHARACTER_SPECS_ARMORY_GEARSCORE || "").trim() !== "0",
   });
 
   let rows;
   try {
-    rows = charactersListAll({ missingClassOrSpec: !args.force });
+    rows = charactersListAll(args.force ? {} : { forCharacterSpecsSync: true });
   } catch (error) {
     console.error("[backfill] charactersListAll failed:", error?.message || error);
     process.exit(2);
@@ -141,25 +143,31 @@ function resolveDataDir(explicit) {
     }
     const wowClass = result?.wowClass || null;
     const wowSpec = result?.wowSpec || null;
+    const gearScore =
+      result?.gearScore != null && Number.isFinite(Number(result.gearScore))
+        ? Math.round(Number(result.gearScore))
+        : null;
 
     const willChangeClass = wowClass && wowClass !== row.wowClass;
     const willChangeSpec = wowSpec && wowSpec !== row.wowSpec;
+    const rowGs = row.gearScore != null ? Math.round(Number(row.gearScore)) : null;
+    const willChangeGear = gearScore != null && gearScore !== rowGs;
     const fromTag = result?.source ? `via ${result.source}` : "no data";
 
-    if (!wowClass && !wowSpec) {
+    if (!wowClass && !wowSpec && gearScore == null) {
       skippedNoData += 1;
       console.log(`  [miss ] uid=${row.userId} ${row.characterName} (${fromTag})`);
-    } else if (!willChangeClass && !willChangeSpec) {
+    } else if (!willChangeClass && !willChangeSpec && !willChangeGear) {
       unchanged += 1;
       resolved += 1;
       console.log(
-        `  [same ] uid=${row.userId} ${row.characterName} class=${wowClass || row.wowClass || "?"} spec=${wowSpec || row.wowSpec || "?"} (${fromTag})`
+        `  [same ] uid=${row.userId} ${row.characterName} class=${wowClass || row.wowClass || "?"} spec=${wowSpec || row.wowSpec || "?"} gs=${gearScore != null ? gearScore : rowGs ?? "—"} (${fromTag})`
       );
     } else {
       resolved += 1;
       const action = args.dryRun ? "would" : "write";
       console.log(
-        `  [${action}] uid=${row.userId} ${row.characterName} class=${row.wowClass || "?"}->${wowClass || row.wowClass || "?"} spec=${row.wowSpec || "?"}->${wowSpec || row.wowSpec || "?"} (${fromTag})`
+        `  [${action}] uid=${row.userId} ${row.characterName} class=${row.wowClass || "?"}->${wowClass || row.wowClass || "?"} spec=${row.wowSpec || "?"}->${wowSpec || row.wowSpec || "?"} gs=${rowGs ?? "—"}->${gearScore ?? rowGs ?? "—"} (${fromTag})`
       );
       if (!args.dryRun) {
         const update = {
@@ -169,6 +177,10 @@ function resolveDataDir(explicit) {
         };
         if (wowClass) update.wowClass = wowClass;
         if (wowSpec) update.wowSpec = wowSpec;
+        if (gearScore != null) {
+          update.gearScore = gearScore;
+          update.gearScoreSource = result?.gearScoreSource || "classic-armory";
+        }
         try {
           characterUpsert(update);
           written += 1;

@@ -26,7 +26,13 @@ import {
   syncRunnerSnapshot,
 } from "./lib/sync/runner.mjs";
 import { firstClearParticipantsByRaidFromReports as computeFirstClearParticipantsByRaid } from "./lib/compute/first-clears.mjs";
-import { createCharacterSpecResolver } from "./lib/compute/character-specs.mjs";
+import {
+  createCharacterSpecResolver,
+  classicArmoryCharacterPageUrl,
+  realmSlugForLookup,
+  fetchClassicArmoryCharacter,
+  gearScoreFromClassicArmoryCharacter,
+} from "./lib/compute/character-specs.mjs";
 import {
   buildLatestCombatTypeMap,
   combatTypeSamplesFromTable,
@@ -4631,6 +4637,415 @@ function buildCompBoardFromPayload(compPayload, existingNamesLower = new Set()) 
   };
 }
 
+/** Best single-boss percentile across tank / DPS / heal columns from active-roster `parseSummaries`. */
+function highestPeakParseFromParseSummaries(ps) {
+  if (!ps || typeof ps !== "object") return null;
+  const pairs = [
+    ["tank", Number(ps.bestTank)],
+    ["dps", Number(ps.bestDps)],
+    ["heal", Number(ps.bestHeal)],
+  ];
+  let best = null;
+  for (const [bracket, v] of pairs) {
+    if (!Number.isFinite(v) || v < 0) continue;
+    if (!best || v > best.peakParse) best = { peakParse: v, peakParseBracket: bracket };
+  }
+  return best;
+}
+
+/**
+ * Matches Events roster / leaderboard: peak for the slot's Raid Helper role (not max of all three metrics).
+ * Avoids showing heal-ranking noise for DPS/tank comp slots.
+ */
+function rosterParseBracketFromCompSlotRoleName(roleNameRaw) {
+  const r = String(roleNameRaw || "").trim();
+  if (r === "Healers") return "heal";
+  if (r === "Tanks") return "tank";
+  return "dps";
+}
+
+function roleScopedPeakFromParseSummariesForCompSlot(ps, roleNameRaw) {
+  if (!ps || typeof ps !== "object") return null;
+  const bracket = rosterParseBracketFromCompSlotRoleName(roleNameRaw);
+  const bt = finiteParseNum(ps.bestTank ?? ps.avgTank);
+  const bd = finiteParseNum(ps.bestDps ?? ps.avgDps);
+  const bh = finiteParseNum(ps.bestHeal ?? ps.avgHeal);
+  const hasTankParse = bt != null && bt > 0;
+  const hasHealParse = bh != null && bh > 0;
+  let value = null;
+  let peakParseBracket = bracket;
+  if (bracket === "heal") {
+    value = hasHealParse ? bh : bd;
+    if (!hasHealParse && bd != null) peakParseBracket = "dps";
+  } else if (bracket === "tank") {
+    value = hasTankParse ? bt : bd;
+    if (!hasTankParse && bd != null) peakParseBracket = "dps";
+  } else {
+    value = bd;
+  }
+  if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+  return { peakParse: Number(value), peakParseBracket };
+}
+
+function pickRoleScopedPeakFromCuratedAndWide(psCur, psWide, slotRoleName) {
+  const a = psCur ? roleScopedPeakFromParseSummariesForCompSlot(psCur, slotRoleName) : null;
+  const b = psWide ? roleScopedPeakFromParseSummariesForCompSlot(psWide, slotRoleName) : null;
+  if (!a && !b) return null;
+  if (!a) return { ...b, peakParseSource: "guild_recent" };
+  if (!b) return { ...a, peakParseSource: "curated" };
+  if (b.peakParse > a.peakParse) return { ...b, peakParseSource: "guild_recent" };
+  return { ...a, peakParseSource: "curated" };
+}
+
+/** Normalized RH/WCL keys for matching comp-board names to attendance leaderboard rows. */
+function peakParseLookupKeysForLeaderboardRow(row) {
+  const keys = new Set();
+  for (const x of [row?.name, row?.raidHelperName, ...(Array.isArray(row?.wclCharacters) ? row.wclCharacters : [])]) {
+    const trimmed = String(x || "").trim();
+    if (!trimmed) continue;
+    const stripped = stripRealmSuffixFromWowDisplayName(trimmed);
+    for (const cand of [stripped, trimmed]) {
+      const k = normalizeRaidHelperDisplayKey(cand);
+      if (k) keys.add(k);
+    }
+  }
+  return keys;
+}
+
+function mergeLeaderboardParseSummariesIntoMap(leaderboard, psMap) {
+  if (!psMap) return;
+  for (const row of Array.isArray(leaderboard) ? leaderboard : []) {
+    const ps = row?.parseSummaries;
+    if (!ps || typeof ps !== "object") continue;
+    const hit = highestPeakParseFromParseSummaries(ps);
+    const peakVal = hit?.peakParse != null && Number.isFinite(Number(hit.peakParse)) ? Number(hit.peakParse) : null;
+    for (const k of peakParseLookupKeysForLeaderboardRow(row)) {
+      const existing = psMap.get(k);
+      const exHit = existing ? highestPeakParseFromParseSummaries(existing) : null;
+      const exVal = exHit?.peakParse != null && Number.isFinite(Number(exHit.peakParse)) ? Number(exHit.peakParse) : null;
+      if (!existing || exVal == null || !Number.isFinite(exVal) || (peakVal != null && peakVal > exVal)) {
+        psMap.set(k, ps);
+      }
+    }
+  }
+}
+
+function peakParseKeyVariantsFromSlotName(nameRaw) {
+  const raw = String(nameRaw || "").trim();
+  if (!raw) return [];
+  const stripped = stripRealmSuffixFromWowDisplayName(raw);
+  const out = [];
+  const push = (k) => {
+    const v = String(k || "").trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  push(normalizeRaidHelperDisplayKey(stripped));
+  push(normalizeRaidHelperDisplayKey(raw));
+  const armoryChar = compSlotCharacterNameForArmoryLookup(raw);
+  if (armoryChar) push(normalizeRaidHelperDisplayKey(armoryChar));
+  return out;
+}
+
+function lookupCompBoardPeakForSlot(slot, mapCuratedPs, mapWidePs) {
+  let best = null;
+  const roleName = slot?.roleName;
+  for (const k of peakParseKeyVariantsFromSlotName(slot?.name)) {
+    const pc = mapCuratedPs.get(k) || null;
+    const pw = mapWidePs.get(k) || null;
+    const p = pickRoleScopedPeakFromCuratedAndWide(pc, pw, roleName);
+    if (!p) continue;
+    if (!best || p.peakParse > best.peakParse) best = p;
+  }
+  return best;
+}
+
+/**
+ * Peak parses from our guild's Warcraft Logs window: Event Management scope plus,
+ * when different, all recent filtered guild reports (picks best per name).
+ * Does not query non-guild public logs — those characters won't appear in guild reports.
+ */
+async function attachPeakParsesToCompBoardSlots(compBoard, guildId) {
+  if (!compBoard || !Array.isArray(compBoard.groups)) return;
+  const gid = Number(guildId);
+  if (!Number.isInteger(gid) || gid <= 0) return;
+  try {
+    await ensureGargulLootHistoryStore();
+    await ensureRhWclLinksStore();
+    const reportLimit = 40;
+    const selectedReportCodesList = Array.from(
+      new Set(
+        (gargulLootState?.selectedReportCodes || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+      gid,
+      reportLimit,
+      {
+        attendancePercentMetrics: true,
+      }
+    );
+    const selectedCurationSet = selectedReportCodesList.length > 0 ? new Set(selectedReportCodesList) : null;
+    let curatedSnapshots = raidSnapshots;
+    let curatedRankings = raidRankingPayloads;
+    if (selectedCurationSet) {
+      const filteredSnapshots = raidSnapshots.filter((snap) =>
+        selectedCurationSet.has(String(snap?.reportCode || ""))
+      );
+      if (filteredSnapshots.length > 0) {
+        curatedSnapshots = filteredSnapshots;
+        curatedRankings = raidRankingPayloads.filter((row) =>
+          selectedCurationSet.has(String(row?.reportCode || ""))
+        );
+      }
+    }
+
+    const topN = 600;
+    const curatedLeaderboard = buildRhWclLinkedAttendanceLeaderboard(
+      curatedSnapshots,
+      rhWclLinksState,
+      topN,
+      wclDisplayByLower,
+      curatedRankings
+    ).leaderboard;
+
+    const wideLeaderboard =
+      curatedSnapshots !== raidSnapshots || curatedRankings !== raidRankingPayloads
+        ? buildRhWclLinkedAttendanceLeaderboard(
+            raidSnapshots,
+            rhWclLinksState,
+            topN,
+            wclDisplayByLower,
+            raidRankingPayloads
+          ).leaderboard
+        : curatedLeaderboard;
+
+    const mapCuratedPs = new Map();
+    const mapWidePs = new Map();
+    mergeLeaderboardParseSummariesIntoMap(curatedLeaderboard, mapCuratedPs);
+    mergeLeaderboardParseSummariesIntoMap(wideLeaderboard, mapWidePs);
+
+    for (const group of compBoard.groups) {
+      for (const slot of group?.slots || []) {
+        const hit = lookupCompBoardPeakForSlot(slot, mapCuratedPs, mapWidePs);
+        if (hit) {
+          slot.peakParse = hit.peakParse;
+          slot.peakParseBracket = hit.peakParseBracket;
+          slot.peakParseSource = hit.peakParseSource;
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("[role-alerts] peak overlay failed:", error?.message || error);
+  }
+}
+
+/**
+ * Primary in-game (WCL-linked) character name for a Raid Helper signup display label.
+ */
+function rhWclLinkedInGameNameForRhDisplay(rhDisplayRaw) {
+  const k = normalizeRaidHelperDisplayKey(String(rhDisplayRaw || ""));
+  if (!k) return "";
+  for (const link of rhWclLinksState?.links || []) {
+    const lk = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    if (lk !== k) continue;
+    const names = Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : [];
+    for (const n of names) {
+      const t = String(n || "").trim();
+      if (t) return t;
+    }
+    const main = String(link?.mainCharacterName || "").trim();
+    if (main) return main;
+  }
+  return "";
+}
+
+/** Identity / Classic Armory lookup keys: RH comp label + WCL-linked in-game name (when present). */
+function roleAlertGearScoreLookupKeysForSlot(slot) {
+  const out = [];
+  const push = (k) => {
+    const v = String(k || "").trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  for (const k of peakParseKeyVariantsFromSlotName(slot?.name)) push(k);
+  const linked = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+  if (linked) {
+    push(normalizeRaidHelperDisplayKey(linked));
+    for (const k of peakParseKeyVariantsFromSlotName(linked)) push(k);
+  }
+  return out;
+}
+
+/** Character name to query Classic Armory (prefers Account Assignment WCL name over RH signup label). */
+function roleAlertArmoryCharacterNameForSlot(slot) {
+  const linked = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+  const raw = String((linked || slot?.name || "").trim());
+  if (!raw) return "";
+  return compSlotCharacterNameForArmoryLookup(raw) || raw.trim();
+}
+
+function enrichRoleAlertCompBoardDisplayNames(compBoard) {
+  if (!compBoard?.groups) return;
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      const ig = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+      slot.displayCharacterName =
+        ig ||
+        stripRealmSuffixFromWowDisplayName(String(slot?.name || "").trim()) ||
+        String(slot?.name || "").trim();
+    }
+  }
+}
+
+/**
+ * Attach persisted Classic Armory GearScore from `user_characters` onto comp slots
+ * (identity-backed keys only; no live armory HTTP here).
+ */
+function attachIdentityGearScoresToCompBoardSlots(compBoard) {
+  if (!compBoard || !Array.isArray(compBoard.groups)) return;
+  enrichRoleAlertCompBoardDisplayNames(compBoard);
+  const flavor =
+    String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
+  const publicBase =
+    String(process.env.CLASSIC_ARMORY_PUBLIC_URL || "https://classic-armory.org").replace(/\/+$/, "") ||
+    "https://classic-armory.org";
+  const region = String(wowRosterRegion() || "eu").trim().toLowerCase() || "eu";
+  const realmDefault = String(defaultWowRealmForRoster() || "").trim();
+  let rows;
+  try {
+    rows = identityCharactersListAll({});
+  } catch {
+    return;
+  }
+  const byKey = new Map();
+  for (const row of rows || []) {
+    const gs = row?.gearScore != null ? Number(row.gearScore) : NaN;
+    if (!Number.isFinite(gs)) continue;
+    const pay = {
+      gearScore: gs,
+      realm: String(row.realm || "").trim() || realmDefault,
+      characterNameStripped: stripRealmSuffixFromWowDisplayName(row.characterName || ""),
+    };
+    const k1 = String(row.characterNameKey || "").trim().toLowerCase();
+    const k2 = normalizeRaidHelperDisplayKey(row.characterName || "");
+    if (k1) byKey.set(k1, pay);
+    if (k2 && k2 !== k1) byKey.set(k2, pay);
+    const cn = String(row.characterName || "").trim();
+    const si = cn.indexOf("/");
+    if (si > 0) {
+      const left = normalizeRaidHelperDisplayKey(cn.slice(0, si));
+      const right = normalizeRaidHelperDisplayKey(cn.slice(si + 1));
+      if (left) byKey.set(left, pay);
+      if (right) byKey.set(right, pay);
+    }
+  }
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      if (!slot?.isKnownSignup || slot?.isBlocker) continue;
+      let pay = null;
+      for (const k of roleAlertGearScoreLookupKeysForSlot(slot)) {
+        pay = byKey.get(k);
+        if (pay) break;
+      }
+      if (!pay) continue;
+      slot.gearScore = pay.gearScore;
+      const nameForUrl = roleAlertArmoryCharacterNameForSlot(slot);
+      const realmRaw =
+        realmSuffixFromWowDisplayName(String(slot.name || "")) || pay.realm || realmDefault;
+      const slug = realmRaw ? realmSlugForLookup(realmRaw) : "";
+      if (slug && nameForUrl) {
+        slot.classicArmoryCharacterUrl = classicArmoryCharacterPageUrl({
+          publicBaseUrl: publicBase,
+          region,
+          flavor,
+          realmSlug: slug,
+          characterName: nameForUrl,
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Fill missing `gearScore` on comp slots via Classic Armory when identity DB
+ * has no value yet (throttled, deduped). Disable with ROLE_ALERT_LIVE_ARMORY_GS=0.
+ */
+async function attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard) {
+  if (!compBoard || !Array.isArray(compBoard.groups)) return;
+  if (String(process.env.ROLE_ALERT_LIVE_ARMORY_GS || "1").trim() === "0") return;
+
+  const flavor =
+    String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
+  const baseUrl = String(process.env.CLASSIC_ARMORY_API_BASE || "https://classic-armory.org").replace(
+    /\/+$/,
+    ""
+  );
+  const publicBase =
+    String(process.env.CLASSIC_ARMORY_PUBLIC_URL || "https://classic-armory.org").replace(/\/+$/, "") ||
+    "https://classic-armory.org";
+  const region = String(wowRosterRegion() || "eu").trim().toLowerCase() || "eu";
+  const realmDefault = String(defaultWowRealmForRoster() || "").trim();
+  if (!realmDefault) return;
+
+  const throttleMsRaw = Number(process.env.ROLE_ALERT_ARMORY_THROTTLE_MS);
+  const throttleMs =
+    Number.isFinite(throttleMsRaw) && throttleMsRaw >= 0 ? Math.min(2000, Math.floor(throttleMsRaw)) : 150;
+
+  /** @type {Map<string, { gearScore: number|null }>} */
+  const cache = new Map();
+  let networkCalls = 0;
+
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      if (!slot?.isKnownSignup || slot?.isBlocker) continue;
+      const haveGs = Number(slot?.gearScore);
+      if (Number.isFinite(haveGs) && haveGs > 0) continue;
+
+      const charName = roleAlertArmoryCharacterNameForSlot(slot);
+      if (!charName) continue;
+      const realmRaw = realmSuffixFromWowDisplayName(String(slot.name || "")) || realmDefault;
+      const slug = realmSlugForLookup(realmRaw);
+      if (!slug) continue;
+
+      const dk = `${region}|${slug}|${charName.toLowerCase()}`;
+      let entry = cache.get(dk);
+      if (entry === undefined) {
+        if (networkCalls > 0 && throttleMs > 0) {
+          await new Promise((r) => setTimeout(r, throttleMs));
+        }
+        networkCalls += 1;
+        let gs = null;
+        try {
+          const data = await fetchClassicArmoryCharacter({
+            baseUrl,
+            region,
+            flavor,
+            realmSlug: slug,
+            characterName: charName,
+          });
+          gs = data ? gearScoreFromClassicArmoryCharacter(data) : null;
+        } catch {
+          gs = null;
+        }
+        entry = { gearScore: gs != null && Number.isFinite(gs) ? gs : null };
+        cache.set(dk, entry);
+      }
+
+      if (entry.gearScore != null) {
+        slot.gearScore = entry.gearScore;
+        slot.classicArmoryCharacterUrl = classicArmoryCharacterPageUrl({
+          publicBaseUrl: publicBase,
+          region,
+          flavor,
+          realmSlug: slug,
+          characterName: charName,
+        });
+      }
+    }
+  }
+}
+
 function summarizeEventNeedsFromDetail(detail, overridesMap = {}, extraRows = []) {
   const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
   const primary = signUps.filter((entry) => String(entry?.status || "").toLowerCase() === "primary");
@@ -7172,6 +7587,11 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       compBoard = null;
       compUsed = false;
     }
+    if (compBoard) {
+      await attachPeakParsesToCompBoardSlots(compBoard, votingGuildId);
+      attachIdentityGearScoresToCompBoardSlots(compBoard);
+      await attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard);
+    }
     const summary =
       compUsed && compBoard
         ? summarizeEventNeedsFromCompBoard(detail, compBoard)
@@ -9427,6 +9847,7 @@ function identityActivityTimestamp(raw) {
 
 function identityCharacterAdminPublic(row) {
   if (!row) return null;
+  const gs = row.gearScore != null ? Number(row.gearScore) : null;
   return {
     id: row.id,
     userId: row.userId,
@@ -9434,6 +9855,9 @@ function identityCharacterAdminPublic(row) {
     wowClass: row.wowClass || "",
     wowSpec: row.wowSpec || "",
     realm: row.realm || "",
+    gearScore: Number.isFinite(gs) ? gs : null,
+    gearScoreAt: row.gearScoreAt != null ? Number(row.gearScoreAt) : null,
+    gearScoreSource: row.gearScoreSource || null,
     isMain: !!row.isMain,
     lastSeenAt: row.lastSeenAt || 0,
   };
@@ -12058,6 +12482,18 @@ function wclRankingEntryPercentile(entry) {
   return null;
 }
 
+/**
+ * WCL merged HPS payloads list DPS players with `amount: 0` but a non-zero `rankPercent`.
+ * Those rows do not correspond to the site parse % (Damage Done / meaningful HPS) and
+ * must not feed `bestHeal` deep-fallback or encounter-top badges.
+ */
+function wclRankingNoiseZeroAmountRow(entry) {
+  if (!entry || typeof entry !== "object") return false;
+  if (!Object.prototype.hasOwnProperty.call(entry, "amount")) return false;
+  const amt = Number(entry.amount);
+  return Number.isFinite(amt) && amt === 0;
+}
+
 function wclRankingCharacterDisplayName(entry) {
   if (!entry || typeof entry !== "object") return "";
   const n = String(entry.name || "").trim();
@@ -12089,7 +12525,7 @@ function collectRankPercents(node, targetName, bucket) {
 
   const tl = String(targetName || "").toLowerCase();
   const nm = wclRankingCharacterDisplayName(node).toLowerCase();
-  if (nm && nm === tl) {
+  if (nm && nm === tl && !wclRankingNoiseZeroAmountRow(node)) {
     const pct = wclRankingEntryPercentile(node);
     if (pct != null) bucket.push(pct);
   }
@@ -12140,7 +12576,10 @@ function averageRoleRankPercent(rankingsPayload, roleKey, playerName) {
   const pl = String(playerName).toLowerCase();
   for (const fight of fights) {
     const characters = fightCharactersForRole(fight, roleKey);
-    const match = characters.find((entry) => wclRankingCharacterDisplayName(entry).toLowerCase() === pl);
+    const match = characters.find(
+      (entry) =>
+        wclRankingCharacterDisplayName(entry).toLowerCase() === pl && !wclRankingNoiseZeroAmountRow(entry)
+    );
     const pct = match ? wclRankingEntryPercentile(match) : null;
     if (pct != null) values.push(pct);
   }
@@ -12157,7 +12596,10 @@ function bestRoleParse(rankingsPayload, roleKey, playerName) {
   let best = null;
   for (const fight of fights) {
     const characters = fightCharactersForRole(fight, roleKey);
-    const match = characters.find((entry) => wclRankingCharacterDisplayName(entry).toLowerCase() === pl);
+    const match = characters.find(
+      (entry) =>
+        wclRankingCharacterDisplayName(entry).toLowerCase() === pl && !wclRankingNoiseZeroAmountRow(entry)
+    );
     const pct = match ? wclRankingEntryPercentile(match) : null;
     if (pct == null) continue;
 
@@ -12804,6 +13246,7 @@ function addEncounterTopKeysFromMergedMetric(mergedPayload, rolePlural, groups, 
     const chars = fightCharactersForRole(fight, rolePlural);
     const scored = [];
     for (const entry of chars) {
+      if (wclRankingNoiseZeroAmountRow(entry)) continue;
       const nm = wclRankingCharacterDisplayName(entry);
       const rk = resolveWclRankingsNameToRosterKey(groups, nm, wclDisplayByLower);
       if (!rk) continue;
@@ -14189,6 +14632,15 @@ function stripRealmSuffixFromWowDisplayName(raw) {
     .trim();
 }
 
+/** Realm label after an em/en dash suffix on a WoW display name (`Name — Realm`), if present. */
+function realmSuffixFromWowDisplayName(raw) {
+  const m = String(raw || "")
+    .trim()
+    .replace(/\u00a0/g, " ")
+    .match(/\s*[-–—]\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-\s]*)$/u);
+  return m ? String(m[1] || "").trim() : "";
+}
+
 /**
  * Which side of `Main/Alt` style signup names is the in-game character for Raider.io (assigned toon).
  * `last` = segment after `/` (typical: account or tag / character). Override if your guild lists character first.
@@ -14197,6 +14649,18 @@ function raidHelperSignupSlashCharacterSegment() {
   const raw = String(process.env.RAID_HELPER_SIGNUP_SLASH_CHARACTER || "last").trim().toLowerCase();
   if (raw === "first" || raw === "left" || raw === "0") return "first";
   return "last";
+}
+
+/** Character name to send to Classic Armory from a comp slot label (`Account/Alt`, optional realm suffix). */
+function compSlotCharacterNameForArmoryLookup(slotNameRaw) {
+  let s = stripRealmSuffixFromWowDisplayName(String(slotNameRaw || "").trim());
+  if (!s) return "";
+  const slash = s.indexOf("/");
+  if (slash > 0) {
+    const seg = raidHelperSignupSlashCharacterSegment();
+    s = seg === "first" ? s.slice(0, slash).trim() : s.slice(slash + 1).trim();
+  }
+  return s.trim();
 }
 
 /**
@@ -19684,15 +20148,10 @@ registerSyncTask({
 });
 
 /**
- * Resolve `wow_class` and `wow_spec` for every row in `user_characters`
- * that doesn't already have them. Source priority is Battle.net summary
- * -> Battle.net specializations -> Raider.IO classic profile, all via
- * the self-contained resolver in `lib/compute/character-specs.mjs` so a
- * standalone CLI can share the exact same code path.
- *
- * Runs every 6 hours. Sequential per-character with a small inter-call
- * delay so we stay polite to both APIs even though Bnet's rate limit is
- * roughly two orders of magnitude above what we use here.
+ * Resolve `wow_class` and `wow_spec` for rows still missing either field.
+ * Classic Armory GearScore backfill is handled by the `classic-armory-gear`
+ * sync task. When Classic Armory is hit as a class/spec fallback, any
+ * returned GearScore is still persisted here.
  */
 let cachedCharacterSpecResolver = null;
 function characterSpecResolver() {
@@ -19708,6 +20167,8 @@ function characterSpecResolver() {
     raiderIoApiBase: raiderIoClassicApiBase(),
     raiderIoRegion: wowRosterRegion(),
     defaultRealm: defaultWowRealmForRoster(),
+    includeClassicArmoryGearScore:
+      String(process.env.CHARACTER_SPECS_ARMORY_GEARSCORE || "").trim() !== "0",
   });
   return cachedCharacterSpecResolver;
 }
@@ -19761,7 +20222,11 @@ async function runSyncCharacterSpecs() {
       });
       const wowClass = out?.wowClass || null;
       const wowSpec = out?.wowSpec || null;
-      if (!wowClass && !wowSpec) {
+      const gearScore =
+        out?.gearScore != null && Number.isFinite(Number(out.gearScore))
+          ? Math.round(Number(out.gearScore))
+          : null;
+      if (!wowClass && !wowSpec && gearScore == null) {
         skippedNoData += 1;
       } else {
         const update = {
@@ -19771,6 +20236,10 @@ async function runSyncCharacterSpecs() {
         };
         if (wowClass) update.wowClass = wowClass;
         if (wowSpec) update.wowSpec = wowSpec;
+        if (gearScore != null) {
+          update.gearScore = gearScore;
+          update.gearScoreSource = out?.gearScoreSource || "classic-armory";
+        }
         try {
           identityCharacterUpsert(update);
           resolved += 1;
@@ -19805,8 +20274,121 @@ registerSyncTask({
   id: "character-specs",
   intervalMs: 6 * 60 * 60_000,
   description:
-    "Resolve wow_class/wow_spec for every user_characters row from Battle.net + Raider.IO.",
+    "Resolve wow_class/wow_spec from Battle.net, Raider.IO, and Classic Armory fallback when needed.",
   run: runSyncCharacterSpecs,
+});
+
+/**
+ * POST Classic Armory `/api/v1/character` once per `user_characters` row with
+ * no `gear_score` (dedup-friendly with character-specs: that task no longer
+ * queues gear-only gaps).
+ */
+async function runSyncClassicArmoryGearScores() {
+  if (String(process.env.CHARACTER_SPECS_ARMORY_GEARSCORE || "").trim() === "0") {
+    return { rowsChanged: 0 };
+  }
+  const realmDefault = defaultWowRealmForRoster();
+  if (!realmDefault) {
+    console.warn(
+      "[sync:classic-armory-gear] WOW_GUILD_REALM/WOW_DEFAULT_REALM not set; skipping (no realm to query)."
+    );
+    return { rowsChanged: 0 };
+  }
+
+  const flavor =
+    String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
+  const baseUrl = String(process.env.CLASSIC_ARMORY_API_BASE || "https://classic-armory.org").replace(
+    /\/+$/,
+    ""
+  );
+
+  let rows;
+  try {
+    rows = identityCharactersListAll({ missingGearScoreOnly: true });
+  } catch (error) {
+    console.warn("[sync:classic-armory-gear] charactersListAll failed:", error?.message || error);
+    return { rowsChanged: 0 };
+  }
+
+  const capN = Number(process.env.CLASSIC_ARMORY_GEAR_BATCH_CAP);
+  const cap = Number.isFinite(capN) && capN > 0 ? Math.min(2000, Math.floor(capN)) : characterSpecsBatchCap();
+  const throttleN = Number(process.env.CLASSIC_ARMORY_GEAR_THROTTLE_MS);
+  const throttleMs =
+    Number.isFinite(throttleN) && throttleN >= 0 ? Math.min(5_000, Math.floor(throttleN)) : 250;
+  const region = String(wowRosterRegion() || "eu").trim().toLowerCase() || "eu";
+
+  const queue = rows.slice(0, cap);
+  let scanned = 0;
+  let filled = 0;
+  let skipped = 0;
+  let failed = 0;
+  let rowsChanged = 0;
+
+  for (const row of queue) {
+    scanned += 1;
+    const charName = compSlotCharacterNameForArmoryLookup(row.characterName);
+    if (!charName) {
+      skipped += 1;
+    } else {
+      const realmRaw = String(row.realm || "").trim() || realmDefault;
+      const slug = realmSlugForLookup(realmRaw);
+      if (!slug) {
+        skipped += 1;
+      } else {
+        try {
+          const data = await fetchClassicArmoryCharacter({
+            baseUrl,
+            region,
+            flavor,
+            realmSlug: slug,
+            characterName: charName,
+          });
+          const gearScore = data ? gearScoreFromClassicArmoryCharacter(data) : null;
+          if (gearScore != null && Number.isFinite(gearScore)) {
+            identityCharacterUpsert({
+              userId: row.userId,
+              characterName: row.characterName,
+              gearScore: Math.round(gearScore),
+              gearScoreSource: "classic-armory",
+              source: "sync:classic-armory-gear",
+            });
+            filled += 1;
+            rowsChanged += 1;
+          } else {
+            skipped += 1;
+          }
+        } catch (error) {
+          console.warn(
+            `[sync:classic-armory-gear] fetch failed for ${row.characterName}:`,
+            error?.message || error
+          );
+          failed += 1;
+        }
+      }
+    }
+    if (throttleMs > 0 && scanned < queue.length) {
+      await new Promise((r) => setTimeout(r, throttleMs));
+    }
+  }
+
+  console.log(
+    `[sync:classic-armory-gear] scanned=${scanned} filled=${filled} skipped=${skipped} failed=${failed} (queue ${queue.length}/${rows.length})`
+  );
+  return { rowsChanged };
+}
+
+const classicArmoryGearSyncIntervalMs = (() => {
+  const n = Number(process.env.CLASSIC_ARMORY_GEAR_SYNC_INTERVAL_MS);
+  if (Number.isFinite(n) && n >= 60_000) return Math.min(24 * 60 * 60_000, Math.floor(n));
+  return 3 * 60 * 60_000;
+})();
+
+registerSyncTask({
+  id: "classic-armory-gear",
+  intervalMs: classicArmoryGearSyncIntervalMs,
+  description:
+    "Fetch Classic Armory GearScore for user_characters rows where gear_score is null (POST /api/v1/character).",
+  run: runSyncClassicArmoryGearScores,
 });
 
 startSyncRunner();
