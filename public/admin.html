@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260515gs-pill-csp" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260518admin-widescreen-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -70,6 +70,7 @@
               <div class="admin-sidebar-group" data-admin-group="data-ops">
                 <div class="admin-sidebar-group-label">Data &amp; Ops</div>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="sync-center">Sync Center</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="wcl-phase-avgs">WCL Phase Averages</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="analytics">Analytics</button>
               </div>
             </nav>
@@ -93,8 +94,10 @@
                   Reload identity view
                 </button>
               </div>
-              <div id="identityDashboardHost" class="admin-grid-note">Loading identity health…</div>
-              <div id="identityBacklogHost" class="admin-grid-note">Loading review backlog…</div>
+              <div class="admin-identity-overview">
+                <div id="identityDashboardHost" class="admin-grid-note">Loading identity health…</div>
+                <div id="identityBacklogHost" class="admin-grid-note">Loading review backlog…</div>
+              </div>
               <div class="admin-identity-table-block">
                 <h3 class="section-title">Accounts and Characters</h3>
                 <p class="subtle">
@@ -235,6 +238,23 @@
               </div>
             </section>
 
+            <section class="card admin-panel" data-admin-panel="wcl-phase-avgs" id="admin-panel-wcl-phase-avgs">
+              <h3 class="section-title">WCL Phase Averages</h3>
+              <p class="subtle">
+                Best Perf. Avg from Warcraft Logs Fresh character pages (account-wide, per phase), via the WCL API
+                <code>zoneRankings</code> field — not guild-log parses. Karazhan, Gruul/Mag, and SSC/TK use zones
+                1047, 1048, and 1056.
+              </p>
+              <div class="admin-actions admin-actions--tight" style="margin: 8px 0 10px">
+                <button type="button" class="event-signup-btn" id="wclPhaseAvgsRefreshBtn">Refresh all</button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="wclPhaseAvgsReloadBtn">
+                  Reload
+                </button>
+              </div>
+              <p class="subtle" id="wclPhaseAvgsStatusLine" style="margin: 0 0 10px">Loading…</p>
+              <div id="wclPhaseAvgsTableHost" class="admin-table-wrap admin-grid-note">Loading WCL phase averages…</div>
+            </section>
+
             <section class="card admin-panel" data-admin-panel="analytics" id="admin-panel-analytics">
               <h3 class="section-title">Website Analytics</h3>
               <p class="subtle">Traffic, conversions, Join funnel, referrers, and DM subscribers.</p>
@@ -369,6 +389,20 @@
               </p>
               <label class="subtle" for="roleAlertsEventSelect">Raid event</label>
               <select id="roleAlertsEventSelect" class="admin-input"></select>
+              <label class="subtle" for="roleAlertsRaidplanUrlInput">Raid plan or event link (optional)</label>
+              <div class="admin-role-alerts-url-row">
+                <input
+                  type="text"
+                  id="roleAlertsRaidplanUrlInput"
+                  class="admin-input"
+                  placeholder="https://raid-helper.xyz/raidplan/… or events/… or paste numeric event id"
+                  autocomplete="off"
+                />
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsApplyRaidplanUrlBtn">
+                  Use this event
+                </button>
+              </div>
+              <p class="subtle" style="margin: 4px 0 0">Opens the same event as in the dropdown; use for links from Raid Helper or past events not in the future list.</p>
               <div class="admin-actions admin-actions--tight">
                 <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsReloadBtn">Reload events</button>
                 <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsSaveTargetsBtn">Save role totals</button>
@@ -497,7 +531,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260515heatmap-roster"></script>
+    <script defer src="/admin.js?v=20260517composer-slotnum-v1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

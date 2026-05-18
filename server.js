@@ -7,7 +7,7 @@ import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import {
   isHighConfidenceSource,
@@ -37,6 +37,14 @@ import {
   buildLatestCombatTypeMap,
   combatTypeSamplesFromTable,
 } from "./lib/compute/wcl-combat-types.mjs";
+import {
+  WCL_FRESH_PHASE_ZONES,
+  buildFreshCharacterPageUrl,
+  fetchCharacterPhaseAvgsFromWcl,
+  slugifyFreshCharacterName,
+  slugifyFreshRealmSlug,
+  wclFreshServerRegionFromConfig,
+} from "./lib/wcl/fresh-character-phase-avg.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -359,6 +367,9 @@ app.use("/api", async (req, res, next) => {
 
 const WCL_TOKEN_URL = "https://www.warcraftlogs.com/oauth/token";
 const WCL_GRAPHQL_URL = "https://www.warcraftlogs.com/api/v2/client";
+const WCL_FRESH_GRAPHQL_URL =
+  String(process.env.WCL_FRESH_GRAPHQL_URL || "").trim() ||
+  "https://fresh.warcraftlogs.com/api/v2/client";
 const BLIZZARD_TOKEN_URL = "https://oauth.battle.net/token";
 const WOWHEAD_TBC_NETHER_VORTEX_URL = "https://www.wowhead.com/tbc/item=30183/nether-vortex#reagent-for";
 const NETHER_VORTEX_WOW_ITEM_ID = 30183;
@@ -392,6 +403,15 @@ const TRACKED_RAIDS = {
   ],
   "Gruul's Lair": ["High King Maulgar", "Gruul the Dragonkiller"],
   "Magtheridon's Lair": ["Magtheridon"],
+  "Serpentshrine Cavern": [
+    "Hydross the Unstable",
+    "The Lurker Below",
+    "Leotheras the Blind",
+    "Fathom-Lord Karathress",
+    "Morogrim Tidewalker",
+    "Lady Vashj",
+  ],
+  "Tempest Keep": ["Al'ar", "Void Reaver", "High Astromancer Solarian", "Kael'thas Sunstrider"],
 };
 
 /** 10-player raids — omitted from guild attendance % (`attendancePercentMetrics` mode only). */
@@ -491,7 +511,6 @@ const discordSkipGuildCheck =
 const sessionCookieName = "plb_session";
 const sessionTtlMs = 1000 * 60 * 60 * 24 * 7;
 const oauthStateTtlMs = 1000 * 60 * 10;
-const authSessionSecret = process.env.AUTH_SESSION_SECRET?.trim() || randomBytes(32).toString("hex");
 const authSessions = new Map();
 
 /** Only allow relative redirect targets after Discord OAuth (open-redirect hardening). */
@@ -588,6 +607,79 @@ function pickWritableDataDir() {
 }
 const dataDir = pickWritableDataDir();
 
+const authSessionSecretPath = path.join(dataDir, ".auth-session-secret");
+const authSessionsSnapshotPath = path.join(dataDir, "auth-sessions.json");
+
+function resolveAuthSessionSecret() {
+  const fromEnv = process.env.AUTH_SESSION_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    if (existsSync(authSessionSecretPath)) {
+      const stored = readFileSync(authSessionSecretPath, "utf8").trim();
+      if (stored) return stored;
+    }
+  } catch (error) {
+    console.warn("[auth] dev session secret read failed:", error?.message || error);
+  }
+  const secret = randomBytes(32).toString("hex");
+  try {
+    writeFileSync(authSessionSecretPath, secret, "utf8");
+  } catch (error) {
+    console.warn("[auth] dev session secret write failed:", error?.message || error);
+  }
+  return secret;
+}
+
+const authSessionSecret = resolveAuthSessionSecret();
+
+function loadAuthSessionsFromDisk() {
+  try {
+    if (!existsSync(authSessionsSnapshotPath)) return;
+    const parsed = JSON.parse(readFileSync(authSessionsSnapshotPath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return;
+    const now = Date.now();
+    for (const [sessionId, session] of Object.entries(parsed)) {
+      if (!sessionId || !session?.user?.id) continue;
+      const expiresAt = Number(session.expiresAt || 0);
+      if (expiresAt > now) authSessions.set(sessionId, { ...session, expiresAt });
+    }
+  } catch (error) {
+    console.warn("[auth] session snapshot load failed:", error?.message || error);
+  }
+}
+
+let authSessionsPersistChain = Promise.resolve();
+
+function schedulePersistAuthSessions() {
+  authSessionsPersistChain = authSessionsPersistChain
+    .catch(() => {})
+    .then(async () => {
+      const snap = {};
+      const now = Date.now();
+      for (const [sessionId, session] of authSessions) {
+        if (session?.expiresAt > now) snap[sessionId] = session;
+      }
+      const tmp = `${authSessionsSnapshotPath}.tmp`;
+      await writeFile(tmp, JSON.stringify(snap), "utf8");
+      await rename(tmp, authSessionsSnapshotPath);
+    })
+    .catch((error) => {
+      console.warn("[auth] session snapshot save failed:", error?.message || error);
+    });
+}
+
+function rememberAuthSession(sessionId, session) {
+  authSessions.set(sessionId, session);
+  schedulePersistAuthSessions();
+}
+
+function forgetAuthSession(sessionId) {
+  if (sessionId) authSessions.delete(sessionId);
+  schedulePersistAuthSessions();
+}
+
+loadAuthSessionsFromDisk();
+
 /**
  * Open the SQLite-backed Item Need Submissions database. The DB is the source
  * of truth for Nether Vortex needs and P2 raid material counts; the legacy
@@ -632,6 +724,7 @@ const rhWclCharacterLinksPath = path.join(dataDir, "rh-wcl-character-links.json"
 const rhWclProposalsPath = path.join(dataDir, "rh-wcl-pending-proposals.json");
 /** Admin-hidden identity backlog items. This is only a UI resolution log; canonical data stays in SQLite. */
 const identityBacklogResolvedPath = path.join(dataDir, "identity-backlog-resolved.json");
+const wclCharacterPhaseAvgPath = path.join(dataDir, "wcl-character-phase-avg.json");
 /** Rejected proposals are remembered for 30 days so a subsequent sync doesn't re-suggest the same WCL name immediately after the admin dismissed it. */
 const RH_WCL_PROPOSAL_REJECTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const apiCacheDir = path.join(dataDir, "cache");
@@ -698,6 +791,25 @@ let rhWclProposalsWriteChain = Promise.resolve();
 let identityBacklogResolvedReady = null;
 let identityBacklogResolvedWriteChain = Promise.resolve();
 let identityBacklogResolvedState = { resolved: {} };
+let wclCharacterPhaseAvgReady = null;
+let wclCharacterPhaseAvgWriteChain = Promise.resolve();
+/** @type {{ updatedAt: number, region: string, defaultRealmSlug: string, zones: object, characters: Record<string, object> }} */
+let wclCharacterPhaseAvgState = {
+  updatedAt: 0,
+  region: "eu",
+  defaultRealmSlug: "",
+  zones: { ...WCL_FRESH_PHASE_ZONES },
+  characters: {},
+};
+/** @type {{ refreshing: boolean, startedAt: number, done: number, total: number, lastError: string }} */
+let wclPhaseAvgRefreshProgress = {
+  refreshing: false,
+  startedAt: 0,
+  done: 0,
+  total: 0,
+  lastError: "",
+};
+let wclPhaseAvgRefreshPromise = null;
 const DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE = Object.freeze({ Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 });
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
@@ -1122,7 +1234,7 @@ function getSessionFromRequest(req) {
   if (!valid) return null;
   const session = authSessions.get(sessionId);
   if (!session || session.expiresAt <= Date.now()) {
-    if (session) authSessions.delete(sessionId);
+    if (session) forgetAuthSession(sessionId);
     return null;
   }
   return { sessionId, ...session };
@@ -1130,9 +1242,14 @@ function getSessionFromRequest(req) {
 
 function pruneAuthMaps() {
   const now = Date.now();
+  let changed = false;
   for (const [k, v] of authSessions) {
-    if (!v || v.expiresAt <= now) authSessions.delete(k);
+    if (!v || v.expiresAt <= now) {
+      authSessions.delete(k);
+      changed = true;
+    }
   }
+  if (changed) schedulePersistAuthSessions();
 }
 
 function discordApiMaxRetries() {
@@ -2085,11 +2202,11 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
       leaderboard payload can stamp onto each row, so `events-roster-ui.js`
       can light up the matching achievement tile without re-fetching badge
       state. */
-  const specificRaidAwardsByUserId = (() => {
+  const specificRaidAwardsByUserId = await (async () => {
     /** @type {Map<number, string[]>} */
     const byUser = new Map();
     try {
-      const awards = resolveSpecificRaidAttendanceAwards();
+      const awards = await getSpecificRaidAttendanceAwards();
       for (const [badgeId, userIds] of awards.entries()) {
         for (const uid of userIds) {
           const list = byUser.get(uid) || [];
@@ -4585,8 +4702,138 @@ function compBlockerRowsFromPayload(compPayload, existingNamesLower = new Set())
   return out;
 }
 
+const WOW_CLASS_HEX_COLORS = {
+  Warrior: "#c79c6e",
+  Paladin: "#f58cba",
+  Hunter: "#abd473",
+  Rogue: "#fff569",
+  Priest: "#ffffff",
+  Shaman: "#0070dd",
+  Mage: "#69ccf0",
+  Warlock: "#9482c9",
+  Druid: "#ff7d0a",
+};
+
+function normalizeRaidHelperSlotColor(raw) {
+  if (raw == null || raw === "") return "";
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    const n = Math.floor(raw) >>> 0;
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `#${[r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+  }
+  let s = String(raw).trim();
+  if (!s) return "";
+  if (/^\d+$/.test(s)) return normalizeRaidHelperSlotColor(Number(s));
+  if (/^0x[0-9a-f]{6}$/i.test(s)) s = `#${s.slice(2)}`;
+  else if (/^[0-9a-f]{6}$/i.test(s)) s = `#${s}`;
+  return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : "";
+}
+
+function wowClassHexFromEnglishName(className) {
+  const label = englishWowClassDisplayFromRaidHelper(className);
+  return label ? WOW_CLASS_HEX_COLORS[label] || "" : "";
+}
+
+/** Index every comp slot position from flat `slots` and nested `groups` (for ids on empty cells). */
+function buildCompSlotTemplateIndex(compPayload) {
+  /** @type {Map<string, { id: string, rhGroupId: string, groupNumber: number, slotNumber: number }>} */
+  const index = new Map();
+  const put = (slot, groupNumber, rhGroupId) => {
+    const gn = Math.max(1, Math.floor(Number(groupNumber || slot?.groupNumber || 0)));
+    const sn = Math.max(1, Math.floor(Number(slot?.slotNumber || 0)));
+    if (!sn) return;
+    const id = String(slot?.id ?? slot?._id ?? "").trim();
+    const gid = String(rhGroupId ?? slot?.groupId ?? slot?.groupID ?? slot?.group?.id ?? gn).trim();
+    index.set(`${gn}:${sn}`, { id, rhGroupId: gid || String(gn), groupNumber: gn, slotNumber: sn });
+  };
+  for (const g of Array.isArray(compPayload?.groups) ? compPayload.groups : []) {
+    const gn = Number(g.groupNumber ?? g.number ?? 0);
+    const gid = String(g.id ?? g.groupId ?? g.groupID ?? gn).trim();
+    for (const slot of Array.isArray(g?.slots) ? g.slots : []) put(slot, gn, gid);
+  }
+  for (const slot of Array.isArray(compPayload?.slots) ? compPayload.slots : []) {
+    put(slot, slot?.groupNumber, slot?.groupId ?? slot?.groupID ?? slot?.group?.id);
+  }
+  return index;
+}
+
+function compSlotLooksEmpty(slot) {
+  return !String(slot?.name || "").trim() && !slot?.isBlocker;
+}
+
+function createEmptyCompBoardSlot({ groupNumber, slotNumber, rhGroupId, id }) {
+  return {
+    id: String(id || ""),
+    rhGroupId: String(rhGroupId || groupNumber),
+    slotNumber,
+    name: "",
+    roleName: "Melee",
+    className: "",
+    specName: "",
+    isBlocker: false,
+    isKnownSignup: false,
+    isEmpty: true,
+    color: "",
+    isConfirmed: "",
+    classEmoteId: "",
+    specEmoteId: "",
+  };
+}
+
+function padCompGroupSlots(groupSlots, groupNumber, slotCount, templateIndex) {
+  const gn = Math.max(1, Math.floor(Number(groupNumber || 0)));
+  const byNum = new Map();
+  for (const slot of groupSlots || []) {
+    const sn = Math.max(1, Math.min(slotCount, Math.floor(Number(slot?.slotNumber || 0)) || byNum.size + 1));
+    slot.slotNumber = sn;
+    if (compSlotLooksEmpty(slot)) slot.isEmpty = true;
+    else slot.isEmpty = false;
+    byNum.set(sn, slot);
+  }
+  const defaultGid =
+    String(byNum.get(1)?.rhGroupId || "").trim() ||
+    String(templateIndex.get(`${gn}:1`)?.rhGroupId || "").trim() ||
+    String(gn);
+  const padded = [];
+  for (let sn = 1; sn <= slotCount; sn += 1) {
+    let slot = byNum.get(sn);
+    if (!slot) {
+      const tpl = templateIndex.get(`${gn}:${sn}`);
+      slot = createEmptyCompBoardSlot({
+        groupNumber: gn,
+        slotNumber: sn,
+        rhGroupId: tpl?.rhGroupId || defaultGid,
+        id: tpl?.id || "",
+      });
+    }
+    if (!slot.rhGroupId) slot.rhGroupId = defaultGid;
+    padded.push(slot);
+  }
+  return padded;
+}
+
+function compSlotsListFromPayload(compPayload) {
+  const flat = Array.isArray(compPayload?.slots) ? compPayload.slots : [];
+  if (flat.length) return flat;
+  const nested = [];
+  for (const g of Array.isArray(compPayload?.groups) ? compPayload.groups : []) {
+    const gn = Number(g.groupNumber ?? g.number ?? 0);
+    const gid = g.id ?? g.groupId ?? g.groupID;
+    for (const slot of Array.isArray(g?.slots) ? g.slots : []) {
+      nested.push({
+        ...slot,
+        groupNumber: slot?.groupNumber ?? gn,
+        groupId: slot?.groupId ?? slot?.groupID ?? gid,
+      });
+    }
+  }
+  return nested;
+}
+
 function buildCompBoardFromPayload(compPayload, existingNamesLower = new Set()) {
-  const slots = Array.isArray(compPayload?.slots) ? compPayload.slots : [];
+  const slots = compSlotsListFromPayload(compPayload);
   const groupCount = Math.max(1, Math.floor(Number(compPayload?.groupCount || 5)));
   const slotCount = Math.max(1, Math.floor(Number(compPayload?.slotCount || 5)));
   const roleCounts = { Tanks: 0, Healers: 0, Melee: 0, Ranged: 0 };
@@ -4595,6 +4842,7 @@ function buildCompBoardFromPayload(compPayload, existingNamesLower = new Set()) 
     const name = String(slot?.name || "").trim();
     const className = String(slot?.className || "").trim();
     const specName = String(slot?.specName || "").trim();
+    const englishClass = englishWowClassDisplayFromRaidHelper(className);
     const roleName = inferRoleFromClassSpecName(className, specName, name);
     if (roleName) roleCounts[roleName] = Number(roleCounts[roleName] || 0) + 1;
     const groupNumber = Math.max(1, Math.floor(Number(slot?.groupNumber || 1)));
@@ -4602,28 +4850,35 @@ function buildCompBoardFromPayload(compPayload, existingNamesLower = new Set()) 
     const entryProbe = {
       name,
       roleName,
-      className: englishWowClassDisplayFromRaidHelper(className),
+      className: englishClass,
       specName: normalizeProtectionSpecLabel(specName),
     };
     const isBlocker = signupLooksLikeBlocker(entryProbe);
     const isKnownSignup = existingNamesLower.has(String(name || "").toLowerCase());
+    const rhGroupId = String(
+      slot?.groupId ?? slot?.group?.id ?? slot?.groupID ?? slot?.groupNumber ?? groupNumber ?? ""
+    ).trim();
+    const isEmpty = !name && !isBlocker;
     groups[idx].slots.push({
       id: String(slot?.id || ""),
+      rhGroupId: rhGroupId || String(groupNumber),
       slotNumber: Number(slot?.slotNumber || 0),
       name,
       roleName,
-      className: englishWowClassDisplayFromRaidHelper(className),
+      className: englishClass,
       specName: normalizeProtectionSpecLabel(specName),
       isBlocker,
       isKnownSignup,
-      color: String(slot?.color || ""),
+      isEmpty,
+      color: normalizeRaidHelperSlotColor(slot?.color) || wowClassHexFromEnglishName(className) || "",
       isConfirmed: String(slot?.isConfirmed || ""),
       classEmoteId: String(slot?.classEmoteId || ""),
       specEmoteId: String(slot?.specEmoteId || ""),
     });
   }
+  const templateIndex = buildCompSlotTemplateIndex(compPayload);
   for (const group of groups) {
-    group.slots.sort((a, b) => Number(a.slotNumber || 0) - Number(b.slotNumber || 0));
+    group.slots = padCompGroupSlots(group.slots, group.groupNumber, slotCount, templateIndex);
   }
   return {
     id: String(compPayload?.id || ""),
@@ -4760,14 +5015,12 @@ function lookupCompBoardPeakForSlot(slot, mapCuratedPs, mapWidePs) {
 }
 
 /**
- * Peak parses from our guild's Warcraft Logs window: Event Management scope plus,
- * when different, all recent filtered guild reports (picks best per name).
- * Does not query non-guild public logs — those characters won't appear in guild reports.
+ * Peak-parse lookup maps for Role Alerts (comp slots + signup pool cards).
+ * @returns {Promise<{ mapCuratedPs: Map<string, object>, mapWidePs: Map<string, object> } | null>}
  */
-async function attachPeakParsesToCompBoardSlots(compBoard, guildId) {
-  if (!compBoard || !Array.isArray(compBoard.groups)) return;
+async function buildRoleAlertPeakParseMaps(guildId) {
   const gid = Number(guildId);
-  if (!Number.isInteger(gid) || gid <= 0) return;
+  if (!Number.isInteger(gid) || gid <= 0) return null;
   try {
     await ensureGargulLootHistoryStore();
     await ensureRhWclLinksStore();
@@ -4825,19 +5078,42 @@ async function attachPeakParsesToCompBoardSlots(compBoard, guildId) {
     const mapWidePs = new Map();
     mergeLeaderboardParseSummariesIntoMap(curatedLeaderboard, mapCuratedPs);
     mergeLeaderboardParseSummariesIntoMap(wideLeaderboard, mapWidePs);
-
-    for (const group of compBoard.groups) {
-      for (const slot of group?.slots || []) {
-        const hit = lookupCompBoardPeakForSlot(slot, mapCuratedPs, mapWidePs);
-        if (hit) {
-          slot.peakParse = hit.peakParse;
-          slot.peakParseBracket = hit.peakParseBracket;
-          slot.peakParseSource = hit.peakParseSource;
-        }
-      }
-    }
+    return { mapCuratedPs, mapWidePs };
   } catch (error) {
     console.warn("[role-alerts] peak overlay failed:", error?.message || error);
+    return null;
+  }
+}
+
+function applyPeakParseMapsToCompBoardSlots(compBoard, maps) {
+  if (!compBoard || !Array.isArray(compBoard.groups) || !maps) return;
+  const { mapCuratedPs, mapWidePs } = maps;
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      const hit = lookupCompBoardPeakForSlot(slot, mapCuratedPs, mapWidePs);
+      if (hit) {
+        slot.peakParse = hit.peakParse;
+        slot.peakParseBracket = hit.peakParseBracket;
+        slot.peakParseSource = hit.peakParseSource;
+      }
+    }
+  }
+}
+
+/**
+ * Attach peak parses to `allSignups` rows (same WCL window as comp board).
+ * Each row must have `name` and `roleName` (Raid Helper role bucket).
+ */
+function applyPeakParseMapsToRoleAlertAllSignups(allSignups, maps) {
+  if (!Array.isArray(allSignups) || !maps) return;
+  const { mapCuratedPs, mapWidePs } = maps;
+  for (const row of allSignups) {
+    const hit = lookupCompBoardPeakForSlot(row, mapCuratedPs, mapWidePs);
+    if (hit) {
+      row.peakParse = hit.peakParse;
+      row.peakParseBracket = hit.peakParseBracket;
+      row.peakParseSource = hit.peakParseSource;
+    }
   }
 }
 
@@ -4894,6 +5170,273 @@ function enrichRoleAlertCompBoardDisplayNames(compBoard) {
         ig ||
         stripRealmSuffixFromWowDisplayName(String(slot?.name || "").trim()) ||
         String(slot?.name || "").trim();
+    }
+  }
+}
+
+function enrichRoleAlertAllSignupDisplayNames(allSignups) {
+  if (!Array.isArray(allSignups)) return;
+  for (const row of allSignups) {
+    const ig = rhWclLinkedInGameNameForRhDisplay(row?.name || "");
+    row.displayCharacterName =
+      ig ||
+      stripRealmSuffixFromWowDisplayName(String(row?.name || "").trim()) ||
+      String(row?.name || "").trim();
+  }
+}
+
+/**
+ * Identity-backed GearScore for Role Alert signup rows (same lookup keys as comp slots).
+ */
+function attachIdentityGearScoresToRoleAlertAllSignups(allSignups) {
+  if (!Array.isArray(allSignups)) return;
+  enrichRoleAlertAllSignupDisplayNames(allSignups);
+  const flavor =
+    String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
+  const publicBase =
+    String(process.env.CLASSIC_ARMORY_PUBLIC_URL || "https://classic-armory.org").replace(/\/+$/, "") ||
+    "https://classic-armory.org";
+  const region = String(wowRosterRegion() || "eu").trim().toLowerCase() || "eu";
+  const realmDefault = String(defaultWowRealmForRoster() || "").trim();
+  let rows;
+  try {
+    rows = identityCharactersListAll({});
+  } catch {
+    return;
+  }
+  const byKey = new Map();
+  for (const row of rows || []) {
+    const gs = row?.gearScore != null ? Number(row.gearScore) : NaN;
+    if (!Number.isFinite(gs)) continue;
+    const pay = {
+      gearScore: gs,
+      realm: String(row.realm || "").trim() || realmDefault,
+      characterNameStripped: stripRealmSuffixFromWowDisplayName(row.characterName || ""),
+    };
+    const k1 = String(row.characterNameKey || "").trim().toLowerCase();
+    const k2 = normalizeRaidHelperDisplayKey(row.characterName || "");
+    if (k1) byKey.set(k1, pay);
+    if (k2 && k2 !== k1) byKey.set(k2, pay);
+    const cn = String(row.characterName || "").trim();
+    const si = cn.indexOf("/");
+    if (si > 0) {
+      const left = normalizeRaidHelperDisplayKey(cn.slice(0, si));
+      const right = normalizeRaidHelperDisplayKey(cn.slice(si + 1));
+      if (left) byKey.set(left, pay);
+      if (right) byKey.set(right, pay);
+    }
+  }
+  for (const row of allSignups) {
+    let pay = null;
+    for (const k of roleAlertGearScoreLookupKeysForSlot(row)) {
+      pay = byKey.get(k);
+      if (pay) break;
+    }
+    if (!pay) continue;
+    row.gearScore = pay.gearScore;
+    const nameForUrl = roleAlertArmoryCharacterNameForSlot(row);
+    const realmRaw =
+      realmSuffixFromWowDisplayName(String(row.name || "")) || pay.realm || realmDefault;
+    const slug = realmRaw ? realmSlugForLookup(realmRaw) : "";
+    if (slug && nameForUrl) {
+      row.classicArmoryCharacterUrl = classicArmoryCharacterPageUrl({
+        publicBaseUrl: publicBase,
+        region,
+        flavor,
+        realmSlug: slug,
+        characterName: nameForUrl,
+      });
+    }
+  }
+}
+
+async function attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups) {
+  if (!Array.isArray(allSignups)) return;
+  if (String(process.env.ROLE_ALERT_LIVE_ARMORY_GS || "1").trim() === "0") return;
+
+  const flavor =
+    String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
+  const baseUrl = String(process.env.CLASSIC_ARMORY_API_BASE || "https://classic-armory.org").replace(
+    /\/+$/,
+    ""
+  );
+  const publicBase =
+    String(process.env.CLASSIC_ARMORY_PUBLIC_URL || "https://classic-armory.org").replace(/\/+$/, "") ||
+    "https://classic-armory.org";
+  const region = String(wowRosterRegion() || "eu").trim().toLowerCase() || "eu";
+  const realmDefault = String(defaultWowRealmForRoster() || "").trim();
+  if (!realmDefault) return;
+
+  const throttleMsRaw = Number(process.env.ROLE_ALERT_ARMORY_THROTTLE_MS);
+  const throttleMs =
+    Number.isFinite(throttleMsRaw) && throttleMsRaw >= 0 ? Math.min(2000, Math.floor(throttleMsRaw)) : 150;
+
+  /** @type {Map<string, { gearScore: number|null }>} */
+  const cache = new Map();
+  let networkCalls = 0;
+
+  for (const row of allSignups) {
+    const haveGs = Number(row?.gearScore);
+    if (Number.isFinite(haveGs) && haveGs > 0) continue;
+
+    const charName = roleAlertArmoryCharacterNameForSlot(row);
+    if (!charName) continue;
+    const realmRaw = realmSuffixFromWowDisplayName(String(row.name || "")) || realmDefault;
+    const slug = realmSlugForLookup(realmRaw);
+    if (!slug) continue;
+
+    const dk = `${region}|${slug}|${charName.toLowerCase()}`;
+    let entry = cache.get(dk);
+    if (entry === undefined) {
+      if (networkCalls > 0 && throttleMs > 0) {
+        await new Promise((r) => setTimeout(r, throttleMs));
+      }
+      networkCalls += 1;
+      let gs = null;
+      try {
+        const data = await fetchClassicArmoryCharacter({
+          baseUrl,
+          region,
+          flavor,
+          realmSlug: slug,
+          characterName: charName,
+        });
+        gs = data ? gearScoreFromClassicArmoryCharacter(data) : null;
+      } catch {
+        gs = null;
+      }
+      entry = { gearScore: gs != null && Number.isFinite(gs) ? gs : null };
+      cache.set(dk, entry);
+    }
+
+    if (entry.gearScore != null) {
+      row.gearScore = entry.gearScore;
+      row.classicArmoryCharacterUrl = classicArmoryCharacterPageUrl({
+        publicBaseUrl: publicBase,
+        region,
+        flavor,
+        realmSlug: slug,
+        characterName: charName,
+      });
+    }
+  }
+}
+
+/**
+ * Distinct WCL guild reports per canonical user, using the same scope as the
+ * roster leaderboard "Events" column: all materialised `raid_appearances`, or
+ * the admin Event Management selection when `selectedReportCodes` is non-empty.
+ */
+function roleAlertsWclEventsContext() {
+  const selectedCuratedCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+  let wclEventByUserId = new Map();
+  let distinctReportsInDb = 0;
+  try {
+    distinctReportsInDb = raidAppearancesDistinctReportCount();
+  } catch {
+    distinctReportsInDb = 0;
+  }
+  let active = false;
+  let scope = "unavailable";
+  if (materializeRaidAppearancesEnabled()) {
+    try {
+      if (distinctReportsInDb > 0) {
+        wclEventByUserId = raidAppearancesCountsByUser(
+          selectedCuratedCodes.length ? { reportCodes: selectedCuratedCodes } : {}
+        );
+        active = true;
+        scope = selectedCuratedCodes.length ? "curated" : "all_materialised";
+      }
+    } catch {
+      wclEventByUserId = new Map();
+      active = false;
+      scope = "unavailable";
+    }
+  }
+  return {
+    active,
+    scope,
+    wclEventByUserId,
+    curatedReportCount: selectedCuratedCodes.length,
+    materialisedReportCount: distinctReportsInDb,
+  };
+}
+
+function resolveRoleAlertCanonicalUserId({ signupDiscordUserId, displayName, discordUserIdByRhKey }) {
+  const d = String(signupDiscordUserId || "").trim();
+  if (d) {
+    const u = identityUserGetByDiscordId(d);
+    if (u?.id) return Number(u.id);
+  }
+  const primaryName = String(displayName || "").trim();
+  const key = normalizeRaidHelperDisplayKey(primaryName);
+  const linked = key ? String(discordUserIdByRhKey.get(key) || "").trim() : "";
+  if (linked) {
+    const u = identityUserGetByDiscordId(linked);
+    if (u?.id) return Number(u.id);
+  }
+  if (key) {
+    const u = identityUserGetByRaidHelperKey(key);
+    if (u?.id) return Number(u.id);
+  }
+  if (primaryName) {
+    const u = identityUserGetByCharacterName(primaryName);
+    if (u?.id) return Number(u.id);
+  }
+  return null;
+}
+
+function attachWclEventCountsToRoleAlertAllSignups(allSignups, discordUserIdByRhKey, wclCtx) {
+  if (!Array.isArray(allSignups)) return;
+  const { active, wclEventByUserId } = wclCtx;
+  for (const row of allSignups) {
+    const uid = resolveRoleAlertCanonicalUserId({
+      signupDiscordUserId: row.userId,
+      displayName: row.name,
+      discordUserIdByRhKey,
+    });
+    row.canonicalUserId = uid;
+    if (!active) {
+      row.wclEventCount = null;
+      continue;
+    }
+    row.wclEventCount = uid != null ? wclEventByUserId.get(Number(uid)) ?? 0 : null;
+  }
+}
+
+function attachWclEventCountsToCompBoardSlots(compBoard, discordUserIdByRhKey, wclCtx) {
+  if (!compBoard || !Array.isArray(compBoard.groups)) return;
+  enrichRoleAlertCompBoardDisplayNames(compBoard);
+  const { active, wclEventByUserId } = wclCtx;
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      if (!slot?.isKnownSignup || slot?.isBlocker) {
+        slot.wclEventCount = null;
+        slot.canonicalUserId = null;
+        continue;
+      }
+      const disp = String(slot?.displayCharacterName || "").trim();
+      const rhName = String(slot?.name || "").trim();
+      let uid = resolveRoleAlertCanonicalUserId({
+        signupDiscordUserId: "",
+        displayName: disp || rhName,
+        discordUserIdByRhKey,
+      });
+      if (uid == null && rhName && normalizeRaidHelperDisplayKey(rhName) !== normalizeRaidHelperDisplayKey(disp)) {
+        uid = resolveRoleAlertCanonicalUserId({
+          signupDiscordUserId: "",
+          displayName: rhName,
+          discordUserIdByRhKey,
+        });
+      }
+      slot.canonicalUserId = uid;
+      if (!active) {
+        slot.wclEventCount = null;
+        continue;
+      }
+      slot.wclEventCount = uid != null ? wclEventByUserId.get(Number(uid)) ?? 0 : null;
     }
   }
 }
@@ -5181,6 +5724,80 @@ function summarizeEventNeedsFromCompBoard(detail, compBoard) {
     currentByClass,
     blockerSpecNeedsByRole,
   };
+}
+
+/** Normalised Raid Helper signup keys on the comp board (RH label + display name) for matching `signUps` rows. */
+function collectCompBoardRhKeysForSignupMatch(compBoard) {
+  const keys = new Set();
+  if (!compBoard || !Array.isArray(compBoard.groups)) return keys;
+  for (const group of compBoard.groups) {
+    for (const slot of Array.isArray(group?.slots) ? group.slots : []) {
+      if (!slot?.isKnownSignup) continue;
+      const n = String(slot?.name || "").trim();
+      const disp = String(slot?.displayCharacterName || "").trim();
+      const k = normalizeRaidHelperDisplayKey(n);
+      if (k) keys.add(k);
+      const kd = normalizeRaidHelperDisplayKey(disp);
+      if (kd) keys.add(kd);
+    }
+  }
+  return keys;
+}
+
+/**
+ * Every Raid Helper signup for an event (all statuses), with comp placement flag — admin Role Alerts only.
+ * `wclEventCount` / `canonicalUserId` are attached in the analyze handler when materialised raid appearances exist.
+ * @returns {Array<object>}
+ */
+function buildRoleAlertAllSignupsRows(detail, compBoard, compUsed) {
+  const compKeys = compUsed ? collectCompBoardRhKeysForSignupMatch(compBoard) : new Set();
+  const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+  const rows = signUps.map((entry) => {
+    const status = String(entry?.status || "").trim().toLowerCase() || "unknown";
+    const name = String(entry?.name || "").trim();
+    const rhKey = normalizeRaidHelperDisplayKey(name);
+    const roleName = normalizeRaidHelperRoleLabel(
+      String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+    );
+    const rhSignupClassRaw = raidHelperClassNameFromSignUpEntry(entry);
+    const playableRaw = raidHelperPlayableClassRawFromSignUpEntry(entry);
+    const className = englishWowClassDisplayFromRaidHelper(rhSignupClassRaw);
+    const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+    const isPrimary = status === "primary";
+    const isBlocker = Boolean(isPrimary && signupLooksLikeBlocker(entry));
+    const onComp = Boolean(compUsed && rhKey && compKeys.has(rhKey));
+    let poolKind = roleAlertPoolKindFromRhSignupClassRaw(rhSignupClassRaw);
+    /** Raid Helper status can mark absence without using the Bench/Tentative class column. */
+    if (status === "absence" || status === "absent") {
+      poolKind = "absent";
+    }
+    const patchClassName =
+      poolKind !== "raiders" && playableRaw
+        ? englishWowClassDisplayFromRaidHelper(playableRaw)
+        : className;
+    return {
+      signupId: Number(entry?.id || 0) || 0,
+      userId: String(entry?.userId || "").trim(),
+      name,
+      status,
+      roleName,
+      className,
+      specName,
+      isBlocker,
+      onComp,
+      rhSignupClassRaw,
+      poolKind,
+      raidHelperPatchClassName: patchClassName,
+      specEmoteId: String(entry?.specEmoteId ?? entry?.spec_emote_id ?? "").trim(),
+      classEmoteId: String(entry?.classEmoteId ?? entry?.class_emote_id ?? entry?.classEmote ?? "").trim(),
+    };
+  });
+  rows.sort((a, b) => {
+    const s = String(a.status).localeCompare(String(b.status));
+    if (s !== 0) return s;
+    return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" });
+  });
+  return rows;
 }
 
 function roleAlertDesiredByRoleFromSummary(summary) {
@@ -6074,21 +6691,26 @@ async function raidHelperEventDetailFallbackFromPublicSnapshot(eventId) {
   const match = await publicFutureEventSnapshotFallback(eventId);
   if (!match) return null;
   const event = match.event || {};
+  const stored = Array.isArray(event.raidHelperSignUps) ? event.raidHelperSignUps : [];
   const confirmedRoster = Array.isArray(event.confirmedRoster) ? event.confirmedRoster : [];
-  const signUps = confirmedRoster
-    .map((row, idx) => ({
-      id: idx + 1,
-      userId: String(row?.discordUserId || ""),
-      name: String(row?.name || row?.characterName || "").trim(),
-      status: "primary",
-      roleName: String(row?.roleName || ""),
-      className: String(row?.raidHelperClassName || row?.className || ""),
-      specName: String(row?.raidHelperSpecName || row?.specName || ""),
-      cRoleName: String(row?.roleName || ""),
-      cSpecName: String(row?.raidHelperSpecName || row?.specName || ""),
-      specIcon: String(row?.specIconUrl || ""),
-    }))
-    .filter((row) => row.name);
+  const signUps = stored.length
+    ? stored
+        .map((row) => (row && typeof row === "object" ? row : null))
+        .filter((row) => row && String(row?.name || "").trim())
+    : confirmedRoster
+        .map((row, idx) => ({
+          id: idx + 1,
+          userId: String(row?.discordUserId || ""),
+          name: String(row?.name || row?.characterName || "").trim(),
+          status: "primary",
+          roleName: String(row?.roleName || ""),
+          className: String(row?.raidHelperClassName || row?.className || ""),
+          specName: String(row?.raidHelperSpecName || row?.specName || ""),
+          cRoleName: String(row?.roleName || ""),
+          cSpecName: String(row?.raidHelperSpecName || row?.specName || ""),
+          specIcon: String(row?.specIconUrl || ""),
+        }))
+        .filter((row) => row.name);
   return {
     id: String(event.id || eventId),
     title: String(event.title || event.name || "Unnamed Event"),
@@ -7439,7 +8061,7 @@ app.get("/auth/discord/callback", async (req, res) => {
     }
 
     const sessionId = randomBytes(24).toString("hex");
-    authSessions.set(sessionId, {
+    rememberAuthSession(sessionId, {
       user: {
         id: String(me.id || ""),
         username: String(me.username || ""),
@@ -7459,7 +8081,7 @@ app.get("/auth/discord/callback", async (req, res) => {
 
 app.post("/auth/logout", (req, res) => {
   const current = getSessionFromRequest(req);
-  if (current?.sessionId) authSessions.delete(current.sessionId);
+  if (current?.sessionId) forgetAuthSession(current.sessionId);
   res.setHeader("Set-Cookie", serializeSessionCookie("expired", 0));
   return res.json({ ok: true });
 });
@@ -7578,17 +8200,21 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     let compBoard = null;
     let compUsed = false;
     try {
-      const comp = await raidHelperRequest(`/comps/${encodeURIComponent(eventId)}`);
-      compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
-      compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
-      compUsed = true;
+      const comp = await fetchRaidHelperCompPayload(eventId);
+      if (comp) {
+        compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+        compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
+        compUsed = true;
+      }
     } catch {
       compBlockers = [];
       compBoard = null;
       compUsed = false;
     }
+    let peakMaps = null;
     if (compBoard) {
-      await attachPeakParsesToCompBoardSlots(compBoard, votingGuildId);
+      peakMaps = await buildRoleAlertPeakParseMaps(votingGuildId);
+      if (peakMaps) applyPeakParseMapsToCompBoardSlots(compBoard, peakMaps);
       attachIdentityGearScoresToCompBoardSlots(compBoard);
       await attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard);
     }
@@ -7633,6 +8259,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       if (k) guildRoleByRhKey.set(k, normalizeRhWclGuildRole(link?.guildRole));
       if (k && String(link?.discordUserId || "").trim()) discordUserIdByRhKey.set(k, String(link.discordUserId).trim());
     }
+    const wclCtx = roleAlertsWclEventsContext();
+    if (compBoard) attachWclEventCountsToCompBoardSlots(compBoard, discordUserIdByRhKey, wclCtx);
     const eventSignupExclusions = buildRoleAlertEventSignupExclusions(detail, rhWclLinksState.links);
     let participantSignals = new Map();
     try {
@@ -7708,6 +8336,11 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       }
       if (!specQualified) continue;
       const recent = Array.isArray(sig.samples) && sig.samples.length ? sig.samples[0] : null;
+      let wclEventCount = null;
+      if (wclCtx.active) {
+        const canon = identityUserGetByDiscordId(userId);
+        if (canon?.id) wclEventCount = wclCtx.wclEventByUserId.get(Number(canon.id)) ?? 0;
+      }
       candidateTargets.push({
         userId,
         displayName: String(sig.displayName || userId),
@@ -7720,6 +8353,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         dmSentForEvent: Boolean(alreadyDmSentByUserId[userId]),
         dmSentAt: Number(alreadyDmSentByUserId[userId] || 0),
         raidsSeen: Number(sig.raidsSeen || 0),
+        wclEventCount,
         inGuild: row.inGuild === true,
         discordMembershipConfirmed: row.inGuild === true,
         discordMembershipTrustedFromAccountAssignment: false,
@@ -7729,6 +8363,13 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
       reachableByRole[role] = candidateTargets.filter((row) => Array.isArray(row.matchedRoles) && row.matchedRoles.includes(role)).length;
     }
+    const allSignups = buildRoleAlertAllSignupsRows(detail, compBoard, compUsed);
+    attachWclEventCountsToRoleAlertAllSignups(allSignups, discordUserIdByRhKey, wclCtx);
+    if (peakMaps) applyPeakParseMapsToRoleAlertAllSignups(allSignups, peakMaps);
+    enrichRoleAlertAllSignupDisplayNames(allSignups);
+    attachIdentityGearScoresToRoleAlertAllSignups(allSignups);
+    await attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups);
+    const wclPhaseAvgs = await buildWclPhaseAvgsByRhKeyForRoleAlerts();
     return res.json({
       ok: true,
       event: {
@@ -7736,9 +8377,17 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         title: String(detail?.title || detail?.name || "Unnamed Event"),
         startTime: Number(detail?.startTime || detail?.time || 0),
       },
+      wclEventsMeta: {
+        available: wclCtx.active,
+        scope: wclCtx.scope,
+        curatedReportCount: wclCtx.curatedReportCount,
+        materialisedReportCount: wclCtx.materialisedReportCount,
+      },
+      wclPhaseAvgs,
       compUsed,
       compBlockerRowsAdded: compBlockers.length,
       compBoard,
+      allSignups,
       signups: {
         total: summary.signupsTotal,
         primary: summary.primaryTotal,
@@ -7765,6 +8414,114 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
   }
 });
 
+app.get("/api/admin/wcl-phase-avgs", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureWclCharacterPhaseAvgStore();
+    return res.json(wclPhaseAvgPublicPayload());
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load WCL phase averages" });
+  }
+});
+
+app.post("/api/admin/wcl-phase-avgs/refresh", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    if (wclPhaseAvgRefreshProgress.refreshing || wclPhaseAvgRefreshPromise) {
+      return res.json({
+        ok: true,
+        alreadyRunning: true,
+        message: "Refresh already in progress",
+        meta: wclPhaseAvgPublicPayload().meta,
+      });
+    }
+    const characterKeys = Array.isArray(req.body?.characterKeys)
+      ? req.body.characterKeys.map((k) => String(k || "").trim().toLowerCase()).filter(Boolean)
+      : null;
+    const roster = listRosterCharactersForWclPhaseAvg({ characterKeys });
+    void runWclCharacterPhaseAvgRefresh({ characterKeys });
+    return res.json({
+      ok: true,
+      startedAt: Date.now(),
+      total: roster.length,
+      message: `Refreshing WCL Best Perf. Avg for ${roster.length} character(s)…`,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to start WCL phase average refresh" });
+  }
+});
+
+app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const eventId = String(req.body?.eventId || "").trim();
+    if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
+    const compId = String(req.body?.compId || eventId).trim();
+    const slotPatches = Array.isArray(req.body?.slotPatches) ? req.body.slotPatches : [];
+    const signupPatches = Array.isArray(req.body?.signupPatches) ? req.body.signupPatches : [];
+    if (!slotPatches.length && !signupPatches.length) {
+      return res.status(400).json({ ok: false, error: "slotPatches or signupPatches must be non-empty" });
+    }
+    /** @type {Array<{ step: string, index: number, error: string, statusCode?: number, signupId?: string, groupId?: string, slotId?: string }>} */
+    const errors = [];
+    const applied = { signupPatches: 0, slotPatches: 0 };
+    for (let i = 0; i < signupPatches.length; i += 1) {
+      const p = signupPatches[i];
+      const signupId = String(p?.signupId || "").trim();
+      const body = p?.body && typeof p.body === "object" ? p.body : null;
+      if (!signupId || !body) {
+        errors.push({ step: "signupPatch", index: i, signupId, error: "missing signupId or body" });
+        continue;
+      }
+      try {
+        await raidHelperPatchEventSignup(eventId, signupId, body);
+        applied.signupPatches += 1;
+      } catch (e) {
+        errors.push({
+          step: "signupPatch",
+          index: i,
+          signupId,
+          error: e?.message || String(e),
+          statusCode: e?.statusCode,
+        });
+      }
+    }
+    for (let i = 0; i < slotPatches.length; i += 1) {
+      const p = slotPatches[i];
+      const groupId = String(p?.groupId || "").trim();
+      const slotId = String(p?.slotId || "").trim();
+      const body = p?.body && typeof p.body === "object" ? p.body : null;
+      if (!groupId || !slotId || !body) {
+        errors.push({ step: "slotPatch", index: i, groupId, slotId, error: "missing groupId, slotId, or body" });
+        continue;
+      }
+      try {
+        await raidHelperPatchCompSlot(compId, groupId, slotId, body);
+        applied.slotPatches += 1;
+      } catch (e) {
+        errors.push({
+          step: "slotPatch",
+          index: i,
+          groupId,
+          slotId,
+          error: e?.message || String(e),
+          statusCode: e?.statusCode,
+        });
+      }
+    }
+    return res.json({
+      ok: errors.length === 0,
+      applied,
+      errors,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to apply Raid Helper draft" });
+  }
+});
+
 app.post("/api/admin/role-alerts/send", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
@@ -7786,9 +8543,11 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
     let compBlockers = [];
     let compBoard = null;
     try {
-      const comp = await raidHelperRequest(`/comps/${encodeURIComponent(eventId)}`);
-      compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
-      compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
+      const comp = await fetchRaidHelperCompPayload(eventId);
+      if (comp) {
+        compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+        compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
+      }
     } catch {
       compBlockers = [];
       compBoard = null;
@@ -10745,7 +11504,145 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
        `report_started_at`. */
     reportCodes: ["XVH1LmTWYDq6Zr7t"],
   },
+  {
+    badgeId: "ssc-first-event",
+    label: "SSC First Event",
+    description:
+      "Participated in the guild's first Serpentshrine Cavern raid event (May 21, 2026). Awarded to linked raiders with a primary Raid Helper signup on that event and/or a Warcraft Logs appearance from that night.",
+    icon: "/images/achievements/ssc-first-event.png",
+    /* May 21 2026 00:00 CEST = May 20 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 4, 20, 22, 0, 0),
+    /* May 22 2026 04:00 UTC — pad past midnight local */
+    endMs: Date.UTC(2026, 4, 22, 4, 0, 0),
+    reportCodes: String(process.env.SSC_FIRST_EVENT_WCL_REPORT_CODES || "")
+      .split(/[,\s]+/)
+      .map((x) => x.trim())
+      .filter(Boolean),
+    raidHelperEventIds: String(process.env.SSC_FIRST_EVENT_RH_ID || "")
+      .split(/[,\s]+/)
+      .map((x) => x.trim())
+      .filter(Boolean),
+    raidHelperFirstEventTitleKeywords: ["ssc", "serpentshrine"],
+  },
 ];
+
+const SPECIFIC_RAID_ATTENDANCE_AWARDS_CACHE_TTL_MS = 5 * 60 * 1000;
+let specificRaidAttendanceAwardsCache = {
+  at: 0,
+  /** @type {Map<string, Set<number>>} */
+  awards: new Map(),
+};
+let specificRaidAttendanceAwardsRefreshPromise = null;
+
+function raidHelperEventMatchesTitleKeywords(event, keywords) {
+  const text = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
+  for (const kw of keywords || []) {
+    const k = String(kw || "").trim().toLowerCase();
+    if (!k) continue;
+    if (k === "ssc") {
+      if (/\bssc\b/.test(text) || text.includes("serpentshrine")) return true;
+    } else if (text.includes(k)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function findFirstRaidHelperEventIdByTitleKeywords(keywords) {
+  const serverId = raidHelperDiscordGuildId() || "711838953430319115";
+  const events = await fetchRaidHelperServerEvents(serverId);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const past = events
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+      event,
+    }))
+    .filter((row) => row.id && row.startTime > 0 && row.startTime <= nowSec)
+    .filter((row) => raidHelperEventMatchesTitleKeywords(row.event, keywords))
+    .sort((a, b) => a.startTime - b.startTime);
+  return past[0]?.id || "";
+}
+
+async function raidHelperPrimarySignupUserIdsForEvent(eventId) {
+  /** @type {Set<number>} */
+  const out = new Set();
+  const eid = String(eventId || "").trim();
+  if (!eid) return out;
+  const detail = await fetchRaidHelperEventDetail(eid);
+  if (!detail) return out;
+  const excludedClasses = new Set(["Absence", "Bench", "Tentative", "Late"]);
+  const signUps = Array.isArray(detail.signUps) ? detail.signUps : [];
+  for (const entry of signUps) {
+    if (String(entry?.status || "").toLowerCase() !== "primary") continue;
+    if (excludedClasses.has(raidHelperClassNameFromSignUpEntry(entry))) continue;
+    const key = normalizeRaidHelperDisplayKey(String(entry?.name || ""));
+    if (!key) continue;
+    const user = identityUserGetByRaidHelperKey(key);
+    if (user?.id) out.add(user.id);
+  }
+  return out;
+}
+
+function wclUserIdsForSpecificRaidAttendanceBadge(cfg) {
+  try {
+    return raidAppearancesUserIdsInDateRange({
+      startMs: cfg.startMs,
+      endMs: cfg.endMs,
+      reportCodes: Array.isArray(cfg.reportCodes) && cfg.reportCodes.length ? cfg.reportCodes : undefined,
+    });
+  } catch (error) {
+    console.warn(
+      `[badges] raid_appearances lookup failed for ${cfg.badgeId}:`,
+      error?.message || error
+    );
+    return new Set();
+  }
+}
+
+async function refreshSpecificRaidAttendanceAwardsCache() {
+  /** @type {Map<string, Set<number>>} */
+  const out = new Map();
+  for (const cfg of SPECIFIC_RAID_ATTENDANCE_BADGES) {
+    const userIds = wclUserIdsForSpecificRaidAttendanceBadge(cfg);
+    const rhEventIds = Array.isArray(cfg.raidHelperEventIds) ? cfg.raidHelperEventIds : [];
+    if (rhEventIds.length) {
+      for (const eid of rhEventIds) {
+        const rhIds = await raidHelperPrimarySignupUserIdsForEvent(eid);
+        for (const uid of rhIds) userIds.add(uid);
+      }
+    } else if (Array.isArray(cfg.raidHelperFirstEventTitleKeywords) && cfg.raidHelperFirstEventTitleKeywords.length) {
+      try {
+        const firstId = await findFirstRaidHelperEventIdByTitleKeywords(cfg.raidHelperFirstEventTitleKeywords);
+        if (firstId) {
+          const rhIds = await raidHelperPrimarySignupUserIdsForEvent(firstId);
+          for (const uid of rhIds) userIds.add(uid);
+        }
+      } catch (error) {
+        console.warn(
+          `[badges] Raid Helper lookup failed for ${cfg.badgeId}:`,
+          error?.message || error
+        );
+      }
+    }
+    out.set(cfg.badgeId, userIds);
+  }
+  specificRaidAttendanceAwardsCache = { at: Date.now(), awards: out };
+  return out;
+}
+
+async function getSpecificRaidAttendanceAwards() {
+  const age = Date.now() - specificRaidAttendanceAwardsCache.at;
+  if (specificRaidAttendanceAwardsCache.awards.size && age < SPECIFIC_RAID_ATTENDANCE_AWARDS_CACHE_TTL_MS) {
+    return specificRaidAttendanceAwardsCache.awards;
+  }
+  if (!specificRaidAttendanceAwardsRefreshPromise) {
+    specificRaidAttendanceAwardsRefreshPromise = refreshSpecificRaidAttendanceAwardsCache().finally(() => {
+      specificRaidAttendanceAwardsRefreshPromise = null;
+    });
+  }
+  return specificRaidAttendanceAwardsRefreshPromise;
+}
 
 /** Set of every `badgeId` covered by `SPECIFIC_RAID_ATTENDANCE_BADGES`. */
 const SPECIFIC_RAID_ATTENDANCE_BADGE_IDS = new Set(
@@ -10759,23 +11656,20 @@ const SPECIFIC_RAID_ATTENDANCE_BADGE_IDS = new Set(
  * without re-querying SQLite per user.
  */
 function resolveSpecificRaidAttendanceAwards() {
+  const cached = specificRaidAttendanceAwardsCache.awards;
+  const age = Date.now() - specificRaidAttendanceAwardsCache.at;
+  if (cached.size && age < SPECIFIC_RAID_ATTENDANCE_AWARDS_CACHE_TTL_MS) {
+    return cached;
+  }
   /** @type {Map<string, Set<number>>} */
   const out = new Map();
   for (const cfg of SPECIFIC_RAID_ATTENDANCE_BADGES) {
-    let userIds = new Set();
-    try {
-      userIds = raidAppearancesUserIdsInDateRange({
-        startMs: cfg.startMs,
-        endMs: cfg.endMs,
-        reportCodes: Array.isArray(cfg.reportCodes) ? cfg.reportCodes : undefined,
-      });
-    } catch (error) {
-      console.warn(
-        `[badges] raid_appearances lookup failed for ${cfg.badgeId}:`,
-        error?.message || error
-      );
-    }
-    out.set(cfg.badgeId, userIds);
+    out.set(cfg.badgeId, wclUserIdsForSpecificRaidAttendanceBadge(cfg));
+  }
+  if (!specificRaidAttendanceAwardsRefreshPromise) {
+    specificRaidAttendanceAwardsRefreshPromise = refreshSpecificRaidAttendanceAwardsCache().finally(() => {
+      specificRaidAttendanceAwardsRefreshPromise = null;
+    });
   }
   return out;
 }
@@ -13719,6 +14613,299 @@ async function queryWcl(query, variables) {
   return job;
 }
 
+/** Fresh TBC subdomain GraphQL (character `zoneRankings` / Best Perf. Avg). */
+let wclFreshGraphqlChain = Promise.resolve();
+
+function wclFreshGraphqlMinIntervalMs() {
+  const n = Number(process.env.WCL_FRESH_GRAPHQL_MIN_INTERVAL_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(10_000, n);
+  return 350;
+}
+
+async function queryFreshWcl(query, variables) {
+  const run = async () => {
+    const gap = wclFreshGraphqlMinIntervalMs();
+    if (gap > 0) await sleepMs(gap);
+
+    const token = await getAccessToken();
+    const maxAttempts = wclMaxRetries();
+    let lastStatus = 0;
+    let lastMessage = "";
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const response = await fetch(WCL_FRESH_GRAPHQL_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query, variables }),
+      });
+
+      if (response.ok) {
+        const payload = await response.json();
+        if (payload.errors?.length) {
+          throw new Error(payload.errors[0]?.message || "WCL Fresh GraphQL error");
+        }
+        return payload?.data;
+      }
+
+      lastStatus = response.status;
+      lastMessage = await response.text();
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt === maxAttempts) break;
+
+      const retryAfterRaw = response.headers.get("retry-after");
+      const retryAfterSec = retryAfterRaw ? Number(retryAfterRaw) : NaN;
+      let delayMs =
+        Number.isFinite(retryAfterSec) && retryAfterSec > 0
+          ? Math.min(120_000, Math.round(retryAfterSec * 1000))
+          : Math.min(90_000, 2500 * 2 ** (attempt - 1));
+      delayMs += Math.floor(Math.random() * 500);
+      await sleepMs(delayMs);
+    }
+
+    throw new Error(
+      `WCL Fresh API request failed (${lastStatus})${lastMessage ? `: ${lastMessage.slice(0, 180)}` : ""}`
+    );
+  };
+
+  const job = wclFreshGraphqlChain.then(run);
+  wclFreshGraphqlChain = job.catch(() => {});
+  return job;
+}
+
+function wclFreshCharacterMinIntervalMs() {
+  const n = Number(process.env.WCL_FRESH_CHARACTER_MIN_INTERVAL_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(30_000, n);
+  return 800;
+}
+
+function sanitizeWclCharacterPhaseAvgState(raw) {
+  const zones = { ...WCL_FRESH_PHASE_ZONES };
+  const characters = {};
+  const src = raw?.characters && typeof raw.characters === "object" ? raw.characters : {};
+  for (const [key, row] of Object.entries(src)) {
+    const k = String(key || "").trim().toLowerCase();
+    if (!k || !row || typeof row !== "object") continue;
+    const fin = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.round(n * 10) / 10 : null;
+    };
+    characters[k] = {
+      characterName: String(row.characterName || "").trim(),
+      realm: String(row.realm || "").trim(),
+      realmSlug: slugifyFreshRealmSlug(row.realmSlug || row.realm),
+      karaBestPerfAvg: fin(row.karaBestPerfAvg),
+      gruulMagBestPerfAvg: fin(row.gruulMagBestPerfAvg),
+      sscTkBestPerfAvg: fin(row.sscTkBestPerfAvg),
+      fetchedAt: Number(row.fetchedAt || 0) || 0,
+      errors: Array.isArray(row.errors) ? row.errors.map((e) => String(e || "").trim()).filter(Boolean) : [],
+    };
+  }
+  return {
+    updatedAt: Number(raw?.updatedAt || 0) || 0,
+    region: String(raw?.region || wowRosterRegion()).trim().toLowerCase() || "eu",
+    defaultRealmSlug: slugifyFreshRealmSlug(raw?.defaultRealmSlug || defaultWowRealmForRoster()),
+    zones,
+    characters,
+  };
+}
+
+async function persistWclCharacterPhaseAvgStore() {
+  const tmpPath = `${wclCharacterPhaseAvgPath}.tmp`;
+  const json = JSON.stringify(wclCharacterPhaseAvgState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, wclCharacterPhaseAvgPath);
+}
+
+async function ensureWclCharacterPhaseAvgStore() {
+  if (wclCharacterPhaseAvgReady) return wclCharacterPhaseAvgReady;
+  wclCharacterPhaseAvgReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(wclCharacterPhaseAvgPath, "utf8");
+      wclCharacterPhaseAvgState = sanitizeWclCharacterPhaseAvgState(JSON.parse(raw));
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        console.warn("[wcl-phase-avg] load failed:", error?.message || error);
+      }
+      wclCharacterPhaseAvgState = sanitizeWclCharacterPhaseAvgState({
+        defaultRealmSlug: slugifyFreshRealmSlug(defaultWowRealmForRoster()),
+      });
+    }
+  })();
+  return wclCharacterPhaseAvgReady;
+}
+
+function listRosterCharactersForWclPhaseAvg({ characterKeys = null } = {}) {
+  const realmDefault = slugifyFreshRealmSlug(defaultWowRealmForRoster());
+  const byKey = new Map();
+  for (const row of identityCharactersListAll({})) {
+    const characterName = String(row?.characterName || "").trim();
+    const key = String(row?.characterNameKey || slugifyFreshCharacterName(characterName)).trim().toLowerCase();
+    if (!characterName || !key) continue;
+    if (byKey.has(key)) continue;
+    const realmSlug = slugifyFreshRealmSlug(row?.realm || defaultWowRealmForRoster());
+    byKey.set(key, {
+      characterKey: key,
+      characterName,
+      realm: String(row?.realm || defaultWowRealmForRoster() || "").trim(),
+      realmSlug: realmSlug || realmDefault,
+    });
+  }
+  let list = [...byKey.values()];
+  if (Array.isArray(characterKeys) && characterKeys.length) {
+    const want = new Set(characterKeys.map((k) => String(k || "").trim().toLowerCase()).filter(Boolean));
+    list = list.filter((r) => want.has(r.characterKey));
+  }
+  list.sort((a, b) => a.characterName.localeCompare(b.characterName, undefined, { sensitivity: "base" }));
+  return list;
+}
+
+/** Lookup map for raid roster cards: rhNameKey → phase Best Perf. Avg. */
+async function buildWclPhaseAvgsByRhKeyForRoleAlerts() {
+  await ensureWclCharacterPhaseAvgStore();
+  const byRhKey = {};
+  for (const [characterKey, row] of Object.entries(wclCharacterPhaseAvgState.characters || {})) {
+    if (!row || typeof row !== "object") continue;
+    const entry = {
+      kara: row.karaBestPerfAvg ?? null,
+      gruulMag: row.gruulMagBestPerfAvg ?? null,
+      sscTk: row.sscTkBestPerfAvg ?? null,
+    };
+    const keys = new Set(
+      [characterKey, normalizeRaidHelperDisplayKey(row.characterName)].filter(Boolean)
+    );
+    for (const k of keys) byRhKey[k] = entry;
+  }
+  return { byRhKey, updatedAt: Number(wclCharacterPhaseAvgState.updatedAt || 0) || 0 };
+}
+
+function wclPhaseAvgPublicPayload() {
+  const characters = wclCharacterPhaseAvgState.characters || {};
+  const rows = Object.entries(characters)
+    .map(([characterKey, row]) => ({
+      characterKey,
+      ...row,
+      wclUrl: buildFreshCharacterPageUrl({
+        region: wclCharacterPhaseAvgState.region,
+        realmSlug: row.realmSlug || wclCharacterPhaseAvgState.defaultRealmSlug,
+        nameSlug: slugifyFreshCharacterName(row.characterName),
+        zoneId: WCL_FRESH_PHASE_ZONES.kara,
+      }),
+    }))
+    .sort((a, b) => String(a.characterName).localeCompare(String(b.characterName), undefined, { sensitivity: "base" }));
+  const errorCount = rows.filter((r) => (r.errors || []).length > 0).length;
+  return {
+    ok: true,
+    updatedAt: wclCharacterPhaseAvgState.updatedAt,
+    region: wclCharacterPhaseAvgState.region,
+    defaultRealmSlug: wclCharacterPhaseAvgState.defaultRealmSlug,
+    zones: wclCharacterPhaseAvgState.zones,
+    characters: rows,
+    meta: {
+      characterCount: rows.length,
+      errorCount,
+      refreshing: wclPhaseAvgRefreshProgress.refreshing,
+      progress: { ...wclPhaseAvgRefreshProgress },
+    },
+  };
+}
+
+async function runWclCharacterPhaseAvgRefresh({ characterKeys = null } = {}) {
+  if (wclPhaseAvgRefreshPromise) return wclPhaseAvgRefreshPromise;
+
+  const roster = listRosterCharactersForWclPhaseAvg({ characterKeys });
+  const region = wowRosterRegion();
+  const serverRegion = wclFreshServerRegionFromConfig(region);
+  const defaultRealmSlug = slugifyFreshRealmSlug(defaultWowRealmForRoster());
+
+  wclPhaseAvgRefreshProgress = {
+    refreshing: true,
+    startedAt: Date.now(),
+    done: 0,
+    total: roster.length,
+    lastError: "",
+  };
+
+  wclPhaseAvgRefreshPromise = (async () => {
+    await ensureWclCharacterPhaseAvgStore();
+    wclCharacterPhaseAvgState.region = region;
+    wclCharacterPhaseAvgState.defaultRealmSlug = defaultRealmSlug;
+    wclCharacterPhaseAvgState.zones = { ...WCL_FRESH_PHASE_ZONES };
+
+    const minIntervalMs = wclFreshCharacterMinIntervalMs();
+
+    for (const entry of roster) {
+      try {
+        const result = await fetchCharacterPhaseAvgsFromWcl({
+          queryFreshWcl,
+          serverRegion,
+          realmSlug: entry.realmSlug || defaultRealmSlug,
+          characterName: entry.characterName,
+          zones: WCL_FRESH_PHASE_ZONES,
+        });
+        wclCharacterPhaseAvgState.characters[entry.characterKey] = {
+          characterName: entry.characterName,
+          realm: entry.realm,
+          realmSlug: entry.realmSlug || defaultRealmSlug,
+          karaBestPerfAvg: result.karaBestPerfAvg,
+          gruulMagBestPerfAvg: result.gruulMagBestPerfAvg,
+          sscTkBestPerfAvg: result.sscTkBestPerfAvg,
+          fetchedAt: Date.now(),
+          errors: result.errors || [],
+        };
+        await throttleBetweenWclPhaseAvgCharacters(minIntervalMs);
+      } catch (err) {
+        wclPhaseAvgRefreshProgress.lastError = err?.message || String(err);
+        wclCharacterPhaseAvgState.characters[entry.characterKey] = {
+          characterName: entry.characterName,
+          realm: entry.realm,
+          realmSlug: entry.realmSlug || defaultRealmSlug,
+          karaBestPerfAvg: null,
+          gruulMagBestPerfAvg: null,
+          sscTkBestPerfAvg: null,
+          fetchedAt: Date.now(),
+          errors: [wclPhaseAvgRefreshProgress.lastError],
+        };
+      }
+      wclPhaseAvgRefreshProgress.done += 1;
+      if (
+        wclPhaseAvgRefreshProgress.done % 5 === 0 ||
+        wclPhaseAvgRefreshProgress.done === roster.length
+      ) {
+        wclCharacterPhaseAvgState.updatedAt = Date.now();
+        wclCharacterPhaseAvgWriteChain = wclCharacterPhaseAvgWriteChain.catch(() => {}).then(async () => {
+          await persistWclCharacterPhaseAvgStore();
+        });
+      }
+    }
+
+    wclCharacterPhaseAvgState.updatedAt = Date.now();
+    wclCharacterPhaseAvgWriteChain = wclCharacterPhaseAvgWriteChain.catch(() => {}).then(async () => {
+      await persistWclCharacterPhaseAvgStore();
+    });
+    await wclCharacterPhaseAvgWriteChain;
+  })()
+    .catch((err) => {
+      wclPhaseAvgRefreshProgress.lastError = err?.message || String(err);
+      console.warn("[wcl-phase-avg] refresh failed:", wclPhaseAvgRefreshProgress.lastError);
+    })
+    .finally(() => {
+      wclPhaseAvgRefreshProgress.refreshing = false;
+      wclPhaseAvgRefreshPromise = null;
+    });
+
+  return wclPhaseAvgRefreshPromise;
+}
+
+async function throttleBetweenWclPhaseAvgCharacters(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return;
+  await sleepMs(n);
+}
+
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
@@ -13752,6 +14939,8 @@ function resolveTrackedRaidZoneName(zoneRaw) {
   if (z.includes("karazhan") || /\bkara\b/.test(z)) return "Karazhan";
   if (z.includes("gruul") && z.includes("lair")) return "Gruul's Lair";
   if (z.includes("magtheridon")) return "Magtheridon's Lair";
+  if (z.includes("serpentshrine") || /\bssc\b/.test(z)) return "Serpentshrine Cavern";
+  if (z.includes("tempest") || z.includes("the eye") || z === "tk") return "Tempest Keep";
   return null;
 }
 
@@ -14181,7 +15370,7 @@ function eventDmHeaderImageUrl(eventDetail, eventTitle = "") {
   else if (raidName === "Gruul's Lair") headerPath = "/raid-images/event-header-gruul.png";
   else if (raidName === "Magtheridon's Lair") headerPath = "/raid-images/event-header-magtheridon.png";
   else if (raidName === "Serpentshrine Cavern") headerPath = "/raid-images/event-header-ssc.png";
-  else if (raidName === "The Eye") headerPath = "/raid-images/event-header-tk.png";
+  else if (raidName === "Tempest Keep") headerPath = "/raid-images/event-header-tk.png";
   const fallback = absoluteUrlFromPublicBase(headerPath || raidImageFromTitle(String(eventTitle || "")));
   return fallback || "";
 }
@@ -14227,7 +15416,7 @@ function trackedRaidNameFromEventTitle(eventTitle) {
   const text = normalizeText(String(eventTitle || ""));
   if (!text) return null;
   if (text.includes("serpentshrine") || /\bssc\b/.test(text)) return "Serpentshrine Cavern";
-  if (text.includes("tempest keep") || text.includes("the eye") || /\btk\b/.test(text)) return "The Eye";
+  if (text.includes("tempest keep") || text.includes("the eye") || /\btk\b/.test(text)) return "Tempest Keep";
   if (text.includes("karazhan") || /\bkara\b/.test(text)) return "Karazhan";
   if (text.includes("gruul")) return "Gruul's Lair";
   if (text.includes("magtheridon")) return "Magtheridon's Lair";
@@ -14312,7 +15501,25 @@ function reportWeekdayNormalizedInCalendarZone(startTimeRaw) {
   return normalizeText(weekdayLong);
 }
 
-/** Gruul/Mag → Thursday; Karazhan → Sunday (per report `startTime` in {@link wclCalendarTimeZone}). */
+/** Comma-separated weekdays when P2 logs (SSC / Tempest Keep) count as guild raid night. */
+function wclPhase2RaidWeekdaysNormalized() {
+  const raw = String(
+    process.env.WCL_P2_RAID_WEEKDAYS || process.env.WCL_SSC_RAID_WEEKDAYS || "sunday,thursday"
+  ).trim();
+  if (!raw || raw === "*") return null;
+  const days = raw
+    .split(",")
+    .map((d) => normalizeText(d.trim().toLowerCase()))
+    .filter(Boolean);
+  return days.length ? new Set(days) : null;
+}
+
+/** @deprecated Use {@link wclPhase2RaidWeekdaysNormalized}. */
+function wclSscRaidWeekdaysNormalized() {
+  return wclPhase2RaidWeekdaysNormalized();
+}
+
+/** Gruul/Mag → Thursday; Karazhan → Sunday; P2 → {@link wclPhase2RaidWeekdaysNormalized} (per report `startTime` in {@link wclCalendarTimeZone}). */
 function trackedRaidAllowedOnCalendarWeekday(raidName, weekdayNorm, options = {}) {
   if (!raidName || !Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, raidName)) return false;
   if (raidName === "Karazhan") {
@@ -14320,6 +15527,11 @@ function trackedRaidAllowedOnCalendarWeekday(raidName, weekdayNorm, options = {}
     return weekdayNorm === "sunday";
   }
   if (raidName === "Gruul's Lair" || raidName === "Magtheridon's Lair") return weekdayNorm === "thursday";
+  if (raidName === "Serpentshrine Cavern" || raidName === "Tempest Keep") {
+    const allowed = wclPhase2RaidWeekdaysNormalized();
+    if (!allowed) return true;
+    return allowed.has(weekdayNorm);
+  }
   return false;
 }
 
@@ -14454,6 +15666,35 @@ function raidHelperClassNameFromSignUpEntry(entry) {
   ).trim();
   if (/^\d+$/.test(s)) return "";
   return s;
+}
+
+/** WoW class string when Raid Helper marks the signup as Bench/Tentative/etc. but exposes the real class elsewhere. */
+function raidHelperPlayableClassRawFromSignUpEntry(entry) {
+  if (!entry || typeof entry !== "object") return "";
+  const candidates = [
+    entry.actualClassName,
+    entry.actualClass,
+    entry.wowClassName,
+    entry.playerClassName,
+    entry.character?.className,
+    entry.character?.class,
+    entry.selectedClassName,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (!s || /^\d+$/.test(s)) continue;
+    if (RH_SIGNUP_EXCLUDED_CLASSES.has(s)) continue;
+    return s;
+  }
+  return "";
+}
+
+function roleAlertPoolKindFromRhSignupClassRaw(rhClassRaw) {
+  const rh = String(rhClassRaw || "").trim();
+  if (rh === "Tentative") return "tentative";
+  if (rh === "Bench") return "bench";
+  if (rh === "Absence" || rh === "Late") return "absent";
+  return "raiders";
 }
 
 /**
@@ -15999,25 +17240,132 @@ async function fetchRaidHelperServerEvents(serverId) {
   return events;
 }
 
+/**
+ * Normalize Raid Helper `GET /api/v4/events/{id}` JSON so callers always see
+ * `signUps` at the top level (unwrap `event`, alias `signups`).
+ * @param {unknown} body
+ * @returns {Record<string, unknown> | null}
+ */
+function raidHelperEventDetailFromFetchedBody(body) {
+  if (!body || typeof body !== "object") return null;
+  const nested = body.event && typeof body.event === "object" ? body.event : null;
+  /** @type {Record<string, unknown>} */
+  const merged = nested ? { ...body, ...nested } : { ...body };
+  const signUps =
+    (Array.isArray(merged.signUps) ? merged.signUps : null) ??
+    (Array.isArray(merged.signups) ? merged.signups : null) ??
+    [];
+  if (
+    !signUps.length &&
+    nested &&
+    !Array.isArray(nested.signUps) &&
+    !Array.isArray(nested.signups) &&
+    !Array.isArray(body.signUps) &&
+    !Array.isArray(body.signups)
+  ) {
+    console.warn(
+      "[raid-helper] GET /events/:id payload has no signUps/signups array (nested event present:",
+      Boolean(nested),
+      "top-level keys:",
+      Object.keys(body).slice(0, 12).join(",") + ")"
+    );
+  }
+  return { ...merged, signUps };
+}
+
+/** Fields sufficient to re-run `buildRoleAlertAllSignupsRows` / class inference from a snapshot. */
+function compactRaidHelperSignUpForSnapshot(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const pick = (k) => {
+    const v = entry[k];
+    return v !== undefined ? v : undefined;
+  };
+  return {
+    id: pick("id"),
+    userId: pick("userId"),
+    name: pick("name"),
+    status: pick("status"),
+    roleName: pick("roleName"),
+    role: pick("role"),
+    cRoleName: pick("cRoleName"),
+    cRole: pick("cRole"),
+    className: pick("className"),
+    class: pick("class"),
+    specName: pick("specName"),
+    cSpecName: pick("cSpecName"),
+    spec: pick("spec"),
+    wowClass: pick("wowClass"),
+    playerClass: pick("playerClass"),
+    characterClass: pick("characterClass"),
+    character: pick("character"),
+  };
+}
+
 async function fetchRaidHelperEventDetail(eventId) {
-  const apiKey = process.env.RAID_HELPER_API_KEY;
+  const trimmedKey = String(process.env.RAID_HELPER_API_KEY || "").trim();
   const url = `${RAID_HELPER_API_URL}/events/${eventId}`;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", Authorization: apiKey },
-    });
-    if (res.ok) {
-      try {
-        return await res.json();
-      } catch {
-        return null;
-      }
+  const baseHeaders = { Accept: "application/json" };
+  /** Auth header must be omitted when empty — Raid Helper returns 401 for `Authorization:`. @see https://raid-helper.dev/documentation/api */
+  const authedHeaders = trimmedKey ? { ...baseHeaders, Authorization: trimmedKey } : baseHeaders;
+
+  const tryOnce = async (headers) => {
+    const res = await fetch(url, { headers });
+    if (!res.ok) return { ok: false, status: res.status };
+    try {
+      const body = await res.json();
+      return { ok: true, body };
+    } catch {
+      return { ok: true, body: null };
     }
-    const retryable = res.status === 429 || (res.status >= 500 && res.status <= 504);
-    if (!retryable || attempt >= 1) return null;
-    await sleepMs(250);
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let result = await tryOnce(authedHeaders);
+    if (result.ok && result.body) return raidHelperEventDetailFromFetchedBody(result.body);
+    if (result.ok && !result.body) return null;
+
+    const status = result.status;
+    const retryable = status === 429 || (status >= 500 && status <= 504);
+    if (retryable && attempt < 1) {
+      await sleepMs(250);
+      continue;
+    }
+
+    if ((status === 401 || status === 403) && trimmedKey) {
+      const pub = await tryOnce(baseHeaders);
+      if (pub.ok && pub.body) return raidHelperEventDetailFromFetchedBody(pub.body);
+    }
+    return null;
   }
   return null;
+}
+
+/**
+ * GET /comps/{id} — Raid Helper documents this as not requiring authorization.
+ * Try with API key when set; fall back to a public read on failure.
+ */
+async function fetchRaidHelperCompPayload(compId) {
+  const id = String(compId || "").trim();
+  if (!id) return null;
+  const url = `${RAID_HELPER_API_URL}/comps/${encodeURIComponent(id)}`;
+  const trimmedKey = String(process.env.RAID_HELPER_API_KEY || "").trim();
+
+  const once = async (withAuth) => {
+    /** @type {Record<string, string>} */
+    const headers = { Accept: "application/json" };
+    if (withAuth && trimmedKey) headers.Authorization = trimmedKey;
+    const res = await fetch(url, { headers });
+    if (!res.ok) return null;
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  let payload = trimmedKey ? await once(true) : null;
+  if (!payload) payload = await once(false);
+  return payload;
 }
 
 /** Memo TTL for full-history Raid Helper signup scans (one detail fetch per past event). */
@@ -16233,6 +17581,42 @@ async function raidHelperRequest(pathname, { method = "GET", body } = {}) {
     throw err;
   }
   return parsed;
+}
+
+/**
+ * Raid Helper v4: PATCH /api/v4/comps/{compId}/groups/{groupId}/slots/{slotId}
+ *
+ * Minimal valid body mirrors GET slot fields (see GET /comps/{id}): `name`, `className`, `specName`,
+ * `roleName`, `groupNumber`, `slotNumber`, optional `color`, `isConfirmed`, `classEmoteId`, `specEmoteId`.
+ * Clearing a slot: send empty `name` (and typically blank class/spec) if the API accepts it; otherwise
+ * restore the slot template from a fresh comp fetch before PATCHing.
+ */
+async function raidHelperPatchCompSlot(compId, groupId, slotId, body) {
+  const c = String(compId || "").trim();
+  const g = String(groupId || "").trim();
+  const s = String(slotId || "").trim();
+  if (!c || !g || !s) throw new Error("raidHelperPatchCompSlot: missing compId, groupId, or slotId");
+  return raidHelperRequest(
+    `/comps/${encodeURIComponent(c)}/groups/${encodeURIComponent(g)}/slots/${encodeURIComponent(s)}`,
+    { method: "PATCH", body: body && typeof body === "object" ? body : {} }
+  );
+}
+
+/**
+ * Raid Helper v4: PATCH /api/v4/events/{eventId}/signups/{signupId}
+ *
+ * Same shape as POST /signups used in this codebase: `userId`, `name`, `className`, `specName`, `roleName`, `status`.
+ * Bench / Tentative / Absence / Late use `className` tokens matching {@link raidHelperClassNameFromSignUpEntry}
+ * (e.g. `"Bench"`, `"Tentative"`). Returning to the primary roster sets `className` to the playable English class.
+ */
+async function raidHelperPatchEventSignup(eventId, signupId, body) {
+  const e = String(eventId || "").trim();
+  const sid = String(signupId || "").trim();
+  if (!e || !sid) throw new Error("raidHelperPatchEventSignup: missing eventId or signupId");
+  return raidHelperRequest(`/events/${encodeURIComponent(e)}/signups/${encodeURIComponent(sid)}`, {
+    method: "PATCH",
+    body: body && typeof body === "object" ? body : {},
+  });
 }
 
 function raidHelperSignupProfileFromEntry(entry, fallbackName = "") {
@@ -16572,8 +17956,8 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
       );
       let compBlockers = [];
       try {
-        const comp = await raidHelperRequest(`/comps/${encodeURIComponent(event.id)}`);
-        compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
+        const comp = await fetchRaidHelperCompPayload(event.id);
+        if (comp) compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
       } catch {
         compBlockers = [];
       }
@@ -16667,6 +18051,9 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
             : null,
         rosterByRole,
         confirmedRoster,
+        raidHelperSignUps: signUps
+          .map((entry) => compactRaidHelperSignUpForSnapshot(entry))
+          .filter(Boolean),
       };
     });
 
@@ -16689,7 +18076,8 @@ app.get("/api/admin/raid-helper/comps/:compId", async (req, res) => {
     if (!compId) {
       return res.status(400).json({ ok: false, error: "compId is required" });
     }
-    const payload = await raidHelperRequest(`/comps/${encodeURIComponent(compId)}`);
+    const payload = await fetchRaidHelperCompPayload(compId);
+    if (!payload) return res.status(404).json({ ok: false, error: "Comp not found" });
     return res.json({ ok: true, compId, payload });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load Raid-Helper comp" });
@@ -17120,7 +18508,8 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
         pbClearReportCodes,
         reportsScanned: effectiveReports.length,
         calendarTimeZone: wclCalendarTimeZone(),
-        raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
+        raidNightPolicy:
+          "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday · SSC & Tempest Keep: Sunday & Thursday (WCL_P2_RAID_WEEKDAYS)",
       },
     });
   } catch (error) {
@@ -17162,7 +18551,8 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
       source: selectedSet ? "event_management_plus_kara" : "all_filtered_reports",
       selectedReportCodes,
       calendarTimeZone: wclCalendarTimeZone(),
-      raidNightPolicy: "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday",
+      raidNightPolicy:
+        "Gruul's Lair & Magtheridon's Lair: Thursday · Karazhan: Sunday · SSC & Tempest Keep: Sunday & Thursday (WCL_P2_RAID_WEEKDAYS)",
       requiredRaidPlayers: process.env.WCL_REQUIRED_RAID_PLAYERS ?? "Gernig",
       entries,
     });
@@ -19110,7 +20500,7 @@ async function runSyncBadges() {
 
   /* Specific-raid attendance awards (e.g. "AOE Cleave — May 7 2026"). Resolved
      once per sync from raid_appearances and reused for every user. */
-  const specificRaidAttendanceAwards = resolveSpecificRaidAttendanceAwards();
+  const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
   const specificRaidAttendanceEvidence = new Map(
     SPECIFIC_RAID_ATTENDANCE_BADGES.map((cfg) => [
       cfg.badgeId,

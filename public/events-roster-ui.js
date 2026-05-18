@@ -165,6 +165,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "hall-of-fame": "#f97316",
     "best-time-participant": "#a855f7",
     "aoe-cleave": "#f97316",
+    "ssc-first-event": "#14b8a6",
   };
   if (byId[id]) return byId[id];
   if (id.includes("first-time-clear")) return "#22c55e";
@@ -1466,6 +1467,13 @@ function rosterAchievementBadgesHtml(player) {
         "AOE Cleave — Attended the raid on May 7, 2026. Awarded to every raider with a Warcraft Logs appearance in any guild raid report from that night.",
       alt: "AOE Cleave",
       ok: playerEarnedSpecificEventBadge(player, "aoe-cleave"),
+    },
+    {
+      file: "ssc-first-event.png",
+      title:
+        "SSC First Event — Participated in the guild's first Serpentshrine Cavern raid event (May 21, 2026). Awarded to linked raiders with a primary Raid Helper signup and/or a Warcraft Logs appearance from that night.",
+      alt: "SSC First Event",
+      ok: playerEarnedSpecificEventBadge(player, "ssc-first-event"),
     },
     {
       file: "iron-attendance.png",

@@ -91,6 +91,7 @@
       "hall-of-fame": "#f97316",
       "best-time-participant": "#a855f7",
       "aoe-cleave": "#f97316",
+      "ssc-first-event": "#14b8a6",
     };
     if (byId[id]) return byId[id];
     if (id.includes("first-time-clear")) return "#22c55e";
@@ -630,6 +631,10 @@
       "aoe-cleave":
         typeof plb.playerEarnedSpecificEventBadge === "function"
           ? (p) => plb.playerEarnedSpecificEventBadge(p, "aoe-cleave")
+          : () => false,
+      "ssc-first-event":
+        typeof plb.playerEarnedSpecificEventBadge === "function"
+          ? (p) => plb.playerEarnedSpecificEventBadge(p, "ssc-first-event")
           : () => false,
     };
 
