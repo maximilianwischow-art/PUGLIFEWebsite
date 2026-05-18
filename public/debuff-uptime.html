@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PUG LIFE BALANCE · Debuff Uptime</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260518plb-nav-compact-v1" />
+    <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+  </head>
+  <body class="framework-bg-soft">
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            srcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+            loading="eager"
+            fetchpriority="high"
+            sizes="(max-width: 960px) 100vw, 960px"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/join.html">Join Us</a>
+          <a href="/home.html" title="Raid performance &amp; attendance">Performance</a>
+          <a href="/leaderboard">Leaderboard</a>
+          <a href="/voting.html" title="Hall of Fame">HoF</a>
+        </nav>
+        <div class="auth-top-right" data-auth-widget></div>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container">
+        <section class="card plb-debuff-panel" id="debuffUptimePanel">
+          <div class="plb-debuff-top">
+            <header class="plb-debuff-header">
+              <span class="tw-plb-chip plb-debuff-kicker">WCL · Raid debuffs</span>
+              <h2 class="section-title tw-plb-title plb-debuff-title">Debuff Uptime</h2>
+              <p class="subtle plb-debuff-lead">
+                Per-boss debuff uptime from Warcraft Logs. Overview shows the latest kill pull; click a boss for every
+                kill pull. Reports match the Event Management selection in Admin.
+              </p>
+            </header>
+            <div class="plb-debuff-toolbar surface-elevated">
+              <div class="plb-debuff-field">
+                <label class="plb-debuff-field-label" for="wclDebuffReportSelect">Raid event</label>
+                <select id="wclDebuffReportSelect" class="admin-input plb-debuff-select">
+                  <option value="">Select a report…</option>
+                </select>
+              </div>
+              <button type="button" class="event-signup-btn plb-debuff-reload-btn" id="wclDebuffReloadBtn" disabled>
+                Reload overview
+              </button>
+            </div>
+            <div class="plb-debuff-meta" aria-live="polite">
+              <div class="plb-debuff-legend" role="group" aria-label="Uptime quality">
+                <span class="plb-debuff-legend-label">Quality</span>
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--excellent"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>≥95%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--good"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>85–94%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--average"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>70–84%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--poor"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>50–69%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--critical"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>&lt;50%</span
+                >
+              </div>
+              <p class="plb-debuff-status" id="wclDebuffStatusLine">
+                Select a raid event to load the boss overview.
+              </p>
+            </div>
+          </div>
+          <div id="wclDebuffResultsHost" class="plb-debuff-results"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="wclDebuffDetailDialog" class="plb-debuff-modal">
+      <form method="dialog" class="plb-debuff-modal-head">
+        <div class="plb-debuff-modal-head-text">
+          <h3 class="plb-debuff-modal-title" id="wclDebuffDetailTitle">Encounter</h3>
+          <p class="plb-debuff-modal-sub" id="wclDebuffDetailStatus"></p>
+        </div>
+        <button type="submit" class="plb-debuff-modal-close" aria-label="Close encounter detail">Close</button>
+      </form>
+      <div id="wclDebuffDetailHost" class="plb-debuff-modal-body"></div>
+    </dialog>
+
+    <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
+    <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
+    <script defer src="/debuff-uptime.js?v=20260518plb-debuff-raidlead-v1"></script>
+  </body>
+</html>

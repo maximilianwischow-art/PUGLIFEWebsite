@@ -306,12 +306,14 @@ body.framework-bg-vivid {
 
 .top-nav {
   margin-top: 16px;
-  display: inline-flex;
+  display: flex;
   justify-content: center;
-  gap: var(--space-2);
-  flex-wrap: nowrap;
-  padding: 6px;
-  max-width: min(100%, 1120px);
+  align-items: center;
+  gap: 5px 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  width: fit-content;
+  max-width: min(100%, 960px);
   position: sticky;
   top: var(--space-2);
   z-index: 18;
@@ -326,19 +328,41 @@ body.framework-bg-vivid {
     0 6px 18px rgba(0, 0, 0, 0.28);
 }
 
+.top-nav-sep {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(168, 85, 247, 0.45) 20%,
+    rgba(255, 140, 200, 0.35) 80%,
+    transparent
+  );
+}
+
+.top-nav-sep.nav-auth-hidden {
+  display: none;
+}
+
 .top-nav a {
   position: relative;
   overflow: hidden;
   isolation: isolate;
+  flex: 0 1 auto;
   text-decoration: none;
   font-family: "Inter", sans-serif;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  padding: 9px 16px;
-  min-width: 132px;
+  white-space: nowrap;
+  padding: 7px 13px;
+  min-width: 0;
   text-align: center;
+  line-height: 1.2;
   border-radius: 999px;
   border: 1px solid rgba(168, 85, 247, 0.5);
   background: rgba(13, 10, 20, 0.42);
@@ -4649,187 +4673,704 @@ tr.admin-wcl-phase-row--warn td:first-child {
   border-left: 3px solid var(--accent-warn, #c9a227);
 }
 
-.admin-debuff-uptime-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  margin: 8px 0 10px;
+/* WCL Debuff Uptime — PUGLIFE design system (plb-debuff-*) */
+.plb-debuff-panel {
+  --plb-ds-bg: #0a0a0a;
+  --plb-ds-card: #1a1a1a;
+  --plb-ds-border: #334155;
+  --plb-ds-primary: #22c55e;
+  --plb-ds-muted-fg: #94a3b8;
+  --plb-ds-tier-excellent: #a855f7;
+  --plb-ds-tier-good: #22c55e;
+  --plb-ds-tier-average: #eab308;
+  --plb-ds-tier-poor: #f97316;
+  --plb-ds-tier-critical: #ef4444;
+  display: grid;
+  gap: var(--space-5, 24px);
 }
 
-.admin-debuff-uptime-select {
+.plb-debuff-top {
+  display: grid;
+  gap: 20px;
+}
+
+.plb-debuff-header {
+  display: grid;
+  gap: 12px;
+}
+
+.plb-debuff-kicker {
+  width: fit-content;
+}
+
+.plb-debuff-title {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 28px);
+  line-height: 1.2;
+  padding: 0.1em 0 0.25em;
+}
+
+.plb-debuff-header .plb-debuff-lead {
+  margin: 0;
+  max-width: 72ch;
+  line-height: 1.55;
+}
+
+.plb-debuff-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  padding: 16px 18px;
+  border-radius: var(--radius-lg, 8px);
+  border: 1px solid var(--plb-ds-border);
+  background: color-mix(in srgb, var(--plb-ds-card) 92%, transparent);
+}
+
+.plb-debuff-field {
+  flex: 1 1 280px;
   min-width: min(320px, 100%);
 }
 
-.admin-debuff-uptime-legend {
+.plb-debuff-field-label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: var(--text-xs, 12px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-select {
+  width: 100%;
+}
+
+.plb-debuff-reload-btn {
+  flex: 0 0 auto;
+}
+
+.plb-debuff-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  margin: 0 0 8px;
+  justify-content: space-between;
+  gap: 12px 18px;
+  padding-top: 4px;
 }
 
-.admin-debuff-uptime-pill {
-  display: inline-block;
-  padding: 2px 8px;
+.plb-debuff-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.plb-debuff-legend-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.plb-debuff-legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 12px;
+  font-weight: 600;
   border: 1px solid transparent;
 }
 
-.admin-debuff-uptime-pill--good {
-  background: rgba(76, 175, 80, 0.18);
-  border-color: rgba(129, 199, 132, 0.45);
-  color: #b9f6ca;
+.plb-debuff-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.admin-debuff-uptime-pill--warn {
-  background: rgba(201, 162, 39, 0.16);
-  border-color: rgba(201, 162, 39, 0.45);
-  color: #ffe082;
+.plb-debuff-legend-pill--excellent {
+  background: color-mix(in srgb, var(--plb-ds-tier-excellent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-excellent) 45%, transparent);
+  color: #e9d5ff;
 }
 
-.admin-debuff-uptime-pill--bad {
-  background: rgba(229, 115, 115, 0.16);
-  border-color: rgba(229, 115, 115, 0.45);
-  color: #ffcdd2;
+.plb-debuff-legend-pill--excellent .plb-debuff-legend-dot {
+  background: var(--plb-ds-tier-excellent);
 }
 
-.admin-debuff-uptime-cell--good {
-  color: #b9f6ca;
-  font-weight: 600;
+.plb-debuff-legend-pill--good {
+  background: color-mix(in srgb, var(--plb-ds-tier-good) 16%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-good) 42%, transparent);
+  color: #bbf7d0;
 }
 
-.admin-debuff-uptime-cell--warn {
-  color: #ffe082;
-  font-weight: 600;
+.plb-debuff-legend-pill--good .plb-debuff-legend-dot {
+  background: var(--plb-ds-tier-good);
 }
 
-.admin-debuff-uptime-cell--bad {
-  color: #ffcdd2;
-  font-weight: 600;
+.plb-debuff-legend-pill--average {
+  background: color-mix(in srgb, var(--plb-ds-tier-average) 14%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-average) 40%, transparent);
+  color: #fef08a;
 }
 
-.admin-debuff-uptime-cell--none {
-  color: rgba(255, 255, 255, 0.45);
+.plb-debuff-legend-pill--average .plb-debuff-legend-dot {
+  background: var(--plb-ds-tier-average);
 }
 
-.admin-debuff-uptime-applier {
-  display: block;
-  font-size: 0.78rem;
-  margin-top: 2px;
+.plb-debuff-legend-pill--poor {
+  background: color-mix(in srgb, var(--plb-ds-tier-poor) 14%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-poor) 40%, transparent);
+  color: #fed7aa;
 }
 
-.admin-debuff-uptime-matrix-wrap {
-  margin-bottom: 14px;
+.plb-debuff-legend-pill--poor .plb-debuff-legend-dot {
+  background: var(--plb-ds-tier-poor);
 }
 
-.admin-debuff-uptime-matrix th,
-.admin-debuff-uptime-matrix td {
-  text-align: center;
-  vertical-align: top;
+.plb-debuff-legend-pill--critical {
+  background: color-mix(in srgb, var(--plb-ds-tier-critical) 14%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-critical) 42%, transparent);
+  color: #fecaca;
 }
 
-.admin-debuff-uptime-matrix th:first-child,
-.admin-debuff-uptime-matrix td:first-child {
-  text-align: left;
+.plb-debuff-legend-pill--critical .plb-debuff-legend-dot {
+  background: var(--plb-ds-tier-critical);
 }
 
-.admin-debuff-uptime-fight {
-  margin: 0 0 10px;
-  border: 1px solid rgba(168, 85, 247, 0.2);
-  border-radius: 10px;
-  padding: 6px 10px;
-  background: rgba(15, 11, 26, 0.45);
+.plb-debuff-status {
+  margin: 0;
+  flex: 1 1 220px;
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
-.admin-debuff-uptime-fight summary {
-  cursor: pointer;
-  font-weight: 600;
+.plb-debuff-results {
+  display: grid;
+  gap: var(--space-3);
 }
 
-.admin-debuff-uptime-overview-wrap {
-  overflow-x: auto;
-  margin-bottom: 10px;
+.plb-debuff-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
-.admin-debuff-uptime-overview {
-  min-width: 1100px;
+.plb-debuff-encounters {
+  display: grid;
+  gap: 10px;
 }
 
-.admin-debuff-uptime-overview th,
-.admin-debuff-uptime-overview td {
-  font-size: 0.82rem;
-  vertical-align: top;
+.plb-debuff-encounter,
+.plb-debuff-encounter--nokill {
+  border: 1px solid var(--plb-ds-border);
+  border-radius: var(--radius-lg, 8px);
+  background: color-mix(in srgb, var(--plb-ds-card) 94%, #000 6%);
+  overflow: hidden;
 }
 
-.admin-debuff-uptime-cat {
-  text-align: center;
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: rgba(255, 200, 255, 0.85);
+.plb-debuff-encounter--nokill {
+  opacity: 0.7;
+  padding: 12px 14px;
 }
 
-.admin-debuff-uptime-col {
-  font-size: 0.72rem;
-  white-space: nowrap;
+.plb-debuff-encounter-static {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.admin-debuff-uptime-overview-cell {
-  min-width: 52px;
-}
-
-.admin-debuff-uptime-boss {
-  cursor: pointer;
-}
-
-.admin-debuff-uptime-boss:hover th {
-  color: #ffe082;
-}
-
-.admin-debuff-uptime-boss--nokill {
-  cursor: default;
-  opacity: 0.65;
-}
-
-.admin-debuff-uptime-overview-hint {
-  margin: 0 0 8px;
-}
-
-.admin-debuff-detail-dialog {
-  width: min(96vw, 1200px);
-  max-height: 90vh;
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  border-radius: 14px;
-  padding: 14px 16px 16px;
-  background: #120c1e;
-  color: inherit;
-}
-
-.admin-debuff-detail-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.65);
-}
-
-.admin-debuff-detail-dialog-bar {
+.plb-debuff-encounter-summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 0 0 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
 }
 
-.admin-debuff-detail-title {
+.plb-debuff-encounter-summary::-webkit-details-marker {
+  display: none;
+}
+
+.plb-debuff-encounter[open] .plb-debuff-encounter-summary {
+  border-bottom: 1px solid var(--plb-ds-border);
+  background: color-mix(in srgb, var(--plb-ds-primary) 8%, var(--plb-ds-card));
+}
+
+.plb-debuff-encounter-summary-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.plb-debuff-encounter-name {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: var(--text-base, 16px);
+  font-weight: 700;
+  color: var(--foreground, var(--text));
 }
 
-.admin-debuff-detail-host {
-  max-height: calc(90vh - 100px);
+.plb-debuff-encounter-note {
+  font-size: var(--text-xs, 12px);
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-encounter-drill {
+  flex-shrink: 0;
+  font-size: 11px !important;
+  padding: 6px 10px !important;
+}
+
+.plb-debuff-encounter-body {
+  padding: 10px 12px 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.plb-debuff-cat-block-title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-cat-block--armor .plb-debuff-cat-block-title {
+  color: #c4b5fd;
+}
+
+.plb-debuff-cat-block--spell .plb-debuff-cat-block-title {
+  color: #93c5fd;
+}
+
+.plb-debuff-cat-block--attack .plb-debuff-cat-block-title {
+  color: #fdba74;
+}
+
+.plb-debuff-cat-block--healing .plb-debuff-cat-block-title {
+  color: #f9a8d4;
+}
+
+.plb-debuff-cat-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.plb-debuff-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1.5fr) minmax(72px, 0.7fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.plb-debuff-row-name {
+  min-width: 0;
+  font-size: var(--text-sm, 14px);
+}
+
+.plb-debuff-row-applier {
+  font-size: var(--text-xs, 12px);
+  color: var(--plb-ds-muted-fg);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plb-debuff-row-applier-empty {
+  color: var(--plb-ds-muted-fg);
+  opacity: 0.65;
+}
+
+.plb-debuff-or-note {
+  font-size: 11px;
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-row--or-combined {
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--plb-ds-tier-good) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--plb-ds-tier-good) 22%, transparent);
+}
+
+.plb-debuff-row--or-combined .plb-debuff-row-name strong {
+  color: var(--plb-ds-tier-good);
+}
+
+.plb-debuff-or-applier-sep {
+  opacity: 0.5;
+}
+
+.plb-debuff-matrix-row--or-combined th {
+  font-style: italic;
+}
+
+.plb-debuff-matrix-row--or-combined th strong {
+  color: var(--plb-ds-tier-good);
+}
+
+.plb-debuff-detail-row--or-combined td:first-child {
+  font-style: italic;
+}
+
+.plb-debuff-tier-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+
+.plb-debuff-tier-badge--excellent {
+  color: #f3e8ff;
+  background: color-mix(in srgb, var(--plb-ds-tier-excellent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-excellent) 50%, transparent);
+}
+
+.plb-debuff-tier-badge--good {
+  color: #dcfce7;
+  background: color-mix(in srgb, var(--plb-ds-tier-good) 20%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-good) 48%, transparent);
+}
+
+.plb-debuff-tier-badge--average {
+  color: #fef9c3;
+  background: color-mix(in srgb, var(--plb-ds-tier-average) 18%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-average) 45%, transparent);
+}
+
+.plb-debuff-tier-badge--poor {
+  color: #ffedd5;
+  background: color-mix(in srgb, var(--plb-ds-tier-poor) 18%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-poor) 45%, transparent);
+}
+
+.plb-debuff-tier-badge--critical {
+  color: #fee2e2;
+  background: color-mix(in srgb, var(--plb-ds-tier-critical) 18%, transparent);
+  border-color: color-mix(in srgb, var(--plb-ds-tier-critical) 45%, transparent);
+}
+
+.plb-debuff-tier-badge--none {
+  color: var(--plb-ds-muted-fg);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--plb-ds-border);
+}
+
+.plb-debuff-uptime-bar {
+  position: relative;
+  height: 24px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.plb-debuff-uptime-bar--compact {
+  height: 20px;
+}
+
+.plb-debuff-uptime-bar-track {
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+
+.plb-debuff-uptime-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 500ms ease-in-out;
+}
+
+.plb-debuff-uptime-bar-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.plb-debuff-uptime-bar--excellent .plb-debuff-uptime-bar-fill {
+  background: var(--plb-ds-tier-excellent);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--plb-ds-tier-excellent) 40%, transparent);
+}
+
+.plb-debuff-uptime-bar--good .plb-debuff-uptime-bar-fill {
+  background: var(--plb-ds-tier-good);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--plb-ds-tier-good) 38%, transparent);
+}
+
+.plb-debuff-uptime-bar--average .plb-debuff-uptime-bar-fill {
+  background: var(--plb-ds-tier-average);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--plb-ds-tier-average) 35%, transparent);
+}
+
+.plb-debuff-uptime-bar--poor .plb-debuff-uptime-bar-fill {
+  background: var(--plb-ds-tier-poor);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--plb-ds-tier-poor) 35%, transparent);
+}
+
+.plb-debuff-uptime-bar--critical .plb-debuff-uptime-bar-fill {
+  background: var(--plb-ds-tier-critical);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--plb-ds-tier-critical) 38%, transparent);
+}
+
+.plb-debuff-uptime-bar--none .plb-debuff-uptime-bar-fill {
+  width: 0 !important;
+}
+
+.plb-debuff-surface {
+  border: 1px solid var(--plb-ds-border);
+  border-radius: var(--radius-lg, 8px);
+  background: color-mix(in srgb, var(--plb-ds-card) 94%, #000 6%);
+  padding: 10px 10px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.plb-debuff-surface--matrix {
+  margin-bottom: 14px;
+}
+
+.plb-debuff-section-title {
+  margin: 0 0 8px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--purple-l);
+}
+
+.plb-debuff-table-wrap {
+  margin-top: 0;
+  overflow-x: auto;
+}
+
+.plb-debuff-table {
+  min-width: 1100px;
+}
+
+.plb-debuff-table th,
+.plb-debuff-table td {
+  font-size: 0.82rem;
+  vertical-align: middle;
+}
+
+.plb-debuff-table thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.28);
+}
+
+.plb-debuff-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  text-align: left;
+  background: rgba(18, 14, 30, 0.98);
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.28);
+}
+
+.plb-debuff-cat {
+  text-align: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  border-bottom: 2px solid transparent;
+}
+
+.plb-debuff-cat--armor {
+  color: var(--purple-l);
+  border-bottom-color: rgba(168, 85, 247, 0.55);
+}
+
+.plb-debuff-cat--spell {
+  color: var(--blue-l);
+  border-bottom-color: rgba(96, 165, 250, 0.55);
+}
+
+.plb-debuff-cat--attack {
+  color: #fdba74;
+  border-bottom-color: rgba(251, 146, 60, 0.55);
+}
+
+.plb-debuff-cat--healing {
+  color: var(--pink-l);
+  border-bottom-color: rgba(255, 110, 180, 0.5);
+}
+
+.plb-debuff-col {
+  font-size: 0.72rem;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.plb-debuff-matrix-cell {
+  min-width: 88px;
+  vertical-align: middle;
+}
+
+.plb-debuff-matrix-applier {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-bar-cell {
+  min-width: 140px;
+}
+
+.plb-debuff-applier-cell {
+  font-size: var(--text-sm, 14px);
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-matrix th,
+.plb-debuff-matrix td {
+  text-align: center;
+  vertical-align: top;
+}
+
+.plb-debuff-matrix th:first-child,
+.plb-debuff-matrix td:first-child {
+  text-align: left;
+}
+
+.plb-debuff-pulls {
+  display: grid;
+  gap: 10px;
+}
+
+.plb-debuff-pull {
+  margin: 0;
+  border: 1px solid var(--plb-ds-border);
+  border-radius: var(--radius-lg, 8px);
+  padding: 0;
+  background: color-mix(in srgb, var(--plb-ds-card) 90%, #000);
+  overflow: hidden;
+}
+
+.plb-debuff-pull-summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 10px 12px;
+  list-style: none;
+}
+
+.plb-debuff-pull-summary::-webkit-details-marker {
+  display: none;
+}
+
+.plb-debuff-pull[open] .plb-debuff-pull-summary {
+  border-bottom: 1px solid rgba(168, 85, 247, 0.18);
+  background: rgba(168, 85, 247, 0.08);
+}
+
+.plb-debuff-pull .admin-table-wrap {
+  padding: 8px 10px 10px;
+}
+
+.plb-debuff-modal {
+  width: min(96vw, 1200px);
+  max-height: 90vh;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--plb-ds-border);
+  border-radius: var(--radius-xl, 16px);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--plb-ds-card) 98%, #000), #0a0a0a);
+  color: inherit;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.72),
+    0 0 40px rgba(168, 85, 247, 0.18);
+}
+
+.plb-debuff-modal::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.plb-debuff-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--plb-ds-border);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--plb-ds-primary) 14%, transparent), transparent);
+}
+
+.plb-debuff-modal-title {
+  margin: 0;
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 1.35rem;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.plb-debuff-modal-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.plb-debuff-modal-close {
+  appearance: none;
+  border: 1px solid rgba(255, 110, 180, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 110, 180, 0.12);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition:
+    background var(--interactive-duration) var(--interactive-ease),
+    border-color var(--interactive-duration) var(--interactive-ease);
+}
+
+.plb-debuff-modal-close:hover {
+  background: rgba(255, 110, 180, 0.22);
+  border-color: rgba(255, 110, 180, 0.65);
+}
+
+.plb-debuff-modal-body {
+  max-height: calc(90vh - 88px);
   overflow: auto;
+  padding: 12px 14px 16px;
 }
 
-.admin-debuff-spell-trigger {
+.admin-debuff-spell-trigger,
+.plb-debuff-table .admin-debuff-spell-trigger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -4844,11 +5385,12 @@ tr.admin-wcl-phase-row--warn td:first-child {
 .admin-debuff-spell-icon {
   width: 18px;
   height: 18px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   object-fit: cover;
   flex-shrink: 0;
   background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.15);
 }
 
 .admin-debuff-spell-icon--fallback {
@@ -4856,14 +5398,38 @@ tr.admin-wcl-phase-row--warn td:first-child {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.admin-debuff-uptime-overview .admin-debuff-spell-icon {
+.plb-debuff-overview .admin-debuff-spell-icon {
   width: 16px;
   height: 16px;
 }
 
-.admin-debuff-uptime-table th .admin-debuff-spell-trigger,
-.admin-debuff-uptime-matrix th .admin-debuff-spell-trigger {
+.plb-debuff-table th .admin-debuff-spell-trigger {
   font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .plb-debuff-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .plb-debuff-row-applier {
+    text-align: left;
+  }
+
+  .plb-debuff-encounter-summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .plb-debuff-encounter-drill {
+    width: 100%;
+  }
+
+  .plb-debuff-meta {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .loot-tooltip-wowhead .whtt-name {
@@ -5180,16 +5746,20 @@ tr.admin-wcl-phase-row--warn td:first-child {
 @media (max-width: 1120px) {
   .top-nav {
     top: 6px;
-    padding: 5px;
+    padding: 7px 10px;
     flex-wrap: wrap;
-    border-radius: 24px;
+    border-radius: 22px;
+    max-width: calc(100% - 16px);
   }
 
   .top-nav a {
-    min-width: 120px;
-    flex: 1 1 120px;
-    padding: 8px 12px;
-    letter-spacing: 0.1em;
+    padding: 7px 11px;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+  }
+
+  .top-nav-sep {
+    display: none;
   }
 
   .auth-top-right {
@@ -5231,15 +5801,20 @@ tr.admin-wcl-phase-row--warn td:first-child {
   .top-nav {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 6px 5px;
     width: calc(100% - 12px);
-    border-radius: 20px;
+    border-radius: 18px;
     justify-content: center;
+    padding: 8px 10px;
   }
 
   .top-nav a {
     min-width: 0;
-    flex: 1 1 calc(50% - 6px);
+    flex: 1 1 calc(33.333% - 6px);
+    max-width: calc(50% - 4px);
+    padding: 8px 8px;
+    font-size: 10px;
+    letter-spacing: 0.07em;
   }
 
   .potr-grid {
@@ -7186,6 +7761,19 @@ tr.admin-wcl-phase-row--warn td:first-child {
     0 0 0 1px rgba(251, 191, 36, 0.5),
     0 0 10px rgba(251, 191, 36, 0.3);
   filter: saturate(1.12) brightness(1.06);
+}
+
+.role-alert-slot--blocker-replaceable.role-alert-composer-slot {
+  cursor: copy;
+}
+
+.role-alert-slot--blocker-replaceable.role-alert-composer-slot.is-composer-drop-over,
+.role-alert-slot--blocker-replaceable.role-alert-composer-slot:hover {
+  outline: 2px dashed rgba(34, 197, 94, 0.65);
+  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 0 1px rgba(34, 197, 94, 0.25),
+    0 0 16px rgba(34, 197, 94, 0.18);
 }
 
 .role-alert-slot-row {

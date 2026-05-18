@@ -141,7 +141,7 @@ const ADMIN_GROUPS = [
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
-  { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "wcl-phase-avgs", "wcl-debuff-uptime", "analytics"] },
+  { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "wcl-phase-avgs", "analytics"] },
 ];
 
 const ADMIN_PANEL_IDS = ADMIN_GROUPS.flatMap((g) => g.tools);
@@ -2749,7 +2749,7 @@ function roleAlertsRelinkComposerOccupants(draft) {
       if (!sid) continue;
       const slotId = String(slot.id || "");
       if (!signupToSlotId.has(sid)) signupToSlotId.set(sid, slotId);
-      else roleAlertsEmptyCompSlot(slot);
+      else roleAlertsReleaseCompSlot(slot);
     }
   }
   for (const g of draft.compBoard.groups) {
@@ -2766,7 +2766,7 @@ function roleAlertsRelinkComposerOccupants(draft) {
         continue;
       }
       if (signupToSlotId.has(sid)) {
-        roleAlertsEmptyCompSlot(slot);
+        roleAlertsReleaseCompSlot(slot);
         continue;
       }
       slot._occupantSignupId = sid;
@@ -2799,6 +2799,37 @@ function roleAlertsComposerSlotDropAttrs(slot, group) {
   return ` data-role-alert-composer-drop="1" data-slot-id="${sid}" data-rh-group-id="${gid}" data-rh-slot-number="${sn}"`;
 }
 
+function roleAlertsFindBaselineSlot(slot, baselineBoard) {
+  if (!slot || !baselineBoard?.groups) return null;
+  const sid = String(slot.id || "").trim();
+  const sn = Math.max(0, Math.floor(Number(slot.slotNumber || 0)));
+  for (const g of baselineBoard.groups) {
+    for (const s of g.slots || []) {
+      if (sid && String(s.id || "") === sid) return s;
+      if (
+        sn > 0 &&
+        Number(s.slotNumber || 0) === sn &&
+        roleAlertsCompSlotGroupMatches(g, slot.rhGroupId || g.groupNumber)
+      ) {
+        return s;
+      }
+    }
+  }
+  return null;
+}
+
+/** Clear a comp slot; restore Raid Helper blocker placeholder when the baseline slot was a blocker. */
+function roleAlertsReleaseCompSlot(slot) {
+  if (!slot) return;
+  const baselineBoard = roleAlertsRaidComposerBaseline?.compBoard;
+  const bs = roleAlertsFindBaselineSlot(slot, baselineBoard);
+  if (bs?.isBlocker) {
+    roleAlertsClearSlotFromBaseline(slot, baselineBoard);
+    return;
+  }
+  roleAlertsEmptyCompSlot(slot);
+}
+
 /** Ensure a signup appears on at most one comp slot (clears all other seats). */
 function roleAlertsRemoveSignupFromAllCompSlots(
   draft,
@@ -2817,7 +2848,7 @@ function roleAlertsRemoveSignupFromAllCompSlots(
       const occ = Number(slot._occupantSignupId || 0);
       const nameMatch = nameKey && roleAlertsNormNameKey(slot.name) === nameKey;
       if (occ === sid || (nameMatch && !roleAlertSlotIsEmpty(slot))) {
-        roleAlertsEmptyCompSlot(slot);
+        roleAlertsReleaseCompSlot(slot);
       }
     }
   }
@@ -2902,6 +2933,7 @@ function roleAlertsCopyRowOntoSlot(slot, row) {
   slot._occupantSignupId = Number(row.signupId || 0) || null;
   slot.isKnownSignup = true;
   slot.isEmpty = false;
+  slot.isBlocker = false;
   if (!String(slot.id || "").trim() && roleAlertsCompSlotTemplateIndex) {
     const gn = Math.max(1, Math.floor(Number(slot.groupNumber || 0)));
     const sn = Math.max(1, Math.floor(Number(slot.slotNumber || 0)));
@@ -2939,6 +2971,10 @@ function roleAlertsClearSlotFromBaseline(slot, baselineBoard) {
     slot.classicArmoryCharacterUrl = bs.classicArmoryCharacterUrl;
     slot.wclEventCount = bs.wclEventCount;
     slot.raiderCard = bs.raiderCard && typeof bs.raiderCard === "object" ? { ...bs.raiderCard } : null;
+    slot.isBlocker = Boolean(bs.isBlocker);
+    slot.isKnownSignup = Boolean(bs.isKnownSignup);
+    slot.isEmpty = Boolean(bs.isEmpty);
+    if (!slot.isBlocker && !String(slot.name || "").trim()) slot.isEmpty = true;
   } else {
     slot.name = "";
     slot.className = "";
@@ -2977,6 +3013,7 @@ function roleAlertsEmptyCompSlot(slot) {
   slot.wclEventCount = null;
   slot._occupantSignupId = null;
   slot.isKnownSignup = false;
+  slot.isBlocker = false;
   slot.isEmpty = true;
 }
 
@@ -3024,7 +3061,7 @@ function roleAlertsRaidComposerSlotRowHtml(slot, group, heatStats, wclMeta, wclT
     )}</div>`;
   }
   const cls = slot?.isBlocker
-    ? "role-alert-slot role-alert-slot--blocker role-alert-composer-slot"
+    ? "role-alert-slot role-alert-slot--blocker role-alert-slot--blocker-replaceable role-alert-composer-slot"
     : slot?.isKnownSignup
       ? "role-alert-slot role-alert-slot--known role-alert-composer-slot"
       : "role-alert-slot role-alert-composer-slot";
@@ -3039,13 +3076,16 @@ function roleAlertsRaidComposerSlotRowHtml(slot, group, heatStats, wclMeta, wclT
         )}" data-slot-id="${sid}" data-rh-group-id="${gid}" data-rh-slot-number="${sn}"`
       : "";
   const dropAttr = roleAlertsComposerSlotDropAttrs(slot, group);
+  const blockerHint = slot?.isBlocker
+    ? ` title="${esc("Drop a player here to replace this placeholder (e.g. " + String(slot.name || "blocker") + ")")}"`
+    : "";
   const dblAttr =
     occ && !slot?.isBlocker
       ? ` data-role-alert-composer-dbl="1" data-signup-id="${esc(String(occ))}" title="Double-click to remove from roster"`
       : "";
   const face = roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclTitleBase, {
     outerClass: cls,
-    rootAttrs: `data-role-alert-composer-slot-wrap="1"${dropAttr}${dragAttr}${dblAttr}`,
+    rootAttrs: `data-role-alert-composer-slot-wrap="1"${dropAttr}${dragAttr}${dblAttr}${blockerHint}`,
     compactLayout: true,
     showPhaseAvgs: true,
   });
@@ -3418,7 +3458,7 @@ function roleAlertsComposerToggleSignupOnRoster(draft, signupId) {
 
 function roleAlertsComposerHandleDropOnSlot(draft, payload, groupId, slotId, slotNumber = 0) {
   const hit = roleAlertsFindSlotByIds(draft, groupId, slotId, slotNumber);
-  if (!hit || hit.slot?.isBlocker) return;
+  if (!hit) return;
   const row = roleAlertsFindSignupRow(draft, payload.signupId);
   if (!row) return;
   const srcFrom = payload.from || {};
@@ -3448,10 +3488,9 @@ function roleAlertsComposerHandleDropOnSlot(draft, payload, groupId, slotId, slo
     );
     if (
       srcHit &&
-      !srcHit.slot.isBlocker &&
       !roleAlertsCompSlotIsKeepTarget(srcHit.slot, srcHit.group, targetSlotId, targetGroupId, targetSlotNumber)
     ) {
-      roleAlertsEmptyCompSlot(srcHit.slot);
+      roleAlertsReleaseCompSlot(srcHit.slot);
     }
   }
   if (prevOcc && prevOcc !== Number(row.signupId)) {
@@ -3477,7 +3516,7 @@ function roleAlertsComposerHandleDropOnPool(draft, payload, poolKey) {
       srcFrom.slotId,
       srcFrom.slotNumber
     );
-    if (srcHit && !srcHit.slot.isBlocker) roleAlertsEmptyCompSlot(srcHit.slot);
+    if (srcHit) roleAlertsReleaseCompSlot(srcHit.slot);
   }
   if (poolKey === "bench") roleAlertsSetSignupPoolExclusion(row, "Bench");
   else if (poolKey === "absent") roleAlertsSetSignupPoolExclusion(row, "Absence");
@@ -5216,661 +5255,6 @@ async function loadPublicSnapshotStatus() {
 let wclPhaseAvgsPollTimer = null;
 let wclPhaseAvgsLastUpdatedAt = 0;
 let wclPhaseAvgsCachedRenderKey = "";
-let wclDebuffOverviewCache = null;
-let wclDebuffOverviewReportCode = "";
-let wclDebuffSpellMetaById = new Map();
-
-const WCL_DEBUFF_COL_SHORT = {
-  "sunder-armor": "Sunder",
-  "expose-armor": "Expose",
-  "faerie-fire": "FF",
-  "curse-of-recklessness": "CoR",
-  "curse-of-the-elements": "CotE",
-  "improved-scorch": "Scorch",
-  "shadow-weaving": "SW",
-  misery: "Misery",
-  "thunder-clap": "TC",
-  "demoralizing-shout": "Demo",
-  "demoralizing-roar": "Roar",
-  inspiration: "Insp",
-  "ancestral-fortitude": "Ancestr.",
-};
-const wclPhaseAvgsSort = { key: "characterName", dir: "asc" };
-
-/** Panels that should not block on the full secondary admin bundle (loot, analytics, DMs, …). */
-const ADMIN_PANELS_DEFER_SECONDARY = new Set(["identity", "wcl-phase-avgs"]);
-
-function stopWclPhaseAvgsPoll() {
-  if (wclPhaseAvgsPollTimer) {
-    clearInterval(wclPhaseAvgsPollTimer);
-    wclPhaseAvgsPollTimer = null;
-  }
-}
-
-function startWclPhaseAvgsPoll() {
-  stopWclPhaseAvgsPoll();
-  wclPhaseAvgsPollTimer = setInterval(() => {
-    if (!document.getElementById("admin-panel-wcl-phase-avgs")?.classList.contains("is-admin-panel-active")) {
-      stopWclPhaseAvgsPoll();
-      return;
-    }
-    loadWclPhaseAvgsPanel({ silent: true }).catch(() => {});
-  }, 2000);
-}
-
-function wclPhaseAvgsTableRenderKey(payload) {
-  const progress = payload?.meta?.progress || {};
-  const refreshing = Boolean(payload?.meta?.refreshing);
-  const doneBucket = refreshing ? Math.floor(Number(progress.done || 0) / 5) : "";
-  return [
-    payload?.updatedAt,
-    payload?.characters?.length,
-    refreshing,
-    doneBucket,
-    progress.total,
-    wclPhaseAvgsSort.key,
-    wclPhaseAvgsSort.dir,
-  ].join("|");
-}
-
-function formatWclPhaseAvgCell(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) {
-    return `<span class="subtle">—</span>`;
-  }
-  const tier = roleAlertPeakParseTierClass(n);
-  return `<span class="leaderboard-peak-parse ${tier}" title="WCL Best Perf. Avg">${esc(n.toFixed(1))}</span>`;
-}
-
-function wclPhaseAvgsSortValue(row, key) {
-  if (key === "characterName") return String(row?.characterName || "").toLowerCase();
-  if (key === "realm") return String(row?.realm || "").toLowerCase();
-  const n = Number(row?.[key]);
-  return Number.isFinite(n) ? n : -1;
-}
-
-function renderWclPhaseAvgsTable(payload) {
-  const host = document.getElementById("wclPhaseAvgsTableHost");
-  if (!host) return;
-  if (!payload?.ok) {
-    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Failed to load WCL phase averages.")}</p>`;
-    return;
-  }
-  const rows = Array.isArray(payload.characters) ? [...payload.characters] : [];
-  const key = wclPhaseAvgsSort.key;
-  const dir = wclPhaseAvgsSort.dir === "desc" ? -1 : 1;
-  rows.sort((a, b) => {
-    const da = wclPhaseAvgsSortValue(a, key);
-    const db = wclPhaseAvgsSortValue(b, key);
-    if (typeof da === "string" && typeof db === "string") {
-      const c = da.localeCompare(db, undefined, { sensitivity: "base" });
-      return c !== 0 ? c * dir : 0;
-    }
-    return (da - db) * dir || String(a.characterName).localeCompare(String(b.characterName), undefined, { sensitivity: "base" });
-  });
-
-  const sortBtn = (col, label) => {
-    const active = wclPhaseAvgsSort.key === col;
-    const arrow = active ? (wclPhaseAvgsSort.dir === "asc" ? " ▲" : " ▼") : "";
-    return `<button type="button" class="admin-table-sort-btn" data-wcl-phase-sort="${esc(col)}">${esc(label)}${arrow}</button>`;
-  };
-
-  if (!rows.length) {
-    host.innerHTML = `<p class="subtle">No characters in roster DB yet. Run a refresh after adding characters in Identity Management.</p>`;
-    return;
-  }
-
-  const body = rows
-    .map((row) => {
-      const errTitle =
-        Array.isArray(row.errors) && row.errors.length ? row.errors.join(" · ") : "";
-      const rowAttr = errTitle
-        ? ` class="admin-wcl-phase-row--warn" title="${esc(errTitle)}"`
-        : "";
-      const wclHref = row.wclUrl ? esc(row.wclUrl) : "#";
-      return `<tr${rowAttr}>
-        <td>${esc(row.characterName || "—")}</td>
-        <td class="subtle">${esc(row.realm || "—")}</td>
-        <td>${formatWclPhaseAvgCell(row.karaBestPerfAvg)}</td>
-        <td>${formatWclPhaseAvgCell(row.gruulMagBestPerfAvg)}</td>
-        <td>${formatWclPhaseAvgCell(row.sscTkBestPerfAvg)}</td>
-        <td><a href="${wclHref}" target="_blank" rel="noopener noreferrer">WCL</a></td>
-      </tr>`;
-    })
-    .join("");
-
-  host.innerHTML = `<table class="admin-table admin-wcl-phase-table">
-    <thead><tr>
-      <th>${sortBtn("characterName", "Character")}</th>
-      <th>${sortBtn("realm", "Realm")}</th>
-      <th>${sortBtn("karaBestPerfAvg", "Kara")}</th>
-      <th>${sortBtn("gruulMagBestPerfAvg", "Gruul/Mag")}</th>
-      <th>${sortBtn("sscTkBestPerfAvg", "SSC/TK")}</th>
-      <th>WCL</th>
-    </tr></thead>
-    <tbody>${body}</tbody>
-  </table>`;
-}
-
-function updateWclPhaseAvgsStatusLine(payload) {
-  const el = document.getElementById("wclPhaseAvgsStatusLine");
-  if (!el) return;
-  const meta = payload?.meta || {};
-  const progress = meta.progress || {};
-  const updatedAt = Number(payload?.updatedAt || 0);
-  const parts = [];
-  if (progress.refreshing) {
-    parts.push(
-      `Refreshing… ${Number(progress.done || 0)} / ${Number(progress.total || 0)} character(s)`
-    );
-    if (progress.lastError) parts.push(`Last error: ${progress.lastError}`);
-  } else if (updatedAt > 0) {
-    parts.push(`Last updated ${new Date(updatedAt).toLocaleString()}`);
-    parts.push(`${Number(meta.characterCount || 0)} character(s)`);
-    if (Number(meta.errorCount || 0) > 0) {
-      parts.push(`${Number(meta.errorCount)} with errors`);
-    }
-  } else {
-    parts.push("No cached data yet — click Refresh all to fetch from Warcraft Logs Fresh.");
-  }
-  el.textContent = parts.join(" · ");
-}
-
-function adminLoginNextUrl() {
-  const hash = String(location.hash || "").trim();
-  return encodeURIComponent(`/admin.html${hash || "#admin-wcl-phase-avgs"}`);
-}
-
-function wclPhaseAvgsLoadErrorHtml(error) {
-  const msg = String(error?.message || "");
-  if (/login required/i.test(msg)) {
-    const loginHref = `/auth/discord/login?next=${adminLoginNextUrl()}`;
-    return `<p class="subtle">Your admin session expired (this often happens after restarting the API). <a href="${esc(
-      loginHref
-    )}">Log in with Discord</a> and reopen this section.</p>`;
-  }
-  if (/404/.test(msg)) {
-    return `<p class="subtle">WCL Phase Averages API not found (404). Restart the API server (npm run dev or npm start) so it loads the latest server.js.</p>`;
-  }
-  return `<p class="subtle">${esc(msg || "Failed to load WCL phase averages.")}</p>`;
-}
-
-function wclPhaseAvgsLoadErrorMessage(error) {
-  const msg = String(error?.message || "");
-  if (/login required/i.test(msg)) {
-    return "Session expired — log in with Discord again (common after restarting the API).";
-  }
-  if (/404/.test(msg)) {
-    return "WCL Phase Averages API not found (404). Restart the API server (npm run dev or npm start) so it loads the latest server.js.";
-  }
-  return msg || "Failed to load WCL phase averages.";
-}
-
-async function loadWclPhaseAvgsPanel({ silent = false, forceRender = false } = {}) {
-  let payload;
-  try {
-    payload = await getJson("/api/admin/wcl-phase-avgs");
-  } catch (error) {
-    const host = document.getElementById("wclPhaseAvgsTableHost");
-    const line = document.getElementById("wclPhaseAvgsStatusLine");
-    const message = wclPhaseAvgsLoadErrorMessage(error);
-    if (host) host.innerHTML = wclPhaseAvgsLoadErrorHtml(error);
-    if (line) line.textContent = message;
-    if (!silent) status(message);
-    throw error;
-  }
-  const renderKey = wclPhaseAvgsTableRenderKey(payload);
-  if (forceRender || renderKey !== wclPhaseAvgsCachedRenderKey) {
-    renderWclPhaseAvgsTable(payload);
-    wclPhaseAvgsCachedRenderKey = renderKey;
-  }
-  updateWclPhaseAvgsStatusLine(payload);
-  const refreshing = Boolean(payload?.meta?.refreshing);
-  const refreshBtn = document.getElementById("wclPhaseAvgsRefreshBtn");
-  if (refreshBtn) refreshBtn.disabled = refreshing;
-  if (refreshing) {
-    startWclPhaseAvgsPoll();
-  } else {
-    stopWclPhaseAvgsPoll();
-    const updatedAt = Number(payload?.updatedAt || 0);
-    if (updatedAt > wclPhaseAvgsLastUpdatedAt && !silent) {
-      status("WCL phase averages updated.");
-    }
-    wclPhaseAvgsLastUpdatedAt = updatedAt;
-  }
-  return payload;
-}
-
-function wclDebuffReportRaidOptions() {
-  const selected = selectedReportCodesState;
-  return allRaidsState.filter((raid) => {
-    const code = String(raid?.reportCode || "").trim();
-    if (!code) return false;
-    if (!selected.size) return true;
-    return selected.has(code);
-  });
-}
-
-function wclDebuffArchiveNote(archiveStatus) {
-  if (!archiveStatus || typeof archiveStatus !== "object") return "";
-  if (archiveStatus.isArchived && archiveStatus.isAccessible === false) {
-    return " Report is archived and not accessible — debuff tables may be blocked without WCL archive access.";
-  }
-  if (archiveStatus.isArchived) {
-    const when = archiveStatus.archiveDate ? ` (${archiveStatus.archiveDate})` : "";
-    return ` Report is archived${when}.`;
-  }
-  return "";
-}
-
-function wclDebuffUptimeTier(uptimePct) {
-  const n = Number(uptimePct);
-  if (!Number.isFinite(n)) return "none";
-  if (n >= 90) return "good";
-  if (n >= 70) return "warn";
-  return "bad";
-}
-
-function wclFindDebuff(debuffs, def) {
-  const list = Array.isArray(debuffs) ? debuffs : [];
-  return (
-    list.find(
-      (row) =>
-        (def?.key && row?.key === def.key) || Number(row?.spellId) === Number(def?.spellId)
-    ) || null
-  );
-}
-
-function wclDebuffColLabel(def) {
-  return WCL_DEBUFF_COL_SHORT[def?.key] || String(def?.name || "").split(" ")[0];
-}
-
-function getWclDebuffSpellMeta(spellId) {
-  const id = Math.floor(Number(spellId));
-  if (!id) return null;
-  return wclDebuffSpellMetaById.get(id) || null;
-}
-
-function wclDebuffSpellTriggerHtml(spellId, label) {
-  const id = Math.floor(Number(spellId));
-  const meta = getWclDebuffSpellMeta(id);
-  const text = esc(label || meta?.name || (id ? `Spell ${id}` : ""));
-  if (!id) return text;
-  const title = window.WowSpellTooltip?.tooltipText
-    ? window.WowSpellTooltip.tooltipText(meta)
-    : String(meta?.description || "").trim();
-  const icon = meta?.icon
-    ? `<img class="admin-debuff-spell-icon" src="${esc(meta.icon)}" alt="" loading="lazy" decoding="async" />`
-    : `<span class="admin-debuff-spell-icon admin-debuff-spell-icon--fallback" aria-hidden="true"></span>`;
-  return `<span class="admin-debuff-spell-trigger" data-wow-spell-id="${id}"${
-    title ? ` title="${esc(title)}"` : ""
-  }>${icon}<span class="admin-debuff-spell-label">${text}</span></span>`;
-}
-
-function wclDebuffBindSpellTooltips(root) {
-  if (!window.WowSpellTooltip?.bindSpellTooltipHandlers) return;
-  window.WowSpellTooltip.bindSpellTooltipHandlers(root, getWclDebuffSpellMeta);
-}
-
-async function loadWclDebuffSpellMeta(catalog) {
-  const ids = new Set();
-  for (const row of Array.isArray(catalog) ? catalog : []) {
-    const spellIds = Array.isArray(row.spellIds) ? row.spellIds : [row.spellId];
-    for (const id of spellIds) {
-      const n = Math.floor(Number(id));
-      if (n > 0) ids.add(n);
-    }
-  }
-  const list = [...ids];
-  if (!list.length) {
-    wclDebuffSpellMetaById = new Map();
-    return;
-  }
-  const next = new Map();
-  const chunkSize = 80;
-  for (let i = 0; i < list.length; i += chunkSize) {
-    const chunk = list.slice(i, i + chunkSize);
-    const payload = await getJson(
-      `/api/wow-classic/spells?ids=${encodeURIComponent(chunk.join(","))}`
-    );
-    for (const row of Array.isArray(payload?.spells) ? payload.spells : []) {
-      const sid = Math.floor(Number(row?.spellId));
-      if (sid > 0) next.set(sid, row);
-    }
-  }
-  for (const def of Array.isArray(catalog) ? catalog : []) {
-    const sid = Math.floor(Number(def.spellId));
-    if (!sid) continue;
-    const fetched = next.get(sid) || {};
-    next.set(sid, {
-      ...fetched,
-      spellId: sid,
-      name: fetched.name || def.name,
-      appliedBy: def.appliedBy || def.appliedByClass || null,
-      description: def.description || null,
-      catalogKey: def.key,
-    });
-  }
-  wclDebuffSpellMetaById = next;
-}
-
-function wclDebuffUptimeCellHtml(debuff) {
-  const tier = wclDebuffUptimeTier(debuff?.uptimePct);
-  const uptime =
-    debuff?.uptimePct == null ? "—" : `${Number(debuff.uptimePct).toFixed(1)}%`;
-  const applier = debuff?.appliedByPlayer
-    ? `${esc(debuff.appliedByPlayer)} (${esc(debuff.appliedBy || debuff.appliedByClass || "?")})`
-    : `<span class="subtle">—</span>`;
-  const title = esc(String(debuff?.description || "").trim());
-  const orNote = debuff?.orNote ? ` · ${esc(debuff.orNote)}` : "";
-  return `<tr>
-    <td title="${title}"><strong>${wclDebuffSpellTriggerHtml(debuff?.spellId, debuff?.name)}</strong>${orNote}</td>
-    <td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier}">${esc(uptime)}</td>
-    <td>${applier}</td>
-  </tr>`;
-}
-
-function wclDebuffOverviewMiniCell(debuff, def) {
-  const row = debuff || {};
-  const tier = wclDebuffUptimeTier(row.uptimePct);
-  const uptime = row.uptimePct == null ? "—" : `${Number(row.uptimePct).toFixed(0)}%`;
-  const applier = row.appliedByPlayer ? esc(row.appliedByPlayer) : "";
-  const title = [
-    def?.name,
-    def?.appliedBy ? `Expected: ${def.appliedBy}` : "",
-    def?.description,
-    applier ? `Applied by: ${row.appliedByPlayer}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-  return `<td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier} admin-debuff-uptime-overview-cell" title="${esc(
-    title
-  )}">${esc(uptime)}${applier ? `<span class="subtle admin-debuff-uptime-applier">${applier}</span>` : ""}</td>`;
-}
-
-function renderWclDebuffReportSelect() {
-  const select = document.getElementById("wclDebuffReportSelect");
-  if (!select) return;
-  const prev = String(select.value || "");
-  const raids = wclDebuffReportRaidOptions();
-  if (!raids.length) {
-    select.innerHTML = `<option value="">No Event Management reports — check Roster &amp; Loot → Event Management</option>`;
-    select.disabled = true;
-    return;
-  }
-  select.disabled = false;
-  select.innerHTML = [
-    `<option value="">Select a report…</option>`,
-    ...raids.map(
-      (raid) =>
-        `<option value="${esc(raid.reportCode)}">${esc(raidLabel(raid))} · ${esc(String(raid.reportCode || ""))}</option>`
-    ),
-  ].join("");
-  if (prev && raids.some((r) => String(r.reportCode) === prev)) select.value = prev;
-}
-
-function wclDebuffCatalogByCategory(catalog, categories) {
-  const catOrder = Array.isArray(categories) ? categories.map((c) => c.id) : [];
-  const groups = new Map();
-  for (const def of Array.isArray(catalog) ? catalog : []) {
-    const cat = def.category || "other";
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat).push(def);
-  }
-  const ordered = [];
-  for (const catId of catOrder) {
-    if (groups.has(catId)) ordered.push({ id: catId, defs: groups.get(catId) });
-  }
-  for (const [catId, defs] of groups) {
-    if (!catOrder.includes(catId)) ordered.push({ id: catId, defs });
-  }
-  return ordered;
-}
-
-function renderWclDebuffOverview(payload) {
-  const host = document.getElementById("wclDebuffResultsHost");
-  if (!host) return;
-  if (!payload?.ok) {
-    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Overview failed.")}</p>`;
-    return;
-  }
-  const catalog = Array.isArray(payload.catalog) ? payload.catalog : [];
-  const categories = Array.isArray(payload.categories) ? payload.categories : [];
-  const bossRows = Array.isArray(payload.bossRows) ? payload.bossRows : [];
-  if (!bossRows.length) {
-    host.innerHTML = `<p class="subtle">No boss encounters in this report.</p>`;
-    return;
-  }
-  const grouped = wclDebuffCatalogByCategory(catalog, categories);
-  const catLabel = (id) => esc(categories.find((c) => c.id === id)?.label || id);
-  const headCat = grouped
-    .map((g) => `<th colspan="${g.defs.length}" class="admin-debuff-uptime-cat">${catLabel(g.id)}</th>`)
-    .join("");
-  const headDebuff = grouped
-    .flatMap((g) =>
-      g.defs.map(
-        (def) =>
-          `<th class="admin-debuff-uptime-col" title="${esc(def.description || "")}">${wclDebuffSpellTriggerHtml(
-            def.spellId,
-            wclDebuffColLabel(def)
-          )}</th>`
-      )
-    )
-    .join("");
-  const body = bossRows
-    .map((boss) => {
-      if (boss.noKills) {
-        return `<tr class="admin-debuff-uptime-boss admin-debuff-uptime-boss--nokill">
-          <th>${esc(boss.name || "Boss")} <span class="subtle">(no kill)</span></th>
-          <td colspan="${catalog.length}" class="subtle">—</td>
-        </tr>`;
-      }
-      const cells = grouped
-        .flatMap((g) =>
-          g.defs.map((def) => wclDebuffOverviewMiniCell(wclFindDebuff(boss.debuffs, def), def))
-        )
-        .join("");
-      const killNote =
-        boss.killCount > 1
-          ? ` <span class="subtle">(${boss.killCount} kills · latest pull)</span>`
-          : "";
-      return `<tr class="admin-debuff-uptime-boss" data-wcl-debuff-boss="${esc(String(boss.encounterId))}" data-wcl-debuff-boss-name="${esc(
-        boss.name || ""
-      )}" tabindex="0" role="button" title="Click for all kill pulls">
-        <th>${esc(boss.name || "Boss")}${killNote}</th>${cells}
-      </tr>`;
-    })
-    .join("");
-  host.innerHTML = `
-    <p class="subtle admin-debuff-uptime-overview-hint">Overview uses the latest kill pull per boss. Click a row for every kill pull.</p>
-    <div class="admin-table-wrap admin-debuff-uptime-overview-wrap">
-      <table class="admin-table admin-debuff-uptime-overview">
-        <thead>
-          <tr><th rowspan="2">Boss</th>${headCat}</tr>
-          <tr>${headDebuff}</tr>
-        </thead>
-        <tbody>${body}</tbody>
-      </table>
-    </div>
-  `;
-  wclDebuffBindSpellTooltips(host);
-}
-
-function renderWclDebuffDetailInto(host, payload) {
-  if (!host) return;
-  if (!payload?.ok) {
-    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Detail failed.")}</p>`;
-    return;
-  }
-  const fights = Array.isArray(payload.fights) ? payload.fights : [];
-  if (!fights.length) {
-    host.innerHTML = `<p class="subtle">No kill pulls found for this boss (up to 12 per request).</p>`;
-    return;
-  }
-  const catalog = Array.isArray(payload.catalog) ? payload.catalog : [];
-  const grouped = wclDebuffCatalogByCategory(catalog, payload.categories || []);
-  const matrixHead = fights
-    .map(
-      (fight, idx) =>
-        `<th title="Fight ${esc(String(fight.fightId))}">${esc(String(fight.name || `Pull ${idx + 1}`))}</th>`
-    )
-    .join("");
-  const matrixRows = grouped
-    .flatMap((g) =>
-      g.defs.map((def) => {
-        const cells = fights.map((fight) => {
-          const debuff = wclFindDebuff(fight.debuffs, def) || def;
-          const tier = wclDebuffUptimeTier(debuff?.uptimePct);
-          const uptime =
-            debuff?.uptimePct == null ? "—" : `${Number(debuff.uptimePct).toFixed(1)}%`;
-          const applier = debuff?.appliedByPlayer ? esc(debuff.appliedByPlayer) : "—";
-          const title = esc(String(def.description || "").trim());
-          return `<td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier}" title="${title}">${esc(
-            uptime
-          )}<span class="subtle admin-debuff-uptime-applier">${applier}</span></td>`;
-        });
-        const orNote = def.orNote ? ` <span class="subtle">(${esc(def.orNote)})</span>` : "";
-        return `<tr><th title="${esc(String(def.description || ""))}">${wclDebuffSpellTriggerHtml(
-          def.spellId,
-          def.name
-        )}${orNote}</th>${cells.join("")}</tr>`;
-      })
-    )
-    .join("");
-  const detailBlocks = fights
-    .map((fight, idx) => {
-      const debuffRows = (Array.isArray(fight.debuffs) ? fight.debuffs : [])
-        .map((row) =>
-          wclDebuffUptimeCellHtml({
-            ...row,
-            orNote: catalog.find((c) => c.key === row.key)?.orNote,
-          })
-        )
-        .join("");
-      const wclLink = fight.wclUrl
-        ? `<a href="${esc(fight.wclUrl)}" target="_blank" rel="noopener noreferrer">WCL fight</a>`
-        : "";
-      return `<details class="admin-debuff-uptime-fight" ${idx === 0 ? "open" : ""}>
-        <summary>${esc(String(fight.name || `Pull ${idx + 1}`))} · fight ${esc(String(fight.fightId))} ${
-        fight.kill ? "kill" : "wipe"
-      } ${wclLink}</summary>
-        <div class="admin-table-wrap">
-          <table class="admin-table admin-debuff-uptime-table">
-            <thead><tr><th>Debuff</th><th>Uptime</th><th>Applied by</th></tr></thead>
-            <tbody>${debuffRows}</tbody>
-          </table>
-        </div>
-      </details>`;
-    })
-    .join("");
-  host.innerHTML = `
-    <div class="admin-table-wrap admin-debuff-uptime-matrix-wrap">
-      <table class="admin-table admin-debuff-uptime-matrix">
-        <thead><tr><th>Debuff</th>${matrixHead}</tr></thead>
-        <tbody>${matrixRows}</tbody>
-      </table>
-    </div>
-    ${detailBlocks}
-  `;
-  wclDebuffBindSpellTooltips(host);
-}
-
-function setWclDebuffStatusLine(text) {
-  const line = document.getElementById("wclDebuffStatusLine");
-  if (line) line.textContent = String(text || "");
-}
-
-async function loadWclDebuffOverview(reportCode, { silent = false, btn = null } = {}) {
-  const code = String(reportCode || "").trim();
-  const reloadBtn = document.getElementById("wclDebuffReloadBtn");
-  if (!code) {
-    wclDebuffOverviewCache = null;
-    wclDebuffOverviewReportCode = "";
-    const host = document.getElementById("wclDebuffResultsHost");
-    if (host) host.innerHTML = "";
-    setWclDebuffStatusLine("Select a raid event to load the boss overview.");
-    if (reloadBtn) reloadBtn.disabled = true;
-    return null;
-  }
-  if (reloadBtn) reloadBtn.disabled = false;
-  try {
-    if (btn) setButtonFeedback(btn, "Loading…", "loading");
-    if (!silent) {
-      setWclDebuffStatusLine("Loading debuff overview from WCL (first load may take a minute)…");
-      const host = document.getElementById("wclDebuffResultsHost");
-      if (host) host.innerHTML = `<p class="subtle">Querying WCL for each boss…</p>`;
-    }
-    const payload = await getJson(
-      `/api/admin/wcl-debuff-uptime?reportCode=${encodeURIComponent(code)}&overview=1`
-    );
-    if (!payload?.ok) throw new Error(payload?.error || "Overview failed");
-    wclDebuffOverviewCache = payload;
-    wclDebuffOverviewReportCode = code;
-    await loadWclDebuffSpellMeta(payload.catalog || []);
-    renderWclDebuffOverview(payload);
-    const killBosses = (payload.bossRows || []).filter((b) => !b.noKills).length;
-    const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);
-    setWclDebuffStatusLine(
-      `${payload.reportTitle || code}: ${killBosses} boss(es) with kills (latest pull each).${archiveNote}`
-    );
-    return payload;
-  } catch (error) {
-    const host = document.getElementById("wclDebuffResultsHost");
-    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Overview failed")}</p>`;
-    setWclDebuffStatusLine(error?.message || "Overview failed");
-    if (/rate limit|429|points/i.test(String(error?.message || ""))) {
-      status("WCL rate limit — wait and retry.");
-    } else {
-      status(error?.message || "Debuff overview failed");
-    }
-    throw error;
-  } finally {
-    if (btn) resetButtonFeedback(btn, "Reload overview");
-  }
-}
-
-async function openWclDebuffEncounterDetail(encounterId, encounterName) {
-  const reportCode = String(wclDebuffOverviewReportCode || document.getElementById("wclDebuffReportSelect")?.value || "").trim();
-  const eid = String(encounterId || "").trim();
-  if (!reportCode || !eid) return;
-  const dialog = document.getElementById("wclDebuffDetailDialog");
-  const host = document.getElementById("wclDebuffDetailHost");
-  const title = document.getElementById("wclDebuffDetailTitle");
-  const statusLine = document.getElementById("wclDebuffDetailStatus");
-  if (title) title.textContent = encounterName || "Encounter";
-  if (statusLine) statusLine.textContent = "Loading all kill pulls…";
-  if (host) host.innerHTML = `<p class="subtle">Loading…</p>`;
-  if (dialog && typeof dialog.showModal === "function") dialog.showModal();
-  try {
-    const payload = await getJson(
-      `/api/admin/wcl-debuff-uptime?reportCode=${encodeURIComponent(reportCode)}&encounterId=${encodeURIComponent(eid)}`
-    );
-    if (!payload?.ok) throw new Error(payload?.error || "Detail failed");
-    const fightCount = Array.isArray(payload.fights) ? payload.fights.length : 0;
-    if (statusLine) {
-      statusLine.textContent = `${fightCount} kill pull(s) · ${payload.reportTitle || reportCode}`;
-    }
-    await loadWclDebuffSpellMeta(payload.catalog || []);
-    renderWclDebuffDetailInto(host, payload);
-    wclDebuffBindSpellTooltips(host);
-  } catch (error) {
-    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Detail failed")}</p>`;
-    if (statusLine) statusLine.textContent = error?.message || "Detail failed";
-  }
-}
-
-async function initWclDebuffUptimePanel() {
-  renderWclDebuffReportSelect();
-  const select = document.getElementById("wclDebuffReportSelect");
-  const code = String(select?.value || "").trim();
-  if (code) {
-    try {
-      await loadWclDebuffOverview(code, { silent: true });
-    } catch {
-      /* status set in loader */
-    }
-  }
-}
 
 async function refreshWclPhaseAvgsAll(btn) {
   try {
@@ -5904,7 +5288,6 @@ async function loadAdminSecondaryData() {
   const entries = Array.isArray(gargul?.rows) ? gargul.rows : [];
   renderEventSelection();
   renderTargetReportSelect();
-  renderWclDebuffReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
@@ -9476,35 +8859,6 @@ document.getElementById("wclPhaseAvgsReloadBtn")?.addEventListener("click", asyn
   }
 });
 
-document.getElementById("wclDebuffReportSelect")?.addEventListener("change", async (event) => {
-  const code = String(event.target?.value || "").trim();
-  try {
-    await loadWclDebuffOverview(code);
-  } catch {
-    /* status set in loader */
-  }
-});
-
-document.getElementById("wclDebuffReloadBtn")?.addEventListener("click", (event) => {
-  const code = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
-  loadWclDebuffOverview(code, { btn: event.currentTarget }).catch(() => {});
-});
-
-document.getElementById("wclDebuffResultsHost")?.addEventListener("click", (event) => {
-  const row = event.target.closest("[data-wcl-debuff-boss]");
-  if (!row || row.classList.contains("admin-debuff-uptime-boss--nokill")) return;
-  const encounterId = row.getAttribute("data-wcl-debuff-boss");
-  const encounterName = row.getAttribute("data-wcl-debuff-boss-name") || "";
-  if (encounterId) openWclDebuffEncounterDetail(encounterId, encounterName).catch(() => {});
-});
-
-document.getElementById("wclDebuffResultsHost")?.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  const row = event.target.closest("[data-wcl-debuff-boss]");
-  if (!row) return;
-  event.preventDefault();
-  row.click();
-});
 
 document.getElementById("admin-panel-wcl-phase-avgs")?.addEventListener("click", (event) => {
   const sortBtn = event.target.closest("[data-wcl-phase-sort]");
@@ -9556,11 +8910,6 @@ showAdminPanel = function (panelId, opts) {
       status(error?.message || "Failed to load raider blacklist.");
     });
   }
-  if (panelId === "wcl-debuff-uptime") {
-    initWclDebuffUptimePanel().catch((error) => {
-      status(error?.message || "Failed to load debuff uptime panel.");
-    });
-  }
 };
 
 loadAdminData().catch((error) => {
@@ -9588,11 +8937,6 @@ loadAdminData().catch((error) => {
   if (id === "wcl-phase-avgs") {
     loadWclPhaseAvgsPanel().catch((error) => {
       status(wclPhaseAvgsLoadErrorMessage(error));
-    });
-  }
-  if (id === "wcl-debuff-uptime") {
-    initWclDebuffUptimePanel().catch((error) => {
-      status(error?.message || "Failed to load debuff uptime panel.");
     });
   }
 })();

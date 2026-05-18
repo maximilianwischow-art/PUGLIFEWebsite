@@ -54,7 +54,7 @@ import {
   loadWclReportFightsForDebuffs,
   wclFightUrl,
 } from "./lib/wcl/debuff-uptime.mjs";
-import { debuffCatalogForApi } from "./lib/wcl/important-debuffs.mjs";
+import { debuffCatalogForApi, debuffOrGroupsForApi } from "./lib/wcl/important-debuffs.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -398,7 +398,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-wcl-debuff-tooltip-v2";
+const API_BUILD_ID = "20260518-plb-debuff-ds-v2";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -2882,6 +2882,56 @@ function normalizeAdminNameValue(v) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
+}
+
+function guildRoleForSession(session) {
+  const discordUserId = String(session?.user?.id || "").trim();
+  if (!discordUserId) return null;
+  try {
+    const user = identityUserGetByDiscordId(discordUserId);
+    return user?.guildRole ? normalizeRhWclGuildRole(user.guildRole) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRaidLead(session) {
+  return guildRoleForSession(session) === "Raidlead";
+}
+
+/** Raid Lead guild role, site admins (P2 editors), or DEBUFF_UPTIME_* allowlist (defaults include DR34ML3SS). */
+function canAccessDebuffUptime(session) {
+  if (!session?.user) return false;
+  if (isRaidLead(session) || isP2Editor(session)) return true;
+  const userId = String(session.user.id || "").trim();
+  const allowIds = String(process.env.DEBUFF_UPTIME_DISCORD_IDS || "308667806633951243")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (userId && allowIds.includes(userId)) return true;
+  const allowNames = String(process.env.DEBUFF_UPTIME_DISCORD_NAMES || "dr34ml3ss")
+    .split(",")
+    .map((x) => normalizeAdminNameValue(x))
+    .filter(Boolean);
+  const nameCandidates = [session.user.globalName, session.user.username]
+    .map((x) => normalizeAdminNameValue(x))
+    .filter(Boolean);
+  return nameCandidates.some(
+    (cand) => allowNames.includes(cand) || allowNames.some((cfg) => cand.includes(cfg) || cfg.includes(cand))
+  );
+}
+
+function requireRaidLeadSession(req, res) {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    res.status(401).json({ ok: false, error: "Login required" });
+    return null;
+  }
+  if (!canAccessDebuffUptime(session)) {
+    res.status(403).json({ ok: false, error: "Raid Lead access required" });
+    return null;
+  }
+  return session;
 }
 
 function isP2Editor(session) {
@@ -8307,6 +8357,19 @@ app.get("/p2-preparation.html", (req, res) => {
   res.sendFile(path.join(publicDir, "p2-preparation.html"));
 });
 
+app.get("/debuff-uptime.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/debuff-uptime.html")}`);
+  }
+  if (!canAccessDebuffUptime(session)) {
+    return res.status(403).type("html").send(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Raid Lead only</title><link rel="stylesheet" href="/styles.min.css"/></head><body class="framework-bg-soft"><div class="app-wrap" style="padding:2rem"><p class="card" style="padding:1.25rem">Debuff Uptime is available to logged-in members with the <strong>Raid Lead</strong> guild role.</p><p><a href="/home.html">Back to Raid Performance</a></p></div></body></html>`
+    );
+  }
+  res.sendFile(path.join(publicDir, "debuff-uptime.html"));
+});
+
 app.get("/loot-history.html", (_req, res) => {
   res.sendFile(path.join(publicDir, "loot-history.html"));
 });
@@ -8468,11 +8531,22 @@ app.post("/auth/logout", (req, res) => {
 app.get("/api/auth/me", (req, res) => {
   const session = getSessionFromRequest(req);
   if (!session) {
-    return res.json({ authenticated: false, isAdmin: false });
+    return res.json({
+      authenticated: false,
+      isAdmin: false,
+      isRaidLead: false,
+      canAccessDebuffUptime: false,
+      guildRole: null,
+    });
   }
+  const guildRole = guildRoleForSession(session);
+  const debuffAccess = canAccessDebuffUptime(session);
   return res.json({
     authenticated: true,
     isAdmin: isP2Editor(session),
+    isRaidLead: guildRole === "Raidlead",
+    canAccessDebuffUptime: debuffAccess,
+    guildRole,
     user: session.user,
     guildId: session.guildId || null,
   });
@@ -9781,7 +9855,7 @@ app.delete("/api/admin/raider-blacklist/:id", async (req, res) => {
   }
 });
 
-async function buildAdminWclDebuffUptimePayload({ reportCode, encounterId, overview }) {
+async function buildWclDebuffUptimePayload({ reportCode, encounterId, overview }) {
   const code = String(reportCode || "").trim();
   if (!code) {
     return { ok: false, error: "reportCode is required" };
@@ -9798,6 +9872,7 @@ async function buildAdminWclDebuffUptimePayload({ reportCode, encounterId, overv
 
   const encounters = listBossEncountersFromFights(report.fights);
   const catalog = debuffCatalogForApi();
+  const orGroups = debuffOrGroupsForApi(catalog);
   const categories = DEBUFF_CATEGORIES.map((row) => ({ id: row.id, label: row.label }));
 
   const encounterRaw = encounterId != null ? String(encounterId).trim() : "";
@@ -9838,6 +9913,7 @@ async function buildAdminWclDebuffUptimePayload({ reportCode, encounterId, overv
       encounters,
       categories,
       catalog,
+      orGroups,
       bossRows,
       fights: [],
     };
@@ -9854,6 +9930,7 @@ async function buildAdminWclDebuffUptimePayload({ reportCode, encounterId, overv
       encounters,
       categories,
       catalog,
+      orGroups,
       fights: [],
     };
   }
@@ -9890,13 +9967,49 @@ async function buildAdminWclDebuffUptimePayload({ reportCode, encounterId, overv
     encounters,
     categories,
     catalog,
+    orGroups,
     fights,
   };
 }
 
-app.get("/api/admin/wcl-debuff-uptime", async (req, res) => {
+async function buildRaidLeadEventReportsPayload() {
+  await ensureGargulLootHistoryStore();
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+  let allRaids = [];
+  if (materializeLootEnabled()) {
+    const fast = buildLootHistoryFromMaterialised(votingGuildId);
+    if (Array.isArray(fast?.allRaids)) allRaids = fast.allRaids;
+    else if (Array.isArray(fast?.raids)) allRaids = fast.raids;
+  }
+  if (!allRaids.length) {
+    const reportLimit = 40;
+    const key = lootHistoryCacheKey(votingGuildId, reportLimit);
+    const payload = await getOrRefreshCachedPayload(key, {
+      ttlMs: lootHistoryCacheTtlMs(),
+      maxStaleMs: lootHistoryMaxStaleMs(),
+      loader: () => fetchGuildLootReceived(votingGuildId, reportLimit),
+    });
+    allRaids = Array.isArray(payload?.allRaids) ? payload.allRaids : Array.isArray(payload?.raids) ? payload.raids : [];
+  }
+  return { ok: true, allRaids, selectedReportCodes };
+}
+
+app.get("/api/raid-lead/event-reports", async (req, res) => {
   try {
-    const session = requireAdminSession(req, res);
+    const session = requireRaidLeadSession(req, res);
+    if (!session) return;
+    const payload = await buildRaidLeadEventReportsPayload();
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load event reports" });
+  }
+});
+
+app.get("/api/raid-lead/wcl-debuff-uptime", async (req, res) => {
+  try {
+    const session = requireRaidLeadSession(req, res);
     if (!session) return;
 
     const reportCode = String(req.query?.reportCode || "").trim();
@@ -9914,19 +10027,20 @@ app.get("/api/admin/wcl-debuff-uptime", async (req, res) => {
         ),
         categories: DEBUFF_CATEGORIES.map((row) => ({ id: row.id, label: row.label })),
         catalog: debuffCatalogForApi(),
+        orGroups: debuffOrGroupsForApi(debuffCatalogForApi()),
       });
     }
 
     const cacheKey = encounterId
-      ? `wcl-debuff-uptime-detail-v4-${reportCode}-${String(encounterId).trim()}`
+      ? `wcl-debuff-uptime-detail-v9-${reportCode}-${String(encounterId).trim()}`
       : overview
-        ? `wcl-debuff-uptime-overview-v4-${reportCode}`
-        : `wcl-debuff-uptime-meta-v4-${reportCode}`;
+        ? `wcl-debuff-uptime-overview-v9-${reportCode}`
+        : `wcl-debuff-uptime-meta-v9-${reportCode}`;
 
     const payload = await getOrRefreshCachedPayload(cacheKey, {
       ttlMs: 24 * 60 * 60 * 1000,
       maxStaleMs: 48 * 60 * 60 * 1000,
-      loader: () => buildAdminWclDebuffUptimePayload({ reportCode, encounterId, overview }),
+      loader: () => buildWclDebuffUptimePayload({ reportCode, encounterId, overview }),
     });
     return res.json(payload);
   } catch (error) {

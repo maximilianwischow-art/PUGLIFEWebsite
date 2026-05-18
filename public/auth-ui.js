@@ -6,6 +6,37 @@ async function mountAuthHeaderWidget() {
   const loginHref = `/auth/discord/login?next=${encodeURIComponent(currentPath)}`;
   const nav = document.querySelector(".top-nav");
 
+  function firstMemberNavAnchor() {
+    if (!nav) return null;
+    return (
+      nav.querySelector('a[href="/debuff-uptime.html"]') ||
+      nav.querySelector('a[href="/profile.html"]') ||
+      nav.querySelector('a[href="/p2-preparation.html"]') ||
+      nav.querySelector('a[href="/admin.html"]')
+    );
+  }
+
+  function ensureNavMemberSeparator() {
+    if (!nav) return null;
+    let sep = nav.querySelector(".top-nav-sep");
+    if (!sep) {
+      sep = document.createElement("span");
+      sep.className = "top-nav-sep nav-auth-hidden";
+      sep.setAttribute("aria-hidden", "true");
+      const anchor = firstMemberNavAnchor();
+      if (anchor) nav.insertBefore(sep, anchor);
+      else nav.appendChild(sep);
+    }
+    return sep;
+  }
+
+  function updateNavMemberSeparatorVisible(show) {
+    const sep = ensureNavMemberSeparator();
+    if (!sep) return;
+    if (show) sep.classList.remove("nav-auth-hidden");
+    else sep.classList.add("nav-auth-hidden");
+  }
+
   function ensurePhase2NavLink() {
     if (!nav) return null;
     let phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
@@ -13,6 +44,7 @@ async function mountAuthHeaderWidget() {
       phase2Link = document.createElement("a");
       phase2Link.href = "/p2-preparation.html";
       phase2Link.textContent = "Phase 2";
+      phase2Link.classList.add("nav-auth-member");
       const adminLink = nav.querySelector('a[href="/admin.html"]');
       if (adminLink) nav.insertBefore(phase2Link, adminLink);
       else nav.appendChild(phase2Link);
@@ -28,6 +60,7 @@ async function mountAuthHeaderWidget() {
       profileLink = document.createElement("a");
       profileLink.href = "/profile.html";
       profileLink.textContent = "Profile";
+      profileLink.classList.add("nav-auth-member");
       const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
       const adminLink = nav.querySelector('a[href="/admin.html"]');
       // Insert before Phase 2 / Admin so the order reads Hall of Fame · Profile · Phase 2 · Admin.
@@ -76,6 +109,7 @@ async function mountAuthHeaderWidget() {
       adminLink = document.createElement("a");
       adminLink.href = "/admin.html";
       adminLink.textContent = "Admin";
+      adminLink.classList.add("nav-auth-member");
       nav.appendChild(adminLink);
     }
     adminLink.classList.add("nav-auth-hidden");
@@ -96,11 +130,65 @@ async function mountAuthHeaderWidget() {
     else adminLink.classList.add("nav-auth-hidden");
   }
 
+  function ensureDebuffUptimeNavLink() {
+    if (!nav) return null;
+    let debuffLink = nav.querySelector('a[href="/debuff-uptime.html"]');
+    if (!debuffLink) {
+      debuffLink = document.createElement("a");
+      debuffLink.href = "/debuff-uptime.html";
+      debuffLink.textContent = "Debuffs";
+      debuffLink.title = "Debuff uptime (Warcraft Logs)";
+      debuffLink.classList.add("nav-auth-member");
+      const profileLink = nav.querySelector('a[href="/profile.html"]');
+      const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+      const adminLink = nav.querySelector('a[href="/admin.html"]');
+      const anchor = profileLink || phase2Link || adminLink;
+      if (anchor) nav.insertBefore(debuffLink, anchor);
+      else nav.appendChild(debuffLink);
+    }
+    debuffLink.textContent = "Debuffs";
+    debuffLink.title = "Debuff uptime (Warcraft Logs)";
+    debuffLink.classList.add("nav-auth-hidden");
+    return debuffLink;
+  }
+
+  function updateDebuffUptimeNavState(isRaidLead) {
+    const debuffLink = ensureDebuffUptimeNavLink();
+    if (!debuffLink) return;
+    if (currentPath === "/debuff-uptime.html" && isRaidLead) {
+      debuffLink.classList.add("nav-current");
+      debuffLink.setAttribute("aria-current", "page");
+    } else {
+      debuffLink.classList.remove("nav-current");
+      debuffLink.removeAttribute("aria-current");
+    }
+    if (isRaidLead) debuffLink.classList.remove("nav-auth-hidden");
+    else debuffLink.classList.add("nav-auth-hidden");
+  }
+
+  function updateMemberNavChrome({
+    showProfile,
+    showPhase2,
+    showDebuffs,
+    showAdmin,
+  }) {
+    updateNavMemberSeparatorVisible(
+      Boolean(showProfile || showPhase2 || showDebuffs || showAdmin)
+    );
+  }
+
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
     updatePhase2NavState(false);
     updateAdminNavState(false);
     updateProfileNavState(false);
+    updateDebuffUptimeNavState(false);
+    updateMemberNavChrome({
+      showProfile: false,
+      showPhase2: false,
+      showDebuffs: false,
+      showAdmin: false,
+    });
   };
 
   try {
@@ -140,9 +228,18 @@ async function mountAuthHeaderWidget() {
       }
       window.location.reload();
     });
+    const showAdmin = Boolean(payload?.isAdmin);
+    const showDebuffs = Boolean(payload?.canAccessDebuffUptime ?? payload?.isRaidLead);
     updatePhase2NavState(true);
-    updateAdminNavState(Boolean(payload?.isAdmin));
+    updateAdminNavState(showAdmin);
     updateProfileNavState(true);
+    updateDebuffUptimeNavState(showDebuffs);
+    updateMemberNavChrome({
+      showProfile: true,
+      showPhase2: true,
+      showDebuffs,
+      showAdmin,
+    });
   } catch {
     renderLoggedOut();
   }
