@@ -8554,6 +8554,30 @@ app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
     /** @type {Array<{ step: string, index: number, error: string, statusCode?: number, signupId?: string, groupId?: string, slotId?: string }>} */
     const errors = [];
     const applied = { signupPatches: 0, slotPatches: 0 };
+    let compSlotTemplateIndex = null;
+    if (slotPatches.length) {
+      try {
+        const compPayload = await fetchRaidHelperCompPayload(compId);
+        if (compPayload) compSlotTemplateIndex = buildCompSlotTemplateIndex(compPayload);
+      } catch (error) {
+        console.warn("[role-alerts] comp template index for writeback failed:", error?.message || error);
+      }
+    }
+    const resolveCompSlotPatchIds = (groupId, slotId, body) => {
+      let gid = String(groupId || "").trim();
+      let sid = String(slotId || "").trim();
+      const gn = Math.max(1, Math.floor(Number(body?.groupNumber || 0)));
+      const sn = Math.max(1, Math.floor(Number(body?.slotNumber || 0)));
+      if (compSlotTemplateIndex && gn > 0 && sn > 0) {
+        const hit = compSlotTemplateIndex.get(`${gn}:${sn}`);
+        if (hit) {
+          if (!sid && hit.id) sid = hit.id;
+          if (!gid && hit.rhGroupId) gid = hit.rhGroupId;
+        }
+      }
+      if (!gid && gn > 0) gid = String(gn);
+      return { groupId: gid, slotId: sid };
+    };
     for (let i = 0; i < signupPatches.length; i += 1) {
       const p = signupPatches[i];
       const signupId = String(p?.signupId || "").trim();
@@ -8577,11 +8601,20 @@ app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
     }
     for (let i = 0; i < slotPatches.length; i += 1) {
       const p = slotPatches[i];
-      const groupId = String(p?.groupId || "").trim();
-      const slotId = String(p?.slotId || "").trim();
       const body = p?.body && typeof p.body === "object" ? p.body : null;
+      const resolved = resolveCompSlotPatchIds(p?.groupId, p?.slotId, body);
+      const groupId = resolved.groupId;
+      const slotId = resolved.slotId;
       if (!groupId || !slotId || !body) {
-        errors.push({ step: "slotPatch", index: i, groupId, slotId, error: "missing groupId, slotId, or body" });
+        errors.push({
+          step: "slotPatch",
+          index: i,
+          groupId,
+          slotId,
+          error: !body
+            ? "missing body"
+            : "missing Raid Helper comp slot id (re-open analysis and try again)",
+        });
         continue;
       }
       try {

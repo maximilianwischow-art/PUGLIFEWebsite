@@ -18,6 +18,8 @@ let roleAlertsSelectedUserIds = new Set();
 let roleAlertsAnalyzeSeq = 0;
 let roleAlertsRaidComposerBaseline = null;
 let roleAlertsRaidComposerDraft = null;
+/** @type {Map<string, { id: string, rhGroupId: string, groupNumber: number, slotNumber: number }>} */
+let roleAlertsCompSlotTemplateIndex = null;
 let roleAlertsComposerDropHighlightEl = null;
 
 function roleAlertsComposerClearDropHighlight() {
@@ -2550,7 +2552,36 @@ function roleAlertComposerEmptySlotHtml(slot, group, attrStr = "") {
     </div>`;
 }
 
-function roleAlertsPadCompBoardSlots(compBoard) {
+function roleAlertsBuildCompSlotTemplateIndex(compBoard) {
+  /** @type {Map<string, { id: string, rhGroupId: string, groupNumber: number, slotNumber: number }>} */
+  const index = new Map();
+  if (!compBoard?.groups) return index;
+  for (const group of compBoard.groups) {
+    const gn = Math.max(1, Math.floor(Number(group.groupNumber || 0)));
+    const defaultGid = String(group.rhGroupId || group.groupId || gn).trim();
+    for (const slot of group.slots || []) {
+      const sn = Math.max(1, Math.floor(Number(slot.slotNumber || 0)));
+      if (!sn) continue;
+      const key = `${gn}:${sn}`;
+      const prev = index.get(key);
+      const id = String(slot.id || prev?.id || "").trim();
+      const rhGroupId = String(slot.rhGroupId || prev?.rhGroupId || defaultGid || gn).trim();
+      index.set(key, { id, rhGroupId, groupNumber: gn, slotNumber: sn });
+    }
+  }
+  return index;
+}
+
+function roleAlertsResolveCompSlotRhIds(slot, group, templateIndex) {
+  const gn = Math.max(1, Math.floor(Number(group?.groupNumber || slot?.groupNumber || 1)));
+  const sn = Math.max(1, Math.floor(Number(slot?.slotNumber || 0)));
+  const tpl = templateIndex?.get(`${gn}:${sn}`);
+  const slotId = String(slot?.id || tpl?.id || "").trim();
+  const groupId = String(slot?.rhGroupId || tpl?.rhGroupId || group?.rhGroupId || gn).trim();
+  return { slotId, groupId, groupNumber: gn, slotNumber: sn };
+}
+
+function roleAlertsPadCompBoardSlots(compBoard, templateIndex = roleAlertsCompSlotTemplateIndex) {
   if (!compBoard?.groups) return;
   const slotCount = Math.max(1, Math.floor(Number(compBoard.slotCount || 5)));
   for (const group of compBoard.groups) {
@@ -2566,10 +2597,11 @@ function roleAlertsPadCompBoardSlots(compBoard) {
     const padded = [];
     for (let sn = 1; sn <= slotCount; sn += 1) {
       let slot = byNum.get(sn);
+      const tpl = templateIndex?.get(`${Math.max(1, gn)}:${sn}`);
       if (!slot) {
         slot = {
-          id: "",
-          rhGroupId: defaultGid,
+          id: String(tpl?.id || "").trim(),
+          rhGroupId: String(tpl?.rhGroupId || defaultGid).trim(),
           slotNumber: sn,
           name: "",
           roleName: "Melee",
@@ -2584,7 +2616,8 @@ function roleAlertsPadCompBoardSlots(compBoard) {
           specEmoteId: "",
         };
       }
-      if (!slot.rhGroupId) slot.rhGroupId = defaultGid;
+      if (!String(slot.id || "").trim() && tpl?.id) slot.id = String(tpl.id);
+      if (!slot.rhGroupId) slot.rhGroupId = String(tpl?.rhGroupId || defaultGid);
       padded.push(slot);
     }
     group.slots = padded;
@@ -2631,6 +2664,7 @@ function roleAlertsSyncRaidComposerDraftFromAnalysis(analysis, { preserveDraft =
   if (!analysis?.compBoard || !analysis.compUsed) {
     roleAlertsRaidComposerBaseline = null;
     roleAlertsRaidComposerDraft = null;
+    roleAlertsCompSlotTemplateIndex = null;
     return;
   }
   const eid = String(analysis?.event?.id || "").trim();
@@ -2659,8 +2693,12 @@ function roleAlertsSyncRaidComposerDraftFromAnalysis(analysis, { preserveDraft =
     compBoard: roleAlertsDeepCloneJson(analysis.compBoard),
     allSignups: roleAlertsDeepCloneJson(Array.isArray(analysis.allSignups) ? analysis.allSignups : []),
   };
-  roleAlertsPadCompBoardSlots(roleAlertsRaidComposerBaseline.compBoard);
-  roleAlertsPadCompBoardSlots(roleAlertsRaidComposerDraft.compBoard);
+  roleAlertsCompSlotTemplateIndex = roleAlertsBuildCompSlotTemplateIndex(analysis.compBoard);
+  roleAlertsPadCompBoardSlots(roleAlertsRaidComposerBaseline.compBoard, roleAlertsCompSlotTemplateIndex);
+  roleAlertsPadCompBoardSlots(roleAlertsRaidComposerDraft.compBoard, roleAlertsCompSlotTemplateIndex);
+  roleAlertsCompSlotTemplateIndex = roleAlertsBuildCompSlotTemplateIndex(
+    roleAlertsRaidComposerBaseline.compBoard
+  );
   roleAlertsRelinkComposerOccupants(roleAlertsRaidComposerDraft);
   roleAlertsRecomputeComposerOnComp(roleAlertsRaidComposerDraft);
 }
@@ -2849,6 +2887,13 @@ function roleAlertsCopyRowOntoSlot(slot, row) {
   slot._occupantSignupId = Number(row.signupId || 0) || null;
   slot.isKnownSignup = true;
   slot.isEmpty = false;
+  if (!String(slot.id || "").trim() && roleAlertsCompSlotTemplateIndex) {
+    const gn = Math.max(1, Math.floor(Number(slot.groupNumber || 0)));
+    const sn = Math.max(1, Math.floor(Number(slot.slotNumber || 0)));
+    const tpl = roleAlertsCompSlotTemplateIndex.get(`${gn}:${sn}`);
+    if (tpl?.id) slot.id = String(tpl.id);
+    if (!slot.rhGroupId && tpl?.rhGroupId) slot.rhGroupId = String(tpl.rhGroupId);
+  }
 }
 
 function roleAlertsClearSlotFromBaseline(slot, baselineBoard) {
@@ -2948,6 +2993,7 @@ function englishWowClassDisplayFromRaidHelperClient(raw) {
 function roleAlertsRestoreSignupToPrimaryRoster(row) {
   const playable = String(row.raidHelperPatchClassName || "").trim();
   row.rhSignupClassRaw = playable;
+  row.status = "primary";
   row.poolKind = "raiders";
   row.className = playable || String(row.className || "").trim();
 }
@@ -3202,35 +3248,48 @@ function roleAlertsBuildApplyRaidHelperDraftPayload() {
     signupPatches.push({ signupId: id, body });
   }
   const slotPatches = [];
+  const templateIndex =
+    roleAlertsCompSlotTemplateIndex || roleAlertsBuildCompSlotTemplateIndex(b.compBoard);
   const basSlotById = new Map();
+  const basSlotByPos = new Map();
   for (const g of b.compBoard.groups || []) {
     for (const s of g.slots || []) {
+      const pos = roleAlertsResolveCompSlotRhIds(s, g, templateIndex);
       if (String(s.id || "")) basSlotById.set(String(s.id), { group: g, slot: s });
+      basSlotByPos.set(`${pos.groupNumber}:${pos.slotNumber}`, { group: g, slot: s });
     }
   }
   for (const g of d.compBoard.groups || []) {
     for (const slot of g.slots || []) {
-      const id = String(slot.id || "");
+      const resolved = roleAlertsResolveCompSlotRhIds(slot, g, templateIndex);
+      const id = resolved.slotId;
       if (!id) continue;
-      const bsWrap = basSlotById.get(id);
+      const bsWrap =
+        basSlotById.get(id) || basSlotByPos.get(`${resolved.groupNumber}:${resolved.slotNumber}`);
       if (!bsWrap) continue;
       const bs = bsWrap.slot;
+      const draftClass = String(slot.className || "").trim();
+      const baseClass = String(bs.className || "").trim();
       const changed =
         String(slot.name || "") !== String(bs.name || "") ||
-        String(slot.className || "") !== String(bs.className || "") ||
+        draftClass !== baseClass ||
         String(slot.specName || "") !== String(bs.specName || "") ||
         String(slot.roleName || "") !== String(bs.roleName || "");
       if (!changed) continue;
+      const occ = Number(slot._occupantSignupId || 0);
+      const occRow = occ ? roleAlertsFindSignupRow(d, occ) : null;
       const body = {
         name: String(slot.name || "").trim(),
-        className: String(slot.className || "").trim(),
+        className: draftClass,
         specName: String(slot.specName || "").trim(),
         roleName: String(slot.roleName || "").trim(),
-        groupNumber: Number(g.groupNumber || 1),
-        slotNumber: Number(slot.slotNumber || 0),
+        groupNumber: resolved.groupNumber,
+        slotNumber: resolved.slotNumber,
       };
+      if (occRow?.classEmoteId) body.classEmoteId = String(occRow.classEmoteId);
+      if (occRow?.specEmoteId) body.specEmoteId = String(occRow.specEmoteId);
       slotPatches.push({
-        groupId: String(slot.rhGroupId || g.groupNumber || "1").trim(),
+        groupId: resolved.groupId,
         slotId: id,
         body,
       });
@@ -3274,7 +3333,10 @@ async function roleAlertsApplyRaidHelperDraft(btn) {
       status(parts || body.error || `Raid Helper apply failed (${res.status})`);
       return;
     }
-    status("Raid Helper updated; refreshing analysis…");
+    const ap = body.applied || {};
+    status(
+      `Raid Helper updated (${Number(ap.slotPatches || 0)} roster slot(s), ${Number(ap.signupPatches || 0)} signup(s)); refreshing…`
+    );
     await runRoleAlertsAnalyzeFromSelect();
   } catch (error) {
     if (b) {
