@@ -11511,26 +11511,9 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     badgeId: "ssc-first-event",
     label: "SSC First Event",
     description:
-      "Participated in the guild's first Serpentshrine Cavern raid event (May 17, 2026). Awarded to linked raiders with a primary Raid Helper signup on that event and/or a Warcraft Logs appearance from that night.",
+      "Participated in the guild's first Serpentshrine Cavern raid event. Awarded to linked raiders who appear in a Warcraft Logs roster from that night's SSC logs.",
     icon: "/images/achievements/ssc-first-event.png",
-    /* May 17 2026 00:00 CEST = May 16 2026 22:00 UTC */
-    startMs: Date.UTC(2026, 4, 16, 22, 0, 0),
-    /* May 18 2026 04:00 UTC — pad past midnight local */
-    endMs: Date.UTC(2026, 4, 18, 4, 0, 0),
-    /* First SSC guild logs (Event Management). Env can add more codes. */
-    reportCodes: [
-      "wV2PBqg1aK3jfYnA",
-      "a9R3fcqkZ2y6jgbY",
-      ...String(process.env.SSC_FIRST_EVENT_WCL_REPORT_CODES || "")
-        .split(/[,\s]+/)
-        .map((x) => x.trim())
-        .filter(Boolean),
-    ].filter((code, idx, arr) => arr.indexOf(code) === idx),
-    raidHelperEventIds: String(process.env.SSC_FIRST_EVENT_RH_ID || "")
-      .split(/[,\s]+/)
-      .map((x) => x.trim())
-      .filter(Boolean),
-    raidHelperFirstEventTitleKeywords: ["ssc", "serpentshrine"],
+    dynamicFirstSscEvent: true,
   },
 ];
 
@@ -11556,7 +11539,7 @@ function raidHelperEventMatchesTitleKeywords(event, keywords) {
   return false;
 }
 
-async function findFirstRaidHelperEventIdByTitleKeywords(keywords) {
+async function findFirstRaidHelperEventByTitleKeywords(keywords) {
   const serverId = raidHelperDiscordGuildId() || "711838953430319115";
   const events = await fetchRaidHelperServerEvents(serverId);
   const nowSec = Math.floor(Date.now() / 1000);
@@ -11569,7 +11552,82 @@ async function findFirstRaidHelperEventIdByTitleKeywords(keywords) {
     .filter((row) => row.id && row.startTime > 0 && row.startTime <= nowSec)
     .filter((row) => raidHelperEventMatchesTitleKeywords(row.event, keywords))
     .sort((a, b) => a.startTime - b.startTime);
-  return past[0]?.id || "";
+  return past[0] || null;
+}
+
+async function findFirstRaidHelperEventIdByTitleKeywords(keywords) {
+  return (await findFirstRaidHelperEventByTitleKeywords(keywords))?.id || "";
+}
+
+function isSscRaidMetadataLabel(text) {
+  const z = normalizeWclLabel(String(text || "")).toLowerCase();
+  return z.includes("serpentshrine") || /\bssc\b/.test(z);
+}
+
+/** `reportCode` → earliest known start time (ms) for SSC-tagged guild logs. */
+async function collectSscWclReportStartTimes() {
+  /** @type {Map<string, number>} */
+  const out = new Map();
+  const merge = (code, startMs) => {
+    const c = String(code || "").trim();
+    if (!c) return;
+    const ms = reportStartTimeMs(startMs);
+    const prev = out.get(c) || 0;
+    if (!out.has(c) || (ms > 0 && (prev <= 0 || ms < prev))) out.set(c, ms);
+  };
+  try {
+    for (const row of lootAwardsListRaids()) {
+      if (!isSscRaidMetadataLabel(row.reportRaidName) && !isSscRaidMetadataLabel(row.reportTitle)) continue;
+      merge(row.reportCode, row.reportStartTime);
+    }
+  } catch (error) {
+    console.warn("[badges] loot_awards SSC scan failed:", error?.message || error);
+  }
+  try {
+    const guildId = wclGuildId();
+    if (guildId) {
+      const reports = await getFilteredGuildReportsForGuild(guildId, wclMaxGuildReportsLimit());
+      for (const report of reports) {
+        if (primaryTrackedRaidNameFromReport(report) !== "Serpentshrine Cavern") continue;
+        merge(report?.code, report?.startTime);
+      }
+    }
+  } catch (error) {
+    console.warn("[badges] WCL SSC report scan failed:", error?.message || error);
+  }
+  return out;
+}
+
+/**
+ * Resolve the guild's first SSC raid night from WCL only: the calendar day of
+ * the chronologically earliest SSC guild log; every SSC report on that day
+ * counts (multiple uploads same night).
+ */
+async function resolveFirstSscEventReportCodes() {
+  const sscReports = await collectSscWclReportStartTimes();
+  let firstWclMs = 0;
+  for (const ms of sscReports.values()) {
+    if (ms > 0 && (!firstWclMs || ms < firstWclMs)) firstWclMs = ms;
+  }
+  if (!firstWclMs) return [];
+  const dayKey = raidCalendarDayKey(firstWclMs);
+  const reportCodes = [];
+  for (const [code, ms] of sscReports) {
+    const key = raidCalendarDayKey(ms > 0 ? ms : firstWclMs);
+    if (key === dayKey) reportCodes.push(code);
+  }
+  return reportCodes;
+}
+
+async function userIdsForSscFirstEventBadge() {
+  const reportCodes = await resolveFirstSscEventReportCodes();
+  if (!reportCodes.length) return new Set();
+  try {
+    return raidAppearancesUserIdsInDateRange({ reportCodes });
+  } catch (error) {
+    console.warn("[badges] raid_appearances lookup failed for ssc-first-event:", error?.message || error);
+    return new Set();
+  }
 }
 
 async function raidHelperPrimarySignupUserIdsForEvent(eventId) {
@@ -11612,25 +11670,38 @@ async function refreshSpecificRaidAttendanceAwardsCache() {
   /** @type {Map<string, Set<number>>} */
   const out = new Map();
   for (const cfg of SPECIFIC_RAID_ATTENDANCE_BADGES) {
-    const userIds = wclUserIdsForSpecificRaidAttendanceBadge(cfg);
-    const rhEventIds = Array.isArray(cfg.raidHelperEventIds) ? cfg.raidHelperEventIds : [];
-    if (rhEventIds.length) {
-      for (const eid of rhEventIds) {
-        const rhIds = await raidHelperPrimarySignupUserIdsForEvent(eid);
-        for (const uid of rhIds) userIds.add(uid);
-      }
-    } else if (Array.isArray(cfg.raidHelperFirstEventTitleKeywords) && cfg.raidHelperFirstEventTitleKeywords.length) {
+    let userIds;
+    if (cfg.dynamicFirstSscEvent) {
       try {
-        const firstId = await findFirstRaidHelperEventIdByTitleKeywords(cfg.raidHelperFirstEventTitleKeywords);
-        if (firstId) {
-          const rhIds = await raidHelperPrimarySignupUserIdsForEvent(firstId);
-          for (const uid of rhIds) userIds.add(uid);
-        }
+        userIds = await userIdsForSscFirstEventBadge();
       } catch (error) {
         console.warn(
-          `[badges] Raid Helper lookup failed for ${cfg.badgeId}:`,
+          `[badges] first SSC event resolution failed for ${cfg.badgeId}:`,
           error?.message || error
         );
+        userIds = new Set();
+      }
+    } else {
+      userIds = wclUserIdsForSpecificRaidAttendanceBadge(cfg);
+      const rhEventIds = Array.isArray(cfg.raidHelperEventIds) ? cfg.raidHelperEventIds : [];
+      if (rhEventIds.length) {
+        for (const eid of rhEventIds) {
+          const rhIds = await raidHelperPrimarySignupUserIdsForEvent(eid);
+          for (const uid of rhIds) userIds.add(uid);
+        }
+      } else if (Array.isArray(cfg.raidHelperFirstEventTitleKeywords) && cfg.raidHelperFirstEventTitleKeywords.length) {
+        try {
+          const firstId = await findFirstRaidHelperEventIdByTitleKeywords(cfg.raidHelperFirstEventTitleKeywords);
+          if (firstId) {
+            const rhIds = await raidHelperPrimarySignupUserIdsForEvent(firstId);
+            for (const uid of rhIds) userIds.add(uid);
+          }
+        } catch (error) {
+          console.warn(
+            `[badges] Raid Helper lookup failed for ${cfg.badgeId}:`,
+            error?.message || error
+          );
+        }
       }
     }
     out.set(cfg.badgeId, userIds);
@@ -11672,7 +11743,11 @@ function resolveSpecificRaidAttendanceAwards() {
   /** @type {Map<string, Set<number>>} */
   const out = new Map();
   for (const cfg of SPECIFIC_RAID_ATTENDANCE_BADGES) {
-    out.set(cfg.badgeId, wclUserIdsForSpecificRaidAttendanceBadge(cfg));
+    if (cfg.dynamicFirstSscEvent) {
+      out.set(cfg.badgeId, cached.get(cfg.badgeId) || new Set());
+    } else {
+      out.set(cfg.badgeId, wclUserIdsForSpecificRaidAttendanceBadge(cfg));
+    }
   }
   if (!specificRaidAttendanceAwardsRefreshPromise) {
     specificRaidAttendanceAwardsRefreshPromise = refreshSpecificRaidAttendanceAwardsCache().finally(() => {
@@ -20027,7 +20102,7 @@ function lootCountByUserMapFromMaterialised() {
  * (no sync has ever run on this DB) so the caller can surface a
  * "data warming up" hint instead of an empty grid.
  */
-function buildLeaderboardBundlePayload(guildId) {
+function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = null) {
   const base = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
   if (!base || !Array.isArray(base.leaderboard) || !base.leaderboard.length) return null;
 
@@ -20068,11 +20143,14 @@ function buildLeaderboardBundlePayload(guildId) {
   // Loot count hint for the lazy expand panel.
   const lootCountByUserId = lootCountByUserMapFromMaterialised();
 
-  // Specific-raid attendance awards (e.g. "AOE Cleave"). Already SQLite-only.
+  // Specific-raid attendance awards (e.g. "AOE Cleave", SSC first event).
   /** @type {Map<number, string[]>} */
   const specificEventBadgesByUserId = new Map();
   try {
-    const awards = resolveSpecificRaidAttendanceAwards();
+    const awards =
+      specificRaidAttendanceAwards instanceof Map
+        ? specificRaidAttendanceAwards
+        : resolveSpecificRaidAttendanceAwards();
     for (const [badgeId, userIds] of awards.entries()) {
       for (const uid of userIds) {
         const list = specificEventBadgesByUserId.get(uid) || [];
@@ -20237,7 +20315,8 @@ app.get("/api/leaderboard", async (req, res) => {
     Number.isInteger(requestedGuildId) && requestedGuildId > 0 ? requestedGuildId : votingGuildId;
   try {
     await ensureIdentityPublicSettingsStore();
-    const payload = buildLeaderboardBundlePayload(guildId);
+    const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
+    const payload = buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards);
     if (!payload) {
       return res.json({
         ok: true,

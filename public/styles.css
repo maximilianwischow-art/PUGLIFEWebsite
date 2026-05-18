@@ -5217,6 +5217,132 @@ tr.admin-wcl-phase-row--warn td:first-child {
   }
 }
 
+/* Ultra-wide: use horizontal space without stretching line length on prose */
+@media (min-width: 2200px) {
+  .admin-page-main.container {
+    width: min(100%, 94vw);
+    max-width: 2120px;
+  }
+
+  .admin-shell {
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .admin-identity-overview {
+    grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .admin-events-stack {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-dash-charts--two {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  #roleAlertsRaidComposerInner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 36%);
+    gap: 20px 24px;
+    align-items: start;
+  }
+
+  .role-alert-composer-roster {
+    margin-bottom: 0;
+  }
+
+  .role-alert-raid-composer .role-alert-composer-pool-cards {
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  }
+
+  .admin-panel[data-admin-panel="role-alerts"] .admin-role-alerts-url-row {
+    max-width: 720px;
+  }
+
+  .admin-panel[data-admin-panel="role-alerts"] > .admin-actions--tight {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+  }
+
+  #roleAlertsEventSelect {
+    max-width: 520px;
+  }
+}
+
+@media (min-width: 2560px) {
+  .admin-page-main.container {
+    max-width: 2400px;
+  }
+
+  .admin-shell {
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .admin-sidebar-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 10px;
+    row-gap: 14px;
+    align-content: start;
+  }
+
+  .admin-sidebar-group {
+    break-inside: avoid;
+  }
+
+  .admin-dash-chart-mount {
+    min-height: 380px;
+  }
+
+  .admin-dash-charts--two {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-kpi-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .role-alert-signup-pool {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+
+  #roleAlertsRaidComposerInner {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 34%);
+    gap: 24px 28px;
+  }
+
+  .role-alert-raid-composer .role-alert-groups {
+    gap: 12px;
+  }
+
+  .role-alert-raid-composer .role-alert-composer-pool-cards {
+    grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  }
+
+  .admin-identity-table-block > .admin-actions--tight .admin-input[type="search"] {
+    max-width: 560px;
+  }
+
+  .admin-table-wrap {
+    overflow-x: visible;
+  }
+
+  .admin-identity-accounts-table {
+    min-width: 0;
+  }
+}
+
+@media (min-width: 3440px) {
+  .admin-page-main.container {
+    max-width: 2800px;
+  }
+}
+
 @media (max-width: 640px) {
   .container {
     padding: 18px 10px 44px;
