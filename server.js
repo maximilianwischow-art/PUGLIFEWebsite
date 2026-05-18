@@ -396,7 +396,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-wcl-debuff-uptime-v2";
+const API_BUILD_ID = "20260518-wcl-debuff-uptime-v3";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -9815,8 +9815,8 @@ app.get("/api/admin/wcl-debuff-uptime", async (req, res) => {
     }
 
     const cacheKey = encounterId
-      ? `wcl-debuff-uptime-v1-${reportCode}-${String(encounterId).trim()}`
-      : `wcl-debuff-uptime-meta-v1-${reportCode}`;
+      ? `wcl-debuff-uptime-v2-${reportCode}-${String(encounterId).trim()}`
+      : `wcl-debuff-uptime-meta-v2-${reportCode}`;
 
     const payload = await getOrRefreshCachedPayload(cacheKey, {
       ttlMs: 24 * 60 * 60 * 1000,

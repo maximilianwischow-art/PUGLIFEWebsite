@@ -96,34 +96,24 @@ if (!fight) {
 
 console.log("\nUsing fight:", fight.id, fight.name, fight.kill ? "kill" : "wipe", `enc=${fight.encounterID}`);
 
-const DEBUFF_TABLE_QUERY = `
-  query ProbeDebuffs($code: String!, $fightIds: [Int!]!) {
-    reportData {
-      report(code: $code) {
-        byAbility: table(dataType: Debuffs, fightIDs: $fightIds, viewBy: Ability)
-        bySource: table(dataType: Debuffs, fightIDs: $fightIds, viewBy: Source)
-      }
-    }
-  }
-`;
-
-const raw = await queryWcl(DEBUFF_TABLE_QUERY, { code: reportCode, fightIds: [fight.id] });
-const byAbility = parseWclTablePayload(raw?.reportData?.report?.byAbility);
-const bySource = parseWclTablePayload(raw?.reportData?.report?.bySource);
-
-console.log("\n=== Ability view: sample entry keys ===");
-const sample = (byAbility?.entries || [])[0];
-console.log(sample ? Object.keys(sample) : "no entries");
-if (sample?.sources?.[0]) console.log("source[0] keys:", Object.keys(sample.sources[0]));
-
-console.log("\n=== Catalog debuffs in Ability table ===");
+console.log("\n=== Per-debuff Target table (production path) ===");
 for (const def of IMPORTANT_ARMOR_DEBUFFS) {
-  const hit = (byAbility?.entries || []).find((e) =>
-    String(e?.name || "")
-      .toLowerCase()
-      .includes(def.name.split(" ")[0].toLowerCase())
+  const filter = `ability.name = '${String(def.name).replace(/'/g, "\\'")}'`;
+  const raw = await queryWcl(
+    `query ($code: String!, $fightIds: [Int!]!, $filter: String!) {
+      reportData { report(code: $code) {
+        t: table(dataType: Debuffs, fightIDs: $fightIds, viewBy: Target, filterExpression: $filter)
+      } }
+    }`,
+    { code: reportCode, fightIds: [fight.id], filter }
   );
-  console.log(def.name, hit ? { id: hit.id, uptime: hit.uptime, sources: (hit.sources || []).length } : "not found");
+  const parsed = parseWclTablePayload(raw?.reportData?.report?.t);
+  const aura = (parsed?.auras || parsed?.entries || [])[0];
+  const pct =
+    parsed?.totalTime && aura?.totalUptime != null
+      ? Math.round((aura.totalUptime / parsed.totalTime) * 1000) / 10
+      : null;
+  console.log(def.name, aura ? { guid: aura.guid, totalUptime: aura.totalUptime, uptimePct: pct } : "not found");
 }
 
 console.log("\n=== Normalized fetchDebuffUptimeForFight ===");
