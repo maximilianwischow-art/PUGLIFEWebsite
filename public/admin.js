@@ -5218,6 +5218,7 @@ let wclPhaseAvgsLastUpdatedAt = 0;
 let wclPhaseAvgsCachedRenderKey = "";
 let wclDebuffOverviewCache = null;
 let wclDebuffOverviewReportCode = "";
+let wclDebuffSpellMetaById = new Map();
 
 const WCL_DEBUFF_COL_SHORT = {
   "sunder-armor": "Sunder",
@@ -5484,19 +5485,73 @@ function wclDebuffColLabel(def) {
   return WCL_DEBUFF_COL_SHORT[def?.key] || String(def?.name || "").split(" ")[0];
 }
 
-function wclDebuffSpellLink(spellId, label) {
+function getWclDebuffSpellMeta(spellId) {
   const id = Math.floor(Number(spellId));
-  const text = String(label || "").trim();
-  if (window.WowSpellTooltip?.spellLinkHtml && id > 0) {
-    return window.WowSpellTooltip.spellLinkHtml(id, text, {
-      className: "admin-debuff-wowhead-link",
-    });
-  }
-  return esc(text);
+  if (!id) return null;
+  return wclDebuffSpellMetaById.get(id) || null;
 }
 
-function wclDebuffRefreshWowheadTooltips(root) {
-  void window.WowSpellTooltip?.ensureAndRefresh?.(root || document.getElementById("wclDebuffResultsHost"));
+function wclDebuffSpellTriggerHtml(spellId, label) {
+  const id = Math.floor(Number(spellId));
+  const meta = getWclDebuffSpellMeta(id);
+  const text = esc(label || meta?.name || (id ? `Spell ${id}` : ""));
+  if (!id) return text;
+  const title = window.WowSpellTooltip?.tooltipText
+    ? window.WowSpellTooltip.tooltipText(meta)
+    : String(meta?.description || "").trim();
+  const icon = meta?.icon
+    ? `<img class="admin-debuff-spell-icon" src="${esc(meta.icon)}" alt="" loading="lazy" decoding="async" />`
+    : `<span class="admin-debuff-spell-icon admin-debuff-spell-icon--fallback" aria-hidden="true"></span>`;
+  return `<span class="admin-debuff-spell-trigger" data-wow-spell-id="${id}"${
+    title ? ` title="${esc(title)}"` : ""
+  }>${icon}<span class="admin-debuff-spell-label">${text}</span></span>`;
+}
+
+function wclDebuffBindSpellTooltips(root) {
+  if (!window.WowSpellTooltip?.bindSpellTooltipHandlers) return;
+  window.WowSpellTooltip.bindSpellTooltipHandlers(root, getWclDebuffSpellMeta);
+}
+
+async function loadWclDebuffSpellMeta(catalog) {
+  const ids = new Set();
+  for (const row of Array.isArray(catalog) ? catalog : []) {
+    const spellIds = Array.isArray(row.spellIds) ? row.spellIds : [row.spellId];
+    for (const id of spellIds) {
+      const n = Math.floor(Number(id));
+      if (n > 0) ids.add(n);
+    }
+  }
+  const list = [...ids];
+  if (!list.length) {
+    wclDebuffSpellMetaById = new Map();
+    return;
+  }
+  const next = new Map();
+  const chunkSize = 80;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const chunk = list.slice(i, i + chunkSize);
+    const payload = await getJson(
+      `/api/wow-classic/spells?ids=${encodeURIComponent(chunk.join(","))}`
+    );
+    for (const row of Array.isArray(payload?.spells) ? payload.spells : []) {
+      const sid = Math.floor(Number(row?.spellId));
+      if (sid > 0) next.set(sid, row);
+    }
+  }
+  for (const def of Array.isArray(catalog) ? catalog : []) {
+    const sid = Math.floor(Number(def.spellId));
+    if (!sid) continue;
+    const fetched = next.get(sid) || {};
+    next.set(sid, {
+      ...fetched,
+      spellId: sid,
+      name: fetched.name || def.name,
+      appliedBy: def.appliedBy || def.appliedByClass || null,
+      description: def.description || null,
+      catalogKey: def.key,
+    });
+  }
+  wclDebuffSpellMetaById = next;
 }
 
 function wclDebuffUptimeCellHtml(debuff) {
@@ -5509,7 +5564,7 @@ function wclDebuffUptimeCellHtml(debuff) {
   const title = esc(String(debuff?.description || "").trim());
   const orNote = debuff?.orNote ? ` · ${esc(debuff.orNote)}` : "";
   return `<tr>
-    <td title="${title}"><strong>${wclDebuffSpellLink(debuff?.spellId, debuff?.name)}</strong>${orNote}</td>
+    <td title="${title}"><strong>${wclDebuffSpellTriggerHtml(debuff?.spellId, debuff?.name)}</strong>${orNote}</td>
     <td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier}">${esc(uptime)}</td>
     <td>${applier}</td>
   </tr>`;
@@ -5595,7 +5650,7 @@ function renderWclDebuffOverview(payload) {
     .flatMap((g) =>
       g.defs.map(
         (def) =>
-          `<th class="admin-debuff-uptime-col" title="${esc(def.description || "")}">${wclDebuffSpellLink(
+          `<th class="admin-debuff-uptime-col" title="${esc(def.description || "")}">${wclDebuffSpellTriggerHtml(
             def.spellId,
             wclDebuffColLabel(def)
           )}</th>`
@@ -5638,7 +5693,7 @@ function renderWclDebuffOverview(payload) {
       </table>
     </div>
   `;
-  wclDebuffRefreshWowheadTooltips(host);
+  wclDebuffBindSpellTooltips(host);
 }
 
 function renderWclDebuffDetailInto(host, payload) {
@@ -5675,7 +5730,7 @@ function renderWclDebuffDetailInto(host, payload) {
           )}<span class="subtle admin-debuff-uptime-applier">${applier}</span></td>`;
         });
         const orNote = def.orNote ? ` <span class="subtle">(${esc(def.orNote)})</span>` : "";
-        return `<tr><th title="${esc(String(def.description || ""))}">${wclDebuffSpellLink(
+        return `<tr><th title="${esc(String(def.description || ""))}">${wclDebuffSpellTriggerHtml(
           def.spellId,
           def.name
         )}${orNote}</th>${cells.join("")}</tr>`;
@@ -5717,7 +5772,7 @@ function renderWclDebuffDetailInto(host, payload) {
     </div>
     ${detailBlocks}
   `;
-  wclDebuffRefreshWowheadTooltips(host);
+  wclDebuffBindSpellTooltips(host);
 }
 
 function setWclDebuffStatusLine(text) {
@@ -5751,6 +5806,7 @@ async function loadWclDebuffOverview(reportCode, { silent = false, btn = null } 
     if (!payload?.ok) throw new Error(payload?.error || "Overview failed");
     wclDebuffOverviewCache = payload;
     wclDebuffOverviewReportCode = code;
+    await loadWclDebuffSpellMeta(payload.catalog || []);
     renderWclDebuffOverview(payload);
     const killBosses = (payload.bossRows || []).filter((b) => !b.noKills).length;
     const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);
@@ -5794,8 +5850,9 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
     if (statusLine) {
       statusLine.textContent = `${fightCount} kill pull(s) · ${payload.reportTitle || reportCode}`;
     }
+    await loadWclDebuffSpellMeta(payload.catalog || []);
     renderWclDebuffDetailInto(host, payload);
-    wclDebuffRefreshWowheadTooltips(host);
+    wclDebuffBindSpellTooltips(host);
   } catch (error) {
     if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Detail failed")}</p>`;
     if (statusLine) statusLine.textContent = error?.message || "Detail failed";
@@ -5803,7 +5860,6 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
 }
 
 async function initWclDebuffUptimePanel() {
-  void window.WowSpellTooltip?.loadWowheadPower?.();
   renderWclDebuffReportSelect();
   const select = document.getElementById("wclDebuffReportSelect");
   const code = String(select?.value || "").trim();

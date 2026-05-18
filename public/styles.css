@@ -4829,19 +4829,45 @@ tr.admin-wcl-phase-row--warn td:first-child {
   overflow: auto;
 }
 
-.admin-debuff-wowhead-link {
-  color: inherit;
-  text-decoration: underline dotted rgba(200, 160, 255, 0.45);
-  text-underline-offset: 2px;
+.admin-debuff-spell-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: help;
+  vertical-align: middle;
 }
 
-.admin-debuff-wowhead-link:hover {
-  color: #ffe082;
+.admin-debuff-spell-label {
+  line-height: 1.2;
 }
 
-.admin-debuff-uptime-table th .admin-debuff-wowhead-link,
-.admin-debuff-uptime-matrix th .admin-debuff-wowhead-link {
+.admin-debuff-spell-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.admin-debuff-spell-icon--fallback {
+  display: inline-block;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-debuff-uptime-overview .admin-debuff-spell-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.admin-debuff-uptime-table th .admin-debuff-spell-trigger,
+.admin-debuff-uptime-matrix th .admin-debuff-spell-trigger {
   font-weight: 600;
+}
+
+.loot-tooltip-wowhead .whtt-name {
+  font-weight: 700;
 }
 
 .admin-table-sort-btn:hover {

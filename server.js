@@ -398,7 +398,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-wcl-debuff-uptime-v4";
+const API_BUILD_ID = "20260518-wcl-debuff-tooltip-v2";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -1153,10 +1153,12 @@ function wowheadTooltipLocaleKey() {
   return "tooltip_enus";
 }
 
-function extractWowheadTooltipHtml(html, itemId, preferredKey) {
+function extractWowheadPowerTooltipHtml(html, entityId, preferredKey, collectionKey) {
   const keyCandidates = [preferredKey, "tooltip_enus", "tooltip_dede", "tooltip_frfr", "tooltip_eses", "tooltip_ruru"];
+  const entity = Number(entityId);
+  const store = String(collectionKey || "g_items");
   for (const key of keyCandidates) {
-    const rx = new RegExp(`g_items\\[${Number(itemId)}\\]\\.${key}\\s*=\\s*\"((?:\\\\.|[^\"\\\\])*)\";`);
+    const rx = new RegExp(`${store}\\[${entity}\\]\\.${key}\\s*=\\s*"((?:\\\\.|[^"\\\\])*)";`);
     const m = String(html || "").match(rx);
     if (!m?.[1]) continue;
     try {
@@ -1166,6 +1168,64 @@ function extractWowheadTooltipHtml(html, itemId, preferredKey) {
     }
   }
   return "";
+}
+
+function extractWowheadTooltipHtml(html, itemId, preferredKey) {
+  return extractWowheadPowerTooltipHtml(html, itemId, preferredKey, "g_items");
+}
+
+function extractWowheadSpellTooltipHtml(html, spellId, preferredKey) {
+  return extractWowheadPowerTooltipHtml(html, spellId, preferredKey, "g_spells");
+}
+
+function sanitizeWowheadTooltipHtml(tooltipHtml) {
+  return String(tooltipHtml || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+="[^"]*"/gi, "");
+}
+
+function parseWowheadSpellPageMeta(html) {
+  const iconM = String(html || "").match(
+    /<link\s+rel="image_src"\s+href="(https:\/\/wow\.zamimg\.com\/images\/wow\/icons\/large\/[^"]+)"/i
+  );
+  const titleM = String(html || "").match(/<title>([^<]+)<\/title>/i);
+  let name = "";
+  if (titleM?.[1]) {
+    name = titleM[1].replace(/\s*-\s*Spell\s*-\s*TBC Classic\s*$/i, "").trim();
+  }
+  return {
+    name: name || null,
+    icon: iconM?.[1]?.trim() || null,
+  };
+}
+
+async function fetchClassicSpellMetadata(spellId) {
+  const id = Math.floor(Number(spellId));
+  if (!Number.isInteger(id) || id <= 0) return { spellId: id || null };
+  const flavor = wowheadFlavorPath();
+  const spellUrl = `https://www.wowhead.com${flavor}/spell=${id}`;
+  const powerUrl = `${spellUrl}?power`;
+  const ua = { "User-Agent": "fallen-tacticians-api/1.0 (+spell-tooltip)" };
+  const pageRes = await fetch(spellUrl, { headers: ua });
+  const pageHtml = await pageRes.text().catch(() => "");
+  const pageMeta = parseWowheadSpellPageMeta(pageHtml);
+  const baseMeta = {
+    spellId: id,
+    name: pageMeta.name,
+    icon: pageMeta.icon,
+    tooltip: [],
+  };
+  if (!wowheadTooltipEnabled()) return baseMeta;
+  const powerRes = await fetch(powerUrl, { headers: ua });
+  const powerHtml = await powerRes.text().catch(() => "");
+  const tooltipHtml = extractWowheadSpellTooltipHtml(powerHtml, id, wowheadTooltipLocaleKey());
+  if (!tooltipHtml) return baseMeta;
+  const sanitizedTooltipHtml = sanitizeWowheadTooltipHtml(tooltipHtml);
+  return {
+    ...baseMeta,
+    tooltipHtml: sanitizedTooltipHtml || null,
+    tooltipSource: sanitizedTooltipHtml ? "wowhead" : null,
+  };
 }
 
 function lootHistoryMaxStaleMs() {
@@ -15155,9 +15215,7 @@ async function fetchClassicItemMetadata(itemId) {
   const html = await whRes.text().catch(() => "");
   const tooltipHtml = extractWowheadTooltipHtml(html, id, key);
   if (!tooltipHtml) return baseMeta;
-  const sanitizedTooltipHtml = String(tooltipHtml || "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/\son\w+="[^"]*"/gi, "");
+  const sanitizedTooltipHtml = sanitizeWowheadTooltipHtml(tooltipHtml);
   return {
     ...baseMeta,
     tooltipHtml: sanitizedTooltipHtml || null,
@@ -21025,6 +21083,30 @@ app.get("/api/wow-classic/items", async (req, res) => {
     return res.json({ ok: true, items });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load item metadata" });
+  }
+});
+
+app.get("/api/wow-classic/spells", async (req, res) => {
+  try {
+    const idsRaw = String(req.query.ids || "")
+      .split(",")
+      .map((x) => Number(String(x || "").trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    const uniqueIds = [...new Set(idsRaw)].slice(0, 80);
+    if (!uniqueIds.length) return res.json({ ok: true, spells: [] });
+    const spells = [];
+    for (const spellId of uniqueIds) {
+      const key = `spell-meta-v1-${wowheadFlavorPath()}-${spellId}`;
+      const payload = await getOrRefreshCachedPayload(key, {
+        ttlMs: itemMetadataCacheTtlMs(),
+        maxStaleMs: 30 * 24 * 3600_000,
+        loader: () => fetchClassicSpellMetadata(spellId),
+      });
+      spells.push(payload);
+    }
+    return res.json({ ok: true, spells });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load spell metadata" });
   }
 });
 
