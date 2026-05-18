@@ -5,6 +5,7 @@ This app can run on **DigitalOcean App Platform** (recommended for easiest HTTPS
 ## 1) Prep your repo
 
 - Push latest code to GitHub (including `server.js`, `public/`, and `.do/app.yaml`).
+- After pushing, open **Apps → your app → Activity** and confirm the latest deploy succeeded (Event Management needs the running `server.js`, not just static files).
 - In `.do/app.yaml`, replace:
   - `YOUR_GITHUB_USERNAME`
   - `YOUR_REPO_NAME`
