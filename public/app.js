@@ -90,8 +90,14 @@ const raidDayModalTitle = document.querySelector("#raidDayModalTitle");
 const raidDayModalBody = document.querySelector("#raidDayModalBody");
 const raidDayModalClose = document.querySelector("#raidDayModalClose");
 
-/** Tracked raids → latest run rows shown per column (sync with server TRACKED_RAIDS). */
-const RAID_CALENDAR_RAID_ORDER = ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"];
+/** Tracked raids â†’ latest run rows shown per column (sync with server TRACKED_RAIDS). */
+const RAID_CALENDAR_RAID_ORDER = [
+  "Serpentshrine Cavern",
+  "Tempest Keep",
+  "Karazhan",
+  "Gruul's Lair",
+  "Magtheridon's Lair",
+];
 const RAID_CALENDAR_PER_RAID = 20;
 
 /** @type {Record<string, Array>} */
@@ -129,7 +135,7 @@ if (raidCalendarGrid) {
     const list = raidCalendarColumnsData[key];
     const entry = Array.isArray(list) ? list[i] : null;
     if (!entry) return;
-    openRaidDetailModal(`${shortRaidName(entry.raidName)} · ${fmtDate(entry.startTime)}`, [entry]);
+    openRaidDetailModal(`${shortRaidName(entry.raidName)} Â· ${fmtDate(entry.startTime)}`, [entry]);
   });
 }
 
@@ -235,7 +241,7 @@ function escapeHtml(value) {
 }
 
 function fmtKpiAttendancePct(value) {
-  if (value == null || Number.isNaN(Number(value))) return "—";
+  if (value == null || Number.isNaN(Number(value))) return "â€”";
   return `${Number(value).toFixed(1)}%`;
 }
 
@@ -244,17 +250,17 @@ async function loadRaidPerfKpi() {
   raidPerfKpiGrid.innerHTML = `
     <div class="raid-kpi-tile raid-kpi-tile--loading">
       <span class="raid-kpi-label">Loading</span>
-      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-value">â€”</span>
       <span class="raid-kpi-label">Fetching KPI overview</span>
     </div>
     <div class="raid-kpi-tile raid-kpi-tile--loading">
       <span class="raid-kpi-label">Loading</span>
-      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-value">â€”</span>
       <span class="raid-kpi-label">Fetching KPI overview</span>
     </div>
     <div class="raid-kpi-tile raid-kpi-tile--loading">
       <span class="raid-kpi-label">Loading</span>
-      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-value">â€”</span>
       <span class="raid-kpi-label">Fetching KPI overview</span>
     </div>`;
   try {
@@ -271,12 +277,12 @@ async function loadRaidPerfKpi() {
     const coreAvg = data.coreAttendanceAverage;
     const itemsN = data.totalItemsDistributed;
     const itemsLabel =
-      itemsN != null && Number.isFinite(Number(itemsN)) ? Number(itemsN).toLocaleString() : "—";
+      itemsN != null && Number.isFinite(Number(itemsN)) ? Number(itemsN).toLocaleString() : "â€”";
 
     raidPerfKpiGrid.innerHTML = `
       <div class="raid-kpi-tile raid-kpi-tile--primary">
-        <span class="raid-kpi-label" title="Canonical raider database — every Discord/Raid Helper identity we have on file (Admin → Database).">Roster footprint</span>
-        <span class="raid-kpi-value">${escapeHtml(String(uniqueN ?? "—"))}</span>
+        <span class="raid-kpi-label" title="Canonical raider database â€” every Discord/Raid Helper identity we have on file (Admin â†’ Database).">Roster footprint</span>
+        <span class="raid-kpi-value">${escapeHtml(String(uniqueN ?? "â€”"))}</span>
         <span class="raid-kpi-label">Unique raiders in our database</span>
       </div>
       <div class="raid-kpi-tile">
@@ -295,7 +301,7 @@ async function loadRaidPerfKpi() {
   } catch (err) {
     raidPerfKpiGrid.innerHTML = `<div class="raid-kpi-tile raid-kpi-tile--error">
       <span class="raid-kpi-label">Unavailable</span>
-      <span class="raid-kpi-value">—</span>
+      <span class="raid-kpi-value">â€”</span>
       <span class="raid-kpi-label">${escapeHtml(err?.message || "Could not load KPIs")}</span>
     </div>`;
   }
@@ -315,6 +321,8 @@ function shortRaidName(raidName) {
   if (s === "Karazhan") return "Kara";
   if (s === "Gruul's Lair") return "Gruul";
   if (s === "Magtheridon's Lair") return "Mag";
+  if (s === "Serpentshrine Cavern") return "SSC";
+  if (s === "Tempest Keep") return "TK";
   if (s === "Gruul's Lair + Magtheridon's Lair") return "Gruul + Mag";
   return s || "?";
 }
@@ -338,7 +346,7 @@ function responsiveImageAttrs(sourcePath, widths, sizes) {
   return srcset ? ` srcset="${escapeHtml(srcset)}" sizes="${escapeHtml(sizes)}" decoding="async"` : ` decoding="async"`;
 }
 
-/** Same normalization as voting page — WCL strings may use curly apostrophes. */
+/** Same normalization as voting page â€” WCL strings may use curly apostrophes. */
 function normalizedRaidBannerKey(s) {
   return String(s || "")
     .replace(/\u2019/g, "'")
@@ -408,7 +416,7 @@ function renderDashboardOverview(raidSummary) {
   if (dashboardPbRow) {
     const tiles = (raidSummary || []).map((raid) => {
       const bc = raid.bestClear;
-      const dur = bc ? fmtDuration(bc.durationMs) : "—";
+      const dur = bc ? fmtDuration(bc.durationMs) : "â€”";
       const when = bc ? fmtDate(bc.reportStartTime) : "";
       const logHref = bc
         ? `https://fresh.warcraftlogs.com/reports/${escapeHtml(bc.reportCode)}`
@@ -445,7 +453,7 @@ function renderDashboardOverview(raidSummary) {
                 <p class="pb-tile-time">${escapeHtml(dur)}</p>
                 <p class="pb-tile-sub">${escapeHtml(sub)}</p>
               </div>
-              <span class="pb-tile-chevron" aria-hidden="true">▼</span>
+              <span class="pb-tile-chevron" aria-hidden="true">â–¼</span>
             </summary>
             <div class="pb-tile-encounters">
               ${buildEncounterTableHtml(raid)}
@@ -510,7 +518,7 @@ function buildRaidDayDetailRowHtml(e) {
           <div>
             <h4>${escapeHtml(e.raidName)}</h4>
             <p class="subtle">${escapeHtml(e.title)}</p>
-            <p class="subtle">Uploaded by ${escapeHtml(e.uploadedBy || "—")}</p>
+            <p class="subtle">Uploaded by ${escapeHtml(e.uploadedBy || "â€”")}</p>
             <p class="raid-day-clear-line">${escapeHtml(timeLine)}</p>
             ${pb}
             ${behind}
@@ -591,12 +599,7 @@ function closeRaidDayModal() {
 
 async function loadRecentRaidsCalendar() {
   if (!raidCalendarGrid) return;
-  raidCalendarGrid.innerHTML = `
-    <div class="raid-cal-columns">
-      <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
-      <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
-      <div class="raid-cal-column"><div class="raid-cal-column-body"><p class="subtle">Loading raid history…</p></div></div>
-    </div>`;
+  raidCalendarGrid.innerHTML = `<div class="raid-cal-columns"><p class="subtle" style="grid-column:1/-1">Loading raid history...</p></div>`;
   try {
     const cacheBust = `nocache=1&t=${Date.now()}`;
     const payload = await apiGetJson(
@@ -863,11 +866,11 @@ async function loadDeathEncounterHeatmap() {
 
 scheduleNonCritical(initBackgroundStars, 900);
 scheduleNonCritical(initBasicAnalytics, 1200);
-if (raidPerfKpiGrid) {
-  // KPI block is above-the-fold, so keep it eager.
+const phase2RaidOverviewHost = document.getElementById("phase2RaidOverviewHost");
+if (raidPerfKpiGrid && !phase2RaidOverviewHost) {
   loadRaidPerfKpi();
 }
-if (dashboardPbRow) {
+if (dashboardPbRow && !phase2RaidOverviewHost) {
   scheduleNonCritical(loadBossTimes, 1600);
 }
 if (potrRaidBanner && potrRaidDate) {

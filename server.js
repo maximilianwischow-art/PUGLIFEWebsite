@@ -55,6 +55,12 @@ import {
   wclFightUrl,
 } from "./lib/wcl/debuff-uptime.mjs";
 import { debuffCatalogForApi, debuffOrGroupsForApi } from "./lib/wcl/important-debuffs.mjs";
+import {
+  PHASE2_RAID_CATALOG,
+  formatPhase2Duration,
+  formatPhase2ShortDate,
+  phase2ProgressionTone,
+} from "./lib/phase2-raid-overview.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -398,7 +404,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-plb-debuff-ds-v2";
+const API_BUILD_ID = "20260518-plb-phase2-overview-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -7890,6 +7896,7 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
       raidRankingPayloads.push({
         reportCode: String(report.code || ""),
         startTime: Number(report.startTime || 0),
+        primaryRaid: primaryTrackedRaidFromReport(report),
         mergedDps: mergeWclRankingsPayloads(dpsParts),
         mergedHps: mergeWclRankingsPayloads(hpsParts),
       });
@@ -19250,6 +19257,367 @@ app.delete("/api/raid-helper/events/:eventId/signup", async (req, res) => {
   } catch (error) {
     const status = Number(error?.statusCode || 500);
     return res.status(status).json({ ok: false, error: error?.message || "Signoff failed" });
+  }
+});
+
+function primaryTrackedRaidFromReport(report) {
+  const counts = new Map();
+  for (const fight of report?.fights || []) {
+    if (Number(fight?.encounterID || 0) <= 0) continue;
+    const raidKey = resolvedTrackedRaidForFight(fight, report);
+    if (!raidKey || !TRACKED_RAIDS[raidKey]) continue;
+    counts.set(raidKey, (counts.get(raidKey) || 0) + 1);
+  }
+  let best = null;
+  let max = 0;
+  for (const [key, n] of counts) {
+    if (n > max) {
+      max = n;
+      best = key;
+    }
+  }
+  return best;
+}
+
+function allPercentilesFromRankingsPayload(rankingsPayload) {
+  const parsed = parseMaybeJson(rankingsPayload);
+  const values = [];
+  const walk = (node) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (typeof node !== "object") return;
+    const pct = wclRankingEntryPercentile(node);
+    if (pct != null && !wclRankingNoiseZeroAmountRow(node)) values.push(pct);
+    for (const value of Object.values(node)) {
+      if (value && typeof value === "object") walk(value);
+    }
+  };
+  walk(parsed);
+  return values;
+}
+
+/** Mean peak boss parse % for roster members with guild role Core (RH/WCL links). */
+function computeCoreAveragePeakParse(raidSnapshots, raidRankingPayloads, wclDisplayByLower, linksState) {
+  const linked = buildRhWclLinkedAttendanceLeaderboard(
+    raidSnapshots,
+    linksState,
+    500,
+    wclDisplayByLower,
+    raidRankingPayloads
+  );
+  const peaks = [];
+  let coreAssigned = 0;
+  for (const row of linked.leaderboard || []) {
+    if (normalizeRhWclGuildRole(row?.guildRole) !== "Core") continue;
+    coreAssigned += 1;
+    const peak = highestPeakParseFromParseSummaries(row?.parseSummaries);
+    const v = Number(peak?.peakParse);
+    if (Number.isFinite(v) && v >= 0) peaks.push(v);
+  }
+  if (!peaks.length) {
+    return { value: null, coreAssigned, coreWithParse: 0 };
+  }
+  const avg = peaks.reduce((sum, n) => sum + n, 0) / peaks.length;
+  return {
+    value: Math.round(avg * 10) / 10,
+    coreAssigned,
+    coreWithParse: peaks.length,
+  };
+}
+
+function rankingEntryPrimaryRaid(entry, reportByCode) {
+  const tagged = String(entry?.primaryRaid || "").trim();
+  if (tagged && TRACKED_RAIDS[tagged]) return tagged;
+  const code = String(entry?.reportCode || "").trim();
+  if (!code || !reportByCode) return null;
+  const report = reportByCode.get(code);
+  return report ? primaryTrackedRaidFromReport(report) : null;
+}
+
+/** Mean peak parse % for Core roster members on WCL reports whose primary zone is `raidName`. */
+function coreAverageParsePercentForRaid(
+  raidName,
+  raidSnapshots,
+  raidRankingPayloads,
+  linksState,
+  wclDisplayByLower,
+  reportByCode = null
+) {
+  const filteredRankings = (raidRankingPayloads || []).filter(
+    (entry) => rankingEntryPrimaryRaid(entry, reportByCode) === raidName
+  );
+  if (!filteredRankings.length) return null;
+
+  const codes = new Set(
+    filteredRankings
+      .map((entry) => String(entry?.reportCode || "").trim())
+      .filter(Boolean)
+  );
+  const filteredSnapshots = (raidSnapshots || []).filter((snap) =>
+    codes.has(String(snap?.reportCode || "").trim())
+  );
+
+  return computeCoreAveragePeakParse(
+    filteredSnapshots,
+    filteredRankings,
+    wclDisplayByLower,
+    linksState
+  ).value;
+}
+
+function buildPhase2RaidOverviewPayload({
+  effectiveReports,
+  raidSummary,
+  calendarEntries,
+  raidRankingPayloads,
+  coreParseMetrics,
+  coreParseContext,
+}) {
+  const summaryByRaid = new Map((raidSummary || []).map((row) => [row.raidName, row]));
+  const reportByCode = new Map((effectiveReports || []).map((r) => [String(r.code || ""), r]));
+  const kpiRankings = coreParseContext?.raidRankingPayloads ?? raidRankingPayloads ?? [];
+  const kpiSnapshots = coreParseContext?.raidSnapshots ?? [];
+  const linksState = coreParseContext?.linksState ?? null;
+  const wclDisplayByLower = coreParseContext?.wclDisplayByLower ?? new Map();
+  const clearsByRaid = new Map();
+  const lastClearByRaid = new Map();
+
+  for (const entry of calendarEntries || []) {
+    const raidName = entry?.raidName;
+    if (!raidName) continue;
+    if (entry.isFullClear) {
+      clearsByRaid.set(raidName, (clearsByRaid.get(raidName) || 0) + 1);
+      const prev = lastClearByRaid.get(raidName) || 0;
+      const ts = Number(entry.startTime) || 0;
+      if (ts > prev) lastClearByRaid.set(raidName, ts);
+    }
+  }
+
+  const raids = PHASE2_RAID_CATALOG.map((meta) => {
+    const row = summaryByRaid.get(meta.raidKey) || { raidName: meta.raidKey, bosses: [], bestClear: null };
+    const bossRows = Array.isArray(row.bosses) ? row.bosses : [];
+    const bossesTotal = bossRows.length || (TRACKED_RAIDS[meta.raidKey] || []).length;
+    const bossesCleared = bossRows.filter((b) => b?.bestKill).length;
+    const progression =
+      bossesTotal > 0 ? Math.round((bossesCleared / bossesTotal) * 1000) / 10 : 0;
+    const bestClear = row.bestClear || null;
+    const coreAverageParse = coreAverageParsePercentForRaid(
+      meta.raidKey,
+      kpiSnapshots,
+      kpiRankings,
+      linksState,
+      wclDisplayByLower,
+      reportByCode
+    );
+    const lastClearMs = lastClearByRaid.get(meta.raidKey) || bestClear?.reportStartTime || null;
+
+    return {
+      id: meta.id,
+      name: meta.name,
+      shortName: meta.shortName,
+      size: meta.size,
+      tier: meta.tier,
+      color: meta.color,
+      imageUrl: meta.imageUrl,
+      headerImageUrl: meta.headerImageUrl,
+      bosses: { total: bossesTotal, cleared: bossesCleared },
+      progression,
+      progressionTone: phase2ProgressionTone(progression),
+      bestTime: formatPhase2Duration(bestClear?.durationMs),
+      bestTimeMs: bestClear?.durationMs || null,
+      lastClear: formatPhase2ShortDate(lastClearMs),
+      lastClearMs: lastClearMs || null,
+      totalClears: clearsByRaid.get(meta.raidKey) || 0,
+      coreAverageParse:
+        coreAverageParse != null && Number.isFinite(Number(coreAverageParse))
+          ? Number(coreAverageParse)
+          : null,
+      coreAverageParseTone: phase2ProgressionTone(coreAverageParse),
+      wclUrl: bestClear?.reportCode
+        ? `https://fresh.warcraftlogs.com/reports/${bestClear.reportCode}`
+        : null,
+      bossRows: bossRows.map((b) => ({
+        bossName: b.bossName,
+        bestKill: b.bestKill || null,
+      })),
+    };
+  });
+
+  const totalBosses = raids.reduce((sum, r) => sum + (r.bosses?.total || 0), 0);
+  const totalKilled = raids.reduce((sum, r) => sum + (r.bosses?.cleared || 0), 0);
+  const totalClears = raids.reduce((sum, r) => sum + (r.totalClears || 0), 0);
+  const coreAverageParse =
+    coreParseMetrics?.value != null && Number.isFinite(Number(coreParseMetrics.value))
+      ? Number(coreParseMetrics.value)
+      : null;
+  const overallProgression =
+    totalBosses > 0 ? Math.round((totalKilled / totalBosses) * 1000) / 10 : 0;
+  const t4Count = raids.filter((r) => r.tier === "T4").length;
+  const t5Count = raids.filter((r) => r.tier === "T5").length;
+
+  return {
+    raids,
+    summary: {
+      totalBosses,
+      totalKilled,
+      totalClears,
+      overallProgression,
+      overallProgressionTone: phase2ProgressionTone(overallProgression),
+      coreAverageParse,
+      coreAverageParseTone: phase2ProgressionTone(coreAverageParse),
+      coreRaiderCount: Number(coreParseMetrics?.coreAssigned || 0),
+      coreRaiderWithParseCount: Number(coreParseMetrics?.coreWithParse || 0),
+      raidInstanceLabel: `${t4Count}×T4 · ${t5Count}×T5`,
+      reportsScanned: effectiveReports?.length || 0,
+    },
+  };
+}
+
+app.get("/api/raids/phase2/overview", async (req, res) => {
+  const guildId = Number(req.query.guildId || process.env.VOTING_GUILD_ID || 817080);
+  const limit = Math.min(
+    wclMaxGuildReportsLimit(),
+    Math.max(10, Number(req.query.limit || 50))
+  );
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
+  }
+
+  try {
+    await ensureGargulLootHistoryStore();
+    const reports = await getFilteredGuildReportsForGuild(guildId, limit, { relaxKaraSchedule: true });
+    const selectedReportCodes = Array.from(
+      new Set(
+        (gargulLootState?.selectedReportCodes || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
+    const effectiveReports = wclReportsForHomeDashboard(reports, selectedSet);
+
+    const raidSummary = Object.entries(TRACKED_RAIDS).map(([raidName, bosses]) => {
+      const bestByBoss = new Map();
+      let bestClear = null;
+      for (const report of effectiveReports) {
+        const raidBossKills = (report.fights || []).filter(
+          (fight) =>
+            resolvedTrackedRaidForFight(fight, report) === raidName &&
+            fight?.kill &&
+            Number(fight?.encounterID || 0) > 0 &&
+            bossListMatchesFightName(bosses, fight.name)
+        );
+        const uniqueBossKills = new Set(
+          raidBossKills.map((fight) => resolveBossCanonicalName(bosses, fight.name))
+        );
+        if (uniqueBossKills.size === bosses.length && raidBossKills.length) {
+          const clearStart = Math.min(...raidBossKills.map((fight) => Number(fight.startTime || 0)));
+          const clearEnd = Math.max(...raidBossKills.map((fight) => Number(fight.endTime || 0)));
+          const clearDurationMs = clearEnd - clearStart;
+          if (Number.isFinite(clearDurationMs) && clearDurationMs > 0) {
+            if (!bestClear || clearDurationMs < bestClear.durationMs) {
+              bestClear = {
+                durationMs: clearDurationMs,
+                reportCode: report.code,
+                reportTitle: report.title,
+                reportStartTime: reportStartTimeMs(report.startTime),
+              };
+            }
+          }
+        }
+        for (const fight of report.fights || []) {
+          if (resolvedTrackedRaidForFight(fight, report) !== raidName) continue;
+          if (!fight?.kill || Number(fight?.encounterID || 0) <= 0) continue;
+          if (!bossListMatchesFightName(bosses, fight.name)) continue;
+          const durationMs = Number(fight.endTime || 0) - Number(fight.startTime || 0);
+          if (!Number.isFinite(durationMs) || durationMs <= 0) continue;
+          const canonical = resolveBossCanonicalName(bosses, fight.name);
+          const existing = bestByBoss.get(canonical);
+          if (!existing || durationMs < existing.durationMs) {
+            bestByBoss.set(canonical, {
+              bossName: canonical,
+              durationMs,
+              fightId: fight.id,
+              reportCode: report.code,
+              reportTitle: report.title,
+              reportStartTime: reportStartTimeMs(report.startTime),
+            });
+          }
+        }
+      }
+      return {
+        raidName,
+        bestClear,
+        bosses: bosses.map((bossName) => ({
+          bossName,
+          bestKill: bestByBoss.get(bossName) || null,
+        })),
+      };
+    });
+
+    const calendarEntries = buildRecentRaidCalendarEntries(effectiveReports, {});
+    let raidRankingPayloads = [];
+    let kpiRankings = [];
+    let kpiSnapshots = [];
+    let wclDisplayByLower = new Map();
+    let coreParseMetrics = { value: null, coreAssigned: 0, coreWithParse: 0 };
+    try {
+      await ensureRhWclLinksStore();
+      const bundle = await gatherAttendanceRaidSnapshots(guildId, limit, {
+        attendancePercentMetrics: true,
+        maxDetailedReports: Math.min(40, limit),
+      });
+      raidRankingPayloads = bundle.raidRankingPayloads || [];
+      kpiRankings = raidRankingPayloads;
+      kpiSnapshots = bundle.raidSnapshots || [];
+      wclDisplayByLower = bundle.wclDisplayByLower || new Map();
+      if (selectedSet && selectedSet.size > 0) {
+        const filteredSnapshots = kpiSnapshots.filter((snap) =>
+          selectedSet.has(String(snap?.reportCode || ""))
+        );
+        if (filteredSnapshots.length > 0) {
+          kpiSnapshots = filteredSnapshots;
+          kpiRankings = raidRankingPayloads.filter((row) =>
+            selectedSet.has(String(row?.reportCode || ""))
+          );
+        }
+      }
+      coreParseMetrics = computeCoreAveragePeakParse(
+        kpiSnapshots,
+        kpiRankings,
+        bundle.wclDisplayByLower,
+        rhWclLinksState
+      );
+    } catch (err) {
+      console.warn("[phase2-overview] core parse / rankings skipped:", err?.message || err);
+    }
+
+    const payload = buildPhase2RaidOverviewPayload({
+      effectiveReports,
+      raidSummary,
+      calendarEntries,
+      raidRankingPayloads,
+      coreParseMetrics,
+      coreParseContext: {
+        raidRankingPayloads: kpiRankings,
+        raidSnapshots: kpiSnapshots,
+        linksState: rhWclLinksState,
+        wclDisplayByLower,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      guildId,
+      limit,
+      generatedAt: Date.now(),
+      ...payload,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message || "Unknown server error" });
   }
 });
 

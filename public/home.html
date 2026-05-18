@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260518plb-nav-compact-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260518plb-phase2-overview-v2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
     <style>
       .raidperf-shell {
@@ -71,25 +71,16 @@
           </div>
         </section>
 
-        <section class="card tw-plb-card raidperf-shell raid-kpi-section" aria-labelledby="raid-kpi-heading">
-          <h2 id="raid-kpi-heading" class="section-title">KPI overview</h2>
-          <div class="raid-kpi-grid" id="raidPerfKpiGrid">
-            <div class="raid-kpi-tile raid-kpi-tile--loading">
-              <span class="raid-kpi-label">Loading</span>
-              <span class="raid-kpi-value">—</span>
-              <span class="raid-kpi-label">Fetching KPI overview</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="card tw-plb-card raidperf-shell dashboard-overview" aria-labelledby="best-time-raids-title">
-          <h2 id="best-time-raids-title" class="section-title">Best Time Raids</h2>
-          <div id="dashboardPbRow" class="pb-row raidperf-card-stack"><p class="subtle pb-row-status">Loading personal bests…</p></div>
-        </section>
+        <section
+          id="phase2RaidOverviewHost"
+          class="card tw-plb-card raidperf-shell plb-raid-overview-host"
+          role="region"
+          aria-label="Phase 2 raid overview"
+        ></section>
 
         <section class="card tw-plb-card raidperf-shell raid-calendar-card" aria-labelledby="raid-calendar-title">
           <h2 id="raid-calendar-title" class="section-title">Raid calendar</h2>
-          <p class="subtle raid-cal-intro">Latest 20 logs per raid (newest first).</p>
+          <p class="subtle raid-cal-intro">Latest 20 logs per raid tier (newest first).</p>
           <div id="raidCalendarGrid" class="raid-cal raid-cal--columns" aria-live="polite">
             <div class="subtle">Loading…</div>
           </div>
@@ -109,6 +100,16 @@
           <div id="raidDayModalBody" class="raid-day-modal-body"></div>
         </div>
 
+        <dialog id="plbRoDetailDialog" class="plb-ro-modal">
+          <form method="dialog" class="plb-ro-modal-head">
+            <h3 class="plb-ro-modal-title" id="plbRoDetailTitle">Raid details</h3>
+            <button type="submit" class="plb-ro-modal-close" id="plbRoDetailClose" aria-label="Close raid details">
+              Close
+            </button>
+          </form>
+          <div class="plb-ro-modal-body" id="plbRoDetailBody"></div>
+        </dialog>
+
         <section id="status" class="status"></section>
       </main>
 
@@ -126,7 +127,8 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/app.js?v=20260513resolution1"></script>
+    <script defer src="/app.js?v=20260518plb-phase2-overview-v1"></script>
+    <script defer src="/raid-overview.js?v=20260518plb-phase2-overview-v7"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
