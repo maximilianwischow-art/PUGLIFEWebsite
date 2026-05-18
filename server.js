@@ -396,7 +396,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-wcl-debuff-uptime-v1";
+const API_BUILD_ID = "20260518-wcl-debuff-uptime-v2";
 
 const TRACKED_RAIDS = {
   Karazhan: [

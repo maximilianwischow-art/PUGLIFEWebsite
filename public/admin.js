@@ -5434,6 +5434,18 @@ function wclDebuffReportRaidOptions() {
   });
 }
 
+function wclDebuffArchiveNote(archiveStatus) {
+  if (!archiveStatus || typeof archiveStatus !== "object") return "";
+  if (archiveStatus.isArchived && archiveStatus.isAccessible === false) {
+    return " Report is archived and not accessible — debuff tables may be blocked without WCL archive access.";
+  }
+  if (archiveStatus.isArchived) {
+    const when = archiveStatus.archiveDate ? ` (${archiveStatus.archiveDate})` : "";
+    return ` Report is archived${when}.`;
+  }
+  return "";
+}
+
 function wclDebuffUptimeTier(uptimePct) {
   const n = Number(uptimePct);
   if (!Number.isFinite(n)) return "none";
@@ -5597,11 +5609,7 @@ async function loadWclDebuffMetaForReport(reportCode, { silent = false } = {}) {
   }
   wclDebuffMetaCache = payload;
   renderWclDebuffEncounterSelect(payload.encounters || []);
-  const archive = payload.archiveStatus != null ? String(payload.archiveStatus) : "";
-  const archiveNote =
-    archive && archive !== "0" && archive.toLowerCase() !== "false"
-      ? ` Archive status: ${archive} — table data may be blocked without WCL archive access.`
-      : "";
+  const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);
   setWclDebuffStatusLine(
     `${payload.reportTitle || code}: ${(payload.encounters || []).length} boss encounter(s).${archiveNote}`
   );
@@ -5624,11 +5632,7 @@ async function analyzeWclDebuffUptime(btn) {
     if (!payload?.ok) throw new Error(payload?.error || "Analysis failed");
     renderWclDebuffResults(payload);
     const fightCount = Array.isArray(payload.fights) ? payload.fights.length : 0;
-    const archive = payload.archiveStatus != null ? String(payload.archiveStatus) : "";
-    const archiveNote =
-      archive && archive !== "0" && archive.toLowerCase() !== "false"
-        ? ` Archive: ${archive}.`
-        : "";
+    const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);
     setWclDebuffStatusLine(
       `${payload.reportTitle || reportCode}: ${fightCount} kill pull(s) analyzed.${archiveNote}`
     );
