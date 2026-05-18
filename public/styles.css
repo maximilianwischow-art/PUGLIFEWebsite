@@ -4829,6 +4829,21 @@ tr.admin-wcl-phase-row--warn td:first-child {
   overflow: auto;
 }
 
+.admin-debuff-wowhead-link {
+  color: inherit;
+  text-decoration: underline dotted rgba(200, 160, 255, 0.45);
+  text-underline-offset: 2px;
+}
+
+.admin-debuff-wowhead-link:hover {
+  color: #ffe082;
+}
+
+.admin-debuff-uptime-table th .admin-debuff-wowhead-link,
+.admin-debuff-uptime-matrix th .admin-debuff-wowhead-link {
+  font-weight: 600;
+}
+
 .admin-table-sort-btn:hover {
   border-color: rgba(255, 110, 180, 0.42);
   background: rgba(46, 30, 72, 0.8);

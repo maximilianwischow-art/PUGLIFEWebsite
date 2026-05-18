@@ -5484,6 +5484,21 @@ function wclDebuffColLabel(def) {
   return WCL_DEBUFF_COL_SHORT[def?.key] || String(def?.name || "").split(" ")[0];
 }
 
+function wclDebuffSpellLink(spellId, label) {
+  const id = Math.floor(Number(spellId));
+  const text = String(label || "").trim();
+  if (window.WowSpellTooltip?.spellLinkHtml && id > 0) {
+    return window.WowSpellTooltip.spellLinkHtml(id, text, {
+      className: "admin-debuff-wowhead-link",
+    });
+  }
+  return esc(text);
+}
+
+function wclDebuffRefreshWowheadTooltips(root) {
+  void window.WowSpellTooltip?.ensureAndRefresh?.(root || document.getElementById("wclDebuffResultsHost"));
+}
+
 function wclDebuffUptimeCellHtml(debuff) {
   const tier = wclDebuffUptimeTier(debuff?.uptimePct);
   const uptime =
@@ -5494,7 +5509,7 @@ function wclDebuffUptimeCellHtml(debuff) {
   const title = esc(String(debuff?.description || "").trim());
   const orNote = debuff?.orNote ? ` · ${esc(debuff.orNote)}` : "";
   return `<tr>
-    <td title="${title}"><strong>${esc(debuff?.name || "—")}</strong>${orNote}</td>
+    <td title="${title}"><strong>${wclDebuffSpellLink(debuff?.spellId, debuff?.name)}</strong>${orNote}</td>
     <td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier}">${esc(uptime)}</td>
     <td>${applier}</td>
   </tr>`;
@@ -5580,7 +5595,8 @@ function renderWclDebuffOverview(payload) {
     .flatMap((g) =>
       g.defs.map(
         (def) =>
-          `<th class="admin-debuff-uptime-col" title="${esc(def.description || "")}">${esc(
+          `<th class="admin-debuff-uptime-col" title="${esc(def.description || "")}">${wclDebuffSpellLink(
+            def.spellId,
             wclDebuffColLabel(def)
           )}</th>`
       )
@@ -5622,6 +5638,7 @@ function renderWclDebuffOverview(payload) {
       </table>
     </div>
   `;
+  wclDebuffRefreshWowheadTooltips(host);
 }
 
 function renderWclDebuffDetailInto(host, payload) {
@@ -5658,7 +5675,10 @@ function renderWclDebuffDetailInto(host, payload) {
           )}<span class="subtle admin-debuff-uptime-applier">${applier}</span></td>`;
         });
         const orNote = def.orNote ? ` <span class="subtle">(${esc(def.orNote)})</span>` : "";
-        return `<tr><th title="${esc(String(def.description || ""))}">${esc(def.name)}${orNote}</th>${cells.join("")}</tr>`;
+        return `<tr><th title="${esc(String(def.description || ""))}">${wclDebuffSpellLink(
+          def.spellId,
+          def.name
+        )}${orNote}</th>${cells.join("")}</tr>`;
       })
     )
     .join("");
@@ -5697,6 +5717,7 @@ function renderWclDebuffDetailInto(host, payload) {
     </div>
     ${detailBlocks}
   `;
+  wclDebuffRefreshWowheadTooltips(host);
 }
 
 function setWclDebuffStatusLine(text) {
@@ -5774,6 +5795,7 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
       statusLine.textContent = `${fightCount} kill pull(s) · ${payload.reportTitle || reportCode}`;
     }
     renderWclDebuffDetailInto(host, payload);
+    wclDebuffRefreshWowheadTooltips(host);
   } catch (error) {
     if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Detail failed")}</p>`;
     if (statusLine) statusLine.textContent = error?.message || "Detail failed";
@@ -5781,6 +5803,7 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
 }
 
 async function initWclDebuffUptimePanel() {
+  void window.WowSpellTooltip?.loadWowheadPower?.();
   renderWclDebuffReportSelect();
   const select = document.getElementById("wclDebuffReportSelect");
   const code = String(select?.value || "").trim();
