@@ -388,7 +388,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-p2-event-mgmt-v1";
+const API_BUILD_ID = "20260518-ssc-hof-rh-writeback-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
