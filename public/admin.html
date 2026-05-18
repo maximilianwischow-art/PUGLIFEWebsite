@@ -243,20 +243,17 @@
             <section class="card admin-panel" data-admin-panel="wcl-debuff-uptime" id="admin-panel-wcl-debuff-uptime">
               <h3 class="section-title">WCL Debuff Uptime</h3>
               <p class="subtle">
-                Per-kill armor debuff uptime from Warcraft Logs (<code>table(Debuffs)</code>) for Sunder Armor, Expose
-                Armor, Faerie Fire, and Curse of Recklessness. Reports come from Event Management selections; compare
-                pulls on a boss encounter.
+                Raid debuff uptime from Warcraft Logs per boss (latest kill in overview; all kill pulls in detail).
+                Reports come from Event Management. Click a boss row for the full breakdown.
               </p>
               <div class="admin-actions admin-actions--tight admin-debuff-uptime-controls">
-                <label class="subtle" for="wclDebuffReportSelect">Report</label>
+                <label class="subtle" for="wclDebuffReportSelect">Raid event</label>
                 <select id="wclDebuffReportSelect" class="admin-input admin-debuff-uptime-select">
                   <option value="">Select a report…</option>
                 </select>
-                <label class="subtle" for="wclDebuffEncounterSelect">Boss encounter</label>
-                <select id="wclDebuffEncounterSelect" class="admin-input admin-debuff-uptime-select" disabled>
-                  <option value="">Load report first…</option>
-                </select>
-                <button type="button" class="event-signup-btn" id="wclDebuffAnalyzeBtn" disabled>Analyze</button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="wclDebuffReloadBtn" disabled>
+                  Reload overview
+                </button>
               </div>
               <p class="subtle admin-debuff-uptime-legend">
                 Uptime bands:
@@ -264,9 +261,18 @@
                 <span class="admin-debuff-uptime-pill admin-debuff-uptime-pill--warn">70–89%</span>
                 <span class="admin-debuff-uptime-pill admin-debuff-uptime-pill--bad">&lt;70%</span>
               </p>
-              <p class="subtle" id="wclDebuffStatusLine" style="margin: 0 0 10px">Select a report and boss, then Analyze.</p>
+              <p class="subtle" id="wclDebuffStatusLine" style="margin: 0 0 10px">Select a raid event to load the boss overview.</p>
               <div id="wclDebuffResultsHost" class="admin-debuff-uptime-results admin-grid-note"></div>
             </section>
+
+            <dialog id="wclDebuffDetailDialog" class="admin-debuff-detail-dialog">
+              <form method="dialog" class="admin-debuff-detail-dialog-bar">
+                <h4 class="admin-debuff-detail-title" id="wclDebuffDetailTitle">Encounter</h4>
+                <button type="submit" class="event-signup-btn event-signup-btn--softres">Close</button>
+              </form>
+              <p class="subtle" id="wclDebuffDetailStatus" style="margin: 0 0 8px"></p>
+              <div id="wclDebuffDetailHost" class="admin-debuff-detail-host"></div>
+            </dialog>
 
             <section class="card admin-panel" data-admin-panel="wcl-phase-avgs" id="admin-panel-wcl-phase-avgs">
               <h3 class="section-title">WCL Phase Averages</h3>
@@ -624,7 +630,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260518wcl-debuff-uptime-v3"></script>
+    <script defer src="/admin.js?v=20260518wcl-debuff-uptime-v4"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

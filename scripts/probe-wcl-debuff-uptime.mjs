@@ -4,7 +4,7 @@
  */
 import dotenv from "dotenv";
 import {
-  IMPORTANT_ARMOR_DEBUFFS,
+  IMPORTANT_DEBUFFS,
   fetchDebuffUptimeForFight,
   loadWclReportFightsForDebuffs,
   killFightsForEncounter,
@@ -97,7 +97,7 @@ if (!fight) {
 console.log("\nUsing fight:", fight.id, fight.name, fight.kill ? "kill" : "wipe", `enc=${fight.encounterID}`);
 
 console.log("\n=== Per-debuff Target table (production path) ===");
-for (const def of IMPORTANT_ARMOR_DEBUFFS) {
+for (const def of IMPORTANT_DEBUFFS) {
   const filter = `ability.name = '${String(def.name).replace(/'/g, "\\'")}'`;
   const raw = await queryWcl(
     `query ($code: String!, $fightIds: [Int!]!, $filter: String!) {

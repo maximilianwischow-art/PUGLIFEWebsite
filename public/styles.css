@@ -4748,6 +4748,87 @@ tr.admin-wcl-phase-row--warn td:first-child {
   font-weight: 600;
 }
 
+.admin-debuff-uptime-overview-wrap {
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
+.admin-debuff-uptime-overview {
+  min-width: 1100px;
+}
+
+.admin-debuff-uptime-overview th,
+.admin-debuff-uptime-overview td {
+  font-size: 0.82rem;
+  vertical-align: top;
+}
+
+.admin-debuff-uptime-cat {
+  text-align: center;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 200, 255, 0.85);
+}
+
+.admin-debuff-uptime-col {
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.admin-debuff-uptime-overview-cell {
+  min-width: 52px;
+}
+
+.admin-debuff-uptime-boss {
+  cursor: pointer;
+}
+
+.admin-debuff-uptime-boss:hover th {
+  color: #ffe082;
+}
+
+.admin-debuff-uptime-boss--nokill {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.admin-debuff-uptime-overview-hint {
+  margin: 0 0 8px;
+}
+
+.admin-debuff-detail-dialog {
+  width: min(96vw, 1200px);
+  max-height: 90vh;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 14px;
+  padding: 14px 16px 16px;
+  background: #120c1e;
+  color: inherit;
+}
+
+.admin-debuff-detail-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.admin-debuff-detail-dialog-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+
+.admin-debuff-detail-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.admin-debuff-detail-host {
+  max-height: calc(90vh - 100px);
+  overflow: auto;
+}
+
 .admin-table-sort-btn:hover {
   border-color: rgba(255, 110, 180, 0.42);
   background: rgba(46, 30, 72, 0.8);
