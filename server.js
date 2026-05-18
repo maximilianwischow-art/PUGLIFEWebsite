@@ -45,6 +45,14 @@ import {
   slugifyFreshRealmSlug,
   wclFreshServerRegionFromConfig,
 } from "./lib/wcl/fresh-character-phase-avg.mjs";
+import {
+  IMPORTANT_ARMOR_DEBUFFS,
+  fetchDebuffUptimeForFight,
+  killFightsForEncounter,
+  listBossEncountersFromFights,
+  loadWclReportFightsForDebuffs,
+  wclFightUrl,
+} from "./lib/wcl/debuff-uptime.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -388,7 +396,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-roster-blacklist-cards-v1";
+const API_BUILD_ID = "20260518-wcl-debuff-uptime-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -9708,6 +9716,116 @@ app.delete("/api/admin/raider-blacklist/:id", async (req, res) => {
     return res.json({ ok: true, id });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to remove raider blacklist entry" });
+  }
+});
+
+async function buildAdminWclDebuffUptimePayload({ reportCode, encounterId }) {
+  const code = String(reportCode || "").trim();
+  if (!code) {
+    return { ok: false, error: "reportCode is required" };
+  }
+  await ensureGargulLootHistoryStore();
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  const report = await loadWclReportFightsForDebuffs(code, { queryWcl });
+  if (!report) {
+    return { ok: false, error: "Report not found or WCL API unavailable" };
+  }
+
+  const encounters = listBossEncountersFromFights(report.fights);
+  const catalog = IMPORTANT_ARMOR_DEBUFFS.map((row) => ({
+    spellId: row.spellId,
+    name: row.name,
+    appliedByClass: row.appliedByClass,
+    description: row.description,
+  }));
+
+  const encounterRaw = encounterId != null ? String(encounterId).trim() : "";
+  if (!encounterRaw) {
+    return {
+      ok: true,
+      reportCode: code,
+      reportTitle: report.title,
+      archiveStatus: report.archiveStatus ?? null,
+      selectedReportCodes,
+      encounters,
+      catalog,
+      fights: [],
+    };
+  }
+
+  const eid = Number(encounterRaw);
+  if (!Number.isFinite(eid) || eid <= 0) {
+    return { ok: false, error: "Invalid encounterId" };
+  }
+
+  const killFights = killFightsForEncounter(report.fights, eid, { maxFights: 12 });
+  const fights = [];
+  for (const fight of killFights) {
+    const { debuffs } = await fetchDebuffUptimeForFight(code, fight.id, { queryWcl });
+    fights.push({
+      fightId: fight.id,
+      name: fight.name,
+      kill: fight.kill,
+      bossPercentage: fight.bossPercentage,
+      startTime: fight.startTime,
+      endTime: fight.endTime,
+      wclUrl: wclFightUrl(code, fight.id),
+      debuffs,
+    });
+  }
+
+  return {
+    ok: true,
+    reportCode: code,
+    reportTitle: report.title,
+    archiveStatus: report.archiveStatus ?? null,
+    selectedReportCodes,
+    encounterId: eid,
+    encounters,
+    catalog,
+    fights,
+  };
+}
+
+app.get("/api/admin/wcl-debuff-uptime", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+
+    const reportCode = String(req.query?.reportCode || "").trim();
+    const encounterId = req.query?.encounterId;
+
+    if (!reportCode) {
+      await ensureGargulLootHistoryStore();
+      return res.json({
+        ok: true,
+        selectedReportCodes: Array.from(
+          new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+        ),
+        catalog: IMPORTANT_ARMOR_DEBUFFS.map((row) => ({
+          spellId: row.spellId,
+          name: row.name,
+          appliedByClass: row.appliedByClass,
+          description: row.description,
+        })),
+      });
+    }
+
+    const cacheKey = encounterId
+      ? `wcl-debuff-uptime-v1-${reportCode}-${String(encounterId).trim()}`
+      : `wcl-debuff-uptime-meta-v1-${reportCode}`;
+
+    const payload = await getOrRefreshCachedPayload(cacheKey, {
+      ttlMs: 24 * 60 * 60 * 1000,
+      maxStaleMs: 48 * 60 * 60 * 1000,
+      loader: () => buildAdminWclDebuffUptimePayload({ reportCode, encounterId }),
+    });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "WCL debuff uptime failed" });
   }
 });
 

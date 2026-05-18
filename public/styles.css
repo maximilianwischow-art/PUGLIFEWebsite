@@ -4649,6 +4649,105 @@ tr.admin-wcl-phase-row--warn td:first-child {
   border-left: 3px solid var(--accent-warn, #c9a227);
 }
 
+.admin-debuff-uptime-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0 10px;
+}
+
+.admin-debuff-uptime-select {
+  min-width: min(320px, 100%);
+}
+
+.admin-debuff-uptime-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 8px;
+}
+
+.admin-debuff-uptime-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  border: 1px solid transparent;
+}
+
+.admin-debuff-uptime-pill--good {
+  background: rgba(76, 175, 80, 0.18);
+  border-color: rgba(129, 199, 132, 0.45);
+  color: #b9f6ca;
+}
+
+.admin-debuff-uptime-pill--warn {
+  background: rgba(201, 162, 39, 0.16);
+  border-color: rgba(201, 162, 39, 0.45);
+  color: #ffe082;
+}
+
+.admin-debuff-uptime-pill--bad {
+  background: rgba(229, 115, 115, 0.16);
+  border-color: rgba(229, 115, 115, 0.45);
+  color: #ffcdd2;
+}
+
+.admin-debuff-uptime-cell--good {
+  color: #b9f6ca;
+  font-weight: 600;
+}
+
+.admin-debuff-uptime-cell--warn {
+  color: #ffe082;
+  font-weight: 600;
+}
+
+.admin-debuff-uptime-cell--bad {
+  color: #ffcdd2;
+  font-weight: 600;
+}
+
+.admin-debuff-uptime-cell--none {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.admin-debuff-uptime-applier {
+  display: block;
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
+.admin-debuff-uptime-matrix-wrap {
+  margin-bottom: 14px;
+}
+
+.admin-debuff-uptime-matrix th,
+.admin-debuff-uptime-matrix td {
+  text-align: center;
+  vertical-align: top;
+}
+
+.admin-debuff-uptime-matrix th:first-child,
+.admin-debuff-uptime-matrix td:first-child {
+  text-align: left;
+}
+
+.admin-debuff-uptime-fight {
+  margin: 0 0 10px;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 10px;
+  padding: 6px 10px;
+  background: rgba(15, 11, 26, 0.45);
+}
+
+.admin-debuff-uptime-fight summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .admin-table-sort-btn:hover {
   border-color: rgba(255, 110, 180, 0.42);
   background: rgba(46, 30, 72, 0.8);

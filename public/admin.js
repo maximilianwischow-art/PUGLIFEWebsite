@@ -141,7 +141,7 @@ const ADMIN_GROUPS = [
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
-  { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "wcl-phase-avgs", "analytics"] },
+  { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "wcl-phase-avgs", "wcl-debuff-uptime", "analytics"] },
 ];
 
 const ADMIN_PANEL_IDS = ADMIN_GROUPS.flatMap((g) => g.tools);
@@ -5216,6 +5216,8 @@ async function loadPublicSnapshotStatus() {
 let wclPhaseAvgsPollTimer = null;
 let wclPhaseAvgsLastUpdatedAt = 0;
 let wclPhaseAvgsCachedRenderKey = "";
+let wclDebuffMetaCache = null;
+let wclDebuffEncountersCache = [];
 const wclPhaseAvgsSort = { key: "characterName", dir: "asc" };
 
 /** Panels that should not block on the full secondary admin bundle (loot, analytics, DMs, …). */
@@ -5422,6 +5424,244 @@ async function loadWclPhaseAvgsPanel({ silent = false, forceRender = false } = {
   return payload;
 }
 
+function wclDebuffReportRaidOptions() {
+  const selected = selectedReportCodesState;
+  return allRaidsState.filter((raid) => {
+    const code = String(raid?.reportCode || "").trim();
+    if (!code) return false;
+    if (!selected.size) return true;
+    return selected.has(code);
+  });
+}
+
+function wclDebuffUptimeTier(uptimePct) {
+  const n = Number(uptimePct);
+  if (!Number.isFinite(n)) return "none";
+  if (n >= 90) return "good";
+  if (n >= 70) return "warn";
+  return "bad";
+}
+
+function wclDebuffUptimeCellHtml(debuff) {
+  const tier = wclDebuffUptimeTier(debuff?.uptimePct);
+  const uptime =
+    debuff?.uptimePct == null ? "—" : `${Number(debuff.uptimePct).toFixed(1)}%`;
+  const applier = debuff?.appliedByPlayer
+    ? `${esc(debuff.appliedByPlayer)} (${esc(debuff.appliedByClass || "?")})`
+    : `<span class="subtle">—</span>`;
+  const title = esc(String(debuff?.description || "").trim());
+  return `<tr>
+    <td title="${title}"><strong>${esc(debuff?.name || "—")}</strong></td>
+    <td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier}">${esc(uptime)}</td>
+    <td>${applier}</td>
+  </tr>`;
+}
+
+function renderWclDebuffReportSelect() {
+  const select = document.getElementById("wclDebuffReportSelect");
+  if (!select) return;
+  const prev = String(select.value || "");
+  const raids = wclDebuffReportRaidOptions();
+  if (!raids.length) {
+    select.innerHTML = `<option value="">No Event Management reports — check Roster &amp; Loot → Event Management</option>`;
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  select.innerHTML = [
+    `<option value="">Select a report…</option>`,
+    ...raids.map(
+      (raid) =>
+        `<option value="${esc(raid.reportCode)}">${esc(raidLabel(raid))} · ${esc(String(raid.reportCode || ""))}</option>`
+    ),
+  ].join("");
+  if (prev && raids.some((r) => String(r.reportCode) === prev)) select.value = prev;
+}
+
+function renderWclDebuffEncounterSelect(encounters) {
+  const select = document.getElementById("wclDebuffEncounterSelect");
+  const analyzeBtn = document.getElementById("wclDebuffAnalyzeBtn");
+  if (!select) return;
+  const list = Array.isArray(encounters) ? encounters : [];
+  wclDebuffEncountersCache = list;
+  if (!list.length) {
+    select.innerHTML = `<option value="">No boss encounters in report</option>`;
+    select.disabled = true;
+    if (analyzeBtn) analyzeBtn.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  const prev = String(select.value || "");
+  select.innerHTML = [
+    `<option value="">Select boss…</option>`,
+    ...list.map((row) => {
+      const label = `${esc(String(row.name || `Encounter ${row.encounterId}`))} · ${row.killCount || 0} kill${
+        Number(row.killCount) === 1 ? "" : "s"
+      }`;
+      return `<option value="${esc(String(row.encounterId))}">${label}</option>`;
+    }),
+  ].join("");
+  if (prev && list.some((r) => String(r.encounterId) === prev)) select.value = prev;
+  if (analyzeBtn) analyzeBtn.disabled = !select.value;
+}
+
+function renderWclDebuffResults(payload) {
+  const host = document.getElementById("wclDebuffResultsHost");
+  if (!host) return;
+  if (!payload?.ok) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Analysis failed.")}</p>`;
+    return;
+  }
+  const fights = Array.isArray(payload.fights) ? payload.fights : [];
+  if (!fights.length) {
+    host.innerHTML = `<p class="subtle">No kill pulls found for this boss (up to 12 per request).</p>`;
+    return;
+  }
+  const catalog = Array.isArray(payload.catalog) ? payload.catalog : [];
+  const matrixHead = fights
+    .map(
+      (fight, idx) =>
+        `<th title="Fight ${esc(String(fight.fightId))}">${esc(String(fight.name || `Pull ${idx + 1}`))}</th>`
+    )
+    .join("");
+  const matrixRows = catalog
+    .map((def) => {
+      const cells = fights.map((fight) => {
+        const debuff =
+          (Array.isArray(fight.debuffs) ? fight.debuffs : []).find(
+            (row) => Number(row.spellId) === Number(def.spellId)
+          ) || def;
+        const tier = wclDebuffUptimeTier(debuff?.uptimePct);
+        const uptime =
+          debuff?.uptimePct == null ? "—" : `${Number(debuff.uptimePct).toFixed(1)}%`;
+        const applier = debuff?.appliedByPlayer ? esc(debuff.appliedByPlayer) : "—";
+        const title = esc(String(def.description || "").trim());
+        return `<td class="admin-debuff-uptime-cell admin-debuff-uptime-cell--${tier}" title="${title}">${esc(
+          uptime
+        )}<span class="subtle admin-debuff-uptime-applier">${applier}</span></td>`;
+      });
+      return `<tr><th title="${esc(String(def.description || ""))}">${esc(def.name)}</th>${cells.join("")}</tr>`;
+    })
+    .join("");
+  const detailBlocks = fights
+    .map((fight, idx) => {
+      const debuffRows = (Array.isArray(fight.debuffs) ? fight.debuffs : [])
+        .map((row) => wclDebuffUptimeCellHtml(row))
+        .join("");
+      const wclLink = fight.wclUrl
+        ? `<a href="${esc(fight.wclUrl)}" target="_blank" rel="noopener noreferrer">WCL fight</a>`
+        : "";
+      return `<details class="admin-debuff-uptime-fight" ${idx === 0 ? "open" : ""}>
+        <summary>${esc(String(fight.name || `Pull ${idx + 1}`))} · fight ${esc(String(fight.fightId))} ${
+        fight.kill ? "kill" : "wipe"
+      } ${wclLink}</summary>
+        <div class="admin-table-wrap">
+          <table class="admin-table admin-debuff-uptime-table">
+            <thead><tr><th>Debuff</th><th>Uptime</th><th>Applied by</th></tr></thead>
+            <tbody>${debuffRows}</tbody>
+          </table>
+        </div>
+      </details>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <div class="admin-table-wrap admin-debuff-uptime-matrix-wrap">
+      <table class="admin-table admin-debuff-uptime-matrix">
+        <thead><tr><th>Debuff</th>${matrixHead}</tr></thead>
+        <tbody>${matrixRows}</tbody>
+      </table>
+    </div>
+    ${detailBlocks}
+  `;
+}
+
+function setWclDebuffStatusLine(text) {
+  const line = document.getElementById("wclDebuffStatusLine");
+  if (line) line.textContent = String(text || "");
+}
+
+async function loadWclDebuffMetaForReport(reportCode, { silent = false } = {}) {
+  const code = String(reportCode || "").trim();
+  if (!code) {
+    renderWclDebuffEncounterSelect([]);
+    wclDebuffMetaCache = null;
+    setWclDebuffStatusLine("Select a report and boss, then Analyze.");
+    return null;
+  }
+  if (!silent) setWclDebuffStatusLine("Loading report fights from WCL…");
+  const payload = await getJson(
+    `/api/admin/wcl-debuff-uptime?reportCode=${encodeURIComponent(code)}`
+  );
+  if (!payload?.ok) {
+    throw new Error(payload?.error || "Failed to load report meta");
+  }
+  wclDebuffMetaCache = payload;
+  renderWclDebuffEncounterSelect(payload.encounters || []);
+  const archive = payload.archiveStatus != null ? String(payload.archiveStatus) : "";
+  const archiveNote =
+    archive && archive !== "0" && archive.toLowerCase() !== "false"
+      ? ` Archive status: ${archive} — table data may be blocked without WCL archive access.`
+      : "";
+  setWclDebuffStatusLine(
+    `${payload.reportTitle || code}: ${(payload.encounters || []).length} boss encounter(s).${archiveNote}`
+  );
+  return payload;
+}
+
+async function analyzeWclDebuffUptime(btn) {
+  const reportCode = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
+  const encounterId = String(document.getElementById("wclDebuffEncounterSelect")?.value || "").trim();
+  if (!reportCode || !encounterId) {
+    status("Select a report and boss encounter first.");
+    return;
+  }
+  try {
+    if (btn) setButtonFeedback(btn, "Analyzing…", "loading");
+    setWclDebuffStatusLine("Querying WCL debuff tables (may take a moment)…");
+    const payload = await getJson(
+      `/api/admin/wcl-debuff-uptime?reportCode=${encodeURIComponent(reportCode)}&encounterId=${encodeURIComponent(encounterId)}`
+    );
+    if (!payload?.ok) throw new Error(payload?.error || "Analysis failed");
+    renderWclDebuffResults(payload);
+    const fightCount = Array.isArray(payload.fights) ? payload.fights.length : 0;
+    const archive = payload.archiveStatus != null ? String(payload.archiveStatus) : "";
+    const archiveNote =
+      archive && archive !== "0" && archive.toLowerCase() !== "false"
+        ? ` Archive: ${archive}.`
+        : "";
+    setWclDebuffStatusLine(
+      `${payload.reportTitle || reportCode}: ${fightCount} kill pull(s) analyzed.${archiveNote}`
+    );
+    if (/rate limit|429|points/i.test(String(payload?.error || ""))) {
+      status("WCL rate limit — try again later or fewer fights.");
+    }
+  } catch (error) {
+    const host = document.getElementById("wclDebuffResultsHost");
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Analysis failed")}</p>`;
+    setWclDebuffStatusLine(error?.message || "Analysis failed");
+    if (/rate limit|429|points/i.test(String(error?.message || ""))) {
+      status("WCL rate limit — wait and retry.");
+    } else {
+      status(error?.message || "Debuff uptime analysis failed");
+    }
+  } finally {
+    if (btn) resetButtonFeedback(btn, "Analyze");
+  }
+}
+
+async function initWclDebuffUptimePanel() {
+  renderWclDebuffReportSelect();
+  const select = document.getElementById("wclDebuffReportSelect");
+  const code = String(select?.value || "").trim();
+  if (code) {
+    try {
+      await loadWclDebuffMetaForReport(code, { silent: true });
+    } catch (error) {
+      setWclDebuffStatusLine(error?.message || "Failed to load report");
+    }
+  }
+}
+
 async function refreshWclPhaseAvgsAll(btn) {
   try {
     if (btn) setButtonFeedback(btn, "Starting…", "loading");
@@ -5454,6 +5694,7 @@ async function loadAdminSecondaryData() {
   const entries = Array.isArray(gargul?.rows) ? gargul.rows : [];
   renderEventSelection();
   renderTargetReportSelect();
+  renderWclDebuffReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
@@ -9025,6 +9266,39 @@ document.getElementById("wclPhaseAvgsReloadBtn")?.addEventListener("click", asyn
   }
 });
 
+document.getElementById("wclDebuffReportSelect")?.addEventListener("change", async (event) => {
+  const code = String(event.target?.value || "").trim();
+  const encounterSelect = document.getElementById("wclDebuffEncounterSelect");
+  const analyzeBtn = document.getElementById("wclDebuffAnalyzeBtn");
+  const host = document.getElementById("wclDebuffResultsHost");
+  if (host) host.innerHTML = "";
+  if (!code) {
+    renderWclDebuffEncounterSelect([]);
+    if (analyzeBtn) analyzeBtn.disabled = true;
+    setWclDebuffStatusLine("Select a report and boss, then Analyze.");
+    return;
+  }
+  try {
+    await loadWclDebuffMetaForReport(code);
+  } catch (error) {
+    if (encounterSelect) {
+      encounterSelect.innerHTML = `<option value="">Failed to load</option>`;
+      encounterSelect.disabled = true;
+    }
+    if (analyzeBtn) analyzeBtn.disabled = true;
+    setWclDebuffStatusLine(error?.message || "Failed to load report");
+  }
+});
+
+document.getElementById("wclDebuffEncounterSelect")?.addEventListener("change", (event) => {
+  const analyzeBtn = document.getElementById("wclDebuffAnalyzeBtn");
+  if (analyzeBtn) analyzeBtn.disabled = !String(event.target?.value || "").trim();
+});
+
+document.getElementById("wclDebuffAnalyzeBtn")?.addEventListener("click", (event) => {
+  analyzeWclDebuffUptime(event.currentTarget).catch(() => {});
+});
+
 document.getElementById("admin-panel-wcl-phase-avgs")?.addEventListener("click", (event) => {
   const sortBtn = event.target.closest("[data-wcl-phase-sort]");
   if (!sortBtn) return;
@@ -9075,6 +9349,11 @@ showAdminPanel = function (panelId, opts) {
       status(error?.message || "Failed to load raider blacklist.");
     });
   }
+  if (panelId === "wcl-debuff-uptime") {
+    initWclDebuffUptimePanel().catch((error) => {
+      status(error?.message || "Failed to load debuff uptime panel.");
+    });
+  }
 };
 
 loadAdminData().catch((error) => {
@@ -9102,6 +9381,11 @@ loadAdminData().catch((error) => {
   if (id === "wcl-phase-avgs") {
     loadWclPhaseAvgsPanel().catch((error) => {
       status(wclPhaseAvgsLoadErrorMessage(error));
+    });
+  }
+  if (id === "wcl-debuff-uptime") {
+    initWclDebuffUptimePanel().catch((error) => {
+      status(error?.message || "Failed to load debuff uptime panel.");
     });
   }
 })();
