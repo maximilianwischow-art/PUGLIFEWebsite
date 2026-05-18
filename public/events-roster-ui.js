@@ -1471,7 +1471,7 @@ function rosterAchievementBadgesHtml(player) {
     {
       file: "ssc-first-event.png",
       title:
-        "SSC First Event — Participated in the guild's first Serpentshrine Cavern raid event (May 21, 2026). Awarded to linked raiders with a primary Raid Helper signup and/or a Warcraft Logs appearance from that night.",
+        "SSC First Event — Participated in the guild's first Serpentshrine Cavern raid event (May 17, 2026). Awarded to linked raiders with a primary Raid Helper signup and/or a Warcraft Logs appearance from that night.",
       alt: "SSC First Event",
       ok: playerEarnedSpecificEventBadge(player, "ssc-first-event"),
     },

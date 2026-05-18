@@ -11511,16 +11511,21 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     badgeId: "ssc-first-event",
     label: "SSC First Event",
     description:
-      "Participated in the guild's first Serpentshrine Cavern raid event (May 21, 2026). Awarded to linked raiders with a primary Raid Helper signup on that event and/or a Warcraft Logs appearance from that night.",
+      "Participated in the guild's first Serpentshrine Cavern raid event (May 17, 2026). Awarded to linked raiders with a primary Raid Helper signup on that event and/or a Warcraft Logs appearance from that night.",
     icon: "/images/achievements/ssc-first-event.png",
-    /* May 21 2026 00:00 CEST = May 20 2026 22:00 UTC */
-    startMs: Date.UTC(2026, 4, 20, 22, 0, 0),
-    /* May 22 2026 04:00 UTC — pad past midnight local */
-    endMs: Date.UTC(2026, 4, 22, 4, 0, 0),
-    reportCodes: String(process.env.SSC_FIRST_EVENT_WCL_REPORT_CODES || "")
-      .split(/[,\s]+/)
-      .map((x) => x.trim())
-      .filter(Boolean),
+    /* May 17 2026 00:00 CEST = May 16 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 4, 16, 22, 0, 0),
+    /* May 18 2026 04:00 UTC — pad past midnight local */
+    endMs: Date.UTC(2026, 4, 18, 4, 0, 0),
+    /* First SSC guild logs (Event Management). Env can add more codes. */
+    reportCodes: [
+      "wV2PBqg1aK3jfYnA",
+      "a9R3fcqkZ2y6jgbY",
+      ...String(process.env.SSC_FIRST_EVENT_WCL_REPORT_CODES || "")
+        .split(/[,\s]+/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ].filter((code, idx, arr) => arr.indexOf(code) === idx),
     raidHelperEventIds: String(process.env.SSC_FIRST_EVENT_RH_ID || "")
       .split(/[,\s]+/)
       .map((x) => x.trim())
