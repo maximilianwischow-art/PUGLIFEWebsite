@@ -6,7 +6,7 @@ import compression from "compression";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import {
@@ -388,7 +388,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-ssc-hof-rh-writeback-v1";
+const API_BUILD_ID = "20260518-raider-blacklist-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -702,6 +702,7 @@ let votingWriteChain = Promise.resolve();
 let votingStoreState = { votes: [] };
 const p2MaterialsPath = path.join(dataDir, "p2-materials.json");
 const joinNeedsPath = path.join(dataDir, "join-current-needs.json");
+const raiderBlacklistPath = path.join(dataDir, "raider-blacklist.json");
 const discordDmSubscribersPath = path.join(dataDir, "discord-dm-subscribers.json");
 const discordNewsNotificationsPath = path.join(dataDir, "discord-news-notifications.json");
 const discordProfileIngestPath = path.join(dataDir, "discord-profile-ingest.json");
@@ -739,6 +740,8 @@ let p2MaterialsReady = null;
 let p2MaterialsWriteChain = Promise.resolve();
 let joinNeedsReady = null;
 let joinNeedsWriteChain = Promise.resolve();
+let raiderBlacklistReady = null;
+let raiderBlacklistWriteChain = Promise.resolve();
 let discordDmSubscribersReady = null;
 let discordDmSubscribersWriteChain = Promise.resolve();
 let discordNewsNotificationsReady = null;
@@ -844,6 +847,7 @@ let p2MaterialsState = {
   currentById: Object.fromEntries(P2_MATERIALS.map((m) => [m.id, Number(m.defaultCurrent || 0)])),
 };
 let joinNeedsState = { rows: DEFAULT_JOIN_NEEDS.map((row) => ({ ...row })) };
+let raiderBlacklistState = { entries: [] };
 let discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] };
 let discordProfileIngestState = { lastMessageId: "", lastScanAt: 0, lastError: "", proposals: [], rejected: [] };
 let roleAlertDmLogState = { byEventId: {} };
@@ -2997,6 +3001,128 @@ async function ensureJoinNeedsStore() {
     }
   })();
   return joinNeedsReady;
+}
+
+const RAIDER_BLACKLIST_CARDS = new Set(["yellow", "black"]);
+
+function sanitizeRaiderBlacklistEntry(raw, { preserveMeta = null } = {}) {
+  const row = raw && typeof raw === "object" ? raw : {};
+  const card = String(row.card || "").trim().toLowerCase();
+  if (!RAIDER_BLACKLIST_CARDS.has(card)) return null;
+  const displayName = String(row.displayName || "").trim().slice(0, 120);
+  if (!displayName) return null;
+  const userIdNum = Number(row.userId);
+  const userId = Number.isFinite(userIdNum) && userIdNum > 0 ? Math.floor(userIdNum) : null;
+  const discordUserId = String(row.discordUserId || "").trim().slice(0, 64);
+  const raidHelperNameKey =
+    normalizeRaidHelperDisplayKey(String(row.raidHelperNameKey || row.displayName || "")) || "";
+  const reason = String(row.reason || "").trim().slice(0, 500);
+  if (!reason) return null;
+  const contextLabel = String(row.contextLabel || "").trim().slice(0, 160);
+  const contextAtRaw = Number(row.contextAt);
+  const contextAt = Number.isFinite(contextAtRaw) && contextAtRaw > 0 ? Math.floor(contextAtRaw) : 0;
+  const id = String(row.id || preserveMeta?.id || randomUUID()).trim().slice(0, 64);
+  const now = Date.now();
+  const createdAt = Number(preserveMeta?.createdAt || row.createdAt || now);
+  const createdBy = String(preserveMeta?.createdBy || row.createdBy || "").trim().slice(0, 128);
+  const updatedAt = Number(row.updatedAt || preserveMeta?.updatedAt || now);
+  const updatedBy = String(row.updatedBy || preserveMeta?.updatedBy || "").trim().slice(0, 128);
+  return {
+    id,
+    card,
+    userId,
+    discordUserId: discordUserId || null,
+    displayName,
+    raidHelperNameKey: raidHelperNameKey || null,
+    reason,
+    contextLabel: contextLabel || null,
+    contextAt: contextAt || null,
+    createdAt,
+    createdBy: createdBy || null,
+    updatedAt,
+    updatedBy: updatedBy || null,
+  };
+}
+
+function sanitizeRaiderBlacklistEntries(rawEntries) {
+  const out = [];
+  const seenIds = new Set();
+  for (const entry of Array.isArray(rawEntries) ? rawEntries : []) {
+    const row = sanitizeRaiderBlacklistEntry(entry);
+    if (!row || seenIds.has(row.id)) continue;
+    seenIds.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
+function raiderBlacklistEntryPublic(row) {
+  if (!row) return null;
+  let displayName = String(row.displayName || "").trim();
+  const userId = row.userId != null ? Number(row.userId) : null;
+  if (userId) {
+    try {
+      const user = identityUserGetById(userId);
+      if (user) {
+        const chars = identityCharactersListAll().filter((c) => Number(c.userId) === userId);
+        const main =
+          chars.find((c) => Number(c.id) === Number(user.mainCharacterId)) ||
+          chars.find((c) => c.isMain) ||
+          chars[0];
+        displayName = String(main?.characterName || user.displayName || user.raidHelperName || displayName).trim();
+      }
+    } catch {
+      // Identity optional for list enrichment.
+    }
+  }
+  return {
+    id: row.id,
+    card: row.card,
+    userId,
+    discordUserId: row.discordUserId || null,
+    displayName,
+    storedDisplayName: String(row.displayName || "").trim(),
+    raidHelperNameKey: row.raidHelperNameKey || null,
+    reason: row.reason,
+    contextLabel: row.contextLabel || null,
+    contextAt: row.contextAt || null,
+    createdAt: Number(row.createdAt || 0),
+    createdBy: row.createdBy || null,
+    updatedAt: Number(row.updatedAt || 0),
+    updatedBy: row.updatedBy || null,
+  };
+}
+
+function adminSessionActorLabel(session) {
+  return (
+    String(session?.user?.globalName || "").trim() ||
+    String(session?.user?.username || "").trim() ||
+    "admin"
+  );
+}
+
+async function persistRaiderBlacklistStore() {
+  const tmpPath = `${raiderBlacklistPath}.tmp`;
+  const json = JSON.stringify(raiderBlacklistState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, raiderBlacklistPath);
+}
+
+async function ensureRaiderBlacklistStore() {
+  if (raiderBlacklistReady) return raiderBlacklistReady;
+  raiderBlacklistReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(raiderBlacklistPath, "utf8");
+      const parsed = JSON.parse(raw);
+      raiderBlacklistState = { entries: sanitizeRaiderBlacklistEntries(parsed?.entries) };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      raiderBlacklistState = { entries: [] };
+      await persistRaiderBlacklistStore();
+    }
+  })();
+  return raiderBlacklistReady;
 }
 
 function sanitizeDiscordDmSubscribersState(raw) {
@@ -9348,6 +9474,131 @@ app.put("/api/admin/hof-notes", async (req, res) => {
     return res.json({ ok: true, winnerRaidKey, quote, keysWritten: [...keysToWrite] });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save hall of fame note" });
+  }
+});
+
+app.get("/api/admin/raider-blacklist", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRaiderBlacklistStore();
+    const entries = [...(raiderBlacklistState.entries || [])]
+      .map((row) => raiderBlacklistEntryPublic(row))
+      .filter(Boolean)
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+    return res.json({ ok: true, total: entries.length, entries });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load raider blacklist" });
+  }
+});
+
+app.post("/api/admin/raider-blacklist", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    await ensureRaiderBlacklistStore();
+    const actor = adminSessionActorLabel(session);
+    const now = Date.now();
+    const userIdNum = Number(req.body?.userId);
+    let userId = Number.isFinite(userIdNum) && userIdNum > 0 ? Math.floor(userIdNum) : null;
+    let discordUserId = String(req.body?.discordUserId || "").trim().slice(0, 64);
+    let displayName = String(req.body?.displayName || "").trim().slice(0, 120);
+    if (userId) {
+      const user = identityUserGetById(userId);
+      if (!user) return res.status(400).json({ ok: false, error: "Unknown user id" });
+      discordUserId = String(user.discordUserId || discordUserId).trim();
+      if (!displayName) {
+        const chars = identityCharactersListAll().filter((c) => Number(c.userId) === userId);
+        const main =
+          chars.find((c) => Number(c.id) === Number(user.mainCharacterId)) ||
+          chars.find((c) => c.isMain) ||
+          chars[0];
+        displayName = String(main?.characterName || user.displayName || user.raidHelperName || "").trim();
+      }
+    }
+    const entry = sanitizeRaiderBlacklistEntry(
+      {
+        ...req.body,
+        userId,
+        discordUserId,
+        displayName,
+        createdAt: now,
+        createdBy: actor,
+        updatedAt: now,
+        updatedBy: actor,
+      },
+      { preserveMeta: { id: randomUUID(), createdAt: now, createdBy: actor } }
+    );
+    if (!entry) {
+      return res.status(400).json({ ok: false, error: "card (yellow|black), displayName, and reason are required" });
+    }
+    raiderBlacklistWriteChain = raiderBlacklistWriteChain.catch(() => {}).then(async () => {
+      raiderBlacklistState.entries = [...(raiderBlacklistState.entries || []), entry];
+      await persistRaiderBlacklistStore();
+    });
+    await raiderBlacklistWriteChain;
+    return res.status(201).json({ ok: true, entry: raiderBlacklistEntryPublic(entry) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to add raider blacklist entry" });
+  }
+});
+
+app.put("/api/admin/raider-blacklist/:id", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const id = String(req.params?.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id is required" });
+    await ensureRaiderBlacklistStore();
+    const idx = (raiderBlacklistState.entries || []).findIndex((row) => String(row?.id || "") === id);
+    if (idx < 0) return res.status(404).json({ ok: false, error: "Entry not found" });
+    const existing = raiderBlacklistState.entries[idx];
+    const actor = adminSessionActorLabel(session);
+    const updated = sanitizeRaiderBlacklistEntry(
+      {
+        ...existing,
+        card: req.body?.card != null ? req.body.card : existing.card,
+        reason: req.body?.reason != null ? req.body.reason : existing.reason,
+        contextLabel: req.body?.contextLabel != null ? req.body.contextLabel : existing.contextLabel,
+        contextAt: req.body?.contextAt != null ? req.body.contextAt : existing.contextAt,
+        displayName: req.body?.displayName != null ? req.body.displayName : existing.displayName,
+        updatedAt: Date.now(),
+        updatedBy: actor,
+      },
+      { preserveMeta: existing }
+    );
+    if (!updated) {
+      return res.status(400).json({ ok: false, error: "Invalid card, displayName, or reason" });
+    }
+    raiderBlacklistWriteChain = raiderBlacklistWriteChain.catch(() => {}).then(async () => {
+      raiderBlacklistState.entries[idx] = updated;
+      await persistRaiderBlacklistStore();
+    });
+    await raiderBlacklistWriteChain;
+    return res.json({ ok: true, entry: raiderBlacklistEntryPublic(updated) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update raider blacklist entry" });
+  }
+});
+
+app.delete("/api/admin/raider-blacklist/:id", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const id = String(req.params?.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id is required" });
+    await ensureRaiderBlacklistStore();
+    const before = (raiderBlacklistState.entries || []).length;
+    raiderBlacklistWriteChain = raiderBlacklistWriteChain.catch(() => {}).then(async () => {
+      raiderBlacklistState.entries = (raiderBlacklistState.entries || []).filter((row) => String(row?.id || "") !== id);
+      await persistRaiderBlacklistStore();
+    });
+    await raiderBlacklistWriteChain;
+    const after = (raiderBlacklistState.entries || []).length;
+    if (after === before) return res.status(404).json({ ok: false, error: "Entry not found" });
+    return res.json({ ok: true, id });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to remove raider blacklist entry" });
   }
 });
 

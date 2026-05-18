@@ -137,7 +137,7 @@ function rhWclGuildRoleSelectHtml(current) {
 }
 
 const ADMIN_GROUPS = [
-  { id: "people", label: "People", tools: ["identity", "hof-notes", "badge-tooltips"] },
+  { id: "people", label: "People", tools: ["identity", "hof-notes", "raider-blacklist", "badge-tooltips"] },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
@@ -169,6 +169,10 @@ let discordNewsStatusState = null;
 let discordNewsRolesState = [];
 let discordNewsSelectedRoleIds = new Set();
 let discordNewsQueueState = [];
+let raiderBlacklistEntriesState = [];
+let raiderBlacklistFilterState = "all";
+let raiderBlacklistSelectedPlayer = null;
+let raiderBlacklistSearchTimer = null;
 const DISCORD_NEWS_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const DISCORD_NEWS_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
@@ -4811,6 +4815,202 @@ function renderSubscribers(payload) {
   `;
 }
 
+function raiderBlacklistCardPillHtml(card) {
+  const c = String(card || "").toLowerCase();
+  if (c === "black") {
+    return `<span class="raider-card-pill raider-card-pill--black" title="Black Card (out)">Black</span>`;
+  }
+  return `<span class="raider-card-pill raider-card-pill--yellow" title="Yellow Card (warning)">Yellow</span>`;
+}
+
+function raiderBlacklistContextHtml(entry) {
+  const label = String(entry?.contextLabel || "").trim();
+  const at = Number(entry?.contextAt || 0);
+  if (!label && !at) return `<span class="subtle">—</span>`;
+  const datePart = at ? fmtWhen(at) : "";
+  return esc([label, datePart].filter(Boolean).join(" · "));
+}
+
+function raiderBlacklistFilteredEntries() {
+  const rows = Array.isArray(raiderBlacklistEntriesState) ? raiderBlacklistEntriesState : [];
+  const f = String(raiderBlacklistFilterState || "all").toLowerCase();
+  if (f === "yellow" || f === "black") return rows.filter((row) => String(row?.card || "").toLowerCase() === f);
+  return rows;
+}
+
+function raiderBlacklistUpdateSelectedPlayerLabel() {
+  const el = document.getElementById("raiderBlacklistSelectedPlayer");
+  if (!el) return;
+  const manual = Boolean(document.getElementById("raiderBlacklistManualName")?.checked);
+  const p = raiderBlacklistSelectedPlayer;
+  if (manual) {
+    const name = String(document.getElementById("raiderBlacklistPlayerSearch")?.value || "").trim();
+    el.textContent = name ? `Manual: ${name}` : "Enter a player name above.";
+    return;
+  }
+  if (!p) {
+    el.textContent = "No player selected — search and pick an identity, or use manual name.";
+    return;
+  }
+  el.textContent = `Selected: ${p.displayName || p.id}${p.discordUserId ? ` (Discord ${p.discordUserId})` : ""}`;
+}
+
+function renderRaiderBlacklistTable(payload) {
+  const host = document.getElementById("adminRaiderBlacklistTable");
+  if (!host) return;
+  if (!payload || payload.ok === false) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Raider blacklist unavailable.")}</p>`;
+    return;
+  }
+  raiderBlacklistEntriesState = Array.isArray(payload.entries) ? payload.entries : [];
+  const rows = raiderBlacklistFilteredEntries();
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle">No cards on the blacklist yet.</p>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="admin-table-wrap role-alert-candidates-wrap">
+      <table class="admin-table role-alert-candidates-table admin-raider-blacklist-table">
+        <thead>
+          <tr>
+            <th>Card</th>
+            <th>Player</th>
+            <th>Reason</th>
+            <th>Context</th>
+            <th>Added</th>
+            <th>By</th>
+            <th>Save</th>
+            <th>Remove</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map((row) => {
+              const id = esc(String(row.id || ""));
+              const card = String(row.card || "yellow").toLowerCase();
+              const contextDate =
+                row.contextAt && Number.isFinite(Number(row.contextAt))
+                  ? new Date(Number(row.contextAt)).toISOString().slice(0, 10)
+                  : "";
+              return `<tr data-raider-blacklist-row="${id}">
+                <td>
+                  <motion.div style="margin-bottom:6px">${raiderBlacklistCardPillHtml(card)}</div>
+                  <select class="admin-input" data-raider-blacklist-k="card" aria-label="Card type">
+                    <option value="yellow"${card === "yellow" ? " selected" : ""}>Yellow</option>
+                    <option value="black"${card === "black" ? " selected" : ""}>Black</option>
+                  </select>
+                </td>
+                <td>${esc(String(row.displayName || "-"))}</td>
+                <td>
+                  <textarea class="admin-input" data-raider-blacklist-k="reason" rows="2" maxlength="500">${esc(
+                    String(row.reason || "")
+                  )}</textarea>
+                </td>
+                <td>
+                  <input class="admin-input" data-raider-blacklist-k="contextLabel" value="${esc(
+                    String(row.contextLabel || "")
+                  )}" placeholder="Raid name" maxlength="160" />
+                  <input class="admin-input" data-raider-blacklist-k="contextDate" type="date" value="${esc(contextDate)}" style="margin-top:6px" />
+                </td>
+                <td class="subtle">${esc(fmtWhen(row.createdAt))}</td>
+                <td class="subtle">${esc(String(row.createdBy || "-"))}</td>
+                <td><button type="button" class="event-signup-btn" data-raider-blacklist-save="${id}">Save</button></td>
+                <td><button type="button" class="event-signup-btn event-signup-btn--softres" data-raider-blacklist-remove="${id}">Remove</button></td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    <p class="subtle">Showing ${rows.length} / ${raiderBlacklistEntriesState.length} entries.</p>
+  `;
+}
+
+async function loadRaiderBlacklistPanel() {
+  const filterEl = document.getElementById("raiderBlacklistFilter");
+  if (filterEl) raiderBlacklistFilterState = String(filterEl.value || "all");
+  const payload = await getJson("/api/admin/raider-blacklist");
+  renderRaiderBlacklistTable(payload);
+}
+
+function raiderBlacklistReadAddForm() {
+  const manual = Boolean(document.getElementById("raiderBlacklistManualName")?.checked);
+  const reason = String(document.getElementById("raiderBlacklistReason")?.value || "").trim();
+  const card = String(document.getElementById("raiderBlacklistCardType")?.value || "yellow").trim().toLowerCase();
+  const contextLabel = String(document.getElementById("raiderBlacklistContextLabel")?.value || "").trim();
+  const dateRaw = String(document.getElementById("raiderBlacklistContextDate")?.value || "").trim();
+  let contextAt = 0;
+  if (dateRaw) {
+    const dt = new Date(`${dateRaw}T12:00:00`);
+    if (!Number.isNaN(dt.getTime())) contextAt = dt.getTime();
+  }
+  if (manual) {
+    const displayName = String(document.getElementById("raiderBlacklistPlayerSearch")?.value || "").trim();
+    return { manual: true, displayName, card, reason, contextLabel, contextAt };
+  }
+  const p = raiderBlacklistSelectedPlayer;
+  return {
+    manual: false,
+    userId: p?.id != null ? Number(p.id) : null,
+    discordUserId: String(p?.discordUserId || "").trim(),
+    displayName: String(p?.displayName || "").trim(),
+    card,
+    reason,
+    contextLabel,
+    contextAt,
+  };
+}
+
+function raiderBlacklistClearAddForm() {
+  const reason = document.getElementById("raiderBlacklistReason");
+  const ctx = document.getElementById("raiderBlacklistContextLabel");
+  const date = document.getElementById("raiderBlacklistContextDate");
+  if (reason) reason.value = "";
+  if (ctx) ctx.value = "";
+  if (date) date.value = "";
+  raiderBlacklistSelectedPlayer = null;
+  raiderBlacklistUpdateSelectedPlayerLabel();
+  const results = document.getElementById("raiderBlacklistSearchResults");
+  if (results) {
+    results.hidden = true;
+    results.innerHTML = "";
+  }
+}
+
+async function raiderBlacklistSearchIdentities(query) {
+  const q = String(query || "").trim();
+  const host = document.getElementById("raiderBlacklistSearchResults");
+  if (!host) return;
+  if (q.length < 2) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  try {
+    const payload = await getJson(`/api/admin/identity/accounts?q=${encodeURIComponent(q)}`);
+    const accounts = Array.isArray(payload?.accounts) ? payload.accounts.slice(0, 12) : [];
+    if (!accounts.length) {
+      host.hidden = false;
+      host.innerHTML = `<p class="subtle">No identities match.</p>`;
+      return;
+    }
+    host.hidden = false;
+    host.innerHTML = accounts
+      .map(
+        (acc) =>
+          `<button type="button" class="admin-raider-blacklist-pick" data-raider-blacklist-pick="${esc(
+            String(acc.id)
+          )}" data-display-name="${esc(String(acc.displayName || ""))}" data-discord-id="${esc(
+            String(acc.discordUserId || "")
+          )}">${esc(String(acc.displayName || acc.id))} · ${esc(String(acc.guildRole || "Peon"))}</button>`
+      )
+      .join("");
+  } catch {
+    host.hidden = false;
+    host.innerHTML = `<p class="subtle">Identity search failed.</p>`;
+  }
+}
+
 function renderHofNotesTable(payload) {
   const host = document.getElementById("adminHofNotesTable");
   if (!host) return;
@@ -5243,6 +5443,12 @@ async function loadAdminSecondaryData() {
   } catch (error) {
     renderHofNotesTable({ ok: false });
     status(`Hall of Fame quotes load failed: ${error?.message || "Unknown error"}`);
+  }
+  try {
+    await loadRaiderBlacklistPanel();
+  } catch (error) {
+    renderRaiderBlacklistTable({ ok: false });
+    status(`Raider blacklist load failed: ${error?.message || "Unknown error"}`);
   }
   try {
     await loadBadgeTooltipsPanel();
@@ -6607,6 +6813,169 @@ document.getElementById("admin-panel-analytics")?.addEventListener("click", (eve
   loadAnalyticsPanel().catch((error) => {
     status(error?.message || "Analytics load failed");
   });
+});
+
+document.getElementById("raiderBlacklistFilter")?.addEventListener("change", () => {
+  raiderBlacklistFilterState = String(document.getElementById("raiderBlacklistFilter")?.value || "all");
+  renderRaiderBlacklistTable({ ok: true, entries: raiderBlacklistEntriesState });
+});
+
+document.getElementById("raiderBlacklistReloadBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("raiderBlacklistReloadBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Reload list", loading: "Loading...", success: "Loaded", failure: "Failed" },
+      async () => {
+        await loadRaiderBlacklistPanel();
+      }
+    );
+    status("Raider blacklist reloaded.");
+  } catch (error) {
+    status(error?.message || "Raider blacklist reload failed");
+  }
+});
+
+document.getElementById("raiderBlacklistManualName")?.addEventListener("change", () => {
+  raiderBlacklistSelectedPlayer = null;
+  raiderBlacklistUpdateSelectedPlayerLabel();
+});
+
+document.getElementById("raiderBlacklistPlayerSearch")?.addEventListener("input", () => {
+  if (Boolean(document.getElementById("raiderBlacklistManualName")?.checked)) {
+    raiderBlacklistUpdateSelectedPlayerLabel();
+    return;
+  }
+  const q = String(document.getElementById("raiderBlacklistPlayerSearch")?.value || "");
+  if (raiderBlacklistSearchTimer) clearTimeout(raiderBlacklistSearchTimer);
+  raiderBlacklistSearchTimer = setTimeout(() => {
+    raiderBlacklistSearchIdentities(q).catch(() => {});
+  }, 280);
+});
+
+document.getElementById("admin-panel-raider-blacklist")?.addEventListener("click", (event) => {
+  const pickBtn = event.target.closest("[data-raider-blacklist-pick]");
+  if (pickBtn) {
+    const id = Number(pickBtn.getAttribute("data-raider-blacklist-pick"));
+    raiderBlacklistSelectedPlayer = {
+      id: Number.isFinite(id) ? id : null,
+      displayName: String(pickBtn.getAttribute("data-display-name") || "").trim(),
+      discordUserId: String(pickBtn.getAttribute("data-discord-id") || "").trim(),
+    };
+    const manual = document.getElementById("raiderBlacklistManualName");
+    if (manual) manual.checked = false;
+    const search = document.getElementById("raiderBlacklistPlayerSearch");
+    if (search) search.value = raiderBlacklistSelectedPlayer.displayName;
+    const results = document.getElementById("raiderBlacklistSearchResults");
+    if (results) {
+      results.hidden = true;
+      results.innerHTML = "";
+    }
+    raiderBlacklistUpdateSelectedPlayerLabel();
+    return;
+  }
+  const saveBtn = event.target.closest("[data-raider-blacklist-save]");
+  if (saveBtn) {
+    const id = String(saveBtn.getAttribute("data-raider-blacklist-save") || "").trim();
+    const tr = saveBtn.closest("[data-raider-blacklist-row]");
+    if (!id || !tr) return;
+    const card = String(tr.querySelector('[data-raider-blacklist-k="card"]')?.value || "yellow").trim();
+    const reason = String(tr.querySelector('[data-raider-blacklist-k="reason"]')?.value || "").trim();
+    const contextLabel = String(tr.querySelector('[data-raider-blacklist-k="contextLabel"]')?.value || "").trim();
+    const dateRaw = String(tr.querySelector('[data-raider-blacklist-k="contextDate"]')?.value || "").trim();
+    let contextAt = null;
+    if (dateRaw) {
+      const dt = new Date(`${dateRaw}T12:00:00`);
+      if (!Number.isNaN(dt.getTime())) contextAt = dt.getTime();
+    }
+    saveBtn.disabled = true;
+    runWithButtonFeedback(
+      saveBtn,
+      { idle: "Save", loading: "Saving...", success: "Saved", failure: "Failed" },
+      async () => {
+        await getJson(`/api/admin/raider-blacklist/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ card, reason, contextLabel, contextAt }),
+        });
+        await loadRaiderBlacklistPanel();
+      }
+    )
+      .then(() => status("Blacklist entry updated."))
+      .catch((error) => status(error?.message || "Failed to update entry"))
+      .finally(() => {
+        saveBtn.disabled = false;
+      });
+    return;
+  }
+  const removeBtn = event.target.closest("[data-raider-blacklist-remove]");
+  if (!removeBtn) return;
+  const id = String(removeBtn.getAttribute("data-raider-blacklist-remove") || "").trim();
+  if (!id) return;
+  const tr = removeBtn.closest("[data-raider-blacklist-row]");
+  const card = String(tr?.querySelector('[data-raider-blacklist-k="card"]')?.value || "").toLowerCase();
+  if (card === "black" && !window.confirm("Remove this Black Card entry?")) return;
+  removeBtn.disabled = true;
+  runWithButtonFeedback(
+    removeBtn,
+    { idle: "Remove", loading: "Removing...", success: "Removed", failure: "Failed" },
+    async () => {
+      await getJson(`/api/admin/raider-blacklist/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await loadRaiderBlacklistPanel();
+    }
+  )
+    .then(() => status("Blacklist entry removed."))
+    .catch((error) => status(error?.message || "Failed to remove entry"))
+    .finally(() => {
+      removeBtn.disabled = false;
+    });
+});
+
+document.getElementById("raiderBlacklistAddBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("raiderBlacklistAddBtn");
+  const form = raiderBlacklistReadAddForm();
+  if (!form.reason) {
+    status("Reason is required.");
+    return;
+  }
+  if (form.manual && !form.displayName) {
+    status("Enter a player name or pick an identity.");
+    return;
+  }
+  if (!form.manual && !form.userId && !form.displayName) {
+    status("Select a player from identity search or use manual name.");
+    return;
+  }
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Add card", loading: "Adding...", success: "Added", failure: "Failed" },
+      async () => {
+        const body = {
+          card: form.card,
+          reason: form.reason,
+          contextLabel: form.contextLabel || undefined,
+          contextAt: form.contextAt || undefined,
+        };
+        if (form.manual) body.displayName = form.displayName;
+        else {
+          if (form.userId) body.userId = form.userId;
+          if (form.discordUserId) body.discordUserId = form.discordUserId;
+          if (form.displayName) body.displayName = form.displayName;
+        }
+        await getJson("/api/admin/raider-blacklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        raiderBlacklistClearAddForm();
+        await loadRaiderBlacklistPanel();
+      }
+    );
+    status("Card added to blacklist.");
+  } catch (error) {
+    status(error?.message || "Failed to add card");
+  }
 });
 
 document.getElementById("adminHofNotesReloadBtn")?.addEventListener("click", async () => {
@@ -8667,6 +9036,11 @@ showAdminPanel = function (panelId, opts) {
   if (panelId === "identity" && !identityBacklogLoaded) {
     loadIdentityJourney().catch((error) => {
       status(error?.message || "Failed to load identity backlog.");
+    });
+  }
+  if (panelId === "raider-blacklist") {
+    loadRaiderBlacklistPanel().catch((error) => {
+      status(error?.message || "Failed to load raider blacklist.");
     });
   }
 };

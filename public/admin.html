@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260518admin-ultrawide-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260518raider-blacklist-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -46,6 +46,7 @@
                 <div class="admin-sidebar-group-label">People</div>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="identity">Identity Management</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="raider-blacklist">Raider Blacklist</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="badge-tooltips">Badge Management</button>
               </div>
               <div class="admin-sidebar-group" data-admin-group="roster">
@@ -368,6 +369,69 @@
               <div id="adminHofNotesTable" class="admin-grid-note">Loading Hall of Fame winners...</div>
             </section>
 
+            <section class="card admin-panel" data-admin-panel="raider-blacklist" id="admin-panel-raider-blacklist">
+              <h3 class="section-title">Raider Blacklist</h3>
+              <p class="subtle">
+                Track raiders with a <strong>Yellow Card</strong> (warning) or <strong>Black Card</strong> (out — e.g. no-show).
+                Cards stay until you remove them.
+              </p>
+              <div class="admin-actions admin-actions--tight admin-raider-blacklist-filters">
+                <label class="subtle" for="raiderBlacklistFilter">Show</label>
+                <select id="raiderBlacklistFilter" class="admin-input">
+                  <option value="all">All cards</option>
+                  <option value="yellow">Yellow only</option>
+                  <option value="black">Black only</option>
+                </select>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="raiderBlacklistReloadBtn">
+                  Reload list
+                </button>
+              </div>
+              <div id="adminRaiderBlacklistTable" class="admin-grid-note">Loading raider blacklist…</div>
+              <h4 class="section-title" style="margin-top: 1.25rem">Add card</h4>
+              <div class="admin-raider-blacklist-add">
+                <label class="subtle" for="raiderBlacklistPlayerSearch">Player</label>
+                <input
+                  id="raiderBlacklistPlayerSearch"
+                  class="admin-input"
+                  type="search"
+                  placeholder="Search identity (name, Discord id)…"
+                  autocomplete="off"
+                />
+                <label class="subtle admin-checkbox-inline">
+                  <input type="checkbox" id="raiderBlacklistManualName" />
+                  Manual name only (no linked account)
+                </label>
+                <div id="raiderBlacklistSearchResults" class="admin-raider-blacklist-search-results subtle" hidden></div>
+                <p id="raiderBlacklistSelectedPlayer" class="subtle admin-raider-blacklist-selected">No player selected.</p>
+                <label class="subtle" for="raiderBlacklistCardType">Card</label>
+                <select id="raiderBlacklistCardType" class="admin-input">
+                  <option value="yellow">Yellow Card (warning)</option>
+                  <option value="black">Black Card (out)</option>
+                </select>
+                <label class="subtle" for="raiderBlacklistReason">Reason</label>
+                <textarea
+                  id="raiderBlacklistReason"
+                  class="admin-input"
+                  rows="2"
+                  maxlength="500"
+                  placeholder="e.g. No-show SSC 17 May"
+                ></textarea>
+                <label class="subtle" for="raiderBlacklistContextLabel">Raid / event (optional)</label>
+                <input
+                  id="raiderBlacklistContextLabel"
+                  class="admin-input"
+                  type="text"
+                  maxlength="160"
+                  placeholder="Serpentshrine Cavern"
+                />
+                <label class="subtle" for="raiderBlacklistContextDate">Date (optional)</label>
+                <input id="raiderBlacklistContextDate" class="admin-input" type="date" />
+                <div class="admin-actions admin-actions--tight">
+                  <button type="button" class="event-signup-btn" id="raiderBlacklistAddBtn">Add card</button>
+                </div>
+              </div>
+            </section>
+
             <section class="card admin-panel" data-admin-panel="badge-tooltips" id="admin-panel-badge-tooltips">
               <h3 class="section-title">Badge Management</h3>
               <p class="subtle">Edit the rarity and tooltip description shown on profile and roster badge hover cards. Default values reset the badge to its built-in copy.</p>
@@ -531,7 +595,7 @@
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/vendor/apexcharts.min.js"></script>
-    <script defer src="/admin.js?v=20260518rh-writeback-roster-v1"></script>
+    <script defer src="/admin.js?v=20260518raider-blacklist-v1"></script>
     <script defer src="/auth-ui.js?v=20260507profilenav1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
