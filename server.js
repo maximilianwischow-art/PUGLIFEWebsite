@@ -387,6 +387,9 @@ const DEFAULT_TBC_ZONES = [
   "Sunwell Plateau",
   "Zul'Aman",
 ];
+/** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
+const API_BUILD_ID = "20260518-p2-event-mgmt-v1";
+
 const TRACKED_RAIDS = {
   Karazhan: [
     "Attumen the Huntsman",
@@ -17658,7 +17661,12 @@ async function resolveRaidHelperSignupProfileForUser(serverId, userId, fallbackN
 }
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, service: "fallen-tacticians-api" });
+  res.json({
+    ok: true,
+    service: "fallen-tacticians-api",
+    buildId: API_BUILD_ID,
+    trackedRaids: Object.keys(TRACKED_RAIDS),
+  });
 });
 
 app.get("/api/wcl/guild/:guildId/reports", async (req, res) => {

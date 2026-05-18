@@ -17,6 +17,23 @@ git push -u origin main
 
 If it already exists as a repo, just push your latest changes.
 
+**Production (`www.wow-pug.com`) runs on Render** (see response header `x-render-origin-server`). Pushing to GitHub does not update the site until Render finishes a deploy.
+
+After any deploy, verify the running build:
+
+```text
+GET https://www.wow-pug.com/api/health
+```
+
+Expect `buildId` (e.g. `20260518-p2-event-mgmt-v1`) and `trackedRaids` including `Serpentshrine Cavern` and `Tempest Keep`. If those are missing, the live service is still on an old build — use **Manual Deploy** below.
+
+### Manual deploy (when auto-deploy did not run)
+
+1. [Render Dashboard](https://dashboard.render.com) → service **fallen-tacticians-api**
+2. **Events** / **Deploys** → confirm the latest commit from `main` is listed
+3. If there is no recent deploy or it failed: **Manual Deploy** → **Deploy latest commit**
+4. Wait until status is **Live**, then re-check `/api/health` and Admin → Event Management
+
 ## 2) Create Render service
 
 1. Open [https://render.com](https://render.com)
