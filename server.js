@@ -2023,21 +2023,64 @@ function hallOfFameBracketFromRosterPlayer(player) {
   return "dps";
 }
 
-function matchHallOfFameRosterPlayer(players, winnerName) {
+/** All normalized name keys that should match a HoF winner (RH + linked WCL alts). */
+function hallOfFameWinnerLookupKeys(winnerName) {
+  const keys = new Set();
   const target = normalizeRaidHelperDisplayKey(winnerName);
-  if (!target) return null;
+  if (target) keys.add(target);
+  for (const link of rhWclLinksState?.links || []) {
+    const names = [
+      link?.raidHelperName,
+      link?.mainCharacterName,
+      ...(Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []),
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    const linkKeys = names.map((n) => normalizeRaidHelperDisplayKey(n)).filter(Boolean);
+    if (!linkKeys.length) continue;
+    const hit = linkKeys.some((k) => k === target || keys.has(k));
+    if (hit) {
+      for (const k of linkKeys) keys.add(k);
+    }
+  }
+  return keys;
+}
+
+function matchHallOfFameRosterPlayer(players, winnerName) {
+  const keys = hallOfFameWinnerLookupKeys(winnerName);
+  if (!keys.size) return null;
   for (const p of players || []) {
     const candidates = [
       p?.characterName,
       p?.name,
+      p?.raidHelperName,
       p?.rioProfileLookupName,
       ...(Array.isArray(p?.wclCharacters) ? p.wclCharacters : []),
     ]
       .map((x) => String(x || "").trim())
       .filter(Boolean);
     for (const c of candidates) {
-      if (normalizeRaidHelperDisplayKey(c) === target) return p;
+      if (keys.has(normalizeRaidHelperDisplayKey(c))) return p;
     }
+  }
+  return null;
+}
+
+function identityUserIdForHallOfFameWinner(winnerName) {
+  const keys = hallOfFameWinnerLookupKeys(winnerName);
+  if (!keys.size) return null;
+  try {
+    for (const u of identityUserListAll()) {
+      const names = identityListLinkedCharacterNames({
+        discordUserId: u.discordUserId,
+        displayName: u.displayName,
+      });
+      for (const n of names) {
+        if (keys.has(normalizeRaidHelperDisplayKey(n))) return u.id;
+      }
+    }
+  } catch {
+    /* identity optional */
   }
   return null;
 }
@@ -2553,6 +2596,8 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
 async function enrichHallOfFameRows(guildId, rows) {
   if (!Array.isArray(rows) || !rows.length) return rows;
 
+  await ensureRhWclLinksStore();
+
   let players = [];
   try {
     const payload = await buildActiveRosterPlayersForGuild(guildId, {
@@ -2564,6 +2609,27 @@ async function enrichHallOfFameRows(guildId, rows) {
   } catch {
     players = [];
   }
+
+  /** @type {Map<number, object> | null} */
+  let materialisedByUserId = null;
+  const materialisedRowForUserId = (userId) => {
+    const uid = Number(userId);
+    if (!Number.isInteger(uid) || uid <= 0) return null;
+    if (!materialisedByUserId) {
+      materialisedByUserId = new Map();
+      try {
+        const mat = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
+        for (const row of mat?.leaderboard || []) {
+          if (Number.isInteger(row?.dbUserId) && row.dbUserId > 0) {
+            materialisedByUserId.set(row.dbUserId, row);
+          }
+        }
+      } catch {
+        /* materialised tables may be empty */
+      }
+    }
+    return materialisedByUserId.get(uid) || null;
+  };
 
   const codes = [...new Set(rows.map((r) => String(r?.raidCode || "").trim()).filter(Boolean))];
   const bundleByCode = new Map();
@@ -2582,7 +2648,23 @@ async function enrichHallOfFameRows(guildId, rows) {
   }
 
   return rows.map((row) => {
-    const matched = matchHallOfFameRosterPlayer(players, row.winnerName);
+    let matched = matchHallOfFameRosterPlayer(players, row.winnerName);
+    const canonicalUserId =
+      Number(matched?.dbUserId) > 0 ? matched.dbUserId : identityUserIdForHallOfFameWinner(row.winnerName);
+    const materialised = canonicalUserId ? materialisedRowForUserId(canonicalUserId) : null;
+    if (!matched && materialised) matched = materialised;
+    else if (matched && materialised) {
+      matched = {
+        ...materialised,
+        ...matched,
+        wclEventCount: Number(matched.wclEventCount) > 0 ? matched.wclEventCount : materialised.wclEventCount,
+        attendanceRate: Number.isFinite(Number(matched.attendanceRate))
+          ? matched.attendanceRate
+          : materialised.attendanceRate,
+        raidsAttended: Number(matched.raidsAttended) > 0 ? matched.raidsAttended : materialised.raidsAttended,
+        parseSummaries: matched.parseSummaries || materialised.parseSummaries,
+      };
+    }
     const bracket = hallOfFameBracketFromRosterPlayer(matched);
     const code = String(row?.raidCode || "").trim();
     const bundle = bundleByCode.get(code);
@@ -3717,9 +3799,10 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
        on each enriched `player`). v2 disk caches pin `specificEventBadges: []`
        forever while the fingerprint is unchanged, so HoF / API never re-runs
        `enrichHallOfFameRows` and the AOE Cleave tile never appears.
-       v4 = HoF role bracket derives from role evidence before the generic roster bucket. */
+       v4 = HoF role bracket derives from role evidence before the generic roster bucket.
+       v5 = HoF chronicle stats + RH/WCL alias matching on enriched `player`. */
     if (
-      parsed?.v === 4 &&
+      parsed?.v === 5 &&
       Number(parsed.guildId) === Number(guildId) &&
       Number(parsed.limit) === Number(limit) &&
       parsed.fingerprint === fingerprint &&
@@ -3744,7 +3827,7 @@ async function tryReadHallOfFameEnrichedCache(guildId, limit, fingerprint) {
 async function persistHallOfFameEnrichedCache(guildId, limit, fingerprint, hallOfFame) {
   const generatedAt = Date.now();
   const payload = {
-    v: 4,
+    v: 5,
     guildId: Number(guildId),
     limit: Number(limit),
     fingerprint,
@@ -18993,6 +19076,12 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
     return best;
   }
 
+  const parseSummaryBestValue = (row) => {
+    if (!row) return null;
+    const n = Number(row.bestValue);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
   const rollingConsideredRaids = Number(attendanceWindow[0]?.attendanceHistory?.length || 0);
   const consideredRaids = curationAttendanceActive
     ? curationAttendanceConsidered
@@ -19022,17 +19111,17 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
     const heal = bestParseRowForUserBracket(u.id, "heal");
     const dps = bestParseRowForUserBracket(u.id, "dps");
     const parseSummaries = {
-      bestTank: tank?.bestValue || 0,
+      bestTank: parseSummaryBestValue(tank),
       bestTankEncounter: tank?.bestEncounter || null,
       bestTankReportCode: tank?.bestReportCode || null,
       bestTankFightId: tank?.bestFightId || null,
       bestTankEncounterTop: !!(tank && tank.encounterTopInBracket),
-      bestHeal: heal?.bestValue || 0,
+      bestHeal: parseSummaryBestValue(heal),
       bestHealEncounter: heal?.bestEncounter || null,
       bestHealReportCode: heal?.bestReportCode || null,
       bestHealFightId: heal?.bestFightId || null,
       bestHealEncounterTop: !!(heal && heal.encounterTopInBracket),
-      bestDps: dps?.bestValue || 0,
+      bestDps: parseSummaryBestValue(dps),
       bestDpsEncounter: dps?.bestEncounter || null,
       bestDpsReportCode: dps?.bestReportCode || null,
       bestDpsFightId: dps?.bestFightId || null,
@@ -20265,7 +20354,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       specName,
       raidHelperSpecName: specName,
       raiderIoSpecName: specName,
-      roleName: "Ranged",
+      roleName: String(row.roleName || main?.roleName || "Ranged").trim() || "Ranged",
       realm: defaultWowRealmForRoster(),
       mainCharacterName,
       characterName: mainCharacterName,

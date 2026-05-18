@@ -480,6 +480,95 @@ function buildMockHallOfFamePreviewRows() {
   ];
 }
 
+/** Merge live attendance KPIs onto a HoF row's `player` (fixes Scottie→Scottey etc.). */
+function hofPlayerForChronicle(row) {
+  const plb = window.plbEventsRoster;
+  const winner = String(row?.winnerName || "").trim();
+  const base = row?.player
+    ? { ...row.player }
+    : {
+        name: winner,
+        characterName: winner,
+        wclCharacters: winner ? [winner] : [],
+      };
+  if (!winner) return base;
+  const wclChars = [
+    ...(Array.isArray(base.wclCharacters) ? base.wclCharacters : []),
+    winner,
+    base.characterName,
+    base.name,
+    base.raidHelperName,
+  ]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+  base.wclCharacters = [...new Set(wclChars)];
+  if (!plb || typeof plb.attendanceRowForRosterPlayerResolved !== "function") return base;
+  const att = plb.attendanceRowForRosterPlayerResolved(base);
+  if (!att) return base;
+  return {
+    ...base,
+    wclEventCount:
+      Number(base.wclEventCount) > 0
+        ? base.wclEventCount
+        : Number(att.wclEventCount ?? att.rhPastEventCount ?? 0) || 0,
+    attendanceRate: Number.isFinite(Number(base.attendanceRate))
+      ? base.attendanceRate
+      : Number(att.attendanceRate),
+    raidsAttended:
+      Number(base.raidsAttended) > 0 ? base.raidsAttended : Number(att.raidsAttended ?? 0),
+    pastRhEvents: Number(att.rhPastEventCount ?? att.wclEventCount ?? base.pastRhEvents ?? 0),
+  };
+}
+
+function renderHallOfFameChampionCard(row, idx, ctx) {
+  const { plb, roleLabelForRow, championSubtitleForRow, quoteForRow, roleIconForRow, attendancePct, highestPeakPct, totalRaids } =
+    ctx;
+  const chronicleRow = { ...row, player: hofPlayerForChronicle(row) };
+  const playerCell = hofRaiderCell(chronicleRow);
+  const role = roleLabelForRow(row);
+  const subtitle = championSubtitleForRow(row);
+  const quote = quoteForRow(row);
+  const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
+  const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
+  const parityCls = idx % 2 === 0 ? "hof-champion-card--parity-a" : "hof-champion-card--parity-b";
+  const roleIcon = roleIconForRow(row);
+  const specPortrait = hofWinnerSpecPortraitHtml(row);
+  const guildRoleToken =
+    chronicleRow?.player && plb?.rosterRoleIconHtml
+      ? plb.rosterRoleIconHtml(chronicleRow.player, { className: "hof-guild-role-token" })
+      : "";
+  return `
+        <article class="hof-champion-card ${parityCls} ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
+          <div class="hof-cine-row ${rowDirCls}">
+            <div class="hof-champion-main">
+              <div class="hof-champion-topline">
+                <div class="hof-role-pill-wrap">
+                  <span class="hof-role-emblem">${roleIcon}</span>
+                  <span class="hof-role-chip tw-plb-chip">${escapeHtml(role)}</span>
+                  ${guildRoleToken}
+                </div>
+              </div>
+              <div class="hof-winner-spec-wrap">${specPortrait}</div>
+              <div class="hof-champion-player">${playerCell.playerHtml}</div>
+              <div class="hof-champion-copy">
+                <p class="hof-champion-subtle">${escapeHtml(subtitle)}</p>
+                <p class="hof-champion-quote">${escapeHtml(quote)}</p>
+              </div>
+              ${playerCell.badgesHtml}
+            </div>
+            <aside class="hof-chronicle-pane">
+              <div class="hof-chronicle-title">᛫ Chronicle ᛫</div>
+              <div class="hof-chronicle-grid">
+                <div class="hof-chronicle-kpi"><span class="subtle" title="Number of Warcraft Logs reports for our guild that the admin has marked as official events.">Total raids</span><strong>${escapeHtml(totalRaids(chronicleRow))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle">Attendance</span><strong>${escapeHtml(attendancePct(chronicleRow))}</strong></div>
+                <div class="hof-chronicle-kpi"><span class="subtle">Highest peak (all raids)</span><strong>${escapeHtml(highestPeakPct(chronicleRow))}</strong></div>
+              </div>
+            </aside>
+          </div>
+        </article>
+      `;
+}
+
 function renderHallOfFame(payload) {
   const host = document.getElementById("votingHallOfFame");
   const plb = window.plbEventsRoster;
@@ -516,7 +605,8 @@ function renderHallOfFame(payload) {
     return "⚔";
   };
   const attendancePct = (row) => {
-    const v = Number(row?.player?.attendanceRate);
+    const chronicle = hofPlayerForChronicle(row);
+    const v = Number(chronicle?.attendanceRate);
     return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
   };
   const highestPeakPct = (row) => {
@@ -524,65 +614,56 @@ function renderHallOfFame(payload) {
     return Number.isFinite(v) && v >= 0 ? `${Math.round(v)}%` : "—";
   };
   const totalRaids = (row) => {
-    /* Prefer the WCL-confirmed Events count (raid_appearances scoped to
-       admin-curated reports). Fall back to legacy Raid Helper signups, then
-       to last-window WCL attendance for very old cached payloads. */
+    const chronicle = hofPlayerForChronicle(row);
     const v = Number(
-      row?.player?.wclEventCount ||
-        row?.player?.pastRhEvents ||
-        row?.player?.raidsAttended ||
-        0,
+      chronicle?.wclEventCount || chronicle?.pastRhEvents || chronicle?.raidsAttended || 0,
     );
     return Number.isFinite(v) && v > 0 ? numberFmt(v) : "—";
   };
-  host.innerHTML = rows
-    .map((row, idx) => {
-      const playerCell = hofRaiderCell(row);
-      const role = roleLabelForRow(row);
-      const subtitle = championSubtitleForRow(row);
-      const quote = quoteForRow(row);
-      const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
-      const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
-      /* Odd ranks (1,3,…) vs even ranks (2,4,…) — alternating card glow / tint */
-      const parityCls = idx % 2 === 0 ? "hof-champion-card--parity-a" : "hof-champion-card--parity-b";
-      const roleIcon = roleIconForRow(row);
-      const specPortrait = hofWinnerSpecPortraitHtml(row);
-      const guildRoleToken =
-        row?.player && plb?.rosterRoleIconHtml
-          ? plb.rosterRoleIconHtml(row.player, { className: "hof-guild-role-token" })
-          : "";
-      return `
-        <article class="hof-champion-card ${parityCls} ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
-          <div class="hof-cine-row ${rowDirCls}">
-            <div class="hof-champion-main">
-              <div class="hof-champion-topline">
-                <div class="hof-role-pill-wrap">
-                  <span class="hof-role-emblem">${roleIcon}</span>
-                  <span class="hof-role-chip tw-plb-chip">${escapeHtml(role)}</span>
-                  ${guildRoleToken}
-                </div>
-              </div>
-              <div class="hof-winner-spec-wrap">${specPortrait}</div>
-              <div class="hof-champion-player">${playerCell.playerHtml}</div>
-              <div class="hof-champion-copy">
-                <p class="hof-champion-subtle">${escapeHtml(subtitle)}</p>
-                <p class="hof-champion-quote">${escapeHtml(quote)}</p>
-              </div>
-              ${playerCell.badgesHtml}
-            </div>
-            <aside class="hof-chronicle-pane">
-              <div class="hof-chronicle-title">᛫ Chronicle ᛫</div>
-              <div class="hof-chronicle-grid">
-                <div class="hof-chronicle-kpi"><span class="subtle" title="Number of Warcraft Logs reports for our guild that the admin has marked as official events.">Total raids</span><strong>${escapeHtml(totalRaids(row))}</strong></div>
-                <div class="hof-chronicle-kpi"><span class="subtle">Attendance</span><strong>${escapeHtml(attendancePct(row))}</strong></div>
-                <div class="hof-chronicle-kpi"><span class="subtle">Highest peak (all raids)</span><strong>${escapeHtml(highestPeakPct(row))}</strong></div>
-              </div>
-            </aside>
+  const cardCtx = {
+    plb,
+    roleLabelForRow,
+    championSubtitleForRow,
+    quoteForRow,
+    roleIconForRow,
+    attendancePct,
+    highestPeakPct,
+    totalRaids,
+  };
+  const recent = rows[0] || null;
+  const archive = rows.slice(1);
+  const recentHtml = recent ? renderHallOfFameChampionCard(recent, 0, cardCtx) : "";
+  const archiveHtml = archive.map((row, idx) => renderHallOfFameChampionCard(row, idx + 1, cardCtx)).join("");
+  const archiveCount = archive.length;
+  const totalCount = rows.length;
+  host.innerHTML = `
+    <div class="hof-recent-wrap">
+      ${recent ? `<p class="hof-recent-kicker subtle">Latest MVP champion</p>${recentHtml}` : `<p class="subtle">No hall of fame entries yet.</p>`}
+    </div>
+    ${
+      archiveCount
+        ? `<div class="hof-archive-wrap" hidden>
+            <p class="hof-archive-kicker subtle">Earlier champions (${archiveCount})</p>
+            <div class="hof-list hof-list--archive">${archiveHtml}</div>
           </div>
-        </article>
-      `;
-    })
-    .join("");
+          <button type="button" class="btn btn-secondary hof-archive-toggle" id="hofArchiveToggle" aria-expanded="false">
+            View all Hall of Fame winners (${totalCount})
+          </button>`
+        : ""
+    }
+  `;
+  const toggle = document.getElementById("hofArchiveToggle");
+  const archiveWrap = host.querySelector(".hof-archive-wrap");
+  if (toggle && archiveWrap) {
+    toggle.addEventListener("click", () => {
+      const open = archiveWrap.hidden;
+      archiveWrap.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.textContent = open
+        ? "Hide earlier Hall of Fame winners"
+        : `View all Hall of Fame winners (${totalCount})`;
+    });
+  }
   if (isMock) {
     host.insertAdjacentHTML(
       "afterbegin",
