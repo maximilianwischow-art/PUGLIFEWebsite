@@ -388,7 +388,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-raider-blacklist-v1";
+const API_BUILD_ID = "20260518-roster-blacklist-cards-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -3123,6 +3123,103 @@ async function ensureRaiderBlacklistStore() {
     }
   })();
   return raiderBlacklistReady;
+}
+
+/** @returns {{ byUserId: Map<number, object>, byDiscordUserId: Map<string, object>, byRhKey: Map<string, object> }} */
+function buildRaiderBlacklistLookup() {
+  const byUserId = new Map();
+  const byDiscordUserId = new Map();
+  const byRhKey = new Map();
+  const rank = (card) => (String(card || "").toLowerCase() === "black" ? 2 : 1);
+  const upsert = (map, key, entry) => {
+    if (key == null || key === "") return;
+    const prev = map.get(key);
+    if (!prev || rank(entry.card) > rank(prev.card)) map.set(key, entry);
+  };
+  for (const raw of raiderBlacklistState.entries || []) {
+    const card = String(raw?.card || "").toLowerCase();
+    if (card !== "yellow" && card !== "black") continue;
+    const entry = {
+      card,
+      reason: String(raw?.reason || "").trim(),
+      id: String(raw?.id || "").trim(),
+    };
+    const userId = raw?.userId != null ? Number(raw.userId) : null;
+    if (Number.isFinite(userId) && userId > 0) upsert(byUserId, userId, entry);
+    const discordUserId = String(raw?.discordUserId || "").trim();
+    if (discordUserId) upsert(byDiscordUserId, discordUserId, entry);
+    const rhKey =
+      String(raw?.raidHelperNameKey || "").trim() ||
+      normalizeRaidHelperDisplayKey(String(raw?.displayName || ""));
+    if (rhKey) upsert(byRhKey, rhKey, entry);
+  }
+  return { byUserId, byDiscordUserId, byRhKey };
+}
+
+function lookupRaiderCard(lookup, { signupDiscordUserId, displayName, canonicalUserId, discordUserIdByRhKey } = {}) {
+  if (!lookup) return null;
+  let best = null;
+  const rank = (card) => (card === "black" ? 2 : 1);
+  const consider = (hit) => {
+    if (!hit?.card) return;
+    if (!best || rank(hit.card) > rank(best.card)) best = hit;
+  };
+  const uid =
+    canonicalUserId != null && Number.isFinite(Number(canonicalUserId))
+      ? Number(canonicalUserId)
+      : resolveRoleAlertCanonicalUserId({
+          signupDiscordUserId,
+          displayName,
+          discordUserIdByRhKey: discordUserIdByRhKey || new Map(),
+        });
+  if (uid != null) consider(lookup.byUserId.get(uid));
+  const discordId = String(signupDiscordUserId || "").trim();
+  if (discordId) consider(lookup.byDiscordUserId.get(discordId));
+  const rhKey = normalizeRaidHelperDisplayKey(String(displayName || ""));
+  if (rhKey) consider(lookup.byRhKey.get(rhKey));
+  return best;
+}
+
+function attachRaiderCardsToRoleAlertAllSignups(allSignups, lookup, discordUserIdByRhKey) {
+  if (!Array.isArray(allSignups) || !lookup) return;
+  for (const row of allSignups) {
+    const hit = lookupRaiderCard(lookup, {
+      signupDiscordUserId: row.userId,
+      displayName: row.name,
+      canonicalUserId: row.canonicalUserId,
+      discordUserIdByRhKey,
+    });
+    row.raiderCard = hit ? { card: hit.card, reason: hit.reason, id: hit.id } : null;
+  }
+}
+
+function attachRaiderCardsToCompBoardSlots(compBoard, lookup, discordUserIdByRhKey) {
+  if (!compBoard || !Array.isArray(compBoard.groups) || !lookup) return;
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      if (slot?.isBlocker || slot?.isEmpty || !slot?.isKnownSignup) {
+        slot.raiderCard = null;
+        continue;
+      }
+      const disp = String(slot?.displayCharacterName || "").trim();
+      const rhName = String(slot?.name || "").trim();
+      let hit = lookupRaiderCard(lookup, {
+        signupDiscordUserId: "",
+        displayName: disp || rhName,
+        canonicalUserId: slot.canonicalUserId,
+        discordUserIdByRhKey,
+      });
+      if (!hit && rhName && normalizeRaidHelperDisplayKey(rhName) !== normalizeRaidHelperDisplayKey(disp)) {
+        hit = lookupRaiderCard(lookup, {
+          signupDiscordUserId: "",
+          displayName: rhName,
+          canonicalUserId: slot.canonicalUserId,
+          discordUserIdByRhKey,
+        });
+      }
+      slot.raiderCard = hit ? { card: hit.card, reason: hit.reason, id: hit.id } : null;
+    }
+  }
 }
 
 function sanitizeDiscordDmSubscribersState(raw) {
@@ -8447,6 +8544,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     const analysisWarnings = [...detailWarnings];
     await ensureDiscordDmSubscribersStore();
     await ensureRoleAlertDmLogStore();
+    await ensureRaiderBlacklistStore();
+    const raiderBlacklistLookup = buildRaiderBlacklistLookup();
     try {
       await ensureRhWclLinksStore();
     } catch (error) {
@@ -8581,6 +8680,16 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     enrichRoleAlertAllSignupDisplayNames(allSignups);
     attachIdentityGearScoresToRoleAlertAllSignups(allSignups);
     await attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups);
+    attachRaiderCardsToRoleAlertAllSignups(allSignups, raiderBlacklistLookup, discordUserIdByRhKey);
+    if (compBoard) attachRaiderCardsToCompBoardSlots(compBoard, raiderBlacklistLookup, discordUserIdByRhKey);
+    for (const row of candidateTargets) {
+      const hit = lookupRaiderCard(raiderBlacklistLookup, {
+        signupDiscordUserId: row.userId,
+        displayName: row.displayName,
+        discordUserIdByRhKey,
+      });
+      row.raiderCard = hit ? { card: hit.card, reason: hit.reason, id: hit.id } : null;
+    }
     const wclPhaseAvgs = await buildWclPhaseAvgsByRhKeyForRoleAlerts();
     return res.json({
       ok: true,

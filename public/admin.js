@@ -2094,8 +2094,12 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
   const wclEventsSpan = compact
     ? `<span class="role-alert-slot-stat role-alert-slot-stat--ev role-alert-slot-wcl-events role-alert-slot-wcl-events--compact" title="${esc(wclEvTitle)}">${esc(wclEvTxt)}</span>`
     : `<span class="role-alert-slot-wcl-events subtle" title="${esc(wclEvTitle)}">Ev ${esc(wclEvTxt)}</span>`;
+  const raiderCardMod = roleAlertsRaiderCardModifier(slot);
+  const raiderCardBadge = roleAlertsRaiderCardBadgeHtml(slot);
   const attrStr = rootAttrs ? ` ${rootAttrs}` : "";
-  const layoutClass = compact ? `${outerClass} role-alert-slot--layout role-alert-slot--compact` : `${outerClass} role-alert-slot--layout`;
+  const layoutClass = compact
+    ? `${outerClass} role-alert-slot--layout role-alert-slot--compact${raiderCardMod ? ` ${raiderCardMod}` : ""}`
+    : `${outerClass} role-alert-slot--layout${raiderCardMod ? ` ${raiderCardMod}` : ""}`;
   const primaryIconsClass = compact ? "role-alert-slot-icons role-alert-slot-icons--compact" : "role-alert-slot-icons";
   const iconDimAttr = compact ? ' width="16" height="16"' : "";
 
@@ -2109,7 +2113,7 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
                       : ""
                   }
                   <span class="role-alert-slot-name-stack" title="${nameTitle}">
-                    <span class="role-alert-slot-name">${esc(disp)}</span>${rhSub}
+                    <span class="role-alert-slot-name">${esc(disp)}</span>${rhSub}${raiderCardBadge}
                   </span>
                 </div>`;
 
@@ -2157,7 +2161,7 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
           : ""
       }
     </section>`;
-    return `<div class="${layoutClass} role-alert-slot--composer-card${classColorClass}"${classColorStyle}${attrStr}>
+    return `<div class="${layoutClass} role-alert-slot--composer-card${classColorClass}${raiderCardMod ? ` ${raiderCardMod}` : ""}"${classColorStyle}${attrStr}>
       ${classColorBar || ""}
       <header class="role-alert-composer-card-head" title="${esc(rhTitle)}">
         <div class="role-alert-composer-card-identity">
@@ -2165,6 +2169,7 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
           <span class="role-alert-composer-name-block" title="${nameTitle}">
             <span class="role-alert-composer-name"${nameColorStyle || ""}>${esc(disp)}</span>
             ${rhAlias}
+            ${raiderCardBadge}
           </span>
         </div>
         <div class="role-alert-composer-tag-row">
@@ -2277,11 +2282,16 @@ function roleAlertsAllSignupsHtml(analysis) {
   };
   const signupNameWithWclPrefix = (row) => {
     const name = String(row?.name || "-").trim() || "-";
-    if (!wclMeta?.available || row?.wclEventCount == null) return esc(name);
-    const n = Math.max(0, Math.floor(Number(row.wclEventCount)));
-    return `<span class="role-alert-signup-wcl-prefix" title="Distinct WCL guild reports (see note above)">${esc(
-      String(n)
-    )}</span> ${esc(name)}`;
+    const cardBadge = roleAlertsRaiderCardBadgeHtml(row);
+    const nameHtml = !wclMeta?.available || row?.wclEventCount == null
+      ? esc(name)
+      : (() => {
+          const n = Math.max(0, Math.floor(Number(row.wclEventCount)));
+          return `<span class="role-alert-signup-wcl-prefix" title="Distinct WCL guild reports (see note above)">${esc(
+            String(n)
+          )}</span> ${esc(name)}`;
+        })();
+    return `${cardBadge}${cardBadge ? " " : ""}${nameHtml}`;
   };
   if (!rows.length) {
     return `<details class="role-alert-all-signups">
@@ -2888,6 +2898,7 @@ function roleAlertsCopyRowOntoSlot(slot, row) {
   slot.gearScore = row.gearScore;
   slot.classicArmoryCharacterUrl = row.classicArmoryCharacterUrl;
   slot.wclEventCount = row.wclEventCount;
+  slot.raiderCard = row.raiderCard && typeof row.raiderCard === "object" ? { ...row.raiderCard } : null;
   slot._occupantSignupId = Number(row.signupId || 0) || null;
   slot.isKnownSignup = true;
   slot.isEmpty = false;
@@ -2927,6 +2938,7 @@ function roleAlertsClearSlotFromBaseline(slot, baselineBoard) {
     slot.gearScore = bs.gearScore;
     slot.classicArmoryCharacterUrl = bs.classicArmoryCharacterUrl;
     slot.wclEventCount = bs.wclEventCount;
+    slot.raiderCard = bs.raiderCard && typeof bs.raiderCard === "object" ? { ...bs.raiderCard } : null;
   } else {
     slot.name = "";
     slot.className = "";
@@ -2941,6 +2953,7 @@ function roleAlertsClearSlotFromBaseline(slot, baselineBoard) {
     slot.gearScore = undefined;
     slot.classicArmoryCharacterUrl = "";
     slot.wclEventCount = null;
+    slot.raiderCard = null;
   }
   slot._occupantSignupId = null;
   slot.isEmpty = true;
@@ -3151,6 +3164,9 @@ function roleAlertsRaidComposerSectionHtml(analysis) {
       </div>
       <p class="subtle" style="margin:4px 0 8px">
         Drag cards between the comp grid and pools. Changes stay in this browser until you write them to Raid Helper (requires <code>RAID_HELPER_API_KEY</code> on the server).${!Number(roleAlertsWclPhaseAvgsUpdatedAt) ? ' <span class="role-alert-composer-wcl-phase-hint">WCL phase averages not cached — refresh in Data &amp; Ops → WCL Phase Averages.</span>' : ""}
+      </p>
+      <p class="subtle role-alert-raider-card-legend" style="margin:0 0 8px">
+        ${raiderBlacklistCardPillHtml("yellow")} warning · ${raiderBlacklistCardPillHtml("black")} out (from People → Raider Blacklist). Hover a pill for the reason.
       </p>
       <div id="roleAlertsRaidComposerInner">${inner}</div>
     </div>
@@ -3710,7 +3726,7 @@ function roleAlertsCandidatesHtml(analysis) {
       const checked = roleAlertsSelectedUserIds.has(uid) ? " checked" : "";
       return `<tr>
         <td><input type="checkbox" data-role-alert-target-user-id="${esc(uid)}"${checked} /></td>
-        <td>${esc(row?.displayName || uid)}</td>
+        <td>${roleAlertsRaiderCardBadgeHtml(row) || `<span class="subtle">—</span>`} ${esc(row?.displayName || uid)}</td>
         <td>${esc(String(row?.recentClass || "-"))}</td>
         <td>${esc(String(row?.recentSpec || "-"))}</td>
         <td>${esc(String(row?.raidRole || "-"))}</td>
@@ -4821,6 +4837,22 @@ function raiderBlacklistCardPillHtml(card) {
     return `<span class="raider-card-pill raider-card-pill--black" title="Black Card (out)">Black</span>`;
   }
   return `<span class="raider-card-pill raider-card-pill--yellow" title="Yellow Card (warning)">Yellow</span>`;
+}
+
+function roleAlertsRaiderCardModifier(slot) {
+  const card = String(slot?.raiderCard?.card || "").toLowerCase();
+  if (card === "black") return "role-alert-slot--raider-card-black";
+  if (card === "yellow") return "role-alert-slot--raider-card-yellow";
+  return "";
+}
+
+function roleAlertsRaiderCardBadgeHtml(slot) {
+  const rc = slot?.raiderCard;
+  if (!rc?.card) return "";
+  const reason = String(rc.reason || "").trim();
+  const label = rc.card === "black" ? "Black Card (out)" : "Yellow Card (warning)";
+  const title = reason ? `${label}: ${reason}` : label;
+  return `<span class="role-alert-raider-card-badge" title="${esc(title)}">${raiderBlacklistCardPillHtml(rc.card)}</span>`;
 }
 
 function raiderBlacklistContextHtml(entry) {
