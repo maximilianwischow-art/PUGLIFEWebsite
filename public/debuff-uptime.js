@@ -331,6 +331,15 @@ function wclDebuffBindSpellTooltips(root) {
   window.WowSpellTooltip.bindSpellTooltipHandlers(root, getWclDebuffSpellMeta);
 }
 
+function wclDebuffTuneMatrixTable(root) {
+  const wrap = root?.querySelector?.(".plb-debuff-table-wrap--matrix");
+  const table = wrap?.querySelector(".plb-debuff-matrix");
+  if (!table) return;
+  const pullCols = Math.max(0, table.querySelectorAll("thead th").length - 1);
+  const minW = Math.max(300, 116 + pullCols * 76);
+  table.style.minWidth = `${minW}px`;
+}
+
 async function loadWclDebuffSpellMeta(catalog) {
   const ids = new Set();
   for (const row of Array.isArray(catalog) ? catalog : []) {
@@ -602,7 +611,8 @@ function renderWclDebuffDetailInto(host, payload) {
   host.innerHTML = `
     <div class="plb-debuff-surface plb-debuff-surface--matrix">
       <h5 class="plb-debuff-section-title">Pull comparison</h5>
-      <div class="admin-table-wrap plb-debuff-table-wrap">
+      <p class="plb-debuff-scroll-hint" role="note">Swipe sideways to compare debuffs across kill pulls.</p>
+      <div class="admin-table-wrap plb-debuff-table-wrap plb-debuff-table-wrap--matrix">
         <table class="admin-table plb-debuff-table plb-debuff-matrix">
           <thead><tr><th class="plb-debuff-sticky-col">Debuff</th>${matrixHead}</tr></thead>
           <tbody>${matrixRows}</tbody>
@@ -612,6 +622,7 @@ function renderWclDebuffDetailInto(host, payload) {
     <div class="plb-debuff-pulls">${detailBlocks}</div>
   `;
   wclDebuffBindSpellTooltips(host);
+  wclDebuffTuneMatrixTable(host);
 }
 
 function setWclDebuffStatusLine(text) {
