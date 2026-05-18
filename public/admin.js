@@ -4894,7 +4894,7 @@ function renderRaiderBlacklistTable(payload) {
                   : "";
               return `<tr data-raider-blacklist-row="${id}">
                 <td>
-                  <motion.div style="margin-bottom:6px">${raiderBlacklistCardPillHtml(card)}</div>
+                  <div style="margin-bottom:6px">${raiderBlacklistCardPillHtml(card)}</div>
                   <select class="admin-input" data-raider-blacklist-k="card" aria-label="Card type">
                     <option value="yellow"${card === "yellow" ? " selected" : ""}>Yellow</option>
                     <option value="black"${card === "black" ? " selected" : ""}>Black</option>
