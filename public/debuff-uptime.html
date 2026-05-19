@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Debuff Uptime</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260518plb-debuff-mobile-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260519plb-gear-enchants-v2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft debuff-uptime-page">
@@ -43,12 +43,72 @@
         <section class="card plb-debuff-panel" id="debuffUptimePanel">
           <div class="plb-debuff-top">
             <header class="plb-debuff-header">
-              <span class="tw-plb-chip plb-debuff-kicker">WCL · Raid debuffs</span>
-              <h2 class="section-title tw-plb-title plb-debuff-title">Debuff Uptime</h2>
+              <span class="tw-plb-chip plb-debuff-kicker">WCL · Raid lead</span>
+              <h2 class="section-title tw-plb-title plb-debuff-title">Debuffs &amp; Consumables</h2>
               <p class="subtle plb-debuff-lead">
-                Per-boss debuff uptime from Warcraft Logs. Overview shows the latest kill pull; click a boss for every
-                kill pull. Reports match the Event Management selection in Admin.
+                Per-boss debuff uptime and consumable checks at boss pull (flask, elixirs, food) from Warcraft Logs.
+                Reports match the Event Management selection in Admin.
               </p>
+              <div class="plb-wcl-mode-switch" role="tablist" aria-label="WCL raid tools">
+                <button
+                  type="button"
+                  class="plb-wcl-mode plb-wcl-mode--debuffs plb-debuff-tab plb-debuff-tab--active"
+                  role="tab"
+                  aria-selected="true"
+                  data-wcl-panel-tab="debuffs"
+                  id="wclTabDebuffs"
+                >
+                  <span class="plb-wcl-mode-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M8 12h8M12 8v8" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <span class="plb-wcl-mode-copy">
+                    <span class="plb-wcl-mode-title">Debuff uptime</span>
+                    <span class="plb-wcl-mode-desc">Coverage per boss &amp; pull</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="plb-wcl-mode plb-wcl-mode--consumables plb-debuff-tab"
+                  role="tab"
+                  aria-selected="false"
+                  data-wcl-panel-tab="consumables"
+                  id="wclTabConsumables"
+                >
+                  <span class="plb-wcl-mode-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <path d="M9 3h6l1 4H8l1-4z" stroke-linejoin="round" />
+                      <path d="M8 7h8v12a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V7z" />
+                      <path d="M10 11h4" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <span class="plb-wcl-mode-copy">
+                    <span class="plb-wcl-mode-title">Consumables</span>
+                    <span class="plb-wcl-mode-desc">Flask, elixirs &amp; food at pull</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="plb-wcl-mode plb-wcl-mode--gear plb-debuff-tab"
+                  role="tab"
+                  aria-selected="false"
+                  data-wcl-panel-tab="gear"
+                  id="wclTabGear"
+                >
+                  <span class="plb-wcl-mode-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <path d="M12 3l7 4v6c0 4.2-3 7.8-7 9-4-1.2-7-4.8-7-9V7l7-4z" stroke-linejoin="round" />
+                      <path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                  <span class="plb-wcl-mode-copy">
+                    <span class="plb-wcl-mode-title">Gear audit</span>
+                    <span class="plb-wcl-mode-desc">Enchants &amp; gems (Classic Armory)</span>
+                  </span>
+                </button>
+              </div>
             </header>
             <div class="plb-debuff-toolbar surface-elevated">
               <div class="plb-debuff-field">
@@ -62,7 +122,7 @@
               </button>
             </div>
             <div class="plb-debuff-meta" aria-live="polite">
-              <div class="plb-debuff-legend" role="group" aria-label="Uptime quality">
+              <div class="plb-debuff-legend plb-debuff-legend--debuffs" id="wclDebuffLegend" role="group" aria-label="Uptime quality">
                 <span class="plb-debuff-legend-label">Quality</span>
                 <span class="plb-debuff-legend-pill plb-debuff-legend-pill--excellent"
                   ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>≥95%</span
@@ -80,12 +140,27 @@
                   ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>&lt;50%</span
                 >
               </div>
+              <div class="plb-debuff-legend plb-debuff-legend--consumables" id="wclConsumablesLegend" role="group" aria-label="Consumables at pull" hidden>
+                <span class="plb-debuff-legend-label">At boss pull</span>
+                <span class="plb-consume-legend-pill plb-consume-legend-pill--ok">Present</span>
+                <span class="plb-consume-legend-pill plb-consume-legend-pill--miss">Missing</span>
+                <span class="subtle plb-consume-flask-note">Flask counts as battle + guardian elixir (TBC).</span>
+              </div>
+              <div class="plb-debuff-legend plb-debuff-legend--gear" id="wclGearLegend" role="group" aria-label="Gear audit" hidden>
+                <span class="plb-debuff-legend-label">Classic Armory</span>
+                <span class="plb-gem-q plb-gem-q--purple" title="Epic">Purple · Epic</span>
+                <span class="plb-gem-q plb-gem-q--blue" title="Rare">Blue · Rare</span>
+                <span class="plb-gem-q plb-gem-q--green" title="Uncommon">Green · Uncommon</span>
+                <span class="plb-gem-q plb-gem-q--empty">Empty socket</span>
+              </div>
               <p class="plb-debuff-status" id="wclDebuffStatusLine">
                 Select a raid event to load the boss overview.
               </p>
             </div>
           </div>
           <div id="wclDebuffResultsHost" class="plb-debuff-results"></div>
+          <div id="wclConsumablesResultsHost" class="plb-debuff-results plb-consumables-results" hidden></div>
+          <div id="wclGearAuditResultsHost" class="plb-debuff-results plb-gear-audit-results" hidden></div>
         </section>
       </main>
     </div>
@@ -101,8 +176,9 @@
       <div id="wclDebuffDetailHost" class="plb-debuff-modal-body"></div>
     </dialog>
 
+    <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
-    <script defer src="/debuff-uptime.js?v=20260518plb-debuff-mobile-v1"></script>
+    <script defer src="/debuff-uptime.js?v=20260519plb-gear-enchants-v2"></script>
   </body>
 </html>

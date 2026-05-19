@@ -48,8 +48,34 @@ function raidLabel(raid) {
 }
 
 const WCL_DEBUFF_API = "/api/raid-lead/wcl-debuff-uptime";
+const WCL_CONSUMABLES_API = "/api/raid-lead/wcl-consumables";
+const WCL_GEAR_AUDIT_API = "/api/raid-lead/armory-gear-audit";
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
+let wclActivePanelTab = "debuffs";
+let wclConsumablesOverviewCache = null;
+let wclConsumablesOverviewReportCode = "";
+let wclGearAuditOverviewCache = null;
+let wclGearAuditOverviewReportCode = "";
+let wclGearEnchantSpellMetaById = new Map();
+let wclGearItemMetaById = new Map();
+let wclGearExpandedPlayerIdx = -1;
+
+const WCL_GEAR_ENCHANT_SLOT_ORDER = [
+  "HEAD",
+  "SHOULDER",
+  "CHEST",
+  "WRIST",
+  "HANDS",
+  "LEGS",
+  "FEET",
+  "BACK",
+  "MAIN_HAND",
+  "OFF_HAND",
+  "RANGED",
+];
+const WCL_GEAR_ENCHANTABLE = new Set(WCL_GEAR_ENCHANT_SLOT_ORDER);
+let wclDetailMode = "debuffs";
 
 let wclDebuffOverviewCache = null;
 let wclDebuffOverviewReportCode = "";
@@ -79,13 +105,9 @@ const WCL_DEBUFF_COL_SHORT = {
 };
 
 function wclDebuffReportRaidOptions() {
-  const selected = selectedReportCodesState;
-  return allRaidsState.filter((raid) => {
-    const code = String(raid?.reportCode || "").trim();
-    if (!code) return false;
-    if (!selected.size) return true;
-    return selected.has(code);
-  });
+  // Raid-lead debuff/consumables: list every WCL report we know about (same pool as Event Management).
+  // Do not filter by saved Event Management checkboxes — stale codes there hid the whole dropdown.
+  return allRaidsState.filter((raid) => String(raid?.reportCode || "").trim());
 }
 
 function wclDebuffArchiveNote(archiveStatus) {
@@ -422,7 +444,7 @@ function renderWclDebuffReportSelect() {
   const prev = String(select.value || "");
   const raids = wclDebuffReportRaidOptions();
   if (!raids.length) {
-    select.innerHTML = `<option value="">No raid reports in the Event Management selection</option>`;
+    select.innerHTML = `<option value="">No raid reports available — check Warcraft Logs uploads or try Reload</option>`;
     select.disabled = true;
     return;
   }
@@ -681,6 +703,7 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
   const reportCode = String(wclDebuffOverviewReportCode || document.getElementById("wclDebuffReportSelect")?.value || "").trim();
   const eid = String(encounterId || "").trim();
   if (!reportCode || !eid) return;
+  wclDetailMode = "debuffs";
   const dialog = document.getElementById("wclDebuffDetailDialog");
   const host = document.getElementById("wclDebuffDetailHost");
   const title = document.getElementById("wclDebuffDetailTitle");
@@ -707,20 +730,653 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
   }
 }
 
+function wclSetActivePanelTab(tab) {
+  const next = tab === "consumables" ? "consumables" : tab === "gear" ? "gear" : "debuffs";
+  wclActivePanelTab = next;
+  document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
+    const on = btn.getAttribute("data-wcl-panel-tab") === next;
+    btn.classList.toggle("plb-debuff-tab--active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const debuffHost = document.getElementById("wclDebuffResultsHost");
+  const consumeHost = document.getElementById("wclConsumablesResultsHost");
+  const gearHost = document.getElementById("wclGearAuditResultsHost");
+  const debuffLegend = document.getElementById("wclDebuffLegend");
+  const consumeLegend = document.getElementById("wclConsumablesLegend");
+  const gearLegend = document.getElementById("wclGearLegend");
+  if (debuffHost) debuffHost.hidden = next !== "debuffs";
+  if (consumeHost) consumeHost.hidden = next !== "consumables";
+  if (gearHost) gearHost.hidden = next !== "gear";
+  if (debuffLegend) debuffLegend.hidden = next !== "debuffs";
+  if (consumeLegend) consumeLegend.hidden = next !== "consumables";
+  if (gearLegend) gearLegend.hidden = next !== "gear";
+}
+
+function wclConsumeChip(slot, label) {
+  const ok = Boolean(slot?.ok);
+  const text = ok ? esc(slot.label || label) : "—";
+  const title = ok && slot?.viaFlask ? `${text} (via flask)` : text;
+  return `<span class="plb-consume-chip plb-consume-chip--${ok ? "ok" : "miss"}" title="${esc(title)}">${text}</span>`;
+}
+
+function wclConsumePlayerRowHtml(player) {
+  const missing = Array.isArray(player?.missing) ? player.missing : [];
+  const missNote = missing.length ? `Missing: ${missing.join(", ")}` : "All consumables present";
+  return `<tr class="${missing.length ? "plb-consume-row--miss" : "plb-consume-row--ok"}" title="${esc(missNote)}">
+    <th scope="row">${esc(player?.name || "?")}</th>
+    <td>${wclConsumeChip(player?.flask, "Flask")}</td>
+    <td>${wclConsumeChip(player?.battleElixir, "Battle")}</td>
+    <td>${wclConsumeChip(player?.guardianElixir, "Guardian")}</td>
+    <td>${wclConsumeChip(player?.food, "Food")}</td>
+  </tr>`;
+}
+
+function wclConsumeSummaryLine(summary) {
+  if (!summary) return "—";
+  const ready = Number(summary.fullyBuffedCount ?? 0);
+  const total = Number(summary.rosterCount ?? 0);
+  return `${ready}/${total} ready`;
+}
+
+function renderWclConsumablesOverview(payload) {
+  const host = document.getElementById("wclConsumablesResultsHost");
+  if (!host) return;
+  if (!payload?.ok) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Overview failed.")}</p>`;
+    return;
+  }
+  const bossRows = Array.isArray(payload.bossRows) ? payload.bossRows : [];
+  if (!bossRows.length) {
+    host.innerHTML = `<p class="subtle">No boss encounters in this report.</p>`;
+    return;
+  }
+  const cards = bossRows
+    .map((boss, idx) => {
+      const name = esc(boss.name || "Boss");
+      if (boss.noKills) {
+        return `<article class="plb-debuff-encounter plb-debuff-encounter--nokill">
+          <div class="plb-debuff-encounter-static">
+            <h4 class="plb-debuff-encounter-name">${name}</h4>
+            <span class="plb-debuff-encounter-grade plb-debuff-tier-badge plb-debuff-tier-badge--none">No kill</span>
+          </div>
+        </article>`;
+      }
+      const s = boss.summary || {};
+      const missParts = [];
+      if (Number(s.missingFlask) > 0) missParts.push(`${s.missingFlask} missing flask`);
+      if (Number(s.missingFood) > 0) missParts.push(`${s.missingFood} missing food`);
+      if (Number(s.missingBattle) > 0) missParts.push(`${s.missingBattle} missing battle`);
+      if (Number(s.missingGuardian) > 0) missParts.push(`${s.missingGuardian} missing guard`);
+      const missNote = missParts.length ? missParts.join(" · ") : "Everyone ready";
+      const players = (Array.isArray(boss.players) ? boss.players : [])
+        .slice()
+        .sort((a, b) => (a.missing?.length || 0) - (b.missing?.length || 0));
+      const tableRows = players.map((p) => wclConsumePlayerRowHtml(p)).join("");
+      return `<details class="plb-debuff-encounter plb-consumables-encounter" ${idx === 0 ? "open" : ""}>
+        <summary class="plb-debuff-encounter-summary">
+          <span class="plb-debuff-encounter-summary-main">
+            <span class="plb-debuff-encounter-name">${name}</span>
+            <span class="plb-consume-ready-badge">${esc(wclConsumeSummaryLine(s))}</span>
+            <span class="subtle plb-consume-miss-note">${esc(missNote)}</span>
+          </span>
+          <button type="button" class="plb-debuff-encounter-drill event-signup-btn event-signup-btn--softres"
+            data-wcl-consumables-boss="${esc(String(boss.encounterId))}"
+            data-wcl-consumables-boss-name="${esc(boss.name || "")}">All kill pulls</button>
+        </summary>
+        <div class="admin-table-wrap plb-debuff-table-wrap">
+          <table class="admin-table plb-debuff-table plb-consumables-table">
+            <thead><tr><th>Player</th><th>Flask</th><th>Battle</th><th>Guardian</th><th>Food</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      </details>`;
+    })
+    .join("");
+  host.innerHTML = `
+    <p class="plb-debuff-hint">Auras on each player at boss pull (WCL combatant snapshot). Flask satisfies battle + guardian elixir slots in TBC.</p>
+    <div class="plb-debuff-encounters">${cards}</div>`;
+}
+
+function renderWclConsumablesDetailInto(host, payload) {
+  if (!host) return;
+  if (!payload?.ok) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Detail failed.")}</p>`;
+    return;
+  }
+  const fights = Array.isArray(payload.fights) ? payload.fights : [];
+  if (!fights.length) {
+    host.innerHTML = `<p class="subtle">No kill pulls found for this boss.</p>`;
+    return;
+  }
+  const blocks = fights
+    .map((fight, idx) => {
+      const players = (Array.isArray(fight.players) ? fight.players : [])
+        .slice()
+        .sort((a, b) => (a.missing?.length || 0) - (b.missing?.length || 0));
+      const rows = players.map((p) => wclConsumePlayerRowHtml(p)).join("");
+      const wclLink = fight.wclUrl
+        ? `<a href="${esc(fight.wclUrl)}" target="_blank" rel="noopener noreferrer">WCL fight</a>`
+        : "";
+      const summary = wclConsumeSummaryLine(fight.summary);
+      return `<details class="plb-debuff-pull" ${idx === 0 ? "open" : ""}>
+        <summary class="plb-debuff-pull-summary">${esc(String(fight.name || `Pull ${idx + 1}`))} · ${esc(summary)} ${wclLink}</summary>
+        <div class="admin-table-wrap plb-debuff-table-wrap">
+          <table class="admin-table plb-debuff-table plb-consumables-table">
+            <thead><tr><th>Player</th><th>Flask</th><th>Battle</th><th>Guardian</th><th>Food</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </details>`;
+    })
+    .join("");
+  host.innerHTML = `<div class="plb-debuff-pulls">${blocks}</div>`;
+}
+
+function wclGearIssueSlots(player) {
+  const slots = Array.isArray(player?.slots) ? player.slots : [];
+  return slots.filter((s) => Array.isArray(s?.issues) && s.issues.length);
+}
+
+function wclGearEnchantSlotsForPlayer(player) {
+  const fromSummary = player?.summary?.enchantSlots;
+  if (Array.isArray(fromSummary) && fromSummary.length) return fromSummary;
+  const byId = new Map();
+  for (const row of Array.isArray(player?.slots) ? player.slots : []) {
+    const slotId = String(row?.slotId || "").toUpperCase();
+    if (!WCL_GEAR_ENCHANTABLE.has(slotId)) continue;
+    if (!row?.itemId && !row?.itemName) continue;
+    byId.set(slotId, row);
+  }
+  return WCL_GEAR_ENCHANT_SLOT_ORDER.filter((slotId) => byId.has(slotId)).map((slotId) => {
+    const row = byId.get(slotId);
+    const enchant = row?.enchant && typeof row.enchant === "object" ? row.enchant : null;
+    return {
+      slotId,
+      slotLabel: row?.slotLabel || slotId.replace(/_/g, " "),
+      missing: !enchant,
+      enchant,
+    };
+  });
+}
+
+function getWclGearEnchantSpellMeta(spellId) {
+  const id = Math.floor(Number(spellId));
+  if (!id) return null;
+  return wclGearEnchantSpellMetaById.get(id) || getWclDebuffSpellMeta(id) || null;
+}
+
+function getWclGearItemMeta(itemId) {
+  const id = Math.floor(Number(itemId));
+  if (!id) return null;
+  return wclGearItemMetaById.get(id) || null;
+}
+
+function wclGearEnchantSpellTriggerHtml(spellId, label) {
+  const id = Math.floor(Number(spellId));
+  const meta = getWclGearEnchantSpellMeta(id);
+  const text = esc(label || meta?.name || (id ? `Spell ${id}` : ""));
+  if (!id) return text;
+  const title = window.WowSpellTooltip?.tooltipText
+    ? window.WowSpellTooltip.tooltipText(meta)
+    : String(meta?.name || "").trim();
+  const icon = meta?.icon
+    ? `<img class="admin-debuff-spell-icon" src="${esc(meta.icon)}" alt="" loading="lazy" decoding="async" />`
+    : `<span class="admin-debuff-spell-icon admin-debuff-spell-icon--fallback" aria-hidden="true"></span>`;
+  return `<span class="admin-debuff-spell-trigger plb-gear-enchant-spell" data-wow-spell-id="${id}"${
+    title ? ` title="${esc(title)}"` : ""
+  }>${icon}<span class="admin-debuff-spell-label">${text}</span></span>`;
+}
+
+function wclGearEnchantTriggerHtml(enc) {
+  const itemId = Math.floor(Number(enc?.itemId));
+  const spellId = Math.floor(Number(enc?.spellId));
+  const name = String(enc?.name || "").trim() || "Enchant";
+  if (itemId > 0) {
+    const meta = getWclGearItemMeta(itemId);
+    const icon = meta?.icon
+      ? `<img class="loot-item-icon plb-gear-enchant-item-icon" src="${esc(meta.icon)}" alt="" width="18" height="18" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+      : `<span class="loot-item-icon loot-item-icon--fallback plb-gear-enchant-item-icon" aria-hidden="true"></span>`;
+    const tip = meta?.name || name;
+    return `<span class="plb-gear-enchant-trigger loot-item-name" data-loot-item-id="${itemId}" title="${esc(tip)}">${icon}<span class="plb-gear-enchant-trigger-label">${esc(name)}</span></span>`;
+  }
+  if (spellId > 0) return wclGearEnchantSpellTriggerHtml(spellId, name);
+  return `<span class="plb-gear-enchant-name">${esc(name)}</span>`;
+}
+
+function wclGearInstallTooltipDelegation(host) {
+  if (!host || host.dataset.gearTooltipDelegation === "1") return;
+  host.dataset.gearTooltipDelegation = "1";
+
+  host.addEventListener("mouseover", (event) => {
+    const itemEl = event.target.closest?.("[data-loot-item-id]");
+    if (itemEl && host.contains(itemEl) && window.WowItemTooltip?.showLootTooltip) {
+      host._gearHoverItem = itemEl;
+      host._gearHoverSpell = null;
+      window.WowSpellTooltip?.hideSpellTooltip?.();
+      window.WowItemTooltip.showLootTooltip(
+        event,
+        Number(itemEl.getAttribute("data-loot-item-id") || 0),
+        getWclGearItemMeta
+      );
+      return;
+    }
+    const spellEl = event.target.closest?.("[data-wow-spell-id]");
+    if (spellEl && host.contains(spellEl) && window.WowSpellTooltip?.showSpellTooltip) {
+      host._gearHoverSpell = spellEl;
+      host._gearHoverItem = null;
+      window.WowItemTooltip?.hideLootTooltip?.();
+      window.WowSpellTooltip.showSpellTooltip(
+        event,
+        Number(spellEl.getAttribute("data-wow-spell-id") || 0),
+        getWclGearEnchantSpellMeta
+      );
+    }
+  });
+
+  host.addEventListener("mousemove", (event) => {
+    if (host._gearHoverItem && window.WowItemTooltip?.positionLootTooltip) {
+      window.WowItemTooltip.positionLootTooltip(event);
+    } else if (host._gearHoverSpell && window.WowSpellTooltip?.positionSpellTooltip) {
+      window.WowSpellTooltip.positionSpellTooltip(event);
+    }
+  });
+
+  host.addEventListener("mouseout", (event) => {
+    const itemEl = event.target.closest?.("[data-loot-item-id]");
+    const spellEl = event.target.closest?.("[data-wow-spell-id]");
+    if (!itemEl && !spellEl) return;
+    const next = event.relatedTarget;
+    if (itemEl && next && itemEl.contains(next)) return;
+    if (spellEl && next && spellEl.contains(next)) return;
+    if (next?.closest?.("[data-loot-item-id]") && host.contains(next.closest("[data-loot-item-id]"))) return;
+    if (next?.closest?.("[data-wow-spell-id]") && host.contains(next.closest("[data-wow-spell-id]"))) return;
+    host._gearHoverItem = null;
+    host._gearHoverSpell = null;
+    window.WowItemTooltip?.hideLootTooltip?.();
+    window.WowSpellTooltip?.hideSpellTooltip?.();
+  });
+}
+
+async function loadWclGearEnchantSpellMeta(players) {
+  const ids = new Set();
+  for (const player of Array.isArray(players) ? players : []) {
+    for (const row of wclGearEnchantSlotsForPlayer(player)) {
+      const spellId = Math.floor(Number(row?.enchant?.spellId));
+      if (spellId > 0) ids.add(spellId);
+    }
+  }
+  const list = [...ids];
+  if (!list.length) {
+    wclGearEnchantSpellMetaById = new Map();
+    return;
+  }
+  const next = new Map();
+  const chunkSize = 80;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const chunk = list.slice(i, i + chunkSize);
+    const payload = await getJson(
+      `/api/wow-classic/spells?ids=${encodeURIComponent(chunk.join(","))}`
+    );
+    for (const row of Array.isArray(payload?.spells) ? payload.spells : []) {
+      const sid = Math.floor(Number(row?.spellId));
+      if (sid > 0) next.set(sid, row);
+    }
+  }
+  wclGearEnchantSpellMetaById = next;
+}
+
+async function loadWclGearEnchantItemMeta(players) {
+  const ids = new Set();
+  for (const player of Array.isArray(players) ? players : []) {
+    for (const row of wclGearEnchantSlotsForPlayer(player)) {
+      const itemId = Math.floor(Number(row?.enchant?.itemId));
+      if (itemId > 0) ids.add(itemId);
+    }
+  }
+  const list = [...ids];
+  if (!list.length) {
+    wclGearItemMetaById = new Map();
+    return;
+  }
+  const next = new Map();
+  const chunkSize = 80;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const chunk = list.slice(i, i + chunkSize);
+    const payload = await getJson(`/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`);
+    for (const row of Array.isArray(payload?.items) ? payload.items : []) {
+      const iid = Math.floor(Number(row?.itemId));
+      if (iid > 0) next.set(iid, row);
+    }
+  }
+  wclGearItemMetaById = next;
+}
+
+function wclGearEnchantChipsHtml(slots) {
+  if (!slots.length) return `<span class="plb-gear-ok">—</span>`;
+  const chips = slots.map((row) => {
+    const slot = esc(row?.slotLabel || row?.slotId || "Slot");
+    if (row?.missing) {
+      return `<span class="plb-gear-enchant-chip plb-gear-enchant-chip--miss" title="${slot}: missing enchant"><span class="plb-gear-enchant-slot">${slot}</span><span class="plb-gear-enchant-miss">Missing</span></span>`;
+    }
+    const enc = row.enchant || {};
+    const enchantHtml = wclGearEnchantTriggerHtml(enc);
+    return `<span class="plb-gear-enchant-chip plb-gear-enchant-chip--ok" title="${slot}"><span class="plb-gear-enchant-slot">${slot}</span>${enchantHtml}</span>`;
+  });
+  return `<span class="plb-gear-enchants-row">${chips.join("")}</span>`;
+}
+
+function wclGearMissingEnchantsCell(player) {
+  const missing = wclGearEnchantSlotsForPlayer(player).filter((row) => row?.missing);
+  return wclGearEnchantChipsHtml(missing);
+}
+
+function wclGearFullEnchantsCell(player) {
+  return wclGearEnchantChipsHtml(wclGearEnchantSlotsForPlayer(player));
+}
+
+function wclGearQualityPill(quality, count) {
+  const q = String(quality || "").toLowerCase();
+  const n = Number(count) || 0;
+  if (!n) return "";
+  const labels = { green: "Uncommon", blue: "Rare", purple: "Epic" };
+  const label = labels[q] || "?";
+  return `<span class="plb-gem-q plb-gem-q--${esc(q)}" title="${esc(`${n}× ${label} (${q}) gem${n === 1 ? "" : "s"}`)}">${n}× ${label}</span>`;
+}
+
+function wclGearGemsCell(summary) {
+  const counts = summary?.gemQualityCounts && typeof summary.gemQualityCounts === "object"
+    ? summary.gemQualityCounts
+    : {};
+  const empty = Number(counts.empty || 0);
+  const parts = [
+    wclGearQualityPill("purple", counts.purple),
+    wclGearQualityPill("blue", counts.blue),
+    wclGearQualityPill("green", counts.green),
+    wclGearQualityPill("unknown", counts.unknown),
+  ].filter(Boolean);
+  if (empty > 0) parts.push(`<span class="plb-gem-q plb-gem-q--empty" title="${esc(`${empty} empty socket${empty === 1 ? "" : "s"}`)}">${empty}× empty</span>`);
+  if (!parts.length) return `<span class="plb-gear-ok">—</span>`;
+  return `<span class="plb-gem-q-row">${parts.join(" ")}</span>`;
+}
+
+function wclGearPlayerRowsHtml(player, playerIdx, expandedIdx) {
+  const summary = player?.summary || {};
+  const ok = Boolean(summary.ok) && !player?.error;
+  const issueSlots = wclGearIssueSlots(player);
+  const detail =
+    issueSlots.length > 0
+      ? issueSlots
+          .map((s) => {
+            const parts = [];
+            if (s.issues.includes("missing_enchant")) parts.push("no enchant");
+            if (s.issues.includes("empty_socket")) parts.push("empty gem");
+            const gemList = (s.gems || [])
+              .map((g) => `${g.name || "?"} (${g.quality || "?"})`)
+              .join(", ");
+            if (gemList) parts.push(`gems: ${gemList}`);
+            return `${s.slotLabel}: ${parts.join("; ")}`;
+          })
+          .join(" · ")
+      : player?.error || "All enchants and gems OK";
+  const armoryLink = player?.armoryUrl
+    ? `<a href="${esc(player.armoryUrl)}" target="_blank" rel="noopener noreferrer">Armory</a>`
+    : "—";
+  const isOpen = expandedIdx === playerIdx;
+  const rowClass = [
+    ok ? "plb-gear-row--ok" : "plb-gear-row--miss",
+    "plb-gear-row--clickable",
+    isOpen ? "plb-gear-row--expanded" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `<tr class="${rowClass}" data-gear-idx="${playerIdx}" aria-expanded="${isOpen ? "true" : "false"}" title="${esc(detail)}">
+    <th scope="row">${esc(player?.name || "?")}<span class="plb-gear-row-expand-hint subtle">${isOpen ? " ▾" : " ▸"}</span></th>
+    <td class="plb-gear-cell-enchants">${wclGearMissingEnchantsCell(player)}</td>
+    <td class="plb-gear-cell-gems">${wclGearGemsCell(summary)}</td>
+    <td>${armoryLink}</td>
+  </tr>
+  <tr class="plb-gear-row-detail" data-gear-idx="${playerIdx}"${isOpen ? "" : " hidden"}>
+    <td colspan="4" class="plb-gear-detail-cell">
+      <p class="plb-gear-detail-label subtle">All enchants · ${esc(player?.name || "?")}</p>
+      ${wclGearFullEnchantsCell(player)}
+    </td>
+  </tr>`;
+}
+
+function wclGearApplyExpandedState(host) {
+  if (!host) return;
+  host.querySelectorAll("tr.plb-gear-row--clickable").forEach((row) => {
+    const idx = Number(row.getAttribute("data-gear-idx"));
+    const open = idx === wclGearExpandedPlayerIdx;
+    row.setAttribute("aria-expanded", open ? "true" : "false");
+    row.classList.toggle("plb-gear-row--expanded", open);
+    const hint = row.querySelector(".plb-gear-row-expand-hint");
+    if (hint) hint.textContent = open ? " ▾" : " ▸";
+  });
+  host.querySelectorAll("tr.plb-gear-row-detail").forEach((row) => {
+    const idx = Number(row.getAttribute("data-gear-idx"));
+    row.hidden = idx !== wclGearExpandedPlayerIdx;
+  });
+}
+
+function wclGearSetupTableHandlers(host) {
+  if (!host || host.dataset.gearTableBound === "1") return;
+  host.dataset.gearTableBound = "1";
+  host.addEventListener("click", (event) => {
+    if (event.target.closest("a")) return;
+    const row = event.target.closest("tr.plb-gear-row--clickable");
+    if (!row || !host.contains(row)) return;
+    const idx = Number(row.getAttribute("data-gear-idx"));
+    if (!Number.isInteger(idx) || idx < 0) return;
+    wclGearExpandedPlayerIdx = wclGearExpandedPlayerIdx === idx ? -1 : idx;
+    wclGearApplyExpandedState(host);
+  });
+}
+
+async function renderWclGearAuditOverview(payload) {
+  const host = document.getElementById("wclGearAuditResultsHost");
+  if (!host) return;
+  if (!payload?.ok) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Gear audit failed.")}</p>`;
+    return;
+  }
+  const players = (Array.isArray(payload.players) ? payload.players : [])
+    .slice()
+    .sort((a, b) => {
+      const am = Number(a?.summary?.missingEnchants || 0) + Number(a?.summary?.emptySockets || 0);
+      const bm = Number(b?.summary?.missingEnchants || 0) + Number(b?.summary?.emptySockets || 0);
+      if (bm !== am) return bm - am;
+      return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base" });
+    });
+  if (!players.length) {
+    host.innerHTML = `<p class="subtle">No roster players found in this report.</p>`;
+    return;
+  }
+  await Promise.all([
+    loadWclGearEnchantSpellMeta(players),
+    loadWclGearEnchantItemMeta(players),
+  ]);
+  const s = payload.summary || {};
+  const rows = players.map((p, i) => wclGearPlayerRowsHtml(p, i, wclGearExpandedPlayerIdx)).join("");
+  host.innerHTML = `
+    <p class="plb-debuff-hint">Enchant and gem status from Classic Armory. Table shows missing enchants only — click a player for the full list (hover enchants for Wowhead tooltips). Gem rarity: Green = Uncommon, Blue = Rare, Purple = Epic.</p>
+    <p class="subtle plb-gear-summary-line">${esc(String(s.fullyReadyCount ?? 0))}/${esc(String(s.rosterCount ?? players.length))} ready · ${esc(String(s.missingEnchants ?? 0))} missing enchants · ${esc(String(s.emptySockets ?? 0))} empty gem sockets</p>
+    <div class="admin-table-wrap plb-debuff-table-wrap plb-gear-audit-table-wrap">
+      <table class="admin-table plb-debuff-table plb-gear-audit-table">
+        <thead><tr><th>Player</th><th>Missing enchants</th><th>Gem rarity</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  wclGearSetupTableHandlers(host);
+  wclGearInstallTooltipDelegation(host);
+}
+
+async function loadWclGearAuditOverview(reportCode, { silent = false, btn = null, refresh = false } = {}) {
+  const code = String(reportCode || "").trim();
+  const reloadBtn = document.getElementById("wclDebuffReloadBtn");
+  if (!code) {
+    wclGearAuditOverviewCache = null;
+    wclGearAuditOverviewReportCode = "";
+    const host = document.getElementById("wclGearAuditResultsHost");
+    if (host) host.innerHTML = "";
+    if (wclActivePanelTab === "gear") {
+      setWclDebuffStatusLine("Select a raid event to load gear audit.");
+    }
+    if (reloadBtn) reloadBtn.disabled = true;
+    return null;
+  }
+  if (reloadBtn) reloadBtn.disabled = false;
+  try {
+    if (btn) setButtonFeedback(btn, "Loading…", "loading");
+    if (!silent && wclActivePanelTab === "gear") {
+      setWclDebuffStatusLine("Fetching enchants and gems from Classic Armory…");
+      const host = document.getElementById("wclGearAuditResultsHost");
+      if (host) host.innerHTML = `<p class="subtle">Loading armory data for roster (first load may take a minute)…</p>`;
+    }
+    const refreshQ = refresh ? "&refresh=1" : "";
+    const payload = await getJson(
+      `${WCL_GEAR_AUDIT_API}?reportCode=${encodeURIComponent(code)}${refreshQ}`
+    );
+    if (!payload?.ok) throw new Error(payload?.error || "Gear audit failed");
+    wclGearAuditOverviewCache = payload;
+    wclGearAuditOverviewReportCode = code;
+    wclGearExpandedPlayerIdx = -1;
+    await renderWclGearAuditOverview(payload);
+    if (wclActivePanelTab === "gear") {
+      const ready = Number(payload.summary?.fullyReadyCount ?? 0);
+      const total = Number(payload.summary?.rosterCount ?? 0);
+      setWclDebuffStatusLine(
+        `${payload.reportTitle || code}: gear audit ${ready}/${total} ready (Classic Armory).`
+      );
+    }
+    return payload;
+  } catch (error) {
+    const host = document.getElementById("wclGearAuditResultsHost");
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Gear audit failed")}</p>`;
+    if (wclActivePanelTab === "gear") {
+      setWclDebuffStatusLine(error?.message || "Gear audit failed");
+    }
+    throw error;
+  } finally {
+    if (btn) resetButtonFeedback(btn, "Reload overview");
+  }
+}
+
+async function loadWclConsumablesOverview(reportCode, { silent = false, btn = null } = {}) {
+  const code = String(reportCode || "").trim();
+  const reloadBtn = document.getElementById("wclDebuffReloadBtn");
+  if (!code) {
+    wclConsumablesOverviewCache = null;
+    wclConsumablesOverviewReportCode = "";
+    const host = document.getElementById("wclConsumablesResultsHost");
+    if (host) host.innerHTML = "";
+    if (wclActivePanelTab === "consumables") {
+      setWclDebuffStatusLine("Select a raid event to load consumables at pull.");
+    }
+    if (reloadBtn) reloadBtn.disabled = true;
+    return null;
+  }
+  if (reloadBtn) reloadBtn.disabled = false;
+  try {
+    if (btn) setButtonFeedback(btn, "Loading…", "loading");
+    if (!silent && wclActivePanelTab === "consumables") {
+      setWclDebuffStatusLine("Loading consumables at boss pull from WCL…");
+      const host = document.getElementById("wclConsumablesResultsHost");
+      if (host) host.innerHTML = `<p class="subtle">Checking flask, elixirs, and food per player…</p>`;
+    }
+    const payload = await getJson(
+      `${WCL_CONSUMABLES_API}?reportCode=${encodeURIComponent(code)}&overview=1`
+    );
+    if (!payload?.ok) throw new Error(payload?.error || "Overview failed");
+    wclConsumablesOverviewCache = payload;
+    wclConsumablesOverviewReportCode = code;
+    renderWclConsumablesOverview(payload);
+    if (wclActivePanelTab === "consumables") {
+      const killBosses = (payload.bossRows || []).filter((b) => !b.noKills).length;
+      const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);
+      setWclDebuffStatusLine(
+        `${payload.reportTitle || code}: consumables at pull for ${killBosses} boss kill(s).${archiveNote}`
+      );
+    }
+    return payload;
+  } catch (error) {
+    const host = document.getElementById("wclConsumablesResultsHost");
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Overview failed")}</p>`;
+    if (wclActivePanelTab === "consumables") {
+      setWclDebuffStatusLine(error?.message || "Consumables overview failed");
+    }
+    throw error;
+  } finally {
+    if (btn) resetButtonFeedback(btn, "Reload overview");
+  }
+}
+
+async function openWclConsumablesEncounterDetail(encounterId, encounterName) {
+  const reportCode = String(
+    wclConsumablesOverviewReportCode || document.getElementById("wclDebuffReportSelect")?.value || ""
+  ).trim();
+  const eid = String(encounterId || "").trim();
+  if (!reportCode || !eid) return;
+  wclDetailMode = "consumables";
+  const dialog = document.getElementById("wclDebuffDetailDialog");
+  const host = document.getElementById("wclDebuffDetailHost");
+  const title = document.getElementById("wclDebuffDetailTitle");
+  const statusLine = document.getElementById("wclDebuffDetailStatus");
+  if (title) title.textContent = encounterName || "Encounter";
+  if (statusLine) statusLine.textContent = "Loading consumables for all kill pulls…";
+  if (host) host.innerHTML = `<p class="subtle">Loading…</p>`;
+  if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+  try {
+    const payload = await getJson(
+      `${WCL_CONSUMABLES_API}?reportCode=${encodeURIComponent(reportCode)}&encounterId=${encodeURIComponent(eid)}`
+    );
+    if (!payload?.ok) throw new Error(payload?.error || "Detail failed");
+    const fightCount = Array.isArray(payload.fights) ? payload.fights.length : 0;
+    if (statusLine) {
+      statusLine.textContent = `${fightCount} kill pull(s) · consumables · ${payload.reportTitle || reportCode}`;
+    }
+    renderWclConsumablesDetailInto(host, payload);
+  } catch (error) {
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Detail failed")}</p>`;
+    if (statusLine) statusLine.textContent = error?.message || "Detail failed";
+  }
+}
+
 async function initWclDebuffUptimePanel() {
+  wclSetActivePanelTab("debuffs");
   renderWclDebuffReportSelect();
   const select = document.getElementById("wclDebuffReportSelect");
   const code = String(select?.value || "").trim();
   if (code) {
     try {
-      await loadWclDebuffOverview(code, { silent: true });
+      await Promise.all([
+        loadWclDebuffOverview(code, { silent: true }),
+        loadWclConsumablesOverview(code, { silent: true }),
+        loadWclGearAuditOverview(code, { silent: true }),
+      ]);
     } catch {
       /* status set in loader */
     }
   }
 }
-async function loadRaidLeadEventReports() {
-  const payload = await getJson("/api/raid-lead/event-reports");
+
+async function loadWclActiveOverview(reportCode, opts = {}) {
+  const code = String(reportCode || "").trim();
+  if (!code) return;
+  if (wclActivePanelTab === "consumables") {
+    await loadWclConsumablesOverview(code, opts);
+    return;
+  }
+  if (wclActivePanelTab === "gear") {
+    await loadWclGearAuditOverview(code, { ...opts, refresh: Boolean(opts.refresh) });
+    return;
+  }
+  await loadWclDebuffOverview(code, opts);
+}
+
+async function loadRaidLeadEventReports({ refresh = false } = {}) {
+  const q = refresh ? "?refresh=1" : "";
+  const payload = await getJson(`/api/raid-lead/event-reports${q}`);
   allRaidsState = Array.isArray(payload?.allRaids) ? payload.allRaids : [];
   selectedReportCodesState = new Set(
     Array.isArray(payload?.selectedReportCodes) ? payload.selectedReportCodes : []
@@ -731,15 +1387,58 @@ async function bootDebuffUptimePage() {
   try {
     await loadRaidLeadEventReports();
     await initWclDebuffUptimePanel();
+    if (!allRaidsState.length) {
+      await loadRaidLeadEventReports({ refresh: true });
+      renderWclDebuffReportSelect();
+    }
   } catch (error) {
     setWclDebuffStatusLine(error?.message || "Failed to load debuff uptime.");
   }
 }
 
+document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const tab = btn.getAttribute("data-wcl-panel-tab") || "debuffs";
+    wclSetActivePanelTab(tab);
+    const code = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
+    if (!code) return;
+    if (tab === "consumables" && wclConsumablesOverviewReportCode === code && wclConsumablesOverviewCache) {
+      renderWclConsumablesOverview(wclConsumablesOverviewCache);
+      const killBosses = (wclConsumablesOverviewCache.bossRows || []).filter((b) => !b.noKills).length;
+      setWclDebuffStatusLine(
+        `${wclConsumablesOverviewCache.reportTitle || code}: consumables at pull for ${killBosses} boss kill(s).`
+      );
+    } else if (tab === "gear" && wclGearAuditOverviewReportCode === code && wclGearAuditOverviewCache) {
+      void renderWclGearAuditOverview(wclGearAuditOverviewCache);
+      const ready = Number(wclGearAuditOverviewCache.summary?.fullyReadyCount ?? 0);
+      const total = Number(wclGearAuditOverviewCache.summary?.rosterCount ?? 0);
+      setWclDebuffStatusLine(
+        `${wclGearAuditOverviewCache.reportTitle || code}: gear audit ${ready}/${total} ready.`
+      );
+    } else if (tab === "debuffs" && wclDebuffOverviewReportCode === code && wclDebuffOverviewCache) {
+      renderWclDebuffOverview(wclDebuffOverviewCache);
+      const killBosses = (wclDebuffOverviewCache.bossRows || []).filter((b) => !b.noKills).length;
+      setWclDebuffStatusLine(`${wclDebuffOverviewCache.reportTitle || code}: ${killBosses} boss(es) with kills.`);
+    } else {
+      loadWclActiveOverview(code).catch(() => {});
+    }
+  });
+});
+
 document.getElementById("wclDebuffReportSelect")?.addEventListener("change", async (event) => {
   const code = String(event.target?.value || "").trim();
   try {
-    await loadWclDebuffOverview(code);
+    await Promise.all([
+      loadWclDebuffOverview(code),
+      loadWclConsumablesOverview(code),
+      loadWclGearAuditOverview(code, { silent: true }),
+    ]);
+    if (wclActivePanelTab === "consumables") {
+      const killBosses = (wclConsumablesOverviewCache?.bossRows || []).filter((b) => !b.noKills).length;
+      setWclDebuffStatusLine(
+        `${wclConsumablesOverviewCache?.reportTitle || code}: consumables at pull for ${killBosses} boss kill(s).`
+      );
+    }
   } catch {
     /* status set in loader */
   }
@@ -747,17 +1446,28 @@ document.getElementById("wclDebuffReportSelect")?.addEventListener("change", asy
 
 document.getElementById("wclDebuffReloadBtn")?.addEventListener("click", (event) => {
   const code = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
-  loadWclDebuffOverview(code, { btn: event.currentTarget }).catch(() => {});
+  const refresh = wclActivePanelTab === "gear";
+  loadWclActiveOverview(code, { btn: event.currentTarget, refresh }).catch(() => {});
 });
 
 document.getElementById("wclDebuffResultsHost")?.addEventListener("click", (event) => {
-  const drill = event.target.closest(".plb-debuff-encounter-drill");
+  const drill = event.target.closest("[data-wcl-debuff-boss]");
   if (!drill) return;
   event.preventDefault();
   event.stopPropagation();
   const encounterId = drill.getAttribute("data-wcl-debuff-boss");
   const encounterName = drill.getAttribute("data-wcl-debuff-boss-name") || "";
   if (encounterId) openWclDebuffEncounterDetail(encounterId, encounterName).catch(() => {});
+});
+
+document.getElementById("wclConsumablesResultsHost")?.addEventListener("click", (event) => {
+  const drill = event.target.closest("[data-wcl-consumables-boss]");
+  if (!drill) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const encounterId = drill.getAttribute("data-wcl-consumables-boss");
+  const encounterName = drill.getAttribute("data-wcl-consumables-boss-name") || "";
+  if (encounterId) openWclConsumablesEncounterDetail(encounterId, encounterName).catch(() => {});
 });
 
 bootDebuffUptimePage();
