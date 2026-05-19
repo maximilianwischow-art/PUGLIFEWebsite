@@ -50,7 +50,45 @@ let selectedItems = [];
 let itemMetaById = new Map();
 let vortexCanEdit = false;
 let netherVortexIcon = "";
+/** @type {Set<string>} keys from admin P2 demand checks (`userId:itemId`) */
+let demandCheckedKeys = new Set();
 const NETHER_VORTEX_ITEM_ID = 30183;
+
+function demandCheckKey(userId, itemId) {
+  return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+const P2_DEMAND_DONE_ICON =
+  '<svg class="p2-demand-status-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M6.2 11.2 3.4 8.4l1-1 2.8 2.8 5.4-5.4 1 1z"/></svg>';
+
+function p2DemandDoneStatusHtml() {
+  return `<span class="p2-demand-status is-done" title="Marked done by raid lead">${P2_DEMAND_DONE_ICON}<span>Done</span></span>`;
+}
+
+function renderP2DemandStats(total, done, open) {
+  const el = document.getElementById("p2DemandStats");
+  if (!el) return;
+  if (total <= 0) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="p2-demand-stat p2-demand-stat--total">
+      <span class="p2-demand-stat-label">Guild need</span>
+      <span class="p2-demand-stat-value">${total}<span class="p2-demand-stat-unit"> NV</span></span>
+    </div>
+    <div class="p2-demand-stat p2-demand-stat--open">
+      <span class="p2-demand-stat-label">Open</span>
+      <span class="p2-demand-stat-value">${open}<span class="p2-demand-stat-unit"> NV</span></span>
+    </div>
+    <div class="p2-demand-stat p2-demand-stat--done">
+      <span class="p2-demand-stat-label">Done</span>
+      <span class="p2-demand-stat-value">${done}<span class="p2-demand-stat-unit"> NV</span></span>
+    </div>
+  `;
+}
 
 function canonicalItemId(itemName, fallbackId) {
   const trimmed = String(itemName || "").trim();
@@ -256,14 +294,15 @@ function buildDemandRaiderCell(row) {
  * binder still wires up Wowhead lookups, then layers `.p2-demand-item*`
  * presentation on top.
  */
-function renderDemandItemCell(itemId, itemName) {
+function renderDemandItemCell(itemId, itemName, isDone) {
   const id = canonicalItemId(itemName, itemId);
   const meta = itemMetaById.get(id);
   const iconUrl = normalizeItemIconUrl(meta?.icon || "");
   const icon = iconUrl
     ? `<img class="p2-demand-item-icon" src="${esc(iconUrl)}" alt="" width="28" height="28" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
     : `<span class="p2-demand-item-icon"></span>`;
-  return `<div class="loot-item-name p2-demand-item" data-loot-item-id="${id}" title="${esc(tooltipText(meta))}">${icon}<span class="p2-demand-item-name">${esc(itemName)}</span></div>`;
+  const doneCls = isDone ? " is-done" : "";
+  return `<div class="loot-item-name p2-demand-item${doneCls}" data-loot-item-id="${id}" title="${esc(tooltipText(meta))}">${icon}<span class="p2-demand-item-name">${esc(itemName)}</span></div>`;
 }
 
 /**
@@ -293,28 +332,43 @@ function buildDemandRowsForRaider(row) {
   }
 
   const span = items.length;
+  const userId = String(row.userId || "");
+  const allItemsChecked =
+    items.length > 0 &&
+    items.every((it) =>
+      demandCheckedKeys.has(demandCheckKey(userId, Math.max(0, Math.floor(Number(it.itemID) || 0))))
+    );
   return items
     .map((it, idx) => {
       const isFirst = idx === 0;
       const isLast = idx === items.length - 1;
-      const trCls = isLast ? ' class="is-group-end"' : "";
+      const itemId = Math.max(0, Math.floor(Number(it.itemID) || 0));
+      const checked = demandCheckedKeys.has(demandCheckKey(userId, itemId));
+      const trCls = [isLast ? "is-group-end" : "", checked ? "is-demand-checked" : ""].filter(Boolean).join(" ");
       const cells = [];
       if (isFirst) {
         cells.push(
           `<td class="cell-raider"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`
         );
       }
-      cells.push(`<td class="cell-item">${renderDemandItemCell(it.itemID, it.itemName)}</td>`);
-      cells.push(`<td class="cell-prof">${it.profession ? esc(it.profession) : "—"}</td>`);
+      const itemHtml = renderDemandItemCell(canonicalItemId(it.itemName, itemId), it.itemName, checked);
+      const statusHtml = checked ? p2DemandDoneStatusHtml() : "";
+      cells.push(
+        `<td class="cell-item"><div class="p2-demand-item-cell${checked ? " is-done" : ""}">${itemHtml}${statusHtml}</div></td>`
+      );
+      cells.push(
+        `<td class="cell-prof${checked ? " is-done" : ""}">${it.profession ? esc(it.profession) : "—"}</td>`
+      );
       if (isFirst) {
+        const numCls = allItemsChecked ? " is-done" : "";
         cells.push(
-          `<td class="cell-num"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`
+          `<td class="cell-num${numCls}"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`
         );
         cells.push(
           `<td class="cell-time"${span > 1 ? ` rowspan="${span}"` : ""}>${timeMarkup}</td>`
         );
       }
-      return `<tr${trCls}>${cells.join("")}</tr>`;
+      return `<tr${trCls ? ` class="${trCls}"` : ""}>${cells.join("")}</tr>`;
     })
     .join("");
 }
@@ -366,6 +420,23 @@ function refreshDemandTable() {
   tbody.innerHTML = rows.map((row) => buildDemandRowsForRaider(row)).join("");
 
   const grandTotal = rows.reduce((sum, row) => sum + entryNetherVortexTotal(row), 0);
+  let checkedNv = 0;
+  for (const row of rows) {
+    const uid = String(row.userId || "");
+    for (const it of row.items || []) {
+      const key = demandCheckKey(uid, Math.max(0, Math.floor(Number(it.itemID) || 0)));
+      if (demandCheckedKeys.has(key)) {
+        checkedNv += vortexNeeded(it?.vortexNeeded);
+      }
+    }
+  }
+  const openNv = Math.max(0, grandTotal - checkedNv);
+  renderP2DemandStats(grandTotal, checkedNv, openNv);
+  const meta = document.getElementById("vortexMeta");
+  if (meta) {
+    meta.textContent = `Total guild need: ${grandTotal} Nether Vortex · Done: ${checkedNv} · Open: ${openNv}`;
+    meta.classList.remove("animate-pulse", "opacity-80");
+  }
   if (tfoot) {
     tfoot.hidden = false;
     tfoot.innerHTML = `
@@ -382,8 +453,11 @@ function refreshDemandTable() {
   window.WowItemTooltip.bindLootTooltipHandlers(tbody, (id) => itemMetaById.get(Number(id)));
 }
 
-function renderList(entries) {
+function renderList(entries, checkedKeys) {
   demandEntriesCache = Array.isArray(entries) ? entries : [];
+  demandCheckedKeys = new Set(
+    Array.isArray(checkedKeys) ? checkedKeys.map((k) => String(k || "").trim()).filter(Boolean) : []
+  );
   refreshDemandTable();
 }
 
@@ -419,9 +493,14 @@ async function loadTracker() {
   } catch {}
   netherVortexIcon = normalizeItemIconUrl(String(itemMetaById.get(NETHER_VORTEX_ITEM_ID)?.icon || "").trim());
   const total = n(payload?.totalNeeded);
-  meta.textContent = `Total guild need: ${total} Nether Vortex`;
-  meta.classList.remove("animate-pulse", "opacity-60");
-  renderList(payload?.entries);
+  const checkedNv = n(payload?.checkedNv);
+  const openNv = n(payload?.openNv ?? Math.max(0, total - checkedNv));
+  renderP2DemandStats(total, checkedNv, openNv);
+  if (meta) {
+    meta.textContent = `Total guild need: ${total} Nether Vortex · Done: ${checkedNv} · Open: ${openNv}`;
+    meta.classList.remove("animate-pulse", "opacity-60");
+  }
+  renderList(payload?.entries, payload?.checkedKeys);
 
   const my = payload?.myEntry || null;
   selectedItems = Array.isArray(my?.items)

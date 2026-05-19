@@ -10954,10 +10954,158 @@ tr.plb-gear-row--miss th {
   font-size: 0.92rem;
   color: rgba(232, 222, 255, 0.95);
 }
-.p2-demand-table col.col-raider { width: 24%; }
-.p2-demand-table col.col-prof   { width: 18%; }
-.p2-demand-table col.col-num    { width: 88px; }
+.p2-demand-table col.col-check  { width: 44px; }
+.p2-demand-table col.col-raider { width: 22%; }
+.p2-demand-table col.col-prof   { width: 16%; }
+.p2-demand-table col.col-num    { width: 72px; }
 .p2-demand-table col.col-time   { width: 124px; }
+
+.admin-p2-demand-table .cell-check {
+  text-align: center;
+  vertical-align: middle;
+  width: 44px;
+}
+
+.p2-demand-admin-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  cursor: pointer;
+}
+
+.p2-demand-admin-check-input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #a78bfa;
+  cursor: pointer;
+}
+
+/* Done rows: soft green tint + accent — avoid whole-row opacity (washes out badges). */
+.p2-demand-table tbody tr.is-demand-checked td {
+  background: linear-gradient(
+    90deg,
+    rgba(16, 185, 129, 0.14) 0%,
+    rgba(16, 185, 129, 0.05) 28%,
+    transparent 55%
+  );
+  box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.75);
+}
+.p2-demand-table tbody tr.is-demand-checked:hover td {
+  background: linear-gradient(
+    90deg,
+    rgba(16, 185, 129, 0.2) 0%,
+    rgba(16, 185, 129, 0.08) 28%,
+    rgba(139, 92, 246, 0.06) 55%
+  );
+}
+
+.p2-demand-item-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.p2-demand-item-cell .p2-demand-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.p2-demand-item.is-done .p2-demand-item-icon {
+  opacity: 0.55;
+  filter: grayscale(0.35);
+}
+.p2-demand-item.is-done .p2-demand-item-name {
+  text-decoration: line-through;
+  text-decoration-color: rgba(110, 231, 183, 0.45);
+  color: rgba(186, 196, 210, 0.88);
+}
+.p2-demand-table tbody td.cell-prof.is-done {
+  color: rgba(148, 163, 184, 0.72);
+  font-style: italic;
+}
+.p2-demand-table tbody td.cell-num.is-done {
+  color: rgba(110, 231, 183, 0.95);
+  text-decoration: line-through;
+  text-decoration-color: rgba(110, 231, 183, 0.4);
+}
+
+.p2-demand-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  line-height: 1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.p2-demand-status.is-done {
+  color: #a7f3d0;
+  background: rgba(6, 78, 59, 0.55);
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);
+}
+.p2-demand-status-icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.p2-demand-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+.p2-demand-stat {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 5.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(167, 139, 250, 0.22);
+  background: rgba(20, 15, 34, 0.65);
+}
+.p2-demand-stat-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(170, 160, 200, 0.82);
+}
+.p2-demand-stat-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgba(232, 222, 255, 0.98);
+  line-height: 1.1;
+}
+.p2-demand-stat-unit {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(170, 160, 200, 0.75);
+}
+.p2-demand-stat--open {
+  border-color: rgba(167, 139, 250, 0.35);
+}
+.p2-demand-stat--open .p2-demand-stat-value {
+  color: #e9d5ff;
+}
+.p2-demand-stat--done {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(6, 78, 59, 0.28);
+}
+.p2-demand-stat--done .p2-demand-stat-value {
+  color: #6ee7b7;
+}
+.p2-demand-stat--total .p2-demand-stat-value {
+  color: #f5f3ff;
+}
 .p2-demand-table thead th {
   text-align: left;
   padding: 0.85rem 1.1rem;

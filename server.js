@@ -744,6 +744,7 @@ let hofEnrichedWriteChain = Promise.resolve();
 let hofEnrichedMemoryCache = null;
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
+const p2DemandAdminChecksPath = path.join(dataDir, "p2-demand-admin-checks.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
 const analyticsStorePath = path.join(dataDir, "site-analytics.json");
 /** Throttled approximate guild member counts for admin analytics timeline (Discord `with_counts`). */
@@ -801,6 +802,10 @@ let identityPublicSettingsReady = null;
 let identityPublicSettingsWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
+let p2DemandAdminChecksReady = null;
+let p2DemandAdminChecksWriteChain = Promise.resolve();
+/** @type {{ checkedKeys: string[], updatedAt?: number }} */
+let p2DemandAdminChecksState = { checkedKeys: [] };
 let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let analyticsStoreState = { events: [] };
 let identityPublicSettingsState = { lastActivityCutoff: "" };
@@ -7017,6 +7022,104 @@ async function ensureNetherVortexStore() {
   return netherVortexReady;
 }
 
+function p2DemandAdminItemCheckKey(userId, itemId) {
+  return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+function netherVortexCheckedNvFromEntries(entries, checkedKeys) {
+  const set = new Set(Array.isArray(checkedKeys) ? checkedKeys : []);
+  let sum = 0;
+  for (const row of entries || []) {
+    const uid = String(row.userId || "");
+    for (const it of row.items || []) {
+      const key = p2DemandAdminItemCheckKey(uid, it.itemID);
+      if (!set.has(key)) continue;
+      const x = Number(it.vortexNeeded);
+      sum += Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
+    }
+  }
+  return sum;
+}
+
+async function persistP2DemandAdminChecksStore() {
+  const tmpPath = `${p2DemandAdminChecksPath}.tmp`;
+  const json = JSON.stringify(p2DemandAdminChecksState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, p2DemandAdminChecksPath);
+}
+
+async function ensureP2DemandAdminChecksStore() {
+  if (p2DemandAdminChecksReady) return p2DemandAdminChecksReady;
+  p2DemandAdminChecksReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(p2DemandAdminChecksPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const keys = Array.isArray(parsed?.checkedKeys)
+        ? parsed.checkedKeys
+        : Array.isArray(parsed)
+          ? parsed
+          : [];
+      p2DemandAdminChecksState = {
+        checkedKeys: [...new Set(keys.map((k) => String(k || "").trim()).filter(Boolean))],
+        updatedAt: Number(parsed?.updatedAt) || 0,
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      p2DemandAdminChecksState = { checkedKeys: [], updatedAt: 0 };
+      await persistP2DemandAdminChecksStore();
+    }
+  })();
+  return p2DemandAdminChecksReady;
+}
+
+async function buildNetherVortexGuildNeedRows() {
+  await ensureNetherVortexStore();
+  await ensureRhWclLinksStore();
+  let catalogMaps = { byId: new Map(), byNameLower: new Map() };
+  try {
+    catalogMaps = await getNetherVortexCraftableCatalogMaps();
+  } catch {
+    /* catalog optional */
+  }
+  const rawEntries = [...(netherVortexState.entries || [])];
+  const rhNamesByUserId = new Map(
+    await Promise.all(
+      rawEntries.map(async (row) => {
+        const id = String(row?.userId || "");
+        if (!id) return [id, ""];
+        const rhName = await resolveRaidHelperNameByDiscordUserId(id);
+        return [id, rhName];
+      })
+    )
+  );
+  return rawEntries
+    .map((row) => {
+      const discordName = String(row.displayName || "Unknown");
+      const userId = String(row.userId || "");
+      const rhSignupName = rhNamesByUserId.get(userId) || "";
+      const linked =
+        resolveLinkedWowCharacterByDiscordUserId(userId) ||
+        (rhSignupName && resolveLinkedWowCharacterFromRhWcl(rhSignupName)) ||
+        resolveLinkedWowCharacterFromRhWcl(discordName);
+      const characterName = String(linked || rhSignupName || discordName).trim() || discordName;
+      const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
+      return {
+        userId,
+        displayName: discordName,
+        raidHelperName: rhSignupName || null,
+        characterName,
+        characterProfileUrl,
+        neededCount: 0,
+        items: enrichSanitizedNetherVortexItems(sanitizeNetherVortexItems(row.items), catalogMaps),
+        updatedAt: Number(row.updatedAt || 0),
+      };
+    })
+    .filter((row) => row.userId)
+    .filter((row) => netherVortexEntryTotal(row) > 0)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
 async function persistPublicDataSnapshotStore() {
   const tmpPath = `${publicDataSnapshotPath}.tmp`;
   const json = JSON.stringify(publicDataSnapshotState, null, 2);
@@ -10826,70 +10929,72 @@ app.put("/api/admin/join/current-needs", async (req, res) => {
 
 app.get("/api/nether-vortex/needs", async (req, res) => {
   try {
-    await ensureNetherVortexStore();
-    await ensureRhWclLinksStore();
     const session = getSessionFromRequest(req);
     const userId = String(session?.user?.id || "").trim();
-    let catalogMaps = { byId: new Map(), byNameLower: new Map() };
-    try {
-      catalogMaps = await getNetherVortexCraftableCatalogMaps();
-    } catch {
-      // Still return rows; per-line counts fall back to stored values.
-    }
-    const rawEntries = [...(netherVortexState.entries || [])];
-    // Resolve every row's Discord-ID → RH-signup-name in parallel before the
-    // sync map step so a slow disk-cache load on the very first request does
-    // not serialize across rows.
-    const rhNamesByUserId = new Map(
-      await Promise.all(
-        rawEntries.map(async (row) => {
-          const id = String(row?.userId || "");
-          if (!id) return [id, ""];
-          const rhName = await resolveRaidHelperNameByDiscordUserId(id);
-          return [id, rhName];
-        })
-      )
-    );
-    const rows = rawEntries
-      .map((row) => {
-        const discordName = String(row.displayName || "Unknown");
-        const userId = String(row.userId || "");
-        const rhSignupName = rhNamesByUserId.get(userId) || "";
-        // Lookup chain (most stable first):
-        //   1. Direct Discord-ID match against rh-wcl-character-links.json
-        //   2. RH-signup-name match (canonical, Discord-ID-keyed via cache)
-        //   3. Discord display-name match (legacy fallback)
-        const linked =
-          resolveLinkedWowCharacterByDiscordUserId(userId) ||
-          (rhSignupName && resolveLinkedWowCharacterFromRhWcl(rhSignupName)) ||
-          resolveLinkedWowCharacterFromRhWcl(discordName);
-        const characterName = String(linked || rhSignupName || discordName).trim() || discordName;
-        const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
-        return {
-          userId,
-          displayName: discordName,
-          raidHelperName: rhSignupName || null,
-          characterName,
-          characterProfileUrl,
-          neededCount: 0,
-          items: enrichSanitizedNetherVortexItems(sanitizeNetherVortexItems(row.items), catalogMaps),
-          updatedAt: Number(row.updatedAt || 0),
-        };
-      })
-      .filter((row) => row.userId)
-      .filter((row) => netherVortexEntryTotal(row) > 0)
-      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    const rows = await buildNetherVortexGuildNeedRows();
     const myEntry = userId ? rows.find((row) => row.userId === userId) || null : null;
     const totalNeeded = rows.reduce((sum, row) => sum + netherVortexEntryTotal(row), 0);
+    await ensureP2DemandAdminChecksStore();
+    const checkedKeys = [...(p2DemandAdminChecksState.checkedKeys || [])];
+    const checkedNv = netherVortexCheckedNvFromEntries(rows, checkedKeys);
     return res.json({
       ok: true,
       authenticated: Boolean(userId),
       entries: rows,
       myEntry,
       totalNeeded,
+      checkedKeys,
+      checkedNv,
+      openNv: Math.max(0, totalNeeded - checkedNv),
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load Nether Vortex tracker" });
+  }
+});
+
+app.get("/api/admin/p2-demand", async (req, res) => {
+  try {
+    if (!requireAdminSession(req, res)) return;
+    await ensureP2DemandAdminChecksStore();
+    const entries = await buildNetherVortexGuildNeedRows();
+    const checkedKeys = [...(p2DemandAdminChecksState.checkedKeys || [])];
+    const totalNeeded = entries.reduce((sum, row) => sum + netherVortexEntryTotal(row), 0);
+    const checkedNv = netherVortexCheckedNvFromEntries(entries, checkedKeys);
+    return res.json({
+      ok: true,
+      entries,
+      checkedKeys,
+      totalNeeded,
+      checkedNv,
+      openNv: Math.max(0, totalNeeded - checkedNv),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load P2 demand admin view" });
+  }
+});
+
+app.patch("/api/admin/p2-demand/check", async (req, res) => {
+  try {
+    if (!requireAdminSession(req, res)) return;
+    const userId = String(req.body?.userId || "").trim();
+    const itemID = Math.max(0, Math.floor(Number(req.body?.itemID ?? req.body?.itemId ?? 0)));
+    const checked = Boolean(req.body?.checked);
+    if (!userId || !itemID) {
+      return res.status(400).json({ ok: false, error: "userId and itemID are required" });
+    }
+    const key = p2DemandAdminItemCheckKey(userId, itemID);
+    await ensureP2DemandAdminChecksStore();
+    const set = new Set(p2DemandAdminChecksState.checkedKeys || []);
+    if (checked) set.add(key);
+    else set.delete(key);
+    p2DemandAdminChecksState = { checkedKeys: [...set], updatedAt: Date.now() };
+    p2DemandAdminChecksWriteChain = p2DemandAdminChecksWriteChain.catch(() => {}).then(async () => {
+      await persistP2DemandAdminChecksStore();
+    });
+    await p2DemandAdminChecksWriteChain;
+    return res.json({ ok: true, key, checked, checkedKeys: [...set] });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update demand check" });
   }
 });
 

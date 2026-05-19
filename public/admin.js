@@ -157,7 +157,7 @@ function rhWclGuildRoleSelectHtml(current) {
 const ADMIN_GROUPS = [
   { id: "people", label: "People", tools: ["identity", "hof-notes", "raider-blacklist", "badge-tooltips"] },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
-  { id: "content", label: "Content", tools: ["p2-materials", "join-needs"] },
+  { id: "content", label: "Content", tools: ["p2-materials", "p2-demand", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
   { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "wcl-phase-avgs", "analytics"] },
 ];
@@ -1581,6 +1581,254 @@ function removeRhWclTodoMissingRhChip(rhName) {
   document.querySelectorAll(`[data-rh-wcl-droptarget="missing-rh"]`).forEach((el) => {
     if (String(el.getAttribute("data-rh-wcl-rh") || "").trim() === v) el.remove();
   });
+}
+
+let adminP2DemandEntries = [];
+let adminP2DemandCheckedKeys = new Set();
+const adminP2DemandItemMeta = new Map();
+let adminP2DemandFilterBound = false;
+
+function adminP2DemandCheckKey(userId, itemId) {
+  return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+function adminP2DemandRowNvTotal(row) {
+  const items = Array.isArray(row?.items) ? row.items : [];
+  return items.reduce((sum, it) => {
+    const x = Number(it?.vortexNeeded);
+    const n = Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
+    return sum + n;
+  }, 0);
+}
+
+function adminP2DemandRowMatchesFilter(row, q) {
+  const needle = String(q || "").trim().toLowerCase();
+  if (!needle) return true;
+  const hay = [
+    row.characterName,
+    row.displayName,
+    row.raidHelperName,
+    ...(Array.isArray(row.items) ? row.items.flatMap((it) => [it.itemName, it.profession]) : []),
+  ]
+    .map((v) => String(v || "").toLowerCase())
+    .join(" ");
+  return hay.includes(needle);
+}
+
+function adminP2DemandFmtUpdated(ts) {
+  const t = Number(ts);
+  if (!Number.isFinite(t) || t <= 0) return "—";
+  try {
+    return new Date(t).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+  } catch {
+    return "—";
+  }
+}
+
+async function adminP2DemandFetchItemMeta(entries) {
+  if (!window.WowItemTooltip) return;
+  const ids = [];
+  for (const row of entries || []) {
+    for (const it of row.items || []) {
+      const id = Math.max(0, Math.floor(Number(it.itemID || 0)));
+      if (id > 0 && !adminP2DemandItemMeta.has(id)) ids.push(id);
+    }
+  }
+  const unique = [...new Set(ids)];
+  for (let i = 0; i < unique.length; i += 80) {
+    const chunk = unique.slice(i, i + 80);
+    const metaPayload = await getJson(`/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`);
+    for (const row of metaPayload?.items || []) {
+      const id = Math.max(0, Math.floor(Number(row?.itemId || 0)));
+      if (id > 0) adminP2DemandItemMeta.set(id, row);
+    }
+  }
+}
+
+function adminP2DemandRaiderCellHtml(row) {
+  const discordName = String(row.displayName || "").trim();
+  const linkedCharacter = String(row.characterName || "").trim();
+  const hasLink = Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
+  const display = linkedCharacter || discordName || "Unknown";
+  const hint =
+    !hasLink && discordName
+      ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row to show the WoW character.">unassigned</span>`
+      : "";
+  return `<div class="p2-demand-raider-name">${esc(display)}${hint}</div>`;
+}
+
+function adminP2DemandItemCellHtml(itemId, itemName) {
+  const id = Math.max(0, Math.floor(Number(itemId || 0)));
+  const meta = adminP2DemandItemMeta.get(id);
+  const tip = window.WowItemTooltip?.tooltipText ? window.WowItemTooltip.tooltipText(meta) : String(itemName || "");
+  const iconRaw = String(meta?.icon || "").trim();
+  const icon = iconRaw
+    ? `<img class="p2-demand-item-icon" src="${esc(iconRaw)}" alt="" width="28" height="28" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+    : `<span class="p2-demand-item-icon"></span>`;
+  return `<div class="loot-item-name p2-demand-item" data-loot-item-id="${id}" title="${esc(tip)}">${icon}<span class="p2-demand-item-name">${esc(itemName)}</span></div>`;
+}
+
+function adminP2DemandCheckCellHtml(userId, itemId, checked) {
+  return `<label class="p2-demand-admin-check" title="Mark fulfilled">
+    <input type="checkbox" class="p2-demand-admin-check-input" data-p2-demand-check="1" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}"${checked ? " checked" : ""} />
+    <span class="visually-hidden">Done</span>
+  </label>`;
+}
+
+function adminP2DemandRowsHtmlForRaider(row) {
+  const items = Array.isArray(row.items) && row.items.length ? row.items : [];
+  const userId = String(row.userId || "");
+  const totalNv = adminP2DemandRowNvTotal(row);
+  const updatedIso = row.updatedAt ? new Date(Number(row.updatedAt)).toISOString() : "";
+  const updatedLabel = adminP2DemandFmtUpdated(row.updatedAt);
+  const timeMarkup = updatedIso
+    ? `<time datetime="${esc(updatedIso)}">${esc(updatedLabel)}</time>`
+    : esc(updatedLabel);
+  const raiderCell = adminP2DemandRaiderCellHtml(row);
+
+  if (!items.length) {
+    return `
+      <tr>
+        <td class="cell-check"></td>
+        <td class="cell-raider">${raiderCell}</td>
+        <td colspan="2"><span class="subtle">No items selected.</span></td>
+        <td class="cell-num">0</td>
+        <td class="cell-time">${timeMarkup}</td>
+      </tr>
+    `;
+  }
+
+  const span = items.length;
+  return items
+    .map((it, idx) => {
+      const itemId = Math.max(0, Math.floor(Number(it.itemID || 0)));
+      const checked = adminP2DemandCheckedKeys.has(adminP2DemandCheckKey(userId, itemId));
+      const trCls = [idx === items.length - 1 ? "is-group-end" : "", checked ? "is-demand-checked" : ""]
+        .filter(Boolean)
+        .join(" ");
+      const isFirst = idx === 0;
+      const cells = [];
+      cells.push(`<td class="cell-check">${adminP2DemandCheckCellHtml(userId, itemId, checked)}</td>`);
+      if (isFirst) {
+        cells.push(`<td class="cell-raider"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`);
+      }
+      cells.push(`<td class="cell-item">${adminP2DemandItemCellHtml(itemId, it.itemName)}</td>`);
+      cells.push(`<td class="cell-prof">${it.profession ? esc(it.profession) : "—"}</td>`);
+      if (isFirst) {
+        cells.push(`<td class="cell-num"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`);
+        cells.push(`<td class="cell-time"${span > 1 ? ` rowspan="${span}"` : ""}>${timeMarkup}</td>`);
+      }
+      return `<tr class="${trCls}">${cells.join("")}</tr>`;
+    })
+    .join("");
+}
+
+function refreshAdminP2DemandTable() {
+  const host = document.getElementById("adminP2DemandTableHost");
+  const meta = document.getElementById("adminP2DemandMeta");
+  if (!host) return;
+
+  const all = adminP2DemandEntries;
+  const q = document.getElementById("adminP2DemandSearch")?.value || "";
+  const rows = all
+    .filter((r) => adminP2DemandRowMatchesFilter(r, q))
+    .sort((a, b) => adminP2DemandRowNvTotal(b) - adminP2DemandRowNvTotal(a));
+
+  if (!all.length) {
+    host.innerHTML = `<p class="subtle p2-demand-empty">No submissions yet.</p>`;
+    if (meta) meta.textContent = "Total guild need: 0 Nether Vortex";
+    return;
+  }
+
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle p2-demand-empty">No raiders match your filter.</p>`;
+    if (meta) meta.textContent = `No matches (of ${all.length} raiders).`;
+    return;
+  }
+
+  const grandTotal = rows.reduce((sum, row) => sum + adminP2DemandRowNvTotal(row), 0);
+  let checkedNv = 0;
+  for (const row of rows) {
+    const uid = String(row.userId || "");
+    for (const it of row.items || []) {
+      const key = adminP2DemandCheckKey(uid, it.itemID);
+      if (adminP2DemandCheckedKeys.has(key)) {
+        const x = Number(it.vortexNeeded);
+        checkedNv += Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
+      }
+    }
+  }
+  if (meta) {
+    meta.textContent = `Total guild need: ${grandTotal} NV · Done: ${checkedNv} · Open: ${Math.max(0, grandTotal - checkedNv)}${
+      rows.length !== all.length ? ` · showing ${rows.length} of ${all.length} raiders` : ""
+    }`;
+  }
+
+  host.innerHTML = `
+    <table class="p2-demand-table admin-p2-demand-table" aria-label="P2 demand by raider">
+      <colgroup>
+        <col class="col-check" />
+        <col class="col-raider" />
+        <col class="col-item" />
+        <col class="col-prof" />
+        <col class="col-num" />
+        <col class="col-time" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th scope="col" class="cell-check">Done</th>
+          <th scope="col">Raider</th>
+          <th scope="col">Item</th>
+          <th scope="col">Profession</th>
+          <th scope="col" class="is-num">NV</th>
+          <th scope="col" class="col-time-th">Updated</th>
+        </tr>
+      </thead>
+      <tbody>${rows.map((row) => adminP2DemandRowsHtmlForRaider(row)).join("")}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4">${rows.length} ${rows.length === 1 ? "raider" : "raiders"}</td>
+          <td class="cell-num">${grandTotal}</td>
+          <td class="cell-time"></td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+
+  if (window.WowItemTooltip?.bindLootTooltipHandlers) {
+    window.WowItemTooltip.bindLootTooltipHandlers(host, (id) => adminP2DemandItemMeta.get(Number(id)));
+  }
+}
+
+function ensureAdminP2DemandFilterListeners() {
+  if (adminP2DemandFilterBound) return;
+  adminP2DemandFilterBound = true;
+  let debounceTimer = null;
+  document.getElementById("adminP2DemandSearch")?.addEventListener("input", () => {
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(() => refreshAdminP2DemandTable(), 140);
+  });
+  document.getElementById("adminP2DemandReloadBtn")?.addEventListener("click", () => {
+    loadAdminP2DemandPanel().catch((error) => status(error?.message || "P2 demand reload failed"));
+  });
+}
+
+async function loadAdminP2DemandPanel() {
+  const host = document.getElementById("adminP2DemandTableHost");
+  if (!host) return;
+  host.textContent = "Loading demand…";
+  const payload = await getJson("/api/admin/p2-demand");
+  adminP2DemandEntries = Array.isArray(payload?.entries) ? payload.entries : [];
+  adminP2DemandCheckedKeys = new Set(
+    Array.isArray(payload?.checkedKeys) ? payload.checkedKeys.map((k) => String(k || "").trim()).filter(Boolean) : []
+  );
+  try {
+    await adminP2DemandFetchItemMeta(adminP2DemandEntries);
+  } catch {
+    /* icons optional */
+  }
+  ensureAdminP2DemandFilterListeners();
+  refreshAdminP2DemandTable();
 }
 
 function renderP2Table(materials) {
@@ -5628,6 +5876,13 @@ async function loadAdminSecondaryData() {
   renderTargetReportSelect();
   renderLootEditor(entries);
   renderP2Table(Array.isArray(p2.materials) ? p2.materials : []);
+  try {
+    await loadAdminP2DemandPanel();
+  } catch (error) {
+    const host = document.getElementById("adminP2DemandTableHost");
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Failed to load P2 demand.")}</p>`;
+    status(`P2 demand load failed: ${error?.message || "Unknown error"}`);
+  }
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
   try {
     await loadPublicSnapshotStatus();
@@ -6929,6 +7184,37 @@ document.addEventListener("input", (event) => {
       const end = Math.max(start, Math.min(selEnd, nextEl.value.length));
       nextEl.setSelectionRange(start, end);
     }
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const cb = event.target.closest("[data-p2-demand-check]");
+  if (!cb || !(cb instanceof HTMLInputElement)) return;
+  const userId = String(cb.getAttribute("data-user-id") || "").trim();
+  const itemID = Math.max(0, Math.floor(Number(cb.getAttribute("data-item-id") || 0)));
+  if (!userId || !itemID) return;
+  const key = adminP2DemandCheckKey(userId, itemID);
+  const checked = cb.checked;
+  const tr = cb.closest("tr");
+  if (checked) adminP2DemandCheckedKeys.add(key);
+  else adminP2DemandCheckedKeys.delete(key);
+  tr?.classList.toggle("is-demand-checked", checked);
+  cb.disabled = true;
+  try {
+    await getJson("/api/admin/p2-demand/check", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ userId, itemID, checked }),
+    });
+    refreshAdminP2DemandTable();
+  } catch (error) {
+    if (checked) adminP2DemandCheckedKeys.delete(key);
+    else adminP2DemandCheckedKeys.add(key);
+    cb.checked = !checked;
+    tr?.classList.toggle("is-demand-checked", cb.checked);
+    status(error?.message || "Failed to save check");
+  } finally {
+    cb.disabled = false;
   }
 });
 
