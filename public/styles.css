@@ -5453,8 +5453,6 @@ tr.plb-gear-row--miss th {
 }
 
 .plb-gear-enchant-chip--miss {
-  flex-direction: column;
-  align-items: flex-start;
   color: #fecaca;
   background: color-mix(in srgb, var(--plb-ds-tier-critical) 18%, transparent);
   border: 1px solid color-mix(in srgb, var(--plb-ds-tier-critical) 35%, transparent);
@@ -5478,15 +5476,6 @@ tr.plb-gear-row--miss th {
 
 .plb-gear-enchant-miss {
   font-weight: 700;
-}
-
-.plb-gear-enchant-sockets {
-  display: block;
-  margin-top: 2px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #bae6fd;
-  line-height: 1.3;
 }
 
 .plb-gear-enchant-spell.admin-debuff-spell-trigger {

@@ -1065,30 +1065,12 @@ async function loadWclGearEnchantItemMeta(players) {
   wclGearItemMetaById = next;
 }
 
-function wclGearGemsNoteForSlot(player, slotId) {
-  const row = (Array.isArray(player?.slots) ? player.slots : []).find(
-    (s) => String(s?.slotId || "").toUpperCase() === String(slotId || "").toUpperCase()
-  );
-  const gems = Array.isArray(row?.gems) ? row.gems : [];
-  if (!gems.length) return "";
-  return gems
-    .map((g) => String(g?.name || "").trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-function wclGearEnchantChipsHtml(slots, player) {
+function wclGearEnchantChipsHtml(slots) {
   if (!slots.length) return `<span class="plb-gear-ok">—</span>`;
   const chips = slots.map((row) => {
     const slot = esc(row?.slotLabel || row?.slotId || "Slot");
     if (row?.missing) {
-      const gemsNote = wclGearGemsNoteForSlot(player, row?.slotId);
-      const gemsHtml = gemsNote
-        ? `<span class="plb-gear-enchant-sockets" title="Socket gems only — not a permanent enchant (e.g. Enchant Boots)">Gems: ${esc(gemsNote)}</span>`
-        : "";
-      return `<span class="plb-gear-enchant-chip plb-gear-enchant-chip--miss" title="${slot}: missing permanent enchant${
-        gemsNote ? ` (has socket gems: ${gemsNote})` : ""
-      }"><span class="plb-gear-enchant-slot">${slot}</span><span class="plb-gear-enchant-miss">No enchant</span>${gemsHtml}</span>`;
+      return `<span class="plb-gear-enchant-chip plb-gear-enchant-chip--miss" title="${slot}: missing enchant"><span class="plb-gear-enchant-slot">${slot}</span><span class="plb-gear-enchant-miss">Missing</span></span>`;
     }
     const enc = row.enchant || {};
     const enchantHtml = wclGearEnchantTriggerHtml(enc);
@@ -1099,11 +1081,11 @@ function wclGearEnchantChipsHtml(slots, player) {
 
 function wclGearMissingEnchantsCell(player) {
   const missing = wclGearEnchantSlotsForPlayer(player).filter((row) => row?.missing);
-  return wclGearEnchantChipsHtml(missing, player);
+  return wclGearEnchantChipsHtml(missing);
 }
 
 function wclGearFullEnchantsCell(player) {
-  return wclGearEnchantChipsHtml(wclGearEnchantSlotsForPlayer(player), player);
+  return wclGearEnchantChipsHtml(wclGearEnchantSlotsForPlayer(player));
 }
 
 function wclGearQualityPill(quality, count) {
@@ -1231,7 +1213,7 @@ async function renderWclGearAuditOverview(payload) {
   const s = payload.summary || {};
   const rows = players.map((p, i) => wclGearPlayerRowsHtml(p, i, wclGearExpandedPlayerIdx)).join("");
   host.innerHTML = `
-    <p class="plb-debuff-hint">Enchant and gem status from Classic Armory. Permanent enchants only (e.g. Enchant Boots — not socket +8 stats). Table shows missing enchants — click a player for the full list. Gem rarity: Green = Uncommon, Blue = Rare, Purple = Epic.</p>
+    <p class="plb-debuff-hint">Enchant and gem status from Classic Armory. Table shows missing enchants only — click a player for the full list (hover enchants for Wowhead tooltips). Gem rarity: Green = Uncommon, Blue = Rare, Purple = Epic.</p>
     <p class="subtle plb-gear-summary-line">${esc(String(s.fullyReadyCount ?? 0))}/${esc(String(s.rosterCount ?? players.length))} ready · ${esc(String(s.missingEnchants ?? 0))} missing enchants · ${esc(String(s.emptySockets ?? 0))} empty gem sockets</p>
     <div class="admin-table-wrap plb-debuff-table-wrap plb-gear-audit-table-wrap">
       <table class="admin-table plb-debuff-table plb-gear-audit-table">
