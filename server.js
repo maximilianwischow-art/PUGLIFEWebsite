@@ -10223,7 +10223,7 @@ async function loadArmoryEquipmentAuditCached({
   const slug = String(realmSlug || "").trim().toLowerCase();
   if (!name || !slug) return null;
 
-  const cacheKey = `armory-equipment-audit-v6-${region}-${flavor}-${slug}-${name.toLowerCase()}`;
+  const cacheKey = `armory-equipment-audit-v8-${region}-${flavor}-${slug}-${name.toLowerCase()}`;
   const ttlMs = 6 * 60 * 60 * 1000;
   const maxStaleMs = 12 * 60 * 60 * 1000;
 
@@ -10561,7 +10561,7 @@ app.get("/api/raid-lead/armory-gear-audit", async (req, res) => {
       });
     }
 
-    const cacheKey = `armory-gear-audit-overview-v6-${reportCode}`;
+    const cacheKey = `armory-gear-audit-overview-v8-${reportCode}`;
     const payload = forceRefresh
       ? await forceRefreshCachedPayload(cacheKey, () => buildArmoryGearAuditPayload({ reportCode, forceRefresh: true }))
       : await getOrRefreshCachedPayload(cacheKey, {
