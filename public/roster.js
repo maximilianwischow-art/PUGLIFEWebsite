@@ -1,4 +1,5 @@
 const rosterActiveGrid = document.querySelector("#rosterActiveGrid");
+const rosterPageMeta = document.querySelector("#rosterPageMeta");
 
 /** Display order: officers first (must match admin Account Assignment role names). */
 const GUILD_ROLE_SECTION_ORDER = ["Puglead", "Raidlead", "Heallead", "Dpslead", "Core", "Veteran", "Grunt", "Peon"];
@@ -42,12 +43,13 @@ function rosterHtmlByGuildRoleSections(players, plb) {
 async function loadGuildRosterPage() {
   const plb = window.plbEventsRoster;
   if (!plb) {
-    if (rosterActiveGrid)
-      rosterActiveGrid.innerHTML = `<p class="subtle">Roster UI failed to load (events-roster-ui.js).</p>`;
+    if (rosterPageMeta) rosterPageMeta.textContent = "Roster UI failed to load (events-roster-ui.js).";
+    if (rosterActiveGrid) rosterActiveGrid.innerHTML = "";
     return;
   }
   try {
-    if (rosterActiveGrid) rosterActiveGrid.innerHTML = `<p class="subtle">Loading roster…</p>`;
+    if (rosterPageMeta) rosterPageMeta.textContent = "Loading roster…";
+    if (rosterActiveGrid) rosterActiveGrid.innerHTML = "";
     await Promise.all([plb.loadTbcSpecIconMap(), plb.loadWclAttendanceForEvents()]);
     const gid = plb.EVENTS_WCL_GUILD_ID;
     const res = await fetch(`/api/wcl/guild/${gid}/active-roster?limit=40&top=250`, {
@@ -56,14 +58,20 @@ async function loadGuildRosterPage() {
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
     const players = Array.isArray(payload.players) ? payload.players : [];
+    const cap = payload.attendanceScope?.recentRaidCap ?? "?";
+    const considered = payload.consideredRaids ?? "?";
+    if (rosterPageMeta) {
+      rosterPageMeta.textContent = `${players.length} active players · appeared in at least one of the last ${considered} tracked 25-player raids (recent cap ${cap}; Karazhan & Zul'Aman excluded from attendance %). Guild role from Account Assignment.`;
+    }
+    await plb.loadRosterGearSummaries(players, { warmMissing: true });
     if (rosterActiveGrid) {
       rosterActiveGrid.innerHTML = players.length
         ? rosterHtmlByGuildRoleSections(players, plb)
         : `<p class="subtle">No players with attendance in those raids yet.</p>`;
     }
   } catch (e) {
-    if (rosterActiveGrid)
-      rosterActiveGrid.innerHTML = `<p class="subtle">${e?.message || "Failed to load roster."}</p>`;
+    if (rosterPageMeta) rosterPageMeta.textContent = e?.message || "Failed to load roster.";
+    if (rosterActiveGrid) rosterActiveGrid.innerHTML = "";
   }
 }
 

@@ -64,6 +64,7 @@ import {
   fetchClassicArmoryEquipment,
   parseClassicArmoryEquipmentAudit,
   buildArmoryGearAuditForPlayers,
+  summarizeGearAudit,
 } from "./lib/classic-armory/equipment-audit.mjs";
 import {
   PHASE2_RAID_CATALOG,
@@ -8399,11 +8400,11 @@ app.get("/events.html", (_req, res) => {
 });
 
 app.get("/roster.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
+  res.sendFile(path.join(publicDir, "roster.html"));
 });
 
 app.get(["/roster", "/roster/"], (_req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
+  res.sendFile(path.join(publicDir, "roster.html"));
 });
 
 app.get("/voting.html", (_req, res) => {
@@ -10271,6 +10272,30 @@ async function loadArmoryEquipmentAuditCached({
   return { audit: data.audit, cached: !forceRefresh };
 }
 
+function armoryEquipmentAuditCacheKey(region, flavor, realmSlug, characterName) {
+  const name = String(characterName || "").trim().toLowerCase();
+  const slug = String(realmSlug || "").trim().toLowerCase();
+  return `armory-equipment-audit-v8-${region}-${flavor}-${slug}-${name}`;
+}
+
+async function readArmoryEquipmentAuditCachedOnly({ region, flavor, realmSlug, characterName }) {
+  const name = String(characterName || "").trim();
+  const slug = String(realmSlug || "").trim().toLowerCase();
+  if (!name || !slug) return null;
+  const cacheKey = armoryEquipmentAuditCacheKey(region, flavor, slug, name);
+  const ttlMs = 6 * 60 * 60 * 1000;
+  const maxStaleMs = 12 * 60 * 60 * 1000;
+  const now = Date.now();
+  const mem = apiResponseCache.get(cacheKey);
+  if (mem?.data?.audit && now - Number(mem.at || 0) <= maxStaleMs) return mem.data.audit;
+  const disk = await readApiCacheEntry(cacheKey);
+  if (disk?.data?.audit && now - Number(disk.at || 0) <= maxStaleMs) {
+    apiResponseCache.set(cacheKey, disk);
+    return disk.data.audit;
+  }
+  return null;
+}
+
 async function buildArmoryGearAuditPayload({ reportCode, forceRefresh = false }) {
   const code = String(reportCode || "").trim();
   if (!code) return { ok: false, error: "reportCode is required" };
@@ -10541,6 +10566,70 @@ app.get("/api/raid-lead/wcl-consumables", async (req, res) => {
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "WCL consumables check failed" });
+  }
+});
+
+app.post("/api/classic-armory/gear-summaries", async (req, res) => {
+  try {
+    const namesRaw = Array.isArray(req.body?.names) ? req.body.names : [];
+    const uniqueNames = [
+      ...new Set(namesRaw.map((n) => String(n || "").trim()).filter(Boolean)),
+    ].slice(0, 80);
+    const warmMissing = Boolean(req.body?.warmMissing);
+    const maxWarm = Math.min(25, Math.max(0, Math.floor(Number(req.body?.maxWarm) || 15)));
+
+    const flavor =
+      String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
+    const baseUrl = String(process.env.CLASSIC_ARMORY_API_BASE || "https://classic-armory.org").replace(
+      /\/+$/,
+      ""
+    );
+    const publicBase =
+      String(process.env.CLASSIC_ARMORY_PUBLIC_URL || "https://classic-armory.org").replace(/\/+$/, "") ||
+      "https://classic-armory.org";
+    const region = String(wowRosterRegion() || "eu").trim().toLowerCase() || "eu";
+    const realmSlug = realmSlugForLookup(defaultWowRealmForRoster());
+    if (!realmSlug) {
+      return res.status(500).json({ ok: false, error: "WOW_GUILD_REALM / WOW_DEFAULT_REALM is not configured" });
+    }
+
+    const aliasMap = buildClassicArmoryNameAliasMap();
+    const throttleMsRaw = Number(process.env.ROLE_ALERT_ARMORY_THROTTLE_MS);
+    const throttleMs =
+      Number.isFinite(throttleMsRaw) && throttleMsRaw >= 0 ? Math.min(2000, Math.floor(throttleMsRaw)) : 150;
+
+    const summaries = {};
+    let warmed = 0;
+    for (const displayName of uniqueNames) {
+      const armoryName = resolveArmoryCharacterName(displayName, aliasMap);
+      let audit = await readArmoryEquipmentAuditCachedOnly({
+        region,
+        flavor,
+        realmSlug,
+        characterName: armoryName,
+      });
+      if (!audit && warmMissing && warmed < maxWarm) {
+        const loaded = await loadArmoryEquipmentAuditCached({
+          region,
+          flavor,
+          realmSlug,
+          characterName: armoryName,
+          baseUrl,
+          publicBase,
+          forceRefresh: false,
+        });
+        audit = loaded?.audit || null;
+        warmed += 1;
+        if (throttleMs > 0 && warmed < maxWarm) {
+          await new Promise((r) => setTimeout(r, throttleMs));
+        }
+      }
+      summaries[displayName.toLowerCase()] = audit ? summarizeGearAudit(audit) : null;
+    }
+
+    return res.json({ ok: true, summaries, meta: { warmed, requested: uniqueNames.length, realmSlug, region, flavor } });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Gear summaries failed" });
   }
 });
 

@@ -21,12 +21,30 @@ let roleAlertsRaidComposerDraft = null;
 /** @type {Map<string, { id: string, rhGroupId: string, groupNumber: number, slotNumber: number }>} */
 let roleAlertsCompSlotTemplateIndex = null;
 let roleAlertsComposerDropHighlightEl = null;
+/** @type {Map<string, object|null>} */
+let roleAlertsGearSummaryByKey = new Map();
+/** @type {Set<string>} signup ids with composer card expanded */
+let roleAlertsComposerExpandedIds = new Set();
+let roleAlertsComposerExpandClickTimer = null;
 
 function roleAlertsComposerClearDropHighlight() {
   if (roleAlertsComposerDropHighlightEl) {
     roleAlertsComposerDropHighlightEl.classList.remove("is-composer-drop-over");
     roleAlertsComposerDropHighlightEl = null;
   }
+}
+
+function roleAlertsComposerSetCardExpanded(card, expanded) {
+  const id = String(card?.getAttribute?.("data-signup-id") || "").trim();
+  if (!id) return;
+  if (expanded) roleAlertsComposerExpandedIds.add(id);
+  else roleAlertsComposerExpandedIds.delete(id);
+  card.classList.toggle("is-composer-expanded", expanded);
+  card.setAttribute("aria-expanded", expanded ? "true" : "false");
+  const panel = card.querySelector(".role-alert-composer-expanded");
+  if (panel) panel.hidden = !expanded;
+  const hint = card.querySelector(".role-alert-composer-expand-hint");
+  if (hint) hint.textContent = expanded ? "▾" : "▸";
 }
 const ROLE_ALERTS_COMPOSER_DRAG_MIME = "application/x-role-alerts-composer";
 /** rhNameKey → { kara, gruulMag, sscTk } from WCL Fresh zoneRankings cache. */
@@ -2146,36 +2164,52 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
         ? `<span class="role-alert-composer-rh-alias">${esc(rhLabel)}</span>`
         : `<span class="role-alert-composer-rh-alias" aria-hidden="true"></span>`;
     const parseVal = `<span class="role-alert-slot-peak-line">${star}<span class="role-alert-slot-peak leaderboard-peak-parse ${peakTier}" title="${esc(peakTitle)}">${esc(peakTxt)}</span></span>`;
+    const composerSignupId = String(slot?._occupantSignupId || slot?.signupId || "").trim();
+    const isComposerExpanded =
+      composerSignupId && roleAlertsComposerExpandedIds.has(composerSignupId);
+    const expandedClass = isComposerExpanded ? " is-composer-expanded" : "";
+    const expandedHiddenAttr = isComposerExpanded ? "" : " hidden";
+    const expandHint = isComposerExpanded ? "▾" : "▸";
+    const expandAttrs = composerSignupId
+      ? ` data-role-alert-composer-expand="1" data-signup-id="${esc(composerSignupId)}" aria-expanded="${isComposerExpanded ? "true" : "false"}"`
+      : "";
     const infoPanel = `<section class="role-alert-composer-info-panel" aria-label="Character stats">
       <div class="role-alert-composer-info-grid">
         ${roleAlertComposerInfoCellHtml("Parse", parseVal, peakTitle)}
-        ${roleAlertComposerInfoCellHtml("Ev", esc(wclEvTxt), wclEvTitle)}
+        ${roleAlertComposerInfoCellHtml("Events", esc(wclEvTxt), wclEvTitle)}
         ${roleAlertComposerInfoCellHtml("GS", gsBlock, gsTitle)}
       </div>
-      ${
-        showPhaseRow
-          ? `<div class="role-alert-composer-phase-block">
-              <span class="role-alert-composer-info-heading">Phase avg</span>
-              ${roleAlertSlotPhaseAvgsHtml(phaseAvgs, { composerPanel: true })}
-            </div>`
-          : ""
-      }
+      <div class="role-alert-composer-expanded"${expandedHiddenAttr}>
+        <div class="role-alert-composer-tag-row">
+          <span class="role-alert-composer-tag role-alert-composer-tag--class">${esc(classLabel)}</span>
+          <span class="role-alert-composer-tag ${roleAlertComposerRoleTagClass(roleLine)}">${esc(roleAlertComposerShortRole(roleLine))}</span>
+          <span class="role-alert-composer-tag role-alert-composer-tag--spec">${esc(specLine)}</span>
+        </div>
+        ${rhAlias}
+        <div class="role-alert-composer-gear-row">
+          <span class="role-alert-composer-info-heading">Gear</span>
+          ${roleAlertsGearSummaryLineHtml(slot)}
+        </div>
+        ${
+          showPhaseRow
+            ? `<div class="role-alert-composer-phase-block">
+                <span class="role-alert-composer-info-heading">Phase avg</span>
+                ${roleAlertSlotPhaseAvgsHtml(phaseAvgs, { composerPanel: true })}
+              </div>`
+            : ""
+        }
+      </div>
     </section>`;
-    return `<div class="${layoutClass} role-alert-slot--composer-card${classColorClass}${raiderCardMod ? ` ${raiderCardMod}` : ""}"${classColorStyle}${attrStr}>
+    return `<div class="${layoutClass} role-alert-slot--composer-card${expandedClass}${classColorClass}${raiderCardMod ? ` ${raiderCardMod}` : ""}"${classColorStyle}${expandAttrs}${attrStr}>
       ${classColorBar || ""}
       <header class="role-alert-composer-card-head" title="${esc(rhTitle)}">
         <div class="role-alert-composer-card-identity">
           ${iconBlock}
           <span class="role-alert-composer-name-block" title="${nameTitle}">
             <span class="role-alert-composer-name"${nameColorStyle || ""}>${esc(disp)}</span>
-            ${rhAlias}
             ${raiderCardBadge}
           </span>
-        </div>
-        <div class="role-alert-composer-tag-row">
-          <span class="role-alert-composer-tag role-alert-composer-tag--class">${esc(classLabel)}</span>
-          <span class="role-alert-composer-tag ${roleAlertComposerRoleTagClass(roleLine)}">${esc(roleAlertComposerShortRole(roleLine))}</span>
-          <span class="role-alert-composer-tag role-alert-composer-tag--spec">${esc(specLine)}</span>
+          <span class="role-alert-composer-expand-hint" aria-hidden="true">${expandHint}</span>
         </div>
       </header>
       ${infoPanel}
@@ -2192,6 +2226,7 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
                   </span>
                   ${wclEventsSpan}
                   <span class="role-alert-slot-gear-line">${gsBlock}</span>
+                  <span class="role-alert-slot-gear-audit">${roleAlertsGearSummaryLineHtml(slot)}</span>
                 </div>
               </div>`;
 }
@@ -2672,6 +2707,86 @@ function roleAlertComposerInfoCellHtml(label, valueHtml, title = "") {
     <span class="role-alert-composer-info-label">${esc(label)}</span>
     <span class="role-alert-composer-info-value">${valueHtml}</span>
   </div>`;
+}
+
+function roleAlertsCollectGearSummaryNames(analysis) {
+  const names = new Set();
+  const add = (value) => {
+    const s = String(value || "").trim();
+    if (s) names.add(s);
+  };
+  for (const row of Array.isArray(analysis?.allSignups) ? analysis.allSignups : []) {
+    add(row?.characterName);
+    add(row?.wowCharacterName);
+    add(row?.displayName);
+    add(row?.name);
+    add(row?.rhSignupName);
+    add(row?.armoryCharacterName);
+  }
+  for (const g of analysis?.compBoard?.groups || []) {
+    for (const slot of g?.slots || []) {
+      add(slot?.characterName);
+      add(slot?.wowCharacterName);
+      add(slot?.displayName);
+      add(slot?.name);
+      add(slot?.rhSignupName);
+    }
+  }
+  return [...names];
+}
+
+function roleAlertsGearSummaryForSlot(slot) {
+  const keys = [
+    slot?.characterName,
+    slot?.wowCharacterName,
+    slot?.displayName,
+    slot?.name,
+    slot?.rhSignupName,
+    slot?.armoryCharacterName,
+  ]
+    .map((v) => String(v || "").trim().toLowerCase())
+    .filter(Boolean);
+  for (const key of keys) {
+    if (roleAlertsGearSummaryByKey.has(key)) return roleAlertsGearSummaryByKey.get(key);
+  }
+  return null;
+}
+
+function roleAlertsGearSummaryLineHtml(slot) {
+  const summary = roleAlertsGearSummaryForSlot(slot);
+  const display = window.plbGearAuditDisplay;
+  if (display?.buildGearAuditSummaryHtml) {
+    return display.buildGearAuditSummaryHtml(summary, esc);
+  }
+  return `<span class="gear-audit-compact gear-audit-compact--empty">—</span>`;
+}
+
+async function roleAlertsLoadGearSummaries(analysis) {
+  const names = roleAlertsCollectGearSummaryNames(analysis);
+  if (!names.length) {
+    roleAlertsGearSummaryByKey = new Map();
+    return;
+  }
+  try {
+    const res = await fetch("/api/classic-armory/gear-summaries", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ names, warmMissing: true, maxWarm: 25 }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || payload?.ok === false) throw new Error(payload?.error || `HTTP ${res.status}`);
+    const next = new Map();
+    const summaries =
+      payload?.summaries && typeof payload.summaries === "object" ? payload.summaries : {};
+    for (const [key, row] of Object.entries(summaries)) {
+      next.set(String(key || "").trim().toLowerCase(), row && typeof row === "object" ? row : null);
+    }
+    roleAlertsGearSummaryByKey = next;
+  } catch (err) {
+    console.warn("[role-alerts] gear summaries failed:", err?.message || err);
+    roleAlertsGearSummaryByKey = new Map();
+  }
 }
 
 function roleAlertsSyncRaidComposerDraftFromAnalysis(analysis, { preserveDraft = false } = {}) {
@@ -3613,7 +3728,20 @@ document.addEventListener("dragend", () => {
   roleAlertsComposerClearDropHighlight();
 });
 
+document.addEventListener("click", (event) => {
+  const root = event.target.closest("#roleAlertsRaidComposerRoot");
+  if (!root) return;
+  const card = event.target.closest("[data-role-alert-composer-expand]");
+  if (!card || !root.contains(card)) return;
+  if (event.target.closest("a")) return;
+  clearTimeout(roleAlertsComposerExpandClickTimer);
+  roleAlertsComposerExpandClickTimer = setTimeout(() => {
+    roleAlertsComposerSetCardExpanded(card, !card.classList.contains("is-composer-expanded"));
+  }, 220);
+});
+
 document.addEventListener("dblclick", (event) => {
+  clearTimeout(roleAlertsComposerExpandClickTimer);
   if (!event.target.closest("#roleAlertsRaidComposerRoot")) return;
   const el = event.target.closest("[data-role-alert-composer-dbl]");
   if (!el) return;
@@ -3932,6 +4060,9 @@ function renderRoleAlertsAnalysis(analysis, options = {}) {
     ${roleAlertsCandidatesHtml(roleAlertsAnalysisState)}
     ${roleAlertsDmSendResultHtml()}
   `;
+  void roleAlertsLoadGearSummaries(roleAlertsAnalysisState).then(() => {
+    if (roleAlertsAnalysisState === analysis) roleAlertsRefreshRaidComposerDom();
+  });
 }
 
 function customDmReadTargetRoles() {
@@ -5252,9 +5383,216 @@ async function loadPublicSnapshotStatus() {
   renderPublicSnapshotStatus(payload);
 }
 
+const wclPhaseAvgsSort = { key: "characterName", dir: "asc" };
+
 let wclPhaseAvgsPollTimer = null;
 let wclPhaseAvgsLastUpdatedAt = 0;
 let wclPhaseAvgsCachedRenderKey = "";
+
+/** Panels that should not block on the full secondary admin bundle (loot, analytics, DMs, …). */
+const ADMIN_PANELS_DEFER_SECONDARY = new Set(["identity", "wcl-phase-avgs"]);
+
+function stopWclPhaseAvgsPoll() {
+  if (wclPhaseAvgsPollTimer) {
+    clearInterval(wclPhaseAvgsPollTimer);
+    wclPhaseAvgsPollTimer = null;
+  }
+}
+
+function startWclPhaseAvgsPoll() {
+  stopWclPhaseAvgsPoll();
+  wclPhaseAvgsPollTimer = setInterval(() => {
+    if (!document.getElementById("admin-panel-wcl-phase-avgs")?.classList.contains("is-admin-panel-active")) {
+      stopWclPhaseAvgsPoll();
+      return;
+    }
+    loadWclPhaseAvgsPanel({ silent: true }).catch(() => {});
+  }, 2000);
+}
+
+function wclPhaseAvgsTableRenderKey(payload) {
+  const progress = payload?.meta?.progress || {};
+  const refreshing = Boolean(payload?.meta?.refreshing);
+  const doneBucket = refreshing ? Math.floor(Number(progress.done || 0) / 5) : "";
+  return [
+    payload?.updatedAt,
+    payload?.characters?.length,
+    refreshing,
+    doneBucket,
+    progress.total,
+    wclPhaseAvgsSort.key,
+    wclPhaseAvgsSort.dir,
+  ].join("|");
+}
+
+function formatWclPhaseAvgCell(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return `<span class="subtle">—</span>`;
+  }
+  const tier = roleAlertPeakParseTierClass(n);
+  return `<span class="leaderboard-peak-parse ${tier}" title="WCL Best Perf. Avg">${esc(n.toFixed(1))}</span>`;
+}
+
+function wclPhaseAvgsSortValue(row, key) {
+  if (key === "characterName") return String(row?.characterName || "").toLowerCase();
+  if (key === "realm") return String(row?.realm || "").toLowerCase();
+  const n = Number(row?.[key]);
+  return Number.isFinite(n) ? n : -1;
+}
+
+function renderWclPhaseAvgsTable(payload) {
+  const host = document.getElementById("wclPhaseAvgsTableHost");
+  if (!host) return;
+  if (!payload?.ok) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Failed to load WCL phase averages.")}</p>`;
+    return;
+  }
+  const rows = Array.isArray(payload.characters) ? [...payload.characters] : [];
+  const key = wclPhaseAvgsSort.key;
+  const dir = wclPhaseAvgsSort.dir === "desc" ? -1 : 1;
+  rows.sort((a, b) => {
+    const da = wclPhaseAvgsSortValue(a, key);
+    const db = wclPhaseAvgsSortValue(b, key);
+    if (typeof da === "string" && typeof db === "string") {
+      const c = da.localeCompare(db, undefined, { sensitivity: "base" });
+      return c !== 0 ? c * dir : 0;
+    }
+    return (da - db) * dir || String(a.characterName).localeCompare(String(b.characterName), undefined, { sensitivity: "base" });
+  });
+
+  const sortBtn = (col, label) => {
+    const active = wclPhaseAvgsSort.key === col;
+    const arrow = active ? (wclPhaseAvgsSort.dir === "asc" ? " ▲" : " ▼") : "";
+    return `<button type="button" class="admin-table-sort-btn" data-wcl-phase-sort="${esc(col)}">${esc(label)}${arrow}</button>`;
+  };
+
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle">No characters in roster DB yet. Run a refresh after adding characters in Identity Management.</p>`;
+    return;
+  }
+
+  const body = rows
+    .map((row) => {
+      const errTitle =
+        Array.isArray(row.errors) && row.errors.length ? row.errors.join(" · ") : "";
+      const rowAttr = errTitle
+        ? ` class="admin-wcl-phase-row--warn" title="${esc(errTitle)}"`
+        : "";
+      const wclHref = row.wclUrl ? esc(row.wclUrl) : "#";
+      return `<tr${rowAttr}>
+        <td>${esc(row.characterName || "—")}</td>
+        <td class="subtle">${esc(row.realm || "—")}</td>
+        <td>${formatWclPhaseAvgCell(row.karaBestPerfAvg)}</td>
+        <td>${formatWclPhaseAvgCell(row.gruulMagBestPerfAvg)}</td>
+        <td>${formatWclPhaseAvgCell(row.sscTkBestPerfAvg)}</td>
+        <td><a href="${wclHref}" target="_blank" rel="noopener noreferrer">WCL</a></td>
+      </tr>`;
+    })
+    .join("");
+
+  host.innerHTML = `<table class="admin-table admin-wcl-phase-table">
+    <thead><tr>
+      <th>${sortBtn("characterName", "Character")}</th>
+      <th>${sortBtn("realm", "Realm")}</th>
+      <th>${sortBtn("karaBestPerfAvg", "Kara")}</th>
+      <th>${sortBtn("gruulMagBestPerfAvg", "Gruul/Mag")}</th>
+      <th>${sortBtn("sscTkBestPerfAvg", "SSC/TK")}</th>
+      <th>WCL</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table>`;
+}
+
+function updateWclPhaseAvgsStatusLine(payload) {
+  const el = document.getElementById("wclPhaseAvgsStatusLine");
+  if (!el) return;
+  const meta = payload?.meta || {};
+  const progress = meta.progress || {};
+  const updatedAt = Number(payload?.updatedAt || 0);
+  const parts = [];
+  if (progress.refreshing) {
+    parts.push(
+      `Refreshing… ${Number(progress.done || 0)} / ${Number(progress.total || 0)} character(s)`
+    );
+    if (progress.lastError) parts.push(`Last error: ${progress.lastError}`);
+  } else if (updatedAt > 0) {
+    parts.push(`Last updated ${new Date(updatedAt).toLocaleString()}`);
+    parts.push(`${Number(meta.characterCount || 0)} character(s)`);
+    if (Number(meta.errorCount || 0) > 0) {
+      parts.push(`${Number(meta.errorCount)} with errors`);
+    }
+  } else {
+    parts.push("No cached data yet — click Refresh all to fetch from Warcraft Logs Fresh.");
+  }
+  el.textContent = parts.join(" · ");
+}
+
+function adminLoginNextUrl() {
+  const hash = String(location.hash || "").trim();
+  return encodeURIComponent(`/admin.html${hash || "#admin-wcl-phase-avgs"}`);
+}
+
+function wclPhaseAvgsLoadErrorHtml(error) {
+  const msg = String(error?.message || "");
+  if (/login required/i.test(msg)) {
+    const loginHref = `/auth/discord/login?next=${adminLoginNextUrl()}`;
+    return `<p class="subtle">Your admin session expired (this often happens after restarting the API). <a href="${esc(
+      loginHref
+    )}">Log in with Discord</a> and reopen this section.</p>`;
+  }
+  if (/404/.test(msg)) {
+    return `<p class="subtle">WCL Phase Averages API not found (404). Restart the API server (npm run dev or npm start) so it loads the latest server.js.</p>`;
+  }
+  return `<p class="subtle">${esc(msg || "Failed to load WCL phase averages.")}</p>`;
+}
+
+function wclPhaseAvgsLoadErrorMessage(error) {
+  const msg = String(error?.message || "");
+  if (/login required/i.test(msg)) {
+    return "Session expired — log in with Discord again (common after restarting the API).";
+  }
+  if (/404/.test(msg)) {
+    return "WCL Phase Averages API not found (404). Restart the API server (npm run dev or npm start) so it loads the latest server.js.";
+  }
+  return msg || "Failed to load WCL phase averages.";
+}
+
+async function loadWclPhaseAvgsPanel({ silent = false, forceRender = false } = {}) {
+  let payload;
+  try {
+    payload = await getJson("/api/admin/wcl-phase-avgs");
+  } catch (error) {
+    const host = document.getElementById("wclPhaseAvgsTableHost");
+    const line = document.getElementById("wclPhaseAvgsStatusLine");
+    const message = wclPhaseAvgsLoadErrorMessage(error);
+    if (host) host.innerHTML = wclPhaseAvgsLoadErrorHtml(error);
+    if (line) line.textContent = message;
+    if (!silent) status(message);
+    throw error;
+  }
+  const renderKey = wclPhaseAvgsTableRenderKey(payload);
+  if (forceRender || renderKey !== wclPhaseAvgsCachedRenderKey) {
+    renderWclPhaseAvgsTable(payload);
+    wclPhaseAvgsCachedRenderKey = renderKey;
+  }
+  updateWclPhaseAvgsStatusLine(payload);
+  const refreshing = Boolean(payload?.meta?.refreshing);
+  const refreshBtn = document.getElementById("wclPhaseAvgsRefreshBtn");
+  if (refreshBtn) refreshBtn.disabled = refreshing;
+  if (refreshing) {
+    startWclPhaseAvgsPoll();
+  } else {
+    stopWclPhaseAvgsPoll();
+    const updatedAt = Number(payload?.updatedAt || 0);
+    if (updatedAt > wclPhaseAvgsLastUpdatedAt && !silent) {
+      status("WCL phase averages updated.");
+    }
+    wclPhaseAvgsLastUpdatedAt = updatedAt;
+  }
+  return payload;
+}
+
 
 async function refreshWclPhaseAvgsAll(btn) {
   try {

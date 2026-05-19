@@ -82,6 +82,8 @@ const rosterProfilePictureRequestedIds = new Set();
 const rosterProfilePictureRequestedCharacterKeys = new Set();
 /** Resolves once the very first batch lookup for a render returns, so callers can await it before painting. */
 let rosterProfilePicturesPendingFetch = null;
+/** Classic Armory gear audit summaries keyed by lowercase character/signup name. */
+let rosterGearSummaryByKey = new Map();
 /** Legacy fallback: global max peak parse % per bracket (used when API has no encounter-top flags). */
 let parseCeilingMaxByBracket = { tank: null, heal: null, dps: null };
 /** Official WoW class colours (default UI palette). */
@@ -1657,6 +1659,62 @@ function rosterLastRaidsKpiPhrase() {
   return `last ${n} raids`;
 }
 
+function rosterGearSummaryForPlayer(player) {
+  const keys = attendanceLookupNameCandidates(player);
+  const label = eventsRosterCharacterLabel(player);
+  if (label) keys.unshift(label);
+  for (const key of keys) {
+    const hit = rosterGearSummaryByKey.get(String(key || "").trim().toLowerCase());
+    if (hit) return hit;
+  }
+  return rosterGearSummaryByKey.has(String(label || "").trim().toLowerCase())
+    ? rosterGearSummaryByKey.get(String(label || "").trim().toLowerCase())
+    : null;
+}
+
+function rosterGearSummaryHtml(player) {
+  const summary = rosterGearSummaryForPlayer(player);
+  const display = window.plbGearAuditDisplay;
+  if (display?.buildGearAuditSummaryHtml) {
+    return `<div class="raider-gear-summary">${display.buildGearAuditSummaryHtml(summary, escapeHtml)}</div>`;
+  }
+  return `<div class="raider-gear-summary raider-gear-summary--empty">—</div>`;
+}
+
+async function loadRosterGearSummaries(players, { warmMissing = true } = {}) {
+  const names = [
+    ...new Set(
+      (Array.isArray(players) ? players : [])
+        .map((p) => eventsRosterCharacterLabel(p))
+        .filter(Boolean)
+    ),
+  ];
+  if (!names.length) {
+    rosterGearSummaryByKey = new Map();
+    return;
+  }
+  try {
+    const res = await fetch("/api/classic-armory/gear-summaries", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ names, warmMissing: Boolean(warmMissing), maxWarm: 20 }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || payload?.ok === false) throw new Error(payload?.error || `HTTP ${res.status}`);
+    const next = new Map();
+    const summaries =
+      payload?.summaries && typeof payload.summaries === "object" ? payload.summaries : {};
+    for (const [key, row] of Object.entries(summaries)) {
+      next.set(String(key || "").trim().toLowerCase(), row && typeof row === "object" ? row : null);
+    }
+    rosterGearSummaryByKey = next;
+  } catch (err) {
+    console.warn("[plb] loadRosterGearSummaries failed:", err?.message || err);
+    rosterGearSummaryByKey = new Map();
+  }
+}
+
 function rosterCardKpisHtml(player, confirmedRoster) {
   const row = attendanceRowForRosterPlayerResolved(player);
   const period = rosterLastRaidsKpiPhrase();
@@ -2020,6 +2078,7 @@ function rosterRaiderCard(player, confirmedRoster) {
   return `
     <div class="raider-card"${cardTitleAttr}>
       ${rosterCardKpisHtml(player, confirmedRoster)}
+      ${rosterGearSummaryHtml(player)}
       <div class="raider-card-main">
         <div class="raider-portrait-stack">
           <img
@@ -2063,6 +2122,8 @@ window.plbEventsRoster = {
   ROLE_ORDER,
   loadTbcSpecIconMap,
   loadWclAttendanceForEvents,
+  loadRosterGearSummaries,
+  rosterGearSummaryForPlayer,
   rosterRaiderCard,
   rosterGuildRoleSectionTitleHtml,
   effectiveGuildRole,

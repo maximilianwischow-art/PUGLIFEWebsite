@@ -2433,6 +2433,112 @@ body.framework-bg-vivid {
   color: var(--mint);
 }
 
+.raider-gear-summary {
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(168, 85, 247, 0.12);
+  background: rgba(13, 10, 20, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 18px;
+}
+
+.raider-gear-summary--empty {
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Compact gear line: Enc · colored gem counts (shared roster + composer cards) */
+.gear-audit-compact {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.gear-audit-compact--empty {
+  color: rgba(148, 163, 184, 0.8);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.gear-audit-enc {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.gear-audit-enc--ok {
+  color: #86efac;
+}
+
+.gear-audit-enc--miss {
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.gear-audit-sep {
+  color: rgba(148, 163, 184, 0.45);
+  font-size: 9px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.gear-audit-gems {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gear-audit-gems--ok {
+  color: #86efac;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.gear-audit-gem {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.gear-audit-gem--epic {
+  color: #d8b4fe;
+}
+
+.gear-audit-gem--rare {
+  color: #60a5fa;
+}
+
+.gear-audit-gem--uncommon {
+  color: #4ade80;
+}
+
+.gear-audit-gem--unknown {
+  color: #cbd5e1;
+}
+
+.gear-audit-gem--missing {
+  color: #f87171;
+}
+
 .raider-card-main {
   display: flex;
   align-items: center;
@@ -8168,6 +8274,7 @@ tr.plb-gear-row--miss th {
 }
 
 .role-alert-raid-composer {
+  --composer-card-min-height: 96px;
   margin: 12px 0 16px;
   padding: 14px 16px 16px;
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -8256,20 +8363,21 @@ tr.plb-gear-row--miss th {
 }
 
 .role-alert-composer-slot-shell--empty {
-  height: 204px;
-  min-height: 204px;
-  max-height: 204px;
+  height: auto;
+  min-height: var(--composer-card-min-height, 96px);
+  max-height: none;
 }
 
 .role-alert-composer-slot-shell--empty > .role-alert-slot {
   width: 100%;
   height: 100%;
+  min-height: var(--composer-card-min-height, 96px);
 }
 
 .role-alert-slot--composer-empty {
   height: 100%;
-  min-height: 204px;
-  max-height: 204px;
+  min-height: var(--composer-card-min-height, 96px);
+  max-height: none;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -8291,12 +8399,13 @@ tr.plb-gear-row--miss th {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin: 6px 8px 8px;
-  min-height: 0;
+  gap: 6px;
+  margin: 5px 6px 6px;
+  min-height: calc(var(--composer-card-min-height, 96px) - 11px);
   border-radius: 8px;
   border: 1px dashed rgba(255, 255, 255, 0.16);
   background: rgba(0, 0, 0, 0.32);
+  box-sizing: border-box;
   transition:
     border-color 0.15s ease,
     background 0.15s ease;
@@ -8459,7 +8568,7 @@ tr.plb-gear-row--miss th {
 .role-alert-composer-slot-shell,
 .role-alert-composer-pool-card-wrap {
   display: block;
-  height: 204px;
+  height: auto;
   width: 100%;
   min-width: 0;
 }
@@ -8487,9 +8596,9 @@ tr.plb-gear-row--miss th {
 
 .role-alert-slot--composer-card {
   --composer-class-accent: rgba(148, 163, 184, 0.45);
-  height: 204px;
-  min-height: 204px;
-  max-height: 204px;
+  height: auto;
+  min-height: 118px;
+  max-height: 118px;
   padding: 0;
   gap: 0;
   overflow: hidden;
@@ -8500,6 +8609,92 @@ tr.plb-gear-row--miss th {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(10, 9, 18, 0.96);
   position: relative;
+  cursor: pointer;
+}
+
+.role-alert-slot--composer-card.is-composer-expanded {
+  max-height: min(360px, 72vh);
+  cursor: default;
+}
+
+/* Collapsed: single-row identity + Parse / Events / GS only (no dead space) */
+.role-alert-slot--composer-card:not(.is-composer-expanded) {
+  min-height: var(--composer-card-min-height, 96px);
+  max-height: none;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-card-head {
+  flex: 0 0 auto;
+  min-height: 0;
+  gap: 0;
+  padding: 5px 8px 4px 10px;
+  border-bottom: none;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded).role-alert-slot--has-class-color::before {
+  height: 38px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-card-identity {
+  align-items: center;
+  gap: 6px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-class-mark {
+  border-width: 1px;
+  border-radius: 6px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-icon {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-name {
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-panel {
+  flex: 0 0 auto;
+  margin: 0 6px 6px;
+  padding: 4px 5px 5px;
+  gap: 0;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-grid {
+  gap: 3px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-cell {
+  min-height: 26px;
+  padding: 1px 3px;
+  gap: 1px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-label {
+  font-size: 7px;
+  letter-spacing: 0.06em;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-value {
+  min-height: 14px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-value .role-alert-slot-peak {
+  font-size: 11px;
+}
+
+.role-alert-slot--composer-card:not(.is-composer-expanded) .role-alert-composer-info-value .role-alert-slot-gs-pill {
+  font-size: 9px;
+  padding: 0 4px;
+}
+
+.role-alert-slot--composer-card.is-composer-expanded .role-alert-composer-card-head {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 7px 10px 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .role-alert-slot--composer-card.role-alert-slot--has-class-color {
@@ -8641,6 +8836,45 @@ tr.plb-gear-row--miss th {
   align-items: flex-start;
   gap: 8px;
   min-width: 0;
+  width: 100%;
+}
+
+.role-alert-composer-expand-hint {
+  flex-shrink: 0;
+  margin-left: auto;
+  align-self: center;
+  padding-left: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.role-alert-slot--composer-card.is-composer-expanded .role-alert-composer-expand-hint {
+  color: rgba(203, 213, 225, 0.9);
+}
+
+.role-alert-composer-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
+  max-height: 220px;
+  min-height: 0;
+}
+
+.role-alert-composer-expanded[hidden] {
+  display: none !important;
+}
+
+.role-alert-composer-expanded .role-alert-composer-rh-alias:not([aria-hidden="true"]) {
+  display: block;
+  margin: 0 2px;
+  font-size: 9px;
+  text-align: center;
 }
 
 .role-alert-composer-class-mark {
@@ -8837,6 +9071,38 @@ tr.plb-gear-row--miss th {
   gap: 4px;
 }
 
+.role-alert-composer-gear-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+.role-alert-composer-gear-row .role-alert-composer-info-heading {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.role-alert-composer-gear-row .gear-audit-compact {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.role-alert-slot-gear-audit {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
 .role-alert-composer-info-cell {
   display: flex;
   flex-direction: column;
@@ -8880,10 +9146,11 @@ tr.plb-gear-row--miss th {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px 0 1px;
+  padding: 3px 0 0;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
   min-height: 0;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  overflow: hidden;
 }
 
 .role-alert-composer-info-heading {
