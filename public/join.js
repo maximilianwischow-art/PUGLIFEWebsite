@@ -8,7 +8,7 @@ function escJoin(v) {
 
 const JOIN_PAGE_NEXT = "/join.html#join-future-events";
 const JOIN_DISCORD_INVITE = "https://discord.gg/TBnt5f8DFc";
-const JOIN_EVENT_IMG_VER = "20260504j";
+const JOIN_EVENT_IMG_VER = "20260519join-ssc-hero";
 const JOIN_GUILD_ID = 817080;
 const JOIN_DISCORD_CLICKED_KEY = "plb_join_discord_clicked_v1";
 const JOIN_CLASS_LABELS = ["Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Shaman", "Mage", "Warlock", "Druid"];
@@ -438,7 +438,12 @@ function joinDetectEventRaids(event) {
     });
   }
   if (text.includes("serpentshrine") || /\bssc\b/.test(text)) {
-    matches.push({ id: "ssc", image: v("/raid-images/pb-header-ssc.png"), squareImage: v("/raid-images/ssc.png"), rosterCap: 25 });
+    matches.push({
+      id: "ssc",
+      image: v("/raid-images/join-next-raid-ssc.png"),
+      squareImage: v("/raid-images/ssc.png"),
+      rosterCap: 25,
+    });
   }
   if (text.includes("tempest keep") || /\btk\b/.test(text) || text.includes("the eye")) {
     matches.push({ id: "tk", image: v("/raid-images/pb-header-tk.png"), squareImage: v("/raid-images/tk.png"), rosterCap: 25 });
