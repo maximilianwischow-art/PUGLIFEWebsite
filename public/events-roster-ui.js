@@ -580,6 +580,8 @@ function effectiveRosterClassSlug(player) {
   if (wclType) return wclType;
   const wclIcon = classSlugFromWclSpecIconUrl(player?.wclSpecIconUrl);
   if (wclIcon) return wclIcon;
+  const specOnly = classSlugFromWclCombatType(player?.specName);
+  if (specOnly) return specOnly;
   return "";
 }
 
@@ -769,6 +771,7 @@ function displaySpecNameForRoster(raw) {
   if (!s) return "";
   const slug = normalizeSlug(s);
   if (/^protection\d+$/.test(slug)) return "Protection";
+  if (slug === "guardian") return "Guardian";
   return s;
 }
 
@@ -1715,10 +1718,87 @@ async function loadRosterGearSummaries(players, { warmMissing = true } = {}) {
   }
 }
 
-function rosterCardKpisHtml(player, confirmedRoster) {
+function rosterPeakParseTierClass(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "leaderboard-peak-parse--empty";
+  if (n >= 100) return "leaderboard-peak-parse--wcl100";
+  if (n >= 99) return "leaderboard-peak-parse--wcl99";
+  if (n >= 95) return "leaderboard-peak-parse--wcl95";
+  if (n >= 75) return "leaderboard-peak-parse--wcl75";
+  if (n >= 50) return "leaderboard-peak-parse--wcl50";
+  if (n >= 25) return "leaderboard-peak-parse--wcl25";
+  return "leaderboard-peak-parse--wcl0";
+}
+
+function rosterCardPhaseAvgCellHtml(label, value) {
+  const n = Number(value);
+  const txt = Number.isFinite(n) && n > 0 ? n.toFixed(1) : "—";
+  const tier = Number.isFinite(n) && n > 0 ? rosterPeakParseTierClass(n) : "leaderboard-peak-parse--empty";
+  const phaseTitle = { K: "Karazhan", G: "Gruul/Mag", S: "SSC/TK" }[label] || label;
+  return `<span class="raider-card-phase" title="${escapeHtml(phaseTitle)} Best Perf. Avg">
+    <span class="raider-card-phase-label">${escapeHtml(label)}</span>
+    <span class="leaderboard-peak-parse raider-card-phase-val ${tier}">${escapeHtml(txt)}</span>
+  </span>`;
+}
+
+function rosterCardPhaseAvgsHtml(phaseAvgs, options = {}) {
+  const avgs = phaseAvgs && typeof phaseAvgs === "object" ? phaseAvgs : {};
+  const inline = Boolean(options?.inline);
+  const title =
+    "Warcraft Logs Fresh account-wide Best Perf. Avg per phase (WCL Phase Averages cache). Refresh in Admin → WCL Phase Averages if stale.";
+  const gridClass = inline
+    ? "raider-card-phase-avgs raider-card-phase-avgs--inline"
+    : "raider-card-phase-avgs";
+  return `<div class="${gridClass}" aria-label="WCL phase Best Perf. Avg" title="${escapeHtml(title)}">
+    ${rosterCardPhaseAvgCellHtml("K", avgs.kara)}
+    ${rosterCardPhaseAvgCellHtml("G", avgs.gruulMag)}
+    ${rosterCardPhaseAvgCellHtml("S", avgs.sscTk)}
+  </div>`;
+}
+
+/** Classic Armory GS → 0–100 pseudo parse % (fixed bands when roster has no GS spread). */
+function gearScoreToRosterHeatmapPct(gs) {
+  const n = Number(gs);
+  if (!Number.isFinite(n) || n <= 0) return NaN;
+  const minGs = 1050;
+  const maxGs = 2100;
+  if (n >= maxGs) return 100;
+  if (n <= minGs) return Math.max(0, (n / minGs) * 25);
+  return 25 + ((n - minGs) / (maxGs - minGs)) * 75;
+}
+
+/** Map a value into 0–100 using roster min/max; flat roster → 50 (mid band). */
+function rosterRelativeHeatmapPct(value, minV, maxV) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return NaN;
+  if (!Number.isFinite(minV) || !Number.isFinite(maxV)) return NaN;
+  if (maxV <= minV) return 50;
+  return Math.max(0, Math.min(100, ((v - minV) / (maxV - minV)) * 100));
+}
+
+/** Min/max GearScore across a player list (e.g. all characters in one class). */
+function collectRosterGsHeatmapStats(playerList) {
+  let gsMin = Infinity;
+  let gsMax = -Infinity;
+  let count = 0;
+  for (const p of playerList || []) {
+    const gs = Number(p?.gearScore);
+    if (Number.isFinite(gs) && gs > 0) {
+      gsMin = Math.min(gsMin, gs);
+      gsMax = Math.max(gsMax, gs);
+      count += 1;
+    }
+  }
+  return { gsMin: count ? gsMin : NaN, gsMax: count ? gsMax : NaN };
+}
+
+function rosterCardKpisHtml(player, confirmedRoster, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const fullKpi = opts.kpiMode === "full";
+  const composerDetailed = Boolean(opts.composerDetailed);
   const row = attendanceRowForRosterPlayerResolved(player);
   const period = rosterLastRaidsKpiPhrase();
-  const periodParen = `(${period})`;
+  const periodParen = composerDetailed ? "" : `(${period})`;
 
   const mergedLogs =
     Array.isArray(row?.wclCharacters) && row.wclCharacters.length > 1
@@ -1735,9 +1815,10 @@ function rosterCardKpisHtml(player, confirmedRoster) {
         ? "Attendance rate unavailable for this window."
         : "No WCL attendance match in leaderboard.";
   if (row && attendanceConsideredRaids > 0) {
-    attValue = `${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids} · ${Math.round(
-      Number(row.attendanceRate || 0)
-    )}%`;
+    const attPct = Math.round(Number(row.attendanceRate || 0));
+    attValue = composerDetailed
+      ? `${attPct}%`
+      : `${Number(row.raidsAttended || 0)}/${attendanceConsideredRaids} · ${attPct}%`;
   }
 
   const { value, bracket, usedFallback, raidsWithBracket, parseSource } = rosterParseForDisplay(player, row);
@@ -1754,19 +1835,87 @@ function rosterCardKpisHtml(player, confirmedRoster) {
         : `No WCL parse for ${bracketLabel} in ${period}${mergedLogs}`
       : "No WCL attendance row — parse unavailable.";
   if (row && attendanceConsideredRaids > 0 && pctRounded != null) {
-    parseValue = `${pctRounded}% · ${bracketLabel}${usedFallback ? " · DPS" : ""}`;
+    parseValue = composerDetailed
+      ? `${pctRounded}%`
+      : `${pctRounded}% · ${bracketLabel}${usedFallback ? " · DPS" : ""}`;
   }
 
+  let eventsValue = "—";
+  let eventsTitle =
+    "Distinct WCL guild raid reports this character’s account appeared in (admin Event Management scope).";
+  const wclEvRaw = player?.wclEventCount;
+  if (wclEvRaw != null && Number.isFinite(Number(wclEvRaw))) {
+    eventsValue = String(Math.max(0, Math.floor(Number(wclEvRaw))));
+    eventsTitle = `Events: ${eventsValue} curated guild reports. Same scope as the rank pill on the public roster.`;
+  } else if (!row) {
+    eventsTitle = "No WCL roster match — events count unavailable.";
+  }
+
+  let gsValue = "—";
+  let gsTitle = "Classic Armory GearScore from identity DB or roster enrichment.";
+  let gsMetricClass = "raider-kpi-metric";
+  const gsN = Number(player?.gearScore);
+  const gsHeatMin = opts.gsHeatMin;
+  const gsHeatMax = opts.gsHeatMax;
+  if (Number.isFinite(gsN) && gsN > 0) {
+    gsValue = String(Math.round(gsN));
+    const gsHasRange = Number.isFinite(gsHeatMin) && Number.isFinite(gsHeatMax);
+    const gsVirt = gsHasRange
+      ? rosterRelativeHeatmapPct(gsN, gsHeatMin, gsHeatMax)
+      : gearScoreToRosterHeatmapPct(gsN);
+    const gsTierClass = rosterPeakParseTierClass(gsVirt);
+    gsMetricClass = `raider-kpi-metric leaderboard-peak-parse ${gsTierClass}`;
+    gsTitle = gsHasRange
+      ? `GearScore ${gsValue}. Color is scaled to min/max GS (${Math.round(gsHeatMin)}–${Math.round(gsHeatMax)}) among characters in this class. Not the WCL parse number.`
+      : `GearScore ${gsValue}. Colors use fixed GS bands when only one value is in this class. Not the WCL parse number.`;
+  }
+
+  const kpiGridClass = fullKpi
+    ? `raider-card-kpis raider-card-kpis--full${composerDetailed ? " raider-card-kpis--composer-detailed" : ""}`
+    : "raider-card-kpis";
+  const phaseRow = fullKpi
+    ? composerDetailed
+      ? `<div class="raider-kpi raider-kpi--phase-row raider-kpi--phase-row-compact">${rosterCardPhaseAvgsHtml(
+          player?.phaseAvgs,
+          { inline: true }
+        )}</div>`
+      : `<div class="raider-kpi raider-kpi--phase-row">
+        <span class="raider-kpi-heading">WCL phase avg</span>
+        ${rosterCardPhaseAvgsHtml(player?.phaseAvgs)}
+      </div>`
+    : "";
+
+  const extraKpis = fullKpi
+    ? `
+      <div class="raider-kpi raider-kpi--events" title="${escapeHtml(eventsTitle)}">
+        <span class="raider-kpi-heading">Events</span>
+        <span class="raider-kpi-metric">${escapeHtml(eventsValue)}</span>
+      </div>
+      <div class="raider-kpi raider-kpi--gs" title="${escapeHtml(gsTitle)}">
+        <span class="raider-kpi-heading">GS</span>
+        <span class="${gsMetricClass}">${escapeHtml(gsValue)}</span>
+      </div>`
+    : "";
+
+  const attHeading = composerDetailed
+    ? "Att %"
+    : `Attendance <span class="raider-kpi-period">${escapeHtml(periodParen)}</span>`;
+  const parseHeading = composerDetailed
+    ? "Parse"
+    : `Peak parse <span class="raider-kpi-period">${escapeHtml(periodParen)}</span>`;
+
   return `
-    <div class="raider-card-kpis" role="group" aria-label="Warcraft Logs KPIs for ${escapeHtml(period)}">
-      <div class="raider-kpi raider-kpi--attendance" title="${escapeHtml(attTitle)}">
-        <span class="raider-kpi-heading">Attendance <span class="raider-kpi-period">${escapeHtml(periodParen)}</span></span>
+    <div class="${kpiGridClass}" role="group" aria-label="${composerDetailed ? "Raid KPIs" : `Warcraft Logs KPIs for ${escapeHtml(period)}`}">
+      <div class="raider-kpi raider-kpi--attendance${composerDetailed ? " raider-kpi--attendance-compact" : ""}" title="${escapeHtml(attTitle)}">
+        <span class="raider-kpi-heading">${attHeading}</span>
         <span class="raider-kpi-metric">${escapeHtml(attValue)}</span>
       </div>
       <div class="raider-kpi raider-kpi--parse" title="${escapeHtml(parseTitle)}">
-        <span class="raider-kpi-heading">Peak parse <span class="raider-kpi-period">${escapeHtml(periodParen)}</span></span>
+        <span class="raider-kpi-heading">${parseHeading}</span>
         <span class="raider-kpi-metric">${escapeHtml(parseValue)}</span>
       </div>
+      ${extraKpis}
+      ${phaseRow}
     </div>
   `;
 }
@@ -2026,7 +2175,8 @@ function mergedClassDisplayLabel(player) {
   // (cold cache), fall back to whatever the WCL Damage Done / icon URL imply.
   const wclTypeSlug = classSlugFromWclCombatType(player?.wclCombatSpecType);
   const wclIconSlug = classSlugFromWclSpecIconUrl(player?.wclSpecIconUrl);
-  const fallbackSlug = wclTypeSlug || wclIconSlug || "";
+  const specOnlySlug = classSlugFromWclCombatType(player?.specName);
+  const fallbackSlug = wclTypeSlug || wclIconSlug || specOnlySlug || "";
   if (fallbackSlug) {
     const display = fallbackSlug.charAt(0).toUpperCase() + fallbackSlug.slice(1);
     return fallbackSlug === "deathknight" ? "Death Knight" : display;
@@ -2050,7 +2200,10 @@ function rosterClassSpecSourcesTooltip(player) {
   return parts.join(" · ");
 }
 
-function rosterRaiderCard(player, confirmedRoster) {
+function rosterRaiderCard(player, confirmedRoster, options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const showGearSummary = opts.showGearSummary !== false;
+  const showBadges = opts.showBadges !== false;
   const displayName = eventsRosterCharacterLabel(player);
   const className = mergedClassDisplayLabel(player);
   const color = wowClassColor(className);
@@ -2070,16 +2223,34 @@ function rosterRaiderCard(player, confirmedRoster) {
     String(player?.name || "").trim() !== displayName
       ? ` · Raid Helper signup: ${String(player?.name || "").trim()}`
       : "";
+  const nameOnTop = Boolean(opts.nameOnTop);
+  const composerDetailed = Boolean(opts.composerDetailed);
   const sourcesTip = `${rosterClassSpecSourcesTooltip(player)}${rhSignupTip}`;
-  const cardTitleAttr = sourcesTip ? ` title="${escapeHtml(sourcesTip)}"` : "";
+  const cardTitleAttr =
+    composerDetailed || !sourcesTip ? "" : ` title="${escapeHtml(sourcesTip)}"`;
   const role = effectiveGuildRole(player);
-  const roleToken = rosterRoleIconHtml(player, { className: "raider-role-token" });
+  const roleToken = composerDetailed
+    ? ""
+    : rosterRoleIconHtml(player, { className: "raider-role-token" });
+  const guildRoleChip = composerDetailed
+    ? ""
+    : `<span class="raider-guild-role-chip">${escapeHtml(role.displayLabel)}</span>`;
+  const wowClassSlug = String(opts.wowClassSlug || "").trim();
+  const classAccentHex = String(opts.classAccentHex || "").trim();
+  const cardMod = `${nameOnTop ? " raider-card--name-first" : ""}${
+    composerDetailed ? " raider-card--composer-detailed" : ""
+  }`;
+  const cardWowAttr = composerDetailed && wowClassSlug ? ` data-wow-class="${escapeHtml(wowClassSlug)}"` : "";
+  const cardAccentStyle =
+    composerDetailed && classAccentHex
+      ? ` style="--composer-class-accent: ${escapeHtml(classAccentHex)}"`
+      : "";
+  const specLine =
+    specLabel && className
+      ? `${escapeHtml(specLabel)} · ${escapeHtml(className)}`
+      : escapeHtml(specLabel || className);
 
-  return `
-    <div class="raider-card"${cardTitleAttr}>
-      ${rosterCardKpisHtml(player, confirmedRoster)}
-      ${rosterGearSummaryHtml(player)}
-      <div class="raider-card-main">
+  const mainHtml = `<div class="raider-card-main">
         <div class="raider-portrait-stack">
           <img
             class="raider-champion-img"
@@ -2096,21 +2267,24 @@ function rosterRaiderCard(player, confirmedRoster) {
         <div class="raider-text">
           <div class="raider-name-line">
             <span class="raider-name" style="color:${color};${priestGlow}">${escapeHtml(displayName)}</span>
-            <span class="raider-guild-role-chip">${escapeHtml(role.displayLabel)}</span>
+            ${guildRoleChip}
           </div>
-          ${
-            specLabel && className
-              ? `<div class="raider-spec-line">${escapeHtml(specLabel)} · ${escapeHtml(className)}</div>`
-              : `<div class="raider-spec-line">${escapeHtml(specLabel || className)}</div>`
-          }
+          ${specLine ? `<div class="raider-spec-line">${specLine}</div>` : ""}
         </div>
         ${roleToken}
-      </div>
-      <div class="raider-badges" role="group" aria-label="Earned achievement badges">
+      </div>`;
+  const kpiHtml = rosterCardKpisHtml(player, confirmedRoster, opts);
+  const gearHtml = showGearSummary && !composerDetailed ? rosterGearSummaryHtml(player) : "";
+  const badgesHtml = showBadges
+    ? `<div class="raider-badges" role="group" aria-label="Earned achievement badges">
         ${rosterBadgeRowHtml(player)}
-      </div>
-    </div>
-  `;
+      </div>`
+    : "";
+  const body = nameOnTop
+    ? `${mainHtml}${kpiHtml}${gearHtml}${badgesHtml}`
+    : `${kpiHtml}${gearHtml}${mainHtml}${badgesHtml}`;
+
+  return `<div class="raider-card${cardMod}"${cardWowAttr}${cardAccentStyle}${cardTitleAttr}>${body}</div>`;
 }
 
 window.plbEventsRoster = {
@@ -2125,6 +2299,10 @@ window.plbEventsRoster = {
   loadRosterGearSummaries,
   rosterGearSummaryForPlayer,
   rosterRaiderCard,
+  rosterCardPhaseAvgsHtml,
+  rosterPeakParseTierClass,
+  collectRosterGsHeatmapStats,
+  rosterCardKpisHtml,
   rosterGuildRoleSectionTitleHtml,
   effectiveGuildRole,
   primaryGuildRankLabel,

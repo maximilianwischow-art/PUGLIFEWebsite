@@ -9055,6 +9055,20 @@ app.get("/api/admin/wcl-phase-avgs", async (req, res) => {
   }
 });
 
+app.get("/api/admin/character-kpi-overview", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const payload = await buildAdminCharacterKpiOverview();
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to load character KPI overview",
+    });
+  }
+});
+
 app.post("/api/admin/wcl-phase-avgs/refresh", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
@@ -16396,6 +16410,177 @@ async function buildWclPhaseAvgsByRhKeyForRoleAlerts() {
     for (const k of keys) byRhKey[k] = entry;
   }
   return { byRhKey, updatedAt: Number(wclCharacterPhaseAvgState.updatedAt || 0) || 0 };
+}
+
+const ADMIN_CHAR_KPI_CLASS_ORDER = [
+  "warrior",
+  "paladin",
+  "hunter",
+  "rogue",
+  "priest",
+  "shaman",
+  "mage",
+  "warlock",
+  "druid",
+  "deathknight",
+  "unknown",
+];
+
+function buildActiveRosterPlayerIndexes(players) {
+  const byNameKey = new Map();
+  const byUserId = new Map();
+  for (const p of players || []) {
+    const addKey = (raw) => {
+      const k = normalizeRaidHelperDisplayKey(String(raw || ""));
+      if (k && !byNameKey.has(k)) byNameKey.set(k, p);
+    };
+    addKey(p?.characterName);
+    addKey(p?.name);
+    for (const cn of Array.isArray(p?.wclCharacters) ? p.wclCharacters : []) addKey(cn);
+    const uid = Number(p?.dbUserId);
+    if (Number.isInteger(uid) && uid > 0 && !byUserId.has(uid)) byUserId.set(uid, p);
+  }
+  return { byNameKey, byUserId };
+}
+
+function matchActiveRosterForIdentityChar(char, indexes) {
+  const nameKey = normalizeRaidHelperDisplayKey(String(char?.characterName || ""));
+  if (nameKey && indexes.byNameKey.has(nameKey)) return indexes.byNameKey.get(nameKey);
+  const uid = Number(char?.userId);
+  if (Number.isInteger(uid) && uid > 0 && indexes.byUserId.has(uid)) return indexes.byUserId.get(uid);
+  return null;
+}
+
+function phaseAvgsForIdentityCharacter(characterName, byRhKey) {
+  const keys = [
+    normalizeRaidHelperDisplayKey(characterName),
+    String(slugifyFreshCharacterName(characterName) || "")
+      .trim()
+      .toLowerCase(),
+  ].filter(Boolean);
+  for (const k of keys) {
+    if (byRhKey[k]) return byRhKey[k];
+  }
+  return null;
+}
+
+async function buildAdminCharacterKpiOverview() {
+  const guildId = votingGuildId;
+  const [rosterPayload, phaseMeta] = await Promise.all([
+    buildActiveRosterPlayersForGuild(guildId, { reportLimit: 40, top: 250, maxRhPastEvents: 0 }),
+    buildWclPhaseAvgsByRhKeyForRoleAlerts(),
+  ]);
+  const rosterPlayers = Array.isArray(rosterPayload?.players) ? rosterPayload.players : [];
+  const indexes = buildActiveRosterPlayerIndexes(rosterPlayers);
+  const usersById = new Map(identityUserListAll().map((u) => [Number(u.id), u]));
+  const characters = identityCharactersListAll({});
+
+  let withPhaseAvgs = 0;
+  let withRosterMatch = 0;
+  const players = [];
+  const specsByClass = new Map();
+  const classCounts = new Map();
+
+  for (const row of characters) {
+    const char = identityCharacterAdminPublic(row);
+    if (!char?.characterName) continue;
+    const user = usersById.get(Number(char.userId));
+    const matched = matchActiveRosterForIdentityChar(char, indexes);
+    if (matched) withRosterMatch += 1;
+
+    const classSlug = englishCanonicalClassSlugFromLocalizedDisplay(char.wowClass) || "unknown";
+    const specDisplay = String(char.wowSpec || "").trim() || "—";
+
+    classCounts.set(classSlug, (classCounts.get(classSlug) || 0) + 1);
+    if (!specsByClass.has(classSlug)) specsByClass.set(classSlug, new Set());
+    if (specDisplay !== "—") specsByClass.get(classSlug).add(specDisplay);
+
+    const phaseAvgs =
+      phaseAvgsForIdentityCharacter(char.characterName, phaseMeta.byRhKey) || {
+        kara: null,
+        gruulMag: null,
+        sscTk: null,
+      };
+    if (
+      phaseAvgs.kara != null ||
+      phaseAvgs.gruulMag != null ||
+      phaseAvgs.sscTk != null
+    ) {
+      withPhaseAvgs += 1;
+    }
+
+    const gs = char.gearScore;
+    const player = {
+      name: String(user?.raidHelperName || char.characterName).trim() || char.characterName,
+      characterName: char.characterName,
+      className: String(char.wowClass || matched?.className || "").trim(),
+      raiderIoClassName: String(char.wowClass || matched?.raiderIoClassName || "").trim(),
+      specName: String(char.wowSpec || matched?.specName || "").trim(),
+      guildRole: normalizeRhWclGuildRole(user?.guildRole || matched?.guildRole || "Peon"),
+      gearScore: Number.isFinite(gs) ? gs : matched?.gearScore,
+      discordUserId: user?.discordUserId || matched?.discordUserId || null,
+      dbUserId: char.userId,
+      identityCharacterId: char.id,
+      isMain: !!char.isMain,
+      phaseAvgs,
+      _filterClassSlug: classSlug,
+      _filterSpec: specDisplay,
+    };
+    if (matched) {
+      Object.assign(player, {
+        raidsAttended: matched.raidsAttended,
+        attendanceRate: matched.attendanceRate,
+        wclCharacters: matched.wclCharacters,
+        parseSummaries: matched.parseSummaries,
+        attendanceHistory: matched.attendanceHistory,
+        wclEventCount: matched.wclEventCount,
+        rhPastEventCount: matched.rhPastEventCount,
+        roleName: matched.roleName,
+        specificEventBadges: matched.specificEventBadges,
+        wclSpecIconUrl: matched.wclSpecIconUrl,
+        wclCombatSpecType: matched.wclCombatSpecType,
+        race: matched.race,
+        gender: matched.gender,
+        blizzardClassName: matched.blizzardClassName,
+        raidHelperClassName: matched.raidHelperClassName,
+        raidHelperSpecName: matched.raidHelperSpecName,
+        raiderIoSpecName: matched.raiderIoSpecName,
+      });
+    }
+    players.push(player);
+  }
+
+  players.sort((a, b) =>
+    String(a.characterName || "").localeCompare(String(b.characterName || ""), undefined, {
+      sensitivity: "base",
+    })
+  );
+
+  const classes = ADMIN_CHAR_KPI_CLASS_ORDER.map((slug) => ({
+    slug,
+    label: slug === "unknown" ? "Unknown" : ENGLISH_CLASS_SLUG_TO_DISPLAY[slug] || slug,
+    count: classCounts.get(slug) || 0,
+  })).filter((c) => c.count > 0);
+
+  const specsByClassOut = {};
+  for (const [slug, set] of specsByClass) {
+    specsByClassOut[slug] = [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  return {
+    ok: true,
+    guildId,
+    totalCharacters: players.length,
+    withPhaseAvgs,
+    withRosterMatch,
+    phaseAvgsUpdatedAt: phaseMeta.updatedAt,
+    attendanceScope: rosterPayload?.attendanceScope || null,
+    parseScope: rosterPayload?.parseScope || null,
+    wclEventScope: rosterPayload?.wclEventScope || null,
+    players,
+    filters: { classes, specsByClass: specsByClassOut },
+    checkedAt: Date.now(),
+  };
 }
 
 function wclPhaseAvgPublicPayload() {

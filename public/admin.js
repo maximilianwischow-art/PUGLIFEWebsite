@@ -26,6 +26,17 @@ let roleAlertsGearSummaryByKey = new Map();
 /** @type {Set<string>} signup ids with composer card expanded */
 let roleAlertsComposerExpandedIds = new Set();
 let roleAlertsComposerExpandClickTimer = null;
+const ROLE_ALERTS_COMPOSER_VIEW_STORAGE = "plb-role-alerts-composer-view";
+let roleAlertsComposerViewModeState = (() => {
+  try {
+    return sessionStorage.getItem(ROLE_ALERTS_COMPOSER_VIEW_STORAGE) === "detailed" ? "detailed" : "executive";
+  } catch {
+    return "executive";
+  }
+})();
+/** Active roster players for Detailed view cards (guild-wide, not per event). */
+let roleAlertsComposerRosterPlayers = null;
+let roleAlertsComposerRosterLoadPromise = null;
 
 function roleAlertsComposerClearDropHighlight() {
   if (roleAlertsComposerDropHighlightEl) {
@@ -155,7 +166,11 @@ function rhWclGuildRoleSelectHtml(current) {
 }
 
 const ADMIN_GROUPS = [
-  { id: "people", label: "People", tools: ["identity", "hof-notes", "raider-blacklist", "badge-tooltips"] },
+  {
+    id: "people",
+    label: "People",
+    tools: ["identity", "hof-notes", "raider-blacklist", "badge-tooltips", "character-kpis"],
+  },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
   { id: "content", label: "Content", tools: ["p2-materials", "p2-demand", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
@@ -2293,6 +2308,7 @@ function roleAlertEmoteIconUrl(id) {
  * @param {string} surface.outerClass - full class list for the root (includes layout modifiers)
  * @param {string} [surface.rootAttrs] - extra HTML attributes for the root element
  * @param {boolean} [surface.compactLayout] - raid composer: calmer typography, aligned stats row, no Ev/GS prefix noise
+ * @param {boolean} [surface.forceExpanded] - Detailed view: show gear/phase/tags on every card
  */
 function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, surface) {
   const outerClass = String(surface?.outerClass || "role-alert-slot").trim();
@@ -2413,8 +2429,10 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
         : `<span class="role-alert-composer-rh-alias" aria-hidden="true"></span>`;
     const parseVal = `<span class="role-alert-slot-peak-line">${star}<span class="role-alert-slot-peak leaderboard-peak-parse ${peakTier}" title="${esc(peakTitle)}">${esc(peakTxt)}</span></span>`;
     const composerSignupId = String(slot?._occupantSignupId || slot?.signupId || "").trim();
+    const forceExpanded = Boolean(surface?.forceExpanded);
     const isComposerExpanded =
-      composerSignupId && roleAlertsComposerExpandedIds.has(composerSignupId);
+      forceExpanded || (composerSignupId && roleAlertsComposerExpandedIds.has(composerSignupId));
+    const blockerMod = slot?.isBlocker ? " role-alert-slot--blocker-card" : "";
     const expandedClass = isComposerExpanded ? " is-composer-expanded" : "";
     const expandedHiddenAttr = isComposerExpanded ? "" : " hidden";
     const expandHint = isComposerExpanded ? "▾" : "▸";
@@ -2448,7 +2466,7 @@ function roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclEventsTitleBase, 
         }
       </div>
     </section>`;
-    return `<div class="${layoutClass} role-alert-slot--composer-card${expandedClass}${classColorClass}${raiderCardMod ? ` ${raiderCardMod}` : ""}"${classColorStyle}${expandAttrs}${attrStr}>
+    return `<div class="${layoutClass} role-alert-slot--composer-card${blockerMod}${expandedClass}${classColorClass}${raiderCardMod ? ` ${raiderCardMod}` : ""}"${classColorStyle}${expandAttrs}${attrStr}>
       ${classColorBar || ""}
       <header class="role-alert-composer-card-head" title="${esc(rhTitle)}">
         <div class="role-alert-composer-card-identity">
@@ -2740,7 +2758,6 @@ function roleAlertNormalizeClassColor(raw) {
 const ADMIN_SPEC_HINT_CLASS = {
   arms: "Warrior",
   fury: "Warrior",
-  protection: "Warrior",
   holy: "Paladin",
   retribution: "Paladin",
   beastmastery: "Hunter",
@@ -2762,21 +2779,103 @@ const ADMIN_SPEC_HINT_CLASS = {
   destruction: "Warlock",
   balance: "Druid",
   feral: "Druid",
+  guardian: "Druid",
+  bear: "Druid",
 };
 
+function roleAlertKnownWowClassLabel(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const skip = new Set(["bench", "tentative", "absence", "late", ""]);
+  const slug = adminIdentitySlug(s);
+  if (skip.has(slug)) return "";
+  const specOnly = new Set([
+    "protection",
+    "prot",
+    "holy",
+    "retribution",
+    "arms",
+    "fury",
+    "elemental",
+    "enhancement",
+    "restoration",
+    "discipline",
+    "shadow",
+    "balance",
+    "feral",
+  ]);
+  if (specOnly.has(slug)) return "";
+  const label = adminIdentityClassDisplay(s);
+  return ADMIN_WOW_CLASS_COLORS[label] ? label : "";
+}
+
+function roleAlertSlotLooksLikePaladin(slot) {
+  const fields = [
+    slot?.className,
+    slot?.raidHelperPatchClassName,
+    slot?.specName,
+    slot?.roleName,
+  ];
+  for (const f of fields) {
+    if (roleAlertKnownWowClassLabel(f) === "Paladin") return true;
+  }
+  const blob = fields.map((v) => String(v || "").trim()).join(" ").toLowerCase();
+  if (/\bpaladin\b/.test(blob) || /\bpala\b/.test(blob)) return true;
+  const classSlug = adminIdentitySlug(slot?.className || "");
+  const specSlug = adminIdentitySlug(slot?.specName || "");
+  if (
+    (classSlug === "protection" || classSlug === "prot" || specSlug === "protection" || specSlug === "prot") &&
+    !/\bwarrior\b|\bwar\b/.test(blob)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function roleAlertSlotLooksLikeWarrior(slot) {
+  const fields = [slot?.className, slot?.raidHelperPatchClassName, slot?.specName, slot?.roleName];
+  for (const f of fields) {
+    if (roleAlertKnownWowClassLabel(f) === "Warrior") return true;
+  }
+  const blob = fields.map((v) => String(v || "").trim()).join(" ").toLowerCase();
+  return /\bwarrior\b/.test(blob) || /\bwar\b/.test(blob);
+}
+
+function roleAlertSpecHintClassLabel(specSlug, slot) {
+  if (!specSlug) return "";
+  if (specSlug === "protection" || specSlug === "prot") {
+    if (roleAlertSlotLooksLikePaladin(slot)) return "Paladin";
+    if (roleAlertSlotLooksLikeWarrior(slot)) return "Warrior";
+    return "";
+  }
+  const hinted = ADMIN_SPEC_HINT_CLASS[specSlug];
+  return hinted && ADMIN_WOW_CLASS_COLORS[hinted] ? hinted : "";
+}
+
 function roleAlertWowClassLabelFromSlot(slot) {
-  const classRaw = String(slot?.className || "").trim();
+  const classRaw = String(slot?.className || slot?.raidHelperPatchClassName || "").trim();
   const specRaw = String(slot?.specName || "").trim();
   const skip = new Set(["bench", "tentative", "absence", "late", ""]);
+
+  const fromClass = roleAlertKnownWowClassLabel(classRaw);
+  if (fromClass) return fromClass;
+
+  const fromSpecClass = roleAlertKnownWowClassLabel(specRaw);
+  if (fromSpecClass) return fromSpecClass;
+
   const classSlug = adminIdentitySlug(classRaw);
   if (classSlug && !skip.has(classSlug)) {
-    const label = adminIdentityClassDisplay(classRaw);
-    if (ADMIN_WOW_CLASS_COLORS[label]) return label;
+    const display = adminIdentityClassDisplay(classRaw);
+    if (ADMIN_WOW_CLASS_COLORS[display]) return display;
   }
+
   const specSlug = adminIdentitySlug(specRaw);
-  const hinted = ADMIN_SPEC_HINT_CLASS[specSlug];
-  if (hinted && ADMIN_WOW_CLASS_COLORS[hinted]) return hinted;
-  if (classRaw && !skip.has(classSlug)) return adminIdentityClassDisplay(classRaw);
+  const hinted = roleAlertSpecHintClassLabel(specSlug, slot);
+  if (hinted) return hinted;
+
+  if (roleAlertSlotLooksLikePaladin(slot)) return "Paladin";
+  if (roleAlertSlotLooksLikeWarrior(slot)) return "Warrior";
+
   return "";
 }
 
@@ -3415,6 +3514,197 @@ function roleAlertsRestoreSignupToPrimaryRoster(row) {
   row.className = playable || String(row.className || "").trim();
 }
 
+function roleAlertsComposerSlotOccupied(slot) {
+  if (!slot || roleAlertSlotIsEmpty(slot)) return false;
+  return Boolean(String(slot?.displayCharacterName || slot?.name || "").trim());
+}
+
+function roleAlertsComposerSlotHasCharacter(slot) {
+  return roleAlertsComposerSlotOccupied(slot) && !slot?.isBlocker;
+}
+
+function roleAlertsSetComposerViewMode(mode) {
+  const next = mode === "detailed" ? "detailed" : "executive";
+  roleAlertsComposerViewModeState = next;
+  if (next === "executive") roleAlertsComposerExpandedIds.clear();
+  try {
+    sessionStorage.setItem(ROLE_ALERTS_COMPOSER_VIEW_STORAGE, next);
+  } catch {
+    /* ignore */
+  }
+  void roleAlertsRefreshRaidComposerDom();
+}
+
+/** Expand or collapse every executive composer card (Detailed = all open). */
+function roleAlertsComposerApplyViewModeExpansions() {
+  const root = document.getElementById("roleAlertsRaidComposerRoot");
+  if (!root) return;
+  const openAll = roleAlertsComposerViewModeState === "detailed";
+  root.querySelectorAll("[data-role-alert-composer-expand]").forEach((card) => {
+    roleAlertsComposerSetCardExpanded(card, openAll);
+  });
+}
+
+function roleAlertsFindRosterPlayerForSlot(slot, rosterPlayers) {
+  const names = [
+    String(slot?.displayCharacterName || "").trim(),
+    String(slot?.name || "").trim(),
+  ].filter(Boolean);
+  if (!names.length || !Array.isArray(rosterPlayers)) return null;
+  const keys = new Set(names.map((n) => roleAlertsRhNameKey(n)).filter(Boolean));
+  for (const p of rosterPlayers) {
+    const candidates = [
+      String(p?.characterName || "").trim(),
+      String(p?.name || "").trim(),
+      String(p?.rioProfileLookupName || "").trim(),
+      ...(Array.isArray(p?.wclCharacters) ? p.wclCharacters : []).map((v) => String(v || "").trim()),
+    ].filter(Boolean);
+    for (const c of candidates) {
+      const k = roleAlertsRhNameKey(c);
+      if (k && keys.has(k)) return p;
+    }
+  }
+  return null;
+}
+
+function roleAlertsSlotToRosterPlayer(slot, rosterPlayers) {
+  const base = roleAlertsFindRosterPlayerForSlot(slot, rosterPlayers);
+  const disp = String(slot?.displayCharacterName || slot?.name || "").trim();
+  const gs = Number(slot?.gearScore);
+  const phaseAvgs = roleAlertsResolvePhaseAvgs(slot);
+  const resolvedClassLabel =
+    roleAlertWowClassLabelFromSlot(slot) ||
+    roleAlertKnownWowClassLabel(slot?.className) ||
+    String(slot?.className || base?.className || "").trim();
+  const patch = {
+    characterName: disp || String(base?.characterName || "").trim(),
+    name: String(slot?.name || "").trim() || String(base?.name || "").trim() || disp,
+    className: resolvedClassLabel,
+    specName: String(slot?.specName || base?.specName || "").trim(),
+    roleName: String(slot?.roleName || base?.roleName || "").trim(),
+    gearScore: Number.isFinite(gs) && gs > 0 ? gs : base?.gearScore,
+    wclEventCount: slot?.wclEventCount != null ? slot.wclEventCount : base?.wclEventCount,
+    phaseAvgs: phaseAvgs || base?.phaseAvgs,
+    classEmoteId: slot?.classEmoteId || base?.classEmoteId,
+    specEmoteId: slot?.specEmoteId || base?.specEmoteId,
+    color: slot?.color || base?.color,
+  };
+  return base ? { ...base, ...patch } : patch;
+}
+
+async function roleAlertsEnsureComposerRosterPlayers() {
+  if (Array.isArray(roleAlertsComposerRosterPlayers)) return roleAlertsComposerRosterPlayers;
+  if (roleAlertsComposerRosterLoadPromise) return roleAlertsComposerRosterLoadPromise;
+  const plb = window.plbEventsRoster;
+  if (!plb) {
+    roleAlertsComposerRosterPlayers = [];
+    return roleAlertsComposerRosterPlayers;
+  }
+  roleAlertsComposerRosterLoadPromise = (async () => {
+    try {
+      await Promise.all([plb.loadTbcSpecIconMap(), plb.loadWclAttendanceForEvents()]);
+      const gid = plb.EVENTS_WCL_GUILD_ID;
+      const res = await fetch(`/api/wcl/guild/${gid}/active-roster?limit=40&top=250`, {
+        credentials: "include",
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+      const players = Array.isArray(payload.players) ? payload.players : [];
+      for (const p of players) {
+        const avgs = roleAlertsResolvePhaseAvgs({
+          displayCharacterName: p.characterName,
+          name: p.name,
+        });
+        if (avgs) p.phaseAvgs = avgs;
+      }
+      await plb.loadRosterGearSummaries?.(players, { warmMissing: true });
+      roleAlertsComposerRosterPlayers = players;
+      return players;
+    } catch {
+      roleAlertsComposerRosterPlayers = [];
+      return [];
+    } finally {
+      roleAlertsComposerRosterLoadPromise = null;
+    }
+  })();
+  return roleAlertsComposerRosterLoadPromise;
+}
+
+function roleAlertsComposerWowClassSlug(slot, player) {
+  const label = roleAlertWowClassLabelFromSlot(slot);
+  if (label && ADMIN_WOW_CLASS_COLORS[label]) return adminIdentitySlug(label);
+  const cn = String(slot?.className || player?.className || "").trim();
+  if (!cn) return "";
+  const display = adminIdentityClassDisplay(cn) || cn;
+  const slug = adminIdentitySlug(display);
+  return slug && ADMIN_WOW_CLASS_COLORS_BY_SLUG[slug] ? slug : "";
+}
+
+function roleAlertsComposerClassAccent(slot, player, wowClassSlug) {
+  const fromResolve = roleAlertResolveClassColor(slot);
+  const fromSlot = roleAlertNormalizeClassColor(slot?.color);
+  const fromSlug =
+    wowClassSlug && ADMIN_WOW_CLASS_COLORS_BY_SLUG[wowClassSlug]
+      ? ADMIN_WOW_CLASS_COLORS_BY_SLUG[wowClassSlug]
+      : "";
+  const plb = window.plbEventsRoster;
+  let fromPlb = "";
+  if (plb?.wowClassColor) {
+    const label = roleAlertWowClassLabelFromSlot(slot) || String(slot?.className || player?.className || "").trim();
+    const raw = plb.wowClassColor(label);
+    if (raw && /^#[0-9a-f]{6}$/i.test(String(raw).trim())) fromPlb = raw;
+  }
+  return roleAlertReadableClassAccent(fromResolve || fromSlot || fromSlug || fromPlb);
+}
+
+function roleAlertsComposerDetailedCardHtml(slot, heatStats, wclMeta, wclTitleBase, surface) {
+  const plb = window.plbEventsRoster;
+  if (!plb?.rosterRaiderCard) {
+    return roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclTitleBase, {
+      ...surface,
+      compactLayout: true,
+      showPhaseAvgs: true,
+    });
+  }
+  const roster = roleAlertsComposerRosterPlayers || [];
+  const player = roleAlertsSlotToRosterPlayer(slot, roster);
+  const wowClassSlug = roleAlertsComposerWowClassSlug(slot, player);
+  const classAccent = roleAlertsComposerClassAccent(slot, player, wowClassSlug);
+  const cardHtml = plb.rosterRaiderCard(player, roster, {
+    kpiMode: "full",
+    showGearSummary: false,
+    showBadges: false,
+    composerDetailed: true,
+    nameOnTop: true,
+    wowClassSlug,
+    classAccentHex: classAccent,
+    gsHeatMin: heatStats.gsMin,
+    gsHeatMax: heatStats.gsMax,
+  });
+  const raiderCardMod = roleAlertsRaiderCardModifier(slot);
+  const rootAttrs = String(surface?.rootAttrs || "").trim();
+  const { barHtml: classColorBar } = roleAlertComposerCardColorAttrs(classAccent, wowClassSlug);
+  const slugAttr = wowClassSlug ? ` data-wow-class="${esc(wowClassSlug)}"` : "";
+  const accentVar = classAccent ? ` style="--composer-class-accent: ${esc(classAccent)}"` : "";
+  const blockerMod = slot?.isBlocker ? " role-alert-composer-detailed-wrap--blocker" : "";
+  const wrapClass = `role-alert-composer-detailed-wrap${blockerMod}${raiderCardMod ? ` ${raiderCardMod}` : ""}`;
+  return `<div class="${wrapClass}" data-role-alert-composer-detailed="1"${slugAttr}${accentVar}${rootAttrs ? ` ${rootAttrs}` : ""}>${classColorBar}${cardHtml}</div>`;
+}
+
+function roleAlertsComposerCardFaceHtml(slot, heatStats, wclMeta, wclTitleBase, surface) {
+  const occupied = roleAlertsComposerSlotOccupied(slot);
+  const isDetailed = roleAlertsComposerViewModeState === "detailed";
+  if (isDetailed && occupied && window.plbEventsRoster?.rosterRaiderCard) {
+    return roleAlertsComposerDetailedCardHtml(slot, heatStats, wclMeta, wclTitleBase, surface);
+  }
+  return roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclTitleBase, {
+    ...surface,
+    compactLayout: true,
+    showPhaseAvgs: !slot?.isBlocker,
+    forceExpanded: isDetailed && occupied,
+  });
+}
+
 function roleAlertsRaidComposerSlotRowHtml(slot, group, heatStats, wclMeta, wclTitleBase) {
   if (roleAlertSlotIsEmpty(slot)) {
     return `<div class="role-alert-composer-slot-shell role-alert-composer-slot-shell--empty">${roleAlertComposerEmptySlotHtml(
@@ -3446,11 +3736,9 @@ function roleAlertsRaidComposerSlotRowHtml(slot, group, heatStats, wclMeta, wclT
     occ && !slot?.isBlocker
       ? ` data-role-alert-composer-dbl="1" data-signup-id="${esc(String(occ))}" title="Double-click to remove from roster"`
       : "";
-  const face = roleAlertSlotSurfaceHtml(slot, heatStats, wclMeta, wclTitleBase, {
+  const face = roleAlertsComposerCardFaceHtml(slot, heatStats, wclMeta, wclTitleBase, {
     outerClass: cls,
     rootAttrs: `data-role-alert-composer-slot-wrap="1"${dropAttr}${dragAttr}${dblAttr}${blockerHint}`,
-    compactLayout: true,
-    showPhaseAvgs: true,
   });
   return `<div class="role-alert-composer-slot-shell">${face}</div>`;
 }
@@ -3488,13 +3776,11 @@ function roleAlertsRaidComposerPoolStripHtml(title, poolKey, rows, analysis, hea
     .map((row) => {
       const sid = esc(String(row.signupId || ""));
       const slotLike = roleAlertsSignupRowAsSlotLike(row);
-      const face = roleAlertSlotSurfaceHtml(slotLike, heatStats, wclMeta, wclTitleBase, {
+      const face = roleAlertsComposerCardFaceHtml(slotLike, heatStats, wclMeta, wclTitleBase, {
         outerClass: "role-alert-slot role-alert-slot--known role-alert-composer-pool-card",
         rootAttrs: `draggable="true" data-role-alert-composer-drag="1" data-role-alert-composer-dbl="1" data-role-alert-composer-source="pool" data-signup-id="${sid}" data-pool="${esc(
           poolKey
         )}" title="Double-click to add to first open roster slot"`,
-        compactLayout: true,
-        showPhaseAvgs: true,
       });
       return `<div class="role-alert-composer-pool-card-wrap">${face}</div>`;
     })
@@ -3555,11 +3841,20 @@ function roleAlertsRaidComposerSectionHtml(analysis) {
   }
   const dirty = roleAlertsRaidComposerDirtyJson();
   const inner = roleAlertsRaidComposerPoolsAndRosterInnerHtml(analysis);
+  const viewMode = roleAlertsComposerViewModeState;
+  const execActive = viewMode === "executive" ? " is-active" : "";
+  const detailActive = viewMode === "detailed" ? " is-active" : "";
+  const viewClass =
+    viewMode === "detailed" ? " role-alert-raid-composer--detailed" : " role-alert-raid-composer--executive";
   return `
-    <div class="role-alert-raid-composer" id="roleAlertsRaidComposerRoot">
+    <div class="role-alert-raid-composer${viewClass}" id="roleAlertsRaidComposerRoot">
       <div class="role-alert-composer-toolbar">
         <h4 class="subtle" style="margin:0">Raid roster composer</h4>
         <div class="role-alert-composer-toolbar-actions">
+          <div class="role-alert-composer-view-toggle" role="group" aria-label="Roster card view">
+            <button type="button" class="event-signup-btn event-signup-btn--softres role-alert-composer-view-btn${execActive}" data-composer-view="executive" title="Compact cards with Parse, Events, and GS">Executive</button>
+            <button type="button" class="event-signup-btn event-signup-btn--softres role-alert-composer-view-btn${detailActive}" data-composer-view="detailed" title="Full raid roster character cards with attendance, parse, gear, and badges">Detailed</button>
+          </div>
           <button type="button" class="event-signup-btn" id="roleAlertsRaidComposerWriteBtn" ${dirty ? "" : "disabled"}>Write back to Raid Helper</button>
           <button type="button" class="event-signup-btn event-signup-btn--softres" id="roleAlertsRaidComposerResetBtn">Reset draft</button>
           <span id="roleAlertsRaidComposerDirtyBadge" class="subtle">${dirty ? "Unsaved changes" : ""}</span>
@@ -3579,10 +3874,40 @@ function roleAlertsRaidComposerSectionHtml(analysis) {
     </details>`;
 }
 
-function roleAlertsRefreshRaidComposerDom() {
+function roleAlertsComposerAfterDomRefresh(container) {
+  const root = document.getElementById("roleAlertsRaidComposerRoot");
+  if (root) {
+    root.classList.toggle("role-alert-raid-composer--detailed", roleAlertsComposerViewModeState === "detailed");
+    root.classList.toggle("role-alert-raid-composer--executive", roleAlertsComposerViewModeState === "executive");
+  }
+  document.querySelectorAll("[data-composer-view]").forEach((btn) => {
+    const mode = String(btn.getAttribute("data-composer-view") || "");
+    btn.classList.toggle("is-active", mode === roleAlertsComposerViewModeState);
+    btn.setAttribute("aria-pressed", mode === roleAlertsComposerViewModeState ? "true" : "false");
+  });
+  const plb = window.plbEventsRoster;
+  if (roleAlertsComposerViewModeState === "detailed" && container && plb) {
+    const players = roleAlertsComposerRosterPlayers || [];
+    void plb.prefetchRosterProfilePictures?.(players);
+    window.WowItemTooltip?.bindLootTooltipHandlers?.(container, () => null);
+  }
+}
+
+async function roleAlertsRefreshRaidComposerDom() {
   const inner = document.getElementById("roleAlertsRaidComposerInner");
+  const root = document.getElementById("roleAlertsRaidComposerRoot");
   if (!inner || !roleAlertsAnalysisState || !roleAlertsRaidComposerDraft) return;
+  if (roleAlertsComposerViewModeState === "detailed") {
+    inner.innerHTML = `<p class="subtle" style="margin:12px 0">Loading detailed cards…</p>`;
+    await roleAlertsEnsureComposerRosterPlayers();
+  }
   inner.innerHTML = roleAlertsRaidComposerPoolsAndRosterInnerHtml(roleAlertsAnalysisState);
+  if (root) {
+    root.classList.toggle("role-alert-raid-composer--detailed", roleAlertsComposerViewModeState === "detailed");
+    root.classList.toggle("role-alert-raid-composer--executive", roleAlertsComposerViewModeState === "executive");
+  }
+  roleAlertsComposerAfterDomRefresh(inner);
+  roleAlertsComposerApplyViewModeExpansions();
   const writeBtn = document.getElementById("roleAlertsRaidComposerWriteBtn");
   const badge = document.getElementById("roleAlertsRaidComposerDirtyBadge");
   const dirty = roleAlertsRaidComposerDirtyJson();
@@ -3979,6 +4304,13 @@ document.addEventListener("dragend", () => {
 document.addEventListener("click", (event) => {
   const root = event.target.closest("#roleAlertsRaidComposerRoot");
   if (!root) return;
+  const viewBtn = event.target.closest("[data-composer-view]");
+  if (viewBtn && root.contains(viewBtn)) {
+    event.preventDefault();
+    roleAlertsSetComposerViewMode(viewBtn.getAttribute("data-composer-view"));
+    return;
+  }
+  if (roleAlertsComposerViewModeState === "detailed") return;
   const card = event.target.closest("[data-role-alert-composer-expand]");
   if (!card || !root.contains(card)) return;
   if (event.target.closest("a")) return;
@@ -4308,6 +4640,7 @@ function renderRoleAlertsAnalysis(analysis, options = {}) {
     ${roleAlertsCandidatesHtml(roleAlertsAnalysisState)}
     ${roleAlertsDmSendResultHtml()}
   `;
+  void roleAlertsRefreshRaidComposerDom();
   void roleAlertsLoadGearSummaries(roleAlertsAnalysisState).then(() => {
     if (roleAlertsAnalysisState === analysis) roleAlertsRefreshRaidComposerDom();
   });
@@ -5638,7 +5971,202 @@ let wclPhaseAvgsLastUpdatedAt = 0;
 let wclPhaseAvgsCachedRenderKey = "";
 
 /** Panels that should not block on the full secondary admin bundle (loot, analytics, DMs, …). */
-const ADMIN_PANELS_DEFER_SECONDARY = new Set(["identity", "wcl-phase-avgs"]);
+const ADMIN_PANELS_DEFER_SECONDARY = new Set(["identity", "wcl-phase-avgs", "character-kpis"]);
+
+let adminCharKpiState = null;
+let adminCharKpiLoaded = false;
+let adminCharKpiClassSlug = "";
+let adminCharKpiSpecFilter = "all";
+let adminCharKpiSearch = "";
+let adminCharKpiListenersBound = false;
+
+/** Current raid phase for Character KPIs sort (P2 = SSC & TK). */
+const ADMIN_CHAR_KPI_CURRENT_PHASE = {
+  phaseKey: "sscTk",
+  label: "SSC/TK",
+  sortLabel: "P2 SSC/TK WCL phase avg",
+};
+
+function adminCharKpiCurrentPhaseAvg(player) {
+  const n = Number(player?.phaseAvgs?.[ADMIN_CHAR_KPI_CURRENT_PHASE.phaseKey]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function fmtAdminCharKpiUpdated(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "never";
+  return new Date(n).toLocaleString();
+}
+
+function adminCharKpiPlayersFiltered() {
+  const players = Array.isArray(adminCharKpiState?.players) ? adminCharKpiState.players : [];
+  const q = String(adminCharKpiSearch || "").trim().toLowerCase();
+  const classSlug =
+    adminCharKpiClassSlug ||
+    adminCharKpiState?.filters?.classes?.[0]?.slug ||
+    "";
+  const spec = adminCharKpiSpecFilter;
+  const filtered = players.filter((p) => {
+    if (classSlug && String(p._filterClassSlug || "unknown") !== classSlug) return false;
+    if (spec && spec !== "all" && String(p._filterSpec || "—") !== spec) return false;
+    if (!q) return true;
+    const hay = [p.characterName, p.name, p.className, p.specName, p.guildRole, p.raiderIoClassName]
+      .map((v) => String(v || "").toLowerCase())
+      .join(" ");
+    return hay.includes(q);
+  });
+  return filtered.sort((a, b) => {
+    const sa = adminCharKpiCurrentPhaseAvg(a);
+    const sb = adminCharKpiCurrentPhaseAvg(b);
+    if (sa == null && sb == null) {
+      return String(a.characterName || "").localeCompare(String(b.characterName || ""), undefined, {
+        sensitivity: "base",
+      });
+    }
+    if (sa == null) return 1;
+    if (sb == null) return -1;
+    if (sb !== sa) return sb - sa;
+    return String(a.characterName || "").localeCompare(String(b.characterName || ""), undefined, {
+      sensitivity: "base",
+    });
+  });
+}
+
+function renderAdminCharKpiClassTabs() {
+  const host = document.getElementById("adminCharKpiClassTabs");
+  if (!host || !adminCharKpiState?.filters?.classes?.length) return;
+  const classes = adminCharKpiState.filters.classes;
+  const active = adminCharKpiClassSlug || classes[0]?.slug || "";
+  host.innerHTML = classes
+    .map((c) => {
+      const on = c.slug === active;
+      return `<button type="button" class="admin-char-kpi-class-tab${on ? " is-active" : ""}" role="tab" aria-selected="${on ? "true" : "false"}" data-char-kpi-class="${esc(c.slug)}">${esc(c.label)} <span class="admin-char-kpi-tab-count">${Number(c.count) || 0}</span></button>`;
+    })
+    .join("");
+}
+
+function renderAdminCharKpiSpecFilters() {
+  const host = document.getElementById("adminCharKpiSpecFilters");
+  if (!host || !adminCharKpiState?.filters?.specsByClass) return;
+  const classSlug =
+    adminCharKpiClassSlug || adminCharKpiState.filters.classes?.[0]?.slug || "";
+  const specs = adminCharKpiState.filters.specsByClass[classSlug] || [];
+  const active = adminCharKpiSpecFilter || "all";
+  const chips = [
+    `<button type="button" class="admin-char-kpi-spec-chip${active === "all" ? " is-active" : ""}" data-char-kpi-spec="all">All specs</button>`,
+    ...specs.map((s) => {
+      const on = active === s;
+      return `<button type="button" class="admin-char-kpi-spec-chip${on ? " is-active" : ""}" data-char-kpi-spec="${esc(s)}">${esc(s)}</button>`;
+    }),
+  ];
+  host.innerHTML = chips.join("");
+}
+
+function renderAdminCharKpiGrid() {
+  const host = document.getElementById("adminCharKpiGrid");
+  const meta = document.getElementById("adminCharKpiMeta");
+  const plb = window.plbEventsRoster;
+  if (!host) return;
+  const filtered = adminCharKpiPlayersFiltered();
+  if (meta && adminCharKpiState) {
+    const st = adminCharKpiState;
+    meta.textContent = `${st.totalCharacters} registered characters · sorted by ${ADMIN_CHAR_KPI_CURRENT_PHASE.sortLabel} (high → low, no data last) · ${st.withRosterMatch} with WCL roster KPIs · ${st.withPhaseAvgs} with phase avgs · cache ${fmtAdminCharKpiUpdated(st.phaseAvgsUpdatedAt)}. Alts on one Discord account may share attendance/parse.`;
+  }
+  if (!plb?.rosterRaiderCard) {
+    host.innerHTML = `<p class="subtle">Roster UI failed to load (events-roster-ui.js).</p>`;
+    return;
+  }
+  if (!filtered.length) {
+    host.innerHTML = `<p class="subtle">No characters match the current filters.</p>`;
+    return;
+  }
+  const all = adminCharKpiState.players;
+  const classSlug =
+    adminCharKpiClassSlug || adminCharKpiState.filters.classes?.[0]?.slug || "";
+  const classPool = classSlug
+    ? all.filter((p) => String(p._filterClassSlug || "unknown") === classSlug)
+    : all;
+  const gsHeat = plb.collectRosterGsHeatmapStats?.(classPool) || { gsMin: NaN, gsMax: NaN };
+  const cardOpts = {
+    kpiMode: "full",
+    showGearSummary: false,
+    showBadges: false,
+    nameOnTop: true,
+    gsHeatMin: gsHeat.gsMin,
+    gsHeatMax: gsHeat.gsMax,
+  };
+  host.innerHTML = `<div class="raider-grid admin-char-kpi-grid">${filtered
+    .map((p) => plb.rosterRaiderCard(p, all, cardOpts))
+    .join("")}</div>`;
+  void plb.prefetchRosterProfilePictures?.(filtered);
+  window.WowItemTooltip?.bindLootTooltipHandlers?.(host, () => null);
+}
+
+function ensureAdminCharKpiListeners() {
+  if (adminCharKpiListenersBound) return;
+  adminCharKpiListenersBound = true;
+  document.getElementById("adminCharKpiClassTabs")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-char-kpi-class]");
+    if (!btn) return;
+    adminCharKpiClassSlug = btn.getAttribute("data-char-kpi-class") || "";
+    adminCharKpiSpecFilter = "all";
+    renderAdminCharKpiClassTabs();
+    renderAdminCharKpiSpecFilters();
+    renderAdminCharKpiGrid();
+  });
+  document.getElementById("adminCharKpiSpecFilters")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-char-kpi-spec]");
+    if (!btn) return;
+    adminCharKpiSpecFilter = btn.getAttribute("data-char-kpi-spec") || "all";
+    renderAdminCharKpiSpecFilters();
+    renderAdminCharKpiGrid();
+  });
+  let searchTimer = null;
+  document.getElementById("adminCharKpiSearch")?.addEventListener("input", (event) => {
+    adminCharKpiSearch = String(event.target?.value || "");
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => renderAdminCharKpiGrid(), 140);
+  });
+  document.getElementById("adminCharKpiReloadBtn")?.addEventListener("click", () => {
+    adminCharKpiLoaded = false;
+    loadAdminCharacterKpiPanel().catch((error) => {
+      status(error?.message || "Failed to reload character KPIs.");
+    });
+  });
+  document.getElementById("adminCharKpiGoPhaseAvgsBtn")?.addEventListener("click", () => {
+    showAdminPanel("wcl-phase-avgs");
+  });
+}
+
+async function loadAdminCharacterKpiPanel(opts = {}) {
+  const silent = Boolean(opts.silent);
+  const meta = document.getElementById("adminCharKpiMeta");
+  const host = document.getElementById("adminCharKpiGrid");
+  const plb = window.plbEventsRoster;
+  ensureAdminCharKpiListeners();
+  if (!silent && meta) meta.textContent = "Loading characters…";
+  if (!silent && host) host.innerHTML = "";
+  try {
+    if (plb) {
+      await Promise.all([plb.loadTbcSpecIconMap(), plb.loadWclAttendanceForEvents()]);
+    }
+    const payload = await getJson("/api/admin/character-kpi-overview");
+    adminCharKpiState = payload;
+    adminCharKpiLoaded = true;
+    if (!adminCharKpiClassSlug && payload.filters?.classes?.length) {
+      adminCharKpiClassSlug = payload.filters.classes[0].slug;
+    }
+    renderAdminCharKpiClassTabs();
+    renderAdminCharKpiSpecFilters();
+    renderAdminCharKpiGrid();
+  } catch (error) {
+    if (!silent) {
+      if (meta) meta.textContent = error?.message || "Failed to load character KPIs.";
+      if (host) host.innerHTML = "";
+    }
+    throw error;
+  }
+}
 
 function stopWclPhaseAvgsPoll() {
   if (wclPhaseAvgsPollTimer) {
@@ -5958,6 +6486,9 @@ async function loadAdminData() {
     }, 0);
     if (activePanel === "identity") {
       await Promise.allSettled([loadIdentityAccounts({ silent: false }), loadIdentityJourney({ silent: false })]);
+    }
+    if (activePanel === "character-kpis" && !adminCharKpiLoaded) {
+      await loadAdminCharacterKpiPanel({ silent: false });
     }
     return;
   }
@@ -9514,6 +10045,11 @@ showAdminPanel = function (panelId, opts) {
   } else {
     stopWclPhaseAvgsPoll();
   }
+  if (panelId === "character-kpis" && !adminCharKpiLoaded) {
+    loadAdminCharacterKpiPanel().catch((error) => {
+      status(error?.message || "Failed to load character KPIs.");
+    });
+  }
   if (panelId === "sync-center" && !adminDatabaseLoaded) {
     loadAdminDatabasePanel().catch((error) => {
       status(error?.message || "Failed to load database panel.");
@@ -9561,6 +10097,11 @@ loadAdminData().catch((error) => {
   if (id === "wcl-phase-avgs") {
     loadWclPhaseAvgsPanel().catch((error) => {
       status(wclPhaseAvgsLoadErrorMessage(error));
+    });
+  }
+  if (id === "character-kpis" && !adminCharKpiLoaded) {
+    loadAdminCharacterKpiPanel().catch((error) => {
+      status(error?.message || "Failed to load character KPIs.");
     });
   }
 })();

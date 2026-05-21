@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260519plb-p2-demand-checks-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260519plb-blocker-druid-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -48,6 +48,7 @@
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="hof-notes">Hall of Fame Quotes</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="raider-blacklist">Raider Blacklist</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="badge-tooltips">Badge Management</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="character-kpis">Character KPIs</button>
               </div>
               <div class="admin-sidebar-group" data-admin-group="roster">
                 <div class="admin-sidebar-group-label">Roster &amp; Loot</div>
@@ -455,6 +456,36 @@
               </div>
             </section>
 
+            <section class="card admin-panel admin-char-kpi-panel" data-admin-panel="character-kpis" id="admin-panel-character-kpis">
+              <h3 class="section-title">Character KPIs</h3>
+              <p class="subtle">
+                Every website-registered character (identity DB) as a raid roster card with full KPIs: attendance,
+                peak parse, events, gear score, and WCL phase averages (K / G / S). Cards are sorted by
+                <strong>P2 SSC/TK</strong> phase avg (highest first). Attendance and parse may be shared
+                across alts on the same Discord account when WCL only matches at account level.
+              </p>
+              <p id="adminCharKpiMeta" class="subtle">Loading characters…</p>
+              <div class="admin-actions admin-actions--tight admin-char-kpi-toolbar">
+                <input
+                  id="adminCharKpiSearch"
+                  class="admin-input"
+                  type="search"
+                  placeholder="Search character, class, spec, role…"
+                  autocomplete="off"
+                  aria-label="Search characters"
+                />
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminCharKpiReloadBtn">
+                  Reload
+                </button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminCharKpiGoPhaseAvgsBtn">
+                  WCL Phase Averages
+                </button>
+              </div>
+              <div id="adminCharKpiClassTabs" class="admin-char-kpi-class-tabs" role="tablist" aria-label="Filter by class"></div>
+              <div id="adminCharKpiSpecFilters" class="admin-char-kpi-spec-filters" role="group" aria-label="Filter by spec"></div>
+              <div id="adminCharKpiGrid" class="admin-char-kpi-grid-host">Loading…</div>
+            </section>
+
             <section class="card admin-panel" data-admin-panel="badge-tooltips" id="admin-panel-badge-tooltips">
               <h3 class="section-title">Badge Management</h3>
               <p class="subtle">Edit the rarity and tooltip description shown on profile and roster badge hover cards. Default values reset the badge to its built-in copy.</p>
@@ -621,7 +652,8 @@
     <script defer src="/vendor/apexcharts.min.js"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
-    <script defer src="/admin.js?v=20260519plb-p2-demand-checks-v1"></script>
+    <script defer src="/events-roster-ui.js?v=20260519plb-blocker-druid-v1"></script>
+    <script defer src="/admin.js?v=20260519plb-blocker-druid-v1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
