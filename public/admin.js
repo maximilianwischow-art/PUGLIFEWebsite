@@ -2701,8 +2701,10 @@ function roleAlertsRhNameKey(name) {
 }
 
 function roleAlertsResolvePhaseAvgs(slot) {
+  if (slot?.phaseAvgs && typeof slot.phaseAvgs === "object") return slot.phaseAvgs;
   const map = roleAlertsWclPhaseAvgsByKey || {};
-  for (const n of [slot?.displayCharacterName, slot?.name]) {
+  const names = [slot?.wclPhaseAvgCharacterName, slot?.displayCharacterName, slot?.name];
+  for (const n of names) {
     const k = roleAlertsRhNameKey(n);
     if (k && map[k]) return map[k];
   }
@@ -3572,6 +3574,7 @@ function roleAlertsSlotToRosterPlayer(slot, rosterPlayers) {
   const disp = String(slot?.displayCharacterName || slot?.name || "").trim();
   const gs = Number(slot?.gearScore);
   const phaseAvgs = roleAlertsResolvePhaseAvgs(slot);
+  const wclPhaseAvgCharacterName = String(slot?.wclPhaseAvgCharacterName || "").trim();
   const resolvedClassLabel =
     roleAlertWowClassLabelFromSlot(slot) ||
     roleAlertKnownWowClassLabel(slot?.className) ||
@@ -3585,6 +3588,7 @@ function roleAlertsSlotToRosterPlayer(slot, rosterPlayers) {
     gearScore: Number.isFinite(gs) && gs > 0 ? gs : base?.gearScore,
     wclEventCount: slot?.wclEventCount != null ? slot.wclEventCount : base?.wclEventCount,
     phaseAvgs: phaseAvgs || base?.phaseAvgs,
+    wclPhaseAvgCharacterName: wclPhaseAvgCharacterName || base?.wclPhaseAvgCharacterName || "",
     classEmoteId: slot?.classEmoteId || base?.classEmoteId,
     specEmoteId: slot?.specEmoteId || base?.specEmoteId,
     color: slot?.color || base?.color,

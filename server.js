@@ -5588,15 +5588,309 @@ function rhWclLinkedInGameNameForRhDisplay(rhDisplayRaw) {
   return "";
 }
 
+/** Spec slug → canonical class slug (comp slot may only carry spec, e.g. Guardian → druid). */
+const ROLE_ALERT_SPEC_HINT_CLASS = {
+  arms: "warrior",
+  fury: "warrior",
+  protection: "warrior",
+  prot: "warrior",
+  holy: "paladin",
+  retribution: "paladin",
+  ret: "paladin",
+  beastmastery: "hunter",
+  marksmanship: "hunter",
+  survival: "hunter",
+  assassination: "rogue",
+  combat: "rogue",
+  subtlety: "rogue",
+  discipline: "priest",
+  shadow: "priest",
+  elemental: "shaman",
+  enhancement: "shaman",
+  enh: "shaman",
+  restoration: "shaman",
+  resto: "shaman",
+  arcane: "mage",
+  fire: "mage",
+  frost: "mage",
+  affliction: "warlock",
+  demonology: "warlock",
+  destruction: "warlock",
+  balance: "druid",
+  feral: "druid",
+  guardian: "druid",
+  bear: "druid",
+};
+
+function roleAlertSlotTargetClassSlug(slot) {
+  const fromClass = englishCanonicalClassSlugFromLocalizedDisplay(slot?.className);
+  if (fromClass) return fromClass;
+  const specKey = normalizeSpecKey(slot?.specName);
+  return ROLE_ALERT_SPEC_HINT_CLASS[specKey] || "";
+}
+
+function roleAlertDiscordUserIdsForSlot(slot, discordUserIdByRhKey) {
+  const ids = new Set();
+  const signupDiscord = String(slot?.signupDiscordUserId || "").trim();
+  if (signupDiscord) ids.add(signupDiscord);
+  const rhKey = normalizeRaidHelperDisplayKey(String(slot?.name || ""));
+  if (rhKey) {
+    const fromMap = String(discordUserIdByRhKey?.get(rhKey) || "").trim();
+    if (fromMap) ids.add(fromMap);
+  }
+  for (const link of rhWclLinksState?.links || []) {
+    const lk = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    const d = String(link?.discordUserId || "").trim();
+    if (!d) continue;
+    if (rhKey && lk === rhKey) ids.add(d);
+  }
+  return ids;
+}
+
+/** Raid Helper signup Discord id on comp slots (links RH aliases like Johnrogers ↔ [BP]JohnRogers). */
+function attachSignupDiscordUserIdsToCompBoardSlots(compBoard, detail) {
+  if (!compBoard?.groups) return;
+  const byRhKey = new Map();
+  for (const entry of Array.isArray(detail?.signUps) ? detail.signUps : []) {
+    const k = normalizeRaidHelperDisplayKey(String(entry?.name || ""));
+    const uid = String(entry?.userId || "").trim();
+    if (k && uid) byRhKey.set(k, uid);
+  }
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      const k = normalizeRaidHelperDisplayKey(String(slot?.name || ""));
+      slot.signupDiscordUserId = (k && byRhKey.get(k)) || "";
+    }
+  }
+}
+
+function roleAlertWclCharacterNameCandidatesForSlot(slot, discordUserIdByRhKey) {
+  const seen = new Set();
+  const out = [];
+  const push = (name) => {
+    const t = String(name || "").trim();
+    if (!t) return;
+    const k = t.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(t);
+  };
+  const rhKey = normalizeRaidHelperDisplayKey(String(slot?.name || ""));
+  const discordIds = roleAlertDiscordUserIdsForSlot(slot, discordUserIdByRhKey);
+  for (const link of rhWclLinksState?.links || []) {
+    const lk = normalizeRaidHelperDisplayKey(String(link?.raidHelperName || ""));
+    const d = String(link?.discordUserId || "").trim();
+    const matchRh = rhKey && lk === rhKey;
+    const matchDiscord = d && discordIds.has(d);
+    if (!matchRh && !matchDiscord) continue;
+    for (const n of Array.isArray(link?.wclCharacterNames) ? link.wclCharacterNames : []) push(n);
+    push(link?.mainCharacterName);
+  }
+  const uid = Number(slot?.canonicalUserId);
+  if (Number.isInteger(uid) && uid > 0) {
+    try {
+      for (const c of identityCharactersGetByUserId(uid) || []) push(c?.characterName);
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const discordId of discordIds) {
+    const u = identityUserGetByDiscordId(discordId);
+    if (!u?.id) continue;
+    try {
+      for (const c of identityCharactersGetByUserId(u.id) || []) push(c?.characterName);
+    } catch {
+      /* ignore */
+    }
+  }
+  push(slot?.displayCharacterName);
+  push(rhWclLinkedInGameNameForRhDisplay(slot?.name || ""));
+  push(stripRealmSuffixFromWowDisplayName(String(slot?.name || "").trim()));
+  push(slot?.name);
+  return out;
+}
+
+function roleAlertIdentityByNameKeyForUserId(userId) {
+  const map = new Map();
+  const uid = Number(userId);
+  if (!Number.isInteger(uid) || uid <= 0) return map;
+  try {
+    for (const c of identityCharactersGetByUserId(uid) || []) {
+      const k = normalizeRaidHelperDisplayKey(String(c?.characterName || ""));
+      if (k) map.set(k, c);
+    }
+  } catch {
+    /* ignore */
+  }
+  return map;
+}
+
+function roleAlertScoreWclNameForSlot(name, slot, identityByNameKey, rosterClassByWclKey) {
+  const targetClass = roleAlertSlotTargetClassSlug(slot);
+  const targetSpec = normalizeSpecKey(slot?.specName);
+  if (!targetClass) return 0;
+  const key = normalizeRaidHelperDisplayKey(name);
+  const ident = identityByNameKey?.get(key);
+  let score = 0;
+  if (ident) {
+    const cls = englishCanonicalClassSlugFromLocalizedDisplay(ident.wowClass);
+    const spec = normalizeSpecKey(ident.wowSpec);
+    if (cls && cls === targetClass) score += 100;
+    if (targetSpec && spec && spec === targetSpec) score += 50;
+    else if (targetSpec && ROLE_ALERT_SPEC_HINT_CLASS[spec] === targetClass) score += 20;
+  } else {
+    const specFromName = normalizeSpecKey(name);
+    if (ROLE_ALERT_SPEC_HINT_CLASS[specFromName] === targetClass) score += 40;
+  }
+  const rosterCls = rosterClassByWclKey?.get(key);
+  if (rosterCls && rosterCls === targetClass) score += 80;
+  return score;
+}
+
+/**
+ * Pick the WCL / identity character for this comp slot (alt-aware: Rogue on comp → sneakyjohn, not Enh main).
+ */
+function buildRoleAlertRosterClassByWclKey(players) {
+  const map = new Map();
+  for (const p of players || []) {
+    const cls =
+      englishCanonicalClassSlugFromLocalizedDisplay(p?.className) ||
+      englishCanonicalClassSlugFromLocalizedDisplay(p?.raiderIoClassName);
+    if (!cls) continue;
+    const names = [
+      p?.characterName,
+      p?.name,
+      ...(Array.isArray(p?.wclCharacters) ? p.wclCharacters : []),
+    ];
+    for (const raw of names) {
+      const k = normalizeRaidHelperDisplayKey(String(raw || ""));
+      if (k && !map.has(k)) map.set(k, cls);
+    }
+  }
+  return map;
+}
+
+function resolveRoleAlertInGameCharacterNameForSlot(slot, discordUserIdByRhKey, rosterClassByWclKey) {
+  const candidates = roleAlertWclCharacterNameCandidatesForSlot(slot, discordUserIdByRhKey);
+  if (!candidates.length) return "";
+  const targetClass = roleAlertSlotTargetClassSlug(slot);
+  if (!targetClass) return candidates[0];
+
+  let identityByKey = roleAlertIdentityByNameKeyForUserId(slot?.canonicalUserId);
+  if (!identityByKey.size) {
+    for (const discordId of roleAlertDiscordUserIdsForSlot(slot, discordUserIdByRhKey)) {
+      const u = identityUserGetByDiscordId(discordId);
+      if (!u?.id) continue;
+      const part = roleAlertIdentityByNameKeyForUserId(u.id);
+      for (const [k, v] of part) if (!identityByKey.has(k)) identityByKey.set(k, v);
+    }
+  }
+
+  let best = candidates[0];
+  let bestScore = -1;
+  for (const name of candidates) {
+    const score = roleAlertScoreWclNameForSlot(name, slot, identityByKey, rosterClassByWclKey);
+    if (score > bestScore) {
+      bestScore = score;
+      best = name;
+    }
+  }
+  if (bestScore > 0) return best;
+  const rhDefault = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+  const alt = candidates.find((n) => normalizeRaidHelperDisplayKey(n) !== normalizeRaidHelperDisplayKey(rhDefault));
+  return alt || candidates[0];
+}
+
+function resolveRoleAlertPhaseAvgsForSlot(slot, byRhKey, discordUserIdByRhKey, rosterClassByWclKey) {
+  const ig =
+    resolveRoleAlertInGameCharacterNameForSlot(slot, discordUserIdByRhKey, rosterClassByWclKey) ||
+    String(slot?.displayCharacterName || slot?.name || "").trim();
+  if (!ig) return { phaseAvgs: null, wclPhaseAvgCharacterName: "" };
+  const phaseAvgs = phaseAvgsForIdentityCharacter(ig, byRhKey);
+  return { phaseAvgs, wclPhaseAvgCharacterName: ig };
+}
+
+function attachRoleAlertPhaseAvgsToCompBoardSlots(compBoard, byRhKey, discordUserIdByRhKey, rosterClassByWclKey) {
+  if (!compBoard?.groups || !byRhKey) return;
+  for (const group of compBoard.groups) {
+    for (const slot of group?.slots || []) {
+      if (!slot?.isKnownSignup || slot?.isBlocker) {
+        slot.phaseAvgs = null;
+        slot.wclPhaseAvgCharacterName = "";
+        continue;
+      }
+      const { phaseAvgs, wclPhaseAvgCharacterName } = resolveRoleAlertPhaseAvgsForSlot(
+        slot,
+        byRhKey,
+        discordUserIdByRhKey,
+        rosterClassByWclKey
+      );
+      if (wclPhaseAvgCharacterName) {
+        slot.wclPhaseAvgCharacterName = wclPhaseAvgCharacterName;
+        slot.displayCharacterName =
+          wclPhaseAvgCharacterName ||
+          stripRealmSuffixFromWowDisplayName(String(slot?.name || "").trim()) ||
+          String(slot?.name || "").trim();
+      }
+      slot.phaseAvgs = phaseAvgs;
+    }
+  }
+}
+
+function attachRoleAlertPhaseAvgsToAllSignups(allSignups, compBoard, byRhKey, discordUserIdByRhKey, rosterClassByWclKey) {
+  if (!Array.isArray(allSignups) || !byRhKey) return;
+  const slotByRhKey = new Map();
+  if (compBoard?.groups) {
+    for (const group of compBoard.groups) {
+      for (const slot of group?.slots || []) {
+        const k = normalizeRaidHelperDisplayKey(String(slot?.name || ""));
+        if (k && slot?.isKnownSignup && !slot?.isBlocker) slotByRhKey.set(k, slot);
+      }
+    }
+  }
+  for (const row of allSignups) {
+    const k = normalizeRaidHelperDisplayKey(String(row?.name || ""));
+    const compSlot = k ? slotByRhKey.get(k) : null;
+    if (compSlot?.phaseAvgs) {
+      row.phaseAvgs = compSlot.phaseAvgs;
+      row.wclPhaseAvgCharacterName = compSlot.wclPhaseAvgCharacterName || "";
+      if (compSlot.displayCharacterName) row.displayCharacterName = compSlot.displayCharacterName;
+      continue;
+    }
+    const pseudo = {
+      name: row.name,
+      className: row.className,
+      specName: row.specName,
+      roleName: row.roleName,
+      canonicalUserId: row.canonicalUserId,
+      displayCharacterName: row.displayCharacterName,
+      signupDiscordUserId: String(row.userId || "").trim(),
+    };
+    const { phaseAvgs, wclPhaseAvgCharacterName } = resolveRoleAlertPhaseAvgsForSlot(
+      pseudo,
+      byRhKey,
+      discordUserIdByRhKey,
+      rosterClassByWclKey
+    );
+    if (wclPhaseAvgCharacterName) {
+      row.wclPhaseAvgCharacterName = wclPhaseAvgCharacterName;
+      row.displayCharacterName = wclPhaseAvgCharacterName;
+    }
+    row.phaseAvgs = phaseAvgs;
+  }
+}
+
 /** Identity / Classic Armory lookup keys: RH comp label + WCL-linked in-game name (when present). */
-function roleAlertGearScoreLookupKeysForSlot(slot) {
+function roleAlertGearScoreLookupKeysForSlot(slot, discordUserIdByRhKey) {
   const out = [];
   const push = (k) => {
     const v = String(k || "").trim();
     if (v && !out.includes(v)) out.push(v);
   };
   for (const k of peakParseKeyVariantsFromSlotName(slot?.name)) push(k);
-  const linked = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+  const linked =
+    resolveRoleAlertInGameCharacterNameForSlot(slot, discordUserIdByRhKey) ||
+    rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
   if (linked) {
     push(normalizeRaidHelperDisplayKey(linked));
     for (const k of peakParseKeyVariantsFromSlotName(linked)) push(k);
@@ -5605,18 +5899,22 @@ function roleAlertGearScoreLookupKeysForSlot(slot) {
 }
 
 /** Character name to query Classic Armory (prefers Account Assignment WCL name over RH signup label). */
-function roleAlertArmoryCharacterNameForSlot(slot) {
-  const linked = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+function roleAlertArmoryCharacterNameForSlot(slot, discordUserIdByRhKey) {
+  const linked =
+    resolveRoleAlertInGameCharacterNameForSlot(slot, discordUserIdByRhKey) ||
+    rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
   const raw = String((linked || slot?.name || "").trim());
   if (!raw) return "";
   return compSlotCharacterNameForArmoryLookup(raw) || raw.trim();
 }
 
-function enrichRoleAlertCompBoardDisplayNames(compBoard) {
+function enrichRoleAlertCompBoardDisplayNames(compBoard, discordUserIdByRhKey) {
   if (!compBoard?.groups) return;
+  const map = discordUserIdByRhKey instanceof Map ? discordUserIdByRhKey : new Map();
   for (const group of compBoard.groups) {
     for (const slot of group?.slots || []) {
-      const ig = rhWclLinkedInGameNameForRhDisplay(slot?.name || "");
+      if (!slot?.isKnownSignup || slot?.isBlocker) continue;
+      const ig = resolveRoleAlertInGameCharacterNameForSlot(slot, map);
       slot.displayCharacterName =
         ig ||
         stripRealmSuffixFromWowDisplayName(String(slot?.name || "").trim()) ||
@@ -5639,9 +5937,10 @@ function enrichRoleAlertAllSignupDisplayNames(allSignups) {
 /**
  * Identity-backed GearScore for Role Alert signup rows (same lookup keys as comp slots).
  */
-function attachIdentityGearScoresToRoleAlertAllSignups(allSignups) {
+function attachIdentityGearScoresToRoleAlertAllSignups(allSignups, discordUserIdByRhKey) {
   if (!Array.isArray(allSignups)) return;
   enrichRoleAlertAllSignupDisplayNames(allSignups);
+  const discordMap = discordUserIdByRhKey instanceof Map ? discordUserIdByRhKey : new Map();
   const flavor =
     String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
   const publicBase =
@@ -5679,13 +5978,13 @@ function attachIdentityGearScoresToRoleAlertAllSignups(allSignups) {
   }
   for (const row of allSignups) {
     let pay = null;
-    for (const k of roleAlertGearScoreLookupKeysForSlot(row)) {
+    for (const k of roleAlertGearScoreLookupKeysForSlot(row, discordMap)) {
       pay = byKey.get(k);
       if (pay) break;
     }
     if (!pay) continue;
     row.gearScore = pay.gearScore;
-    const nameForUrl = roleAlertArmoryCharacterNameForSlot(row);
+    const nameForUrl = roleAlertArmoryCharacterNameForSlot(row, discordMap);
     const realmRaw =
       realmSuffixFromWowDisplayName(String(row.name || "")) || pay.realm || realmDefault;
     const slug = realmRaw ? realmSlugForLookup(realmRaw) : "";
@@ -5701,9 +6000,10 @@ function attachIdentityGearScoresToRoleAlertAllSignups(allSignups) {
   }
 }
 
-async function attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups) {
+async function attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups, discordUserIdByRhKey) {
   if (!Array.isArray(allSignups)) return;
   if (String(process.env.ROLE_ALERT_LIVE_ARMORY_GS || "1").trim() === "0") return;
+  const discordMap = discordUserIdByRhKey instanceof Map ? discordUserIdByRhKey : new Map();
 
   const flavor =
     String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
@@ -5730,7 +6030,7 @@ async function attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups
     const haveGs = Number(row?.gearScore);
     if (Number.isFinite(haveGs) && haveGs > 0) continue;
 
-    const charName = roleAlertArmoryCharacterNameForSlot(row);
+    const charName = roleAlertArmoryCharacterNameForSlot(row, discordMap);
     if (!charName) continue;
     const realmRaw = realmSuffixFromWowDisplayName(String(row.name || "")) || realmDefault;
     const slug = realmSlugForLookup(realmRaw);
@@ -5896,9 +6196,10 @@ function attachWclEventCountsToCompBoardSlots(compBoard, discordUserIdByRhKey, w
  * Attach persisted Classic Armory GearScore from `user_characters` onto comp slots
  * (identity-backed keys only; no live armory HTTP here).
  */
-function attachIdentityGearScoresToCompBoardSlots(compBoard) {
+function attachIdentityGearScoresToCompBoardSlots(compBoard, discordUserIdByRhKey) {
   if (!compBoard || !Array.isArray(compBoard.groups)) return;
-  enrichRoleAlertCompBoardDisplayNames(compBoard);
+  const discordMap = discordUserIdByRhKey instanceof Map ? discordUserIdByRhKey : new Map();
+  enrichRoleAlertCompBoardDisplayNames(compBoard, discordMap);
   const flavor =
     String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
   const publicBase =
@@ -5938,13 +6239,13 @@ function attachIdentityGearScoresToCompBoardSlots(compBoard) {
     for (const slot of group?.slots || []) {
       if (!slot?.isKnownSignup || slot?.isBlocker) continue;
       let pay = null;
-      for (const k of roleAlertGearScoreLookupKeysForSlot(slot)) {
+      for (const k of roleAlertGearScoreLookupKeysForSlot(slot, discordMap)) {
         pay = byKey.get(k);
         if (pay) break;
       }
       if (!pay) continue;
       slot.gearScore = pay.gearScore;
-      const nameForUrl = roleAlertArmoryCharacterNameForSlot(slot);
+      const nameForUrl = roleAlertArmoryCharacterNameForSlot(slot, discordMap);
       const realmRaw =
         realmSuffixFromWowDisplayName(String(slot.name || "")) || pay.realm || realmDefault;
       const slug = realmRaw ? realmSlugForLookup(realmRaw) : "";
@@ -5965,9 +6266,10 @@ function attachIdentityGearScoresToCompBoardSlots(compBoard) {
  * Fill missing `gearScore` on comp slots via Classic Armory when identity DB
  * has no value yet (throttled, deduped). Disable with ROLE_ALERT_LIVE_ARMORY_GS=0.
  */
-async function attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard) {
+async function attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard, discordUserIdByRhKey) {
   if (!compBoard || !Array.isArray(compBoard.groups)) return;
   if (String(process.env.ROLE_ALERT_LIVE_ARMORY_GS || "1").trim() === "0") return;
+  const discordMap = discordUserIdByRhKey instanceof Map ? discordUserIdByRhKey : new Map();
 
   const flavor =
     String(process.env.CLASSIC_ARMORY_FLAVOR || "tbc-anniversary").trim() || "tbc-anniversary";
@@ -5996,7 +6298,7 @@ async function attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard) {
       const haveGs = Number(slot?.gearScore);
       if (Number.isFinite(haveGs) && haveGs > 0) continue;
 
-      const charName = roleAlertArmoryCharacterNameForSlot(slot);
+      const charName = roleAlertArmoryCharacterNameForSlot(slot, discordMap);
       if (!charName) continue;
       const realmRaw = realmSuffixFromWowDisplayName(String(slot.name || "")) || realmDefault;
       const slug = realmSlugForLookup(realmRaw);
@@ -8833,8 +9135,6 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     if (compBoard) {
       peakMaps = await buildRoleAlertPeakParseMaps(votingGuildId);
       if (peakMaps) applyPeakParseMapsToCompBoardSlots(compBoard, peakMaps);
-      attachIdentityGearScoresToCompBoardSlots(compBoard);
-      await attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard);
     }
     const summary =
       compUsed && compBoard
@@ -8880,7 +9180,12 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       if (k && String(link?.discordUserId || "").trim()) discordUserIdByRhKey.set(k, String(link.discordUserId).trim());
     }
     const wclCtx = roleAlertsWclEventsContext();
-    if (compBoard) attachWclEventCountsToCompBoardSlots(compBoard, discordUserIdByRhKey, wclCtx);
+    if (compBoard) {
+      attachSignupDiscordUserIdsToCompBoardSlots(compBoard, detail);
+      attachWclEventCountsToCompBoardSlots(compBoard, discordUserIdByRhKey, wclCtx);
+      attachIdentityGearScoresToCompBoardSlots(compBoard, discordUserIdByRhKey);
+      await attachLiveClassicArmoryGearScoresToCompBoardSlots(compBoard, discordUserIdByRhKey);
+    }
     const eventSignupExclusions = buildRoleAlertEventSignupExclusions(detail, rhWclLinksState.links);
     let participantSignals = new Map();
     try {
@@ -8987,8 +9292,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     attachWclEventCountsToRoleAlertAllSignups(allSignups, discordUserIdByRhKey, wclCtx);
     if (peakMaps) applyPeakParseMapsToRoleAlertAllSignups(allSignups, peakMaps);
     enrichRoleAlertAllSignupDisplayNames(allSignups);
-    attachIdentityGearScoresToRoleAlertAllSignups(allSignups);
-    await attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups);
+    attachIdentityGearScoresToRoleAlertAllSignups(allSignups, discordUserIdByRhKey);
+    await attachLiveClassicArmoryGearScoresToRoleAlertAllSignups(allSignups, discordUserIdByRhKey);
     attachRaiderCardsToRoleAlertAllSignups(allSignups, raiderBlacklistLookup, discordUserIdByRhKey);
     if (compBoard) attachRaiderCardsToCompBoardSlots(compBoard, raiderBlacklistLookup, discordUserIdByRhKey);
     for (const row of candidateTargets) {
@@ -9000,6 +9305,32 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       row.raiderCard = hit ? { card: hit.card, reason: hit.reason, id: hit.id } : null;
     }
     const wclPhaseAvgs = await buildWclPhaseAvgsByRhKeyForRoleAlerts();
+    let rosterClassByWclKey = null;
+    try {
+      const rosterPayload = await buildActiveRosterPlayersForGuild(votingGuildId, {
+        reportLimit: 40,
+        top: 250,
+        maxRhPastEvents: 0,
+      });
+      rosterClassByWclKey = buildRoleAlertRosterClassByWclKey(rosterPayload?.players);
+    } catch {
+      rosterClassByWclKey = null;
+    }
+    if (compBoard) {
+      attachRoleAlertPhaseAvgsToCompBoardSlots(
+        compBoard,
+        wclPhaseAvgs.byRhKey,
+        discordUserIdByRhKey,
+        rosterClassByWclKey
+      );
+    }
+    attachRoleAlertPhaseAvgsToAllSignups(
+      allSignups,
+      compBoard,
+      wclPhaseAvgs.byRhKey,
+      discordUserIdByRhKey,
+      rosterClassByWclKey
+    );
     return res.json({
       ok: true,
       event: {
