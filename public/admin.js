@@ -2001,7 +2001,51 @@ function renderRoleAlertsEventSelect(events) {
   }
 }
 
-async function runRoleAlertsAnalyzeFromSelect() {
+function roleAlertsCaptureHostUiState() {
+  const host = document.getElementById("roleAlertsHost");
+  if (!host) return null;
+  return {
+    scrollY: window.scrollY,
+    hostScrollTop: host.scrollTop,
+    openDetailsSummaries: [...host.querySelectorAll("details[open]")]
+      .map((el) => String(el.querySelector("summary")?.textContent || "").trim())
+      .filter(Boolean),
+    expandedSignupIds: [...roleAlertsComposerExpandedIds],
+  };
+}
+
+function roleAlertsRestoreHostUiState(state) {
+  if (!state) return;
+  const host = document.getElementById("roleAlertsHost");
+  const apply = () => {
+    window.scrollTo(0, Number(state.scrollY || 0));
+    if (host) host.scrollTop = Number(state.hostScrollTop || 0);
+    if (host && Array.isArray(state.openDetailsSummaries)) {
+      for (const summaryText of state.openDetailsSummaries) {
+        const match = [...host.querySelectorAll("details")].find(
+          (el) => String(el.querySelector("summary")?.textContent || "").trim() === summaryText
+        );
+        if (match) match.open = true;
+      }
+    }
+    roleAlertsComposerExpandedIds = new Set(
+      Array.isArray(state.expandedSignupIds) ? state.expandedSignupIds.map(String) : []
+    );
+    roleAlertsComposerApplyViewModeExpansions();
+    if (host) {
+      host.querySelectorAll("[data-role-alert-composer-expand]").forEach((card) => {
+        const sid = String(card.getAttribute("data-signup-id") || "").trim();
+        if (sid && roleAlertsComposerExpandedIds.has(sid)) {
+          roleAlertsComposerSetCardExpanded(card, true);
+        }
+      });
+    }
+  };
+  requestAnimationFrame(() => requestAnimationFrame(apply));
+}
+
+async function runRoleAlertsAnalyzeFromSelect(options = {}) {
+  const silent = Boolean(options?.silent);
   const eventId = roleAlertsSelectedEventId();
   const host = document.getElementById("roleAlertsHost");
   if (!eventId) {
@@ -2011,8 +2055,9 @@ async function runRoleAlertsAnalyzeFromSelect() {
     return;
   }
   const seq = (roleAlertsAnalyzeSeq += 1);
-  if (host) host.innerHTML = `<p class="subtle">Loading roster…</p>`;
-  roleAlertsSelectedUserIds = new Set();
+  const uiState = silent ? roleAlertsCaptureHostUiState() : null;
+  if (!silent && host) host.innerHTML = `<p class="subtle">Loading roster…</p>`;
+  if (!silent) roleAlertsSelectedUserIds = new Set();
   try {
     const payload = await getJson("/api/admin/role-alerts/analyze", {
       method: "POST",
@@ -2026,8 +2071,11 @@ async function runRoleAlertsAnalyzeFromSelect() {
     });
     if (seq !== roleAlertsAnalyzeSeq) return;
     roleAlertsLastSendResult = null;
-    renderRoleAlertsAnalysis(payload);
-    status("Role-alert analysis updated.");
+    renderRoleAlertsAnalysis(payload, {
+      preserveComposerDraft: Boolean(options?.preserveComposerDraft),
+    });
+    if (silent) roleAlertsRestoreHostUiState(uiState);
+    else status("Role-alert analysis updated.");
   } catch (error) {
     if (seq !== roleAlertsAnalyzeSeq) return;
     roleAlertsAnalysisState = null;
@@ -2969,17 +3017,28 @@ function roleAlertsBuildCompSlotTemplateIndex(compBoard) {
   /** @type {Map<string, { id: string, rhGroupId: string, groupNumber: number, slotNumber: number }>} */
   const index = new Map();
   if (!compBoard?.groups) return index;
+  const slotCount = Math.max(1, Math.floor(Number(compBoard.slotCount || 5)));
   for (const group of compBoard.groups) {
     const gn = Math.max(1, Math.floor(Number(group.groupNumber || 0)));
-    const defaultGid = String(group.rhGroupId || group.groupId || "").trim();
+    const defaultGid = String(group.rhGroupId || group.groupId || gn).trim() || String(gn);
     for (const slot of group.slots || []) {
       const sn = Math.max(1, Math.floor(Number(slot.slotNumber || 0)));
       if (!sn) continue;
       const key = `${gn}:${sn}`;
       const prev = index.get(key);
-      const id = String(slot.id || prev?.id || "").trim();
-      const rhGroupId = String(slot.rhGroupId || prev?.rhGroupId || defaultGid).trim();
+      const id = String(slot.id || prev?.id || sn).trim() || String(sn);
+      const rhGroupId = String(slot.rhGroupId || prev?.rhGroupId || defaultGid).trim() || String(gn);
       index.set(key, { id, rhGroupId, groupNumber: gn, slotNumber: sn });
+    }
+    for (let sn = 1; sn <= slotCount; sn += 1) {
+      const key = `${gn}:${sn}`;
+      if (index.has(key)) continue;
+      index.set(key, {
+        id: String(sn),
+        rhGroupId: defaultGid,
+        groupNumber: gn,
+        slotNumber: sn,
+      });
     }
   }
   return index;
@@ -3004,8 +3063,10 @@ function roleAlertsResolveCompSlotRhIds(slot, group, templateIndex) {
   const gn = Math.max(1, Math.floor(Number(group?.groupNumber || slot?.groupNumber || 1)));
   const sn = Math.max(1, Math.floor(Number(slot?.slotNumber || 0)));
   const tpl = templateIndex?.get(`${gn}:${sn}`);
-  const slotId = String(slot?.id || tpl?.id || "").trim();
-  const groupId = String(slot?.rhGroupId || tpl?.rhGroupId || group?.rhGroupId || "").trim();
+  let slotId = String(slot?.id || tpl?.id || "").trim();
+  let groupId = String(slot?.rhGroupId || tpl?.rhGroupId || group?.rhGroupId || "").trim();
+  if (!groupId && gn > 0) groupId = String(gn);
+  if (!slotId && sn > 0) slotId = String(sn);
   return { slotId, groupId, groupNumber: gn, slotNumber: sn };
 }
 
@@ -4230,7 +4291,7 @@ async function roleAlertsApplyRaidHelperDraft(btn) {
         status(
           `Raid Helper partially updated (${Number(ap.slotPatches || 0)} slot(s), ${Number(ap.signupPatches || 0)} signup(s)). ${parts || ""}`
         );
-        await runRoleAlertsAnalyzeFromSelect();
+        await runRoleAlertsAnalyzeFromSelect({ silent: true });
         return;
       }
       status(parts || body.error || `Raid Helper apply failed (${res.status})`);
@@ -4238,9 +4299,9 @@ async function roleAlertsApplyRaidHelperDraft(btn) {
     }
     const ap = body.applied || {};
     status(
-      `Raid Helper updated (${Number(ap.slotPatches || 0)} roster slot(s), ${Number(ap.signupPatches || 0)} signup(s)); refreshing…`
+      `Raid Helper updated (${Number(ap.slotPatches || 0)} roster slot(s), ${Number(ap.signupPatches || 0)} signup(s)); syncing…`
     );
-    await runRoleAlertsAnalyzeFromSelect();
+    await runRoleAlertsAnalyzeFromSelect({ silent: true });
   } catch (error) {
     if (b) {
       resetButtonFeedback(b, "Write back to Raid Helper");
@@ -4372,7 +4433,8 @@ function roleAlertsComposerHandleDropOnPool(draft, payload, poolKey) {
 document.addEventListener("click", (event) => {
   const writeBtn = event.target.closest("#roleAlertsRaidComposerWriteBtn");
   if (writeBtn) {
-    roleAlertsApplyRaidHelperDraft(writeBtn);
+    event.preventDefault();
+    void roleAlertsApplyRaidHelperDraft(writeBtn);
     return;
   }
   const resetBtn = event.target.closest("#roleAlertsRaidComposerResetBtn");

@@ -417,7 +417,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-rh-roster-writeback-v1";
+const API_BUILD_ID = "20260522-plb-rh-roster-writeback-v3";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -5189,6 +5189,50 @@ function wowClassHexFromEnglishName(className) {
   return label ? WOW_CLASS_HEX_COLORS[label] || "" : "";
 }
 
+/** Raid Helper comp GET often returns `slots: []`; PATCH uses group position + slot number in the URL. */
+function rhCompGroupNumberFromGroupRow(group, fallbackIndex = 0) {
+  return Math.max(
+    1,
+    Math.floor(Number(group?.position ?? group?.groupNumber ?? group?.number ?? fallbackIndex + 1))
+  );
+}
+
+function rhCompGroupIdForPatch(group, groupNumber) {
+  const gn = Math.max(1, Math.floor(Number(groupNumber || 0)));
+  return String(group?.id ?? group?.groupId ?? group?.groupID ?? group?.position ?? gn).trim() || String(gn);
+}
+
+function rhCompSlotIdForPatch(slot, slotNumber) {
+  const sn = Math.max(1, Math.floor(Number(slotNumber || slot?.slotNumber || 0)));
+  const id = String(slot?.id ?? slot?._id ?? "").trim();
+  return id || String(sn);
+}
+
+function synthesizeRhCompSlotGrid(compPayload) {
+  const groupCount = Math.max(1, Math.floor(Number(compPayload?.groupCount || 5)));
+  const slotCount = Math.max(1, Math.floor(Number(compPayload?.slotCount || 5)));
+  const groupRows = Array.isArray(compPayload?.groups) ? compPayload.groups : [];
+  const slots = [];
+  for (let gi = 0; gi < groupCount; gi += 1) {
+    const group = groupRows[gi] || {};
+    const gn = rhCompGroupNumberFromGroupRow(group, gi);
+    const gid = rhCompGroupIdForPatch(group, gn);
+    for (let sn = 1; sn <= slotCount; sn += 1) {
+      slots.push({
+        id: String(sn),
+        groupNumber: gn,
+        groupId: gid,
+        slotNumber: sn,
+        name: "",
+        className: "",
+        specName: "",
+        roleName: "",
+      });
+    }
+  }
+  return slots;
+}
+
 /** Index every comp slot position from flat `slots` and nested `groups` (for ids on empty cells). */
 function buildCompSlotTemplateIndex(compPayload) {
   /** @type {Map<string, { id: string, rhGroupId: string, groupNumber: number, slotNumber: number }>} */
@@ -5197,17 +5241,28 @@ function buildCompSlotTemplateIndex(compPayload) {
     const gn = Math.max(1, Math.floor(Number(groupNumber || slot?.groupNumber || 0)));
     const sn = Math.max(1, Math.floor(Number(slot?.slotNumber || 0)));
     if (!sn) return;
-    const id = String(slot?.id ?? slot?._id ?? "").trim();
-    const gid = String(rhGroupId ?? slot?.groupId ?? slot?.groupID ?? slot?.group?.id ?? "").trim();
-    index.set(`${gn}:${sn}`, { id, rhGroupId: gid, groupNumber: gn, slotNumber: sn });
+    const id = rhCompSlotIdForPatch(slot, sn);
+    const gidResolved =
+      String(rhGroupId ?? slot?.groupId ?? slot?.groupID ?? slot?.group?.id ?? gn).trim() || String(gn);
+    index.set(`${gn}:${sn}`, {
+      id,
+      rhGroupId: gidResolved,
+      groupNumber: gn,
+      slotNumber: sn,
+    });
   };
   for (const g of Array.isArray(compPayload?.groups) ? compPayload.groups : []) {
-    const gn = Number(g.groupNumber ?? g.number ?? 0);
-    const gid = String(g.id ?? g.groupId ?? g.groupID ?? "").trim();
+    const gn = rhCompGroupNumberFromGroupRow(g, 0);
+    const gid = rhCompGroupIdForPatch(g, gn);
     for (const slot of Array.isArray(g?.slots) ? g.slots : []) put(slot, gn, gid);
   }
   for (const slot of Array.isArray(compPayload?.slots) ? compPayload.slots : []) {
     put(slot, slot?.groupNumber, slot?.groupId ?? slot?.groupID ?? slot?.group?.id);
+  }
+  if (!index.size) {
+    for (const slot of synthesizeRhCompSlotGrid(compPayload)) {
+      put(slot, slot.groupNumber, slot.groupId);
+    }
   }
   return index;
 }
@@ -5301,8 +5356,8 @@ function compSlotsListFromPayload(compPayload) {
   if (flat.length) return flat;
   const nested = [];
   for (const g of Array.isArray(compPayload?.groups) ? compPayload.groups : []) {
-    const gn = Number(g.groupNumber ?? g.number ?? 0);
-    const gid = g.id ?? g.groupId ?? g.groupID;
+    const gn = rhCompGroupNumberFromGroupRow(g, nested.length);
+    const gid = rhCompGroupIdForPatch(g, gn);
     for (const slot of Array.isArray(g?.slots) ? g.slots : []) {
       nested.push({
         ...slot,
@@ -5311,7 +5366,8 @@ function compSlotsListFromPayload(compPayload) {
       });
     }
   }
-  return nested;
+  if (nested.length) return nested;
+  return synthesizeRhCompSlotGrid(compPayload);
 }
 
 function buildCompBoardFromPayload(compPayload, existingNamesLower = new Set()) {
@@ -9522,6 +9578,8 @@ app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
           if (!gid && hit.rhGroupId) gid = String(hit.rhGroupId).trim();
         }
       }
+      if (!gid && gn > 0) gid = String(gn);
+      if (!sid && sn > 0) sid = String(sn);
       return { groupId: gid, slotId: sid, groupNumber: gn, slotNumber: sn };
     };
     for (let i = 0; i < signupPatches.length; i += 1) {
