@@ -417,7 +417,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-role-alerts-event-resolve-v1";
+const API_BUILD_ID = "20260522-plb-ssc-tk-role-template-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -851,6 +851,66 @@ let wclPhaseAvgRefreshProgress = {
 };
 let wclPhaseAvgRefreshPromise = null;
 const DEFAULT_ROLE_ALERT_DESIRED_BY_ROLE = Object.freeze({ Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 });
+
+/** 25-player SSC / TK roster template (3+5+5+12 = 25). */
+const ROLE_ALERT_SSC_TK_DESIRED_BY_ROLE = Object.freeze({
+  Tanks: 3,
+  Healers: 5,
+  Melee: 5,
+  Ranged: 12,
+});
+
+function roleAlertDesiredByRoleTemplateForTitle(eventTitle) {
+  const raid = trackedRaidNameFromEventTitle(eventTitle);
+  if (raid === "Serpentshrine Cavern" || raid === "Tempest Keep") {
+    return { ...ROLE_ALERT_SSC_TK_DESIRED_BY_ROLE };
+  }
+  return null;
+}
+
+function roleAlertCompositionTemplateLabelForTitle(eventTitle) {
+  const raid = trackedRaidNameFromEventTitle(eventTitle);
+  if (raid === "Serpentshrine Cavern") return "SSC";
+  if (raid === "Tempest Keep") return "TK";
+  return "";
+}
+
+function roleAlertResolveDesiredByRoleForAnalyze(eventId, eventTitle, clientDesired) {
+  const id = String(eventId || "").trim();
+  const client = sanitizeRoleAlertDesiredByRole(clientDesired);
+  const clientTotal = ["Tanks", "Healers", "Melee", "Ranged"].reduce(
+    (sum, role) => sum + Number(client[role] || 0),
+    0
+  );
+  if (clientTotal > 0) {
+    return {
+      desiredByRole: client,
+      source: "form",
+      compositionTemplate: roleAlertCompositionTemplateLabelForTitle(eventTitle),
+    };
+  }
+  const saved = id ? roleAlertSettingsState.byEventId?.[id]?.desiredByRole : null;
+  if (saved) {
+    return {
+      desiredByRole: sanitizeRoleAlertDesiredByRole(saved),
+      source: "saved",
+      compositionTemplate: roleAlertCompositionTemplateLabelForTitle(eventTitle) || null,
+    };
+  }
+  const template = roleAlertDesiredByRoleTemplateForTitle(eventTitle);
+  if (template) {
+    return {
+      desiredByRole: sanitizeRoleAlertDesiredByRole(template),
+      source: "template",
+      compositionTemplate: roleAlertCompositionTemplateLabelForTitle(eventTitle),
+    };
+  }
+  return {
+    desiredByRole: sanitizeRoleAlertDesiredByRole(null),
+    source: "default",
+    compositionTemplate: null,
+  };
+}
 const P2_MATERIALS = [
   { id: "fel_iron_bar", name: "Fel Iron Bar", required: 84, defaultCurrent: 60 },
   { id: "eternium_bar", name: "Eternium Bar", required: 56, defaultCurrent: 40 },
@@ -4379,10 +4439,13 @@ async function saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole) {
   await invalidatePublicFutureEventsSnapshots();
 }
 
-function roleAlertDesiredByRoleForEvent(eventId) {
+function roleAlertDesiredByRoleForEvent(eventId, eventTitle = "") {
   const id = String(eventId || "").trim();
   const saved = id ? roleAlertSettingsState.byEventId?.[id]?.desiredByRole : null;
-  return sanitizeRoleAlertDesiredByRole(saved);
+  if (saved) return sanitizeRoleAlertDesiredByRole(saved);
+  const template = roleAlertDesiredByRoleTemplateForTitle(eventTitle);
+  if (template) return sanitizeRoleAlertDesiredByRole(template);
+  return sanitizeRoleAlertDesiredByRole(null);
 }
 
 async function invalidatePublicFutureEventsSnapshots() {
@@ -9230,7 +9293,7 @@ app.get("/api/admin/role-alerts/events", async (req, res) => {
       .slice(0, 30)
       .map((event) => ({
         ...event,
-        roleTargets: roleAlertDesiredByRoleForEvent(event.id),
+        roleTargets: roleAlertDesiredByRoleForEvent(event.id, event.title),
       }));
     return res.json({ ok: true, events: future });
   } catch (error) {
@@ -9335,7 +9398,13 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         : summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
-    const desiredByRole = roleAlertDesiredByRoleFromSummary(summary);
+    const eventTitle = String(detail?.title || detail?.name || "");
+    const desiredResolved = roleAlertResolveDesiredByRoleForAnalyze(
+      eventId,
+      eventTitle,
+      req.body?.desiredByRole
+    );
+    const desiredByRole = desiredResolved.desiredByRole;
     await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
     const missingByRole = {};
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
@@ -9553,6 +9622,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         blockers: summary.blockerRows.length,
       },
       desiredByRole,
+      desiredByRoleSource: desiredResolved.source,
+      compositionTemplate: desiredResolved.compositionTemplate || null,
       currentByRole: summary.currentByRole,
       missingByRole,
       reachableByRole,
@@ -9777,7 +9848,13 @@ app.post("/api/admin/role-alerts/send", async (req, res) => {
       : summarizeEventNeedsFromDetail(detail, overrides, compBlockers);
     const manualRoleSpecNeeds = sanitizeRoleSpecNeedsInput(req.body?.manualRoleSpecNeeds);
     const manualRoleSpecNeedMap = roleSpecNeedsMap(manualRoleSpecNeeds);
-    const desiredByRole = roleAlertDesiredByRoleFromSummary(summary);
+    const eventTitle = String(detail?.title || detail?.name || "");
+    const desiredResolved = roleAlertResolveDesiredByRoleForAnalyze(
+      eventId,
+      eventTitle,
+      req.body?.desiredByRole
+    );
+    const desiredByRole = desiredResolved.desiredByRole;
     await saveRoleAlertDesiredByRoleForEvent(eventId, desiredByRole);
     const neededRoles = [];
     for (const role of ["Tanks", "Healers", "Melee", "Ranged"]) {
@@ -20636,7 +20713,7 @@ app.get("/api/raid-helper/future-events", async (_req, res) => {
         Melee: Number(needsSummary.currentByRole?.Melee || 0),
         Ranged: Number(needsSummary.currentByRole?.Ranged || 0),
       };
-      const roleTargets = roleAlertDesiredByRoleForEvent(event.id);
+      const roleTargets = roleAlertDesiredByRoleForEvent(event.id, event.title);
 
       return {
         ...event,

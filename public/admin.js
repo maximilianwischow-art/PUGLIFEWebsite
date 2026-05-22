@@ -80,6 +80,23 @@ let badgeTooltipsRowsState = [];
 
 const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
 const ROLE_ALERT_DEFAULT_TARGETS = { Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 };
+/** 25-player SSC / TK template (3+5+5+12). */
+const ROLE_ALERT_SSC_TK_TARGETS = { Tanks: 3, Healers: 5, Melee: 5, Ranged: 12 };
+
+function roleAlertsTemplateForEventTitle(title) {
+  const text = String(title || "").toLowerCase();
+  if (text.includes("serpentshrine") || /\bssc\b/.test(text)) return ROLE_ALERT_SSC_TK_TARGETS;
+  if (text.includes("tempest keep") || text.includes("the eye") || /\btk\b/.test(text)) return ROLE_ALERT_SSC_TK_TARGETS;
+  return null;
+}
+
+function roleAlertsDefaultTargetsForEventId(eventId) {
+  const id = String(eventId || "").trim();
+  const saved = roleAlertsSavedTargetsByEventId.get(id);
+  if (saved && typeof saved === "object") return saved;
+  const ev = roleAlertsEventsState.find((row) => String(row?.id || "") === id);
+  return roleAlertsTemplateForEventTitle(ev?.title) || ROLE_ALERT_DEFAULT_TARGETS;
+}
 const BADGE_RARITIES = ["common", "rare", "epic", "legendary"];
 const ADMIN_TBC_SPEC_ICONS_JSON_VER = "20260511b";
 const ADMIN_ZAM_ICON_LARGE = "https://wow.zamimg.com/images/wow/icons/large";
@@ -2119,10 +2136,11 @@ function roleAlertsReadOverrides() {
 }
 
 function roleAlertsReadDesiredByRole() {
-  const saved = roleAlertsSavedTargetsByEventId.get(roleAlertsSelectedEventId()) || {};
+  const eventId = roleAlertsSelectedEventId();
+  const defaults = roleAlertsDefaultTargetsForEventId(eventId);
   const pick = (id, role) => {
     const n = Number(document.getElementById(id)?.value);
-    const fallback = Number(saved?.[role] ?? ROLE_ALERT_DEFAULT_TARGETS[role] ?? 0);
+    const fallback = Number(defaults?.[role] ?? ROLE_ALERT_DEFAULT_TARGETS[role] ?? 0);
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : Math.max(0, Math.floor(fallback || 0));
   };
   return {
@@ -2196,7 +2214,12 @@ function roleAlertsCompositionRowsHtml(analysis) {
       </tr>`;
     })
     .join("");
+  const templateLabel = String(analysis?.compositionTemplate || "").trim();
+  const templateNote = templateLabel
+    ? `<p class="subtle">Role targets use the <strong>${esc(templateLabel)}</strong> template: 3 tanks · 5 heals · 5 melee · 12 ranged (25).</p>`
+    : "";
   return `
+    ${templateNote}
     <p class="subtle">Subscribed users (marked in candidate list): ${Number(analysis?.subscribedTotal || 0)}</p>
     <div class="admin-table-wrap">
       <table class="admin-table">
