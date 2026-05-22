@@ -417,7 +417,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-rh-roster-writeback-v3";
+const API_BUILD_ID = "20260522-plb-ssc-first-clear-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -13523,6 +13523,17 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
       "Participated in the guild's first Serpentshrine Cavern raid event. Awarded to linked raiders who appear in a Warcraft Logs roster from that night's SSC logs.",
     icon: "/images/achievements/ssc-first-event.png",
     dynamicFirstSscEvent: true,
+  },
+  {
+    badgeId: "ssc-first-clear",
+    label: "SSC First Clear",
+    description:
+      "Attended the guild's first Serpentshrine Cavern full clear on 21 May 2026. Awarded to every canonical user with a Warcraft Logs appearance in report c8dgnLmWCZ7xyvzG (6/6 SSC, 21.05.2026).",
+    icon: "/images/achievements/ssc-first-clear.png",
+    /* May 21 2026 00:00 CEST = May 20 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 4, 20, 22, 0, 0),
+    endMs: Date.UTC(2026, 4, 22, 4, 0, 0),
+    reportCodes: ["c8dgnLmWCZ7xyvzG"],
   },
 ];
 
