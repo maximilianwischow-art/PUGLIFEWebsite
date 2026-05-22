@@ -417,7 +417,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260518-plb-phase2-overview-v1";
+const API_BUILD_ID = "20260522-plb-performance-event-import-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -13682,6 +13682,7 @@ const BADGE_CATALOG = [
       { id: "master-crafter-tailoring", name: "PUG Master Crafter: Tailoring", icon: "/images/guild-roles/tailoring.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Tailoring." },
       { id: "master-crafter-leatherworking", name: "PUG Master Crafter: Leatherworking", icon: "/images/guild-roles/leatherworking.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Leatherworking." },
       { id: "master-crafter-blacksmithing", name: "PUG Master Crafter: Blacksmithing", icon: "/images/guild-roles/blacksmithing.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Blacksmithing." },
+      { id: "portal", name: "Portal", icon: "/images/guild-roles/portal.png", tier: "legendary", description: "Legendary portal honour badge awarded by guild leadership." },
     ],
   },
   {
@@ -13744,6 +13745,7 @@ const GUILD_ROLE_BADGE_IDS = new Set([
   "master-crafter-tailoring",
   "master-crafter-leatherworking",
   "master-crafter-blacksmithing",
+  "portal",
 ]);
 
 function badgeCatalogRarityForCategory(categoryId, badge) {
@@ -19246,6 +19248,40 @@ const GUILD_REPORTS_QUERY_DASHBOARD = `
   }
 `;
 
+/** Single-report pull for Event Management imports outside the guild top-N window. */
+const SINGLE_GUILD_DASHBOARD_REPORT_QUERY = `
+  query DashboardReportByCode($code: String!) {
+    reportData {
+      report(code: $code) {
+        code
+        title
+        startTime
+        endTime
+        rankedCharacters {
+          name
+        }
+        owner {
+          name
+        }
+        zone {
+          name
+        }
+        fights {
+          id
+          encounterID
+          name
+          kill
+          startTime
+          endTime
+          gameZone {
+            name
+          }
+        }
+      }
+    }
+  }
+`;
+
 const filteredGuildReportsCache = new Map();
 /** When the dashboard fires many endpoints at once, reuse the same in-flight WCL pull. */
 const filteredGuildReportsInflight = new Map();
@@ -19279,6 +19315,114 @@ async function getFilteredGuildReportsForGuild(guildId, sliceLimit, options = {}
   const reports = await inflight;
   filteredGuildReportsCache.set(key, { at: Date.now(), reports });
   return reports.slice(0, want);
+}
+
+const materializedDashboardReportCache = new Map();
+const materializedDashboardReportInflight = new Map();
+
+function materializedDashboardReportCacheTtlMs() {
+  const n = Number(process.env.WCL_MATERIALIZED_REPORT_CACHE_MS);
+  if (Number.isFinite(n) && n >= 0) return Math.min(600_000, n);
+  return 300_000;
+}
+
+function eventManagementDashboardMaxReportFetches() {
+  const n = Number(process.env.WCL_EVENT_IMPORT_DASHBOARD_MAX_FETCHES);
+  if (Number.isFinite(n) && n >= 1) return Math.min(60, Math.floor(n));
+  return 24;
+}
+
+async function fetchGuildDashboardReportByCode(reportCode) {
+  const code = String(reportCode || "").trim();
+  if (!code) return null;
+  const ttl = materializedDashboardReportCacheTtlMs();
+  const now = Date.now();
+  const hit = materializedDashboardReportCache.get(code);
+  if (hit && now - hit.at <= ttl) return hit.report;
+
+  let inflight = materializedDashboardReportInflight.get(code);
+  if (!inflight) {
+    inflight = (async () => {
+      try {
+        const data = await queryWcl(SINGLE_GUILD_DASHBOARD_REPORT_QUERY, { code });
+        return data?.reportData?.report || null;
+      } finally {
+        materializedDashboardReportInflight.delete(code);
+      }
+    })();
+    materializedDashboardReportInflight.set(code, inflight);
+  }
+
+  const report = await inflight;
+  if (report) materializedDashboardReportCache.set(code, { at: Date.now(), report });
+  return report;
+}
+
+/** Newest-first WCL codes from Event Management (materialised appearances + saved selection). */
+function eventManagementReportCodesOrderedForDashboard() {
+  const ordered = [];
+  const seen = new Set();
+  const push = (raw) => {
+    const code = String(raw || "").trim();
+    if (!code || seen.has(code)) return;
+    seen.add(code);
+    ordered.push(code);
+  };
+  try {
+    for (const row of raidAppearancesListReports({ limit: 500 })) {
+      push(row?.reportCode);
+    }
+  } catch (error) {
+    console.warn("[home-dashboard] raid_appearances list failed:", error?.message || error);
+  }
+  for (const code of gargulLootState?.selectedReportCodes || []) {
+    push(code);
+  }
+  return ordered;
+}
+
+/**
+ * Fold in WCL reports imported via Event Management link when they are not in
+ * the guild's recent top-N list (Performance tab calendar + phase overview).
+ */
+async function augmentGuildReportsWithEventManagementImports(reports, options = {}) {
+  await ensureGargulLootHistoryStore();
+  const list = Array.isArray(reports) ? [...reports] : [];
+  const have = new Set(list.map((r) => String(r?.code || "").trim()).filter(Boolean));
+  const missing = eventManagementReportCodesOrderedForDashboard().filter((code) => !have.has(code));
+  if (!missing.length) return list;
+
+  const maxFetches = eventManagementDashboardMaxReportFetches();
+  const toFetch = missing.slice(0, maxFetches);
+  const fetched = await Promise.all(
+    toFetch.map(async (code) => {
+      try {
+        const report = await fetchGuildDashboardReportByCode(code);
+        if (!report) return null;
+        const normalized = { ...report, code: String(report.code || code).trim() };
+        // Admin link imports are curated guild raids — do not hide them behind weekday gates.
+        const filtered = filterGuildRaidReports([normalized], { ...options, skipRaidNightSchedule: true });
+        return filtered[0] || null;
+      } catch (error) {
+        console.warn(`[home-dashboard] WCL report fetch failed for ${code}:`, error?.message || error);
+        return null;
+      }
+    })
+  );
+
+  for (const report of fetched) {
+    if (report) list.push(report);
+  }
+  list.sort(
+    (a, b) => Number(reportStartTimeMs(b?.startTime) || 0) - Number(reportStartTimeMs(a?.startTime) || 0)
+  );
+  return list;
+}
+
+/** Guild raid reports for Performance / boss-times / calendar, including link-imported events. */
+async function getGuildReportsForHomeDashboard(guildId, sliceLimit, options = {}) {
+  const reports = await getFilteredGuildReportsForGuild(guildId, sliceLimit, options);
+  return augmentGuildReportsWithEventManagementImports(reports, options);
 }
 
 /** Comma-separated WCL site usernames; earlier = higher priority when deduping same-day raids. */
@@ -20848,7 +20992,7 @@ app.get("/api/raids/phase2/overview", async (req, res) => {
 
   try {
     await ensureGargulLootHistoryStore();
-    const reports = await getFilteredGuildReportsForGuild(guildId, limit, { relaxKaraSchedule: true });
+    const reports = await getGuildReportsForHomeDashboard(guildId, limit, { relaxKaraSchedule: true });
     const selectedReportCodes = Array.from(
       new Set(
         (gargulLootState?.selectedReportCodes || [])
@@ -20994,7 +21138,7 @@ app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
   try {
     // Ensure Event Management selection is loaded before we scope reports.
     await ensureGargulLootHistoryStore();
-    const reports = await getFilteredGuildReportsForGuild(guildId, limit, { relaxKaraSchedule: true });
+    const reports = await getGuildReportsForHomeDashboard(guildId, limit, { relaxKaraSchedule: true });
     const selectedReportCodes = Array.from(
       new Set(
         (gargulLootState?.selectedReportCodes || [])
@@ -21157,7 +21301,7 @@ app.get("/api/wcl/guild/:guildId/recent-raids-calendar", async (req, res) => {
   try {
     // Ensure Event Management selection is loaded before we scope reports.
     await ensureGargulLootHistoryStore();
-    const reports = await getFilteredGuildReportsForGuild(guildId, limit, { relaxKaraSchedule: true });
+    const reports = await getGuildReportsForHomeDashboard(guildId, limit, { relaxKaraSchedule: true });
     const selectedReportCodes = Array.from(
       new Set(
         (gargulLootState?.selectedReportCodes || [])
