@@ -13682,6 +13682,7 @@ const BADGE_CATALOG = [
       { id: "master-crafter-tailoring", name: "PUG Master Crafter: Tailoring", icon: "/images/guild-roles/tailoring.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Tailoring." },
       { id: "master-crafter-leatherworking", name: "PUG Master Crafter: Leatherworking", icon: "/images/guild-roles/leatherworking.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Leatherworking." },
       { id: "master-crafter-blacksmithing", name: "PUG Master Crafter: Blacksmithing", icon: "/images/guild-roles/blacksmithing.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Blacksmithing." },
+      { id: "horde-vanguard", name: "Horde Vanguard", icon: "/images/guild-roles/horde-vanguard.png", tier: "legendary", description: "Legendary Horde honour badge awarded by guild leadership." },
     ],
   },
   {
@@ -13744,6 +13745,7 @@ const GUILD_ROLE_BADGE_IDS = new Set([
   "master-crafter-tailoring",
   "master-crafter-leatherworking",
   "master-crafter-blacksmithing",
+  "horde-vanguard",
 ]);
 
 function badgeCatalogRarityForCategory(categoryId, badge) {
