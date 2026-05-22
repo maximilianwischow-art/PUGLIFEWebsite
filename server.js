@@ -55,11 +55,13 @@ import {
   wclFightUrl,
 } from "./lib/wcl/debuff-uptime.mjs";
 import { debuffCatalogForApi, debuffOrGroupsForApi } from "./lib/wcl/important-debuffs.mjs";
+import { buildDebuffAssignmentsFromCompBoard } from "./lib/wcl/debuff-roster-assignments.mjs";
 import {
   CONSUMABLE_CATEGORIES,
   consumableCatalogForApi,
   fetchConsumablesForFight,
 } from "./lib/wcl/consumables-at-pull.mjs";
+import { fetchEventReportMetaFromWcl } from "./lib/wcl/import-event-report.mjs";
 import {
   fetchClassicArmoryEquipment,
   parseClassicArmoryEquipmentAudit,
@@ -9093,6 +9095,24 @@ app.put("/api/admin/role-alerts/role-targets", async (req, res) => {
   }
 });
 
+app.post("/api/admin/role-alerts/debuff-assignments", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const compBoard = req.body?.compBoard;
+    if (!compBoard?.groups) {
+      return res.status(400).json({ ok: false, error: "compBoard with groups is required" });
+    }
+    const debuffAssignments = buildDebuffAssignmentsFromCompBoard(compBoard);
+    return res.json({ ok: true, debuffAssignments });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to build debuff assignments",
+    });
+  }
+});
+
 app.post("/api/admin/role-alerts/analyze", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
@@ -9331,6 +9351,8 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       discordUserIdByRhKey,
       rosterClassByWclKey
     );
+    const debuffAssignments =
+      compBoard && compUsed ? buildDebuffAssignmentsFromCompBoard(compBoard) : null;
     return res.json({
       ok: true,
       event: {
@@ -9345,6 +9367,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
         materialisedReportCount: wclCtx.materialisedReportCount,
       },
       wclPhaseAvgs,
+      debuffAssignments,
       compUsed,
       compBlockerRowsAdded: compBlockers.length,
       compBoard,
@@ -14656,6 +14679,85 @@ app.put("/api/loot-history/events/selection", async (req, res) => {
     return res.json({ ok: true, selected: gargulLootState.selectedReportCodes.length });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save event selection" });
+  }
+});
+
+app.post("/api/loot-history/events/import", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+
+    const reportCode = extractReportCode(
+      req.body?.url || req.body?.reportUrl || req.body?.reportLink || req.body?.reportCode
+    );
+    if (!reportCode) {
+      return res.status(400).json({
+        ok: false,
+        error: "Provide a Warcraft Logs report URL or code in { url } or { reportCode }",
+      });
+    }
+
+    const meta = await fetchEventReportMetaFromWcl({ reportCode, queryWcl });
+    const appResult = raidAppearancesReplaceForReports({
+      reportCodes: [meta.reportCode],
+      entries: meta.appearanceEntries,
+    });
+
+    const reportRaidName = primaryTrackedRaidNameFromReport(meta.report);
+    const raidRow = {
+      reportCode: meta.reportCode,
+      reportTitle: meta.title,
+      reportRaidName,
+      reportStartTime: meta.startTimeMs || 0,
+      reportUploader: meta.reportUploader,
+    };
+
+    if (isTenPlayerTbcLootRow(raidRow)) {
+      return res.status(400).json({
+        ok: false,
+        error: "This report looks like a 10-player Karazhan / Zul'Aman log and is excluded from Event Management.",
+      });
+    }
+
+    await ensureGargulLootHistoryStore();
+    const existingSelected = Array.from(
+      new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+    );
+    const appendToSelection = req.body?.appendToSelection !== false;
+    let selectionAppended = false;
+    let nextSelected = existingSelected;
+
+    if (appendToSelection && existingSelected.length > 0 && !existingSelected.includes(meta.reportCode)) {
+      nextSelected = [...existingSelected, meta.reportCode];
+      selectionAppended = true;
+      gargulLootWriteChain = gargulLootWriteChain.then(async () => {
+        gargulLootState.selectedReportCodes = nextSelected;
+        await persistGargulLootHistory();
+        await invalidateLootHistoryCacheEntries();
+      });
+      await gargulLootWriteChain;
+    } else {
+      await invalidateLootHistoryCacheEntries();
+    }
+
+    return res.json({
+      ok: true,
+      report: raidRow,
+      rankedCount: meta.rankedCount,
+      raidAppearancesRowsWritten: appResult?.rows ?? 0,
+      selectionAppended,
+      selectedReportCodes: nextSelected,
+      note:
+        existingSelected.length === 0
+          ? "Saved selection is empty (all materialised raids count). The new report is in the table below — use Save Event Selection if you curate a subset."
+          : selectionAppended
+            ? "Report added to your saved Event Management selection."
+            : "Report was already in your saved selection.",
+    });
+  } catch (error) {
+    const message = error?.message || "Failed to import Warcraft Logs report";
+    const status = /not found|no ranked roster/i.test(message) ? 404 : 500;
+    return res.status(status).json({ ok: false, error: message });
   }
 });
 

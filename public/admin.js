@@ -61,6 +61,8 @@ const ROLE_ALERTS_COMPOSER_DRAG_MIME = "application/x-role-alerts-composer";
 /** rhNameKey → { kara, gruulMag, sscTk } from WCL Fresh zoneRankings cache. */
 let roleAlertsWclPhaseAvgsByKey = {};
 let roleAlertsWclPhaseAvgsUpdatedAt = 0;
+let roleAlertsDebuffAssignmentsState = null;
+let roleAlertsDebuffAssignmentsFetchSeq = 0;
 let roleAlertsCandidateSortState = { key: "displayName", dir: "asc" };
 let roleAlertsCandidateFilterState = {
   displayName: "",
@@ -486,6 +488,19 @@ function raidWeekday(raid) {
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString(undefined, { weekday: "long" });
+}
+
+function mergeRaidIntoAllRaidsState(raid) {
+  const code = String(raid?.reportCode || "").trim();
+  if (!code) return false;
+  const idx = allRaidsState.findIndex((r) => String(r.reportCode) === code);
+  if (idx >= 0) {
+    allRaidsState[idx] = { ...allRaidsState[idx], ...raid };
+  } else {
+    allRaidsState.push(raid);
+    allRaidsState.sort((a, b) => Number(b.reportStartTime || 0) - Number(a.reportStartTime || 0));
+  }
+  return true;
 }
 
 function renderEventSelection() {
@@ -3836,6 +3851,114 @@ function roleAlertsRaidComposerPoolsAndRosterInnerHtml(analysis) {
     </div>`;
 }
 
+function roleAlertsDebuffAssignmentsCategoryLabel(cat) {
+  const map = { armor: "Armor reduction", spell: "Spell damage", attack: "Attack speed / AP" };
+  return map[String(cat || "").trim()] || String(cat || "Other");
+}
+
+function roleAlertsRenderDebuffAssignmentsHtml(payload) {
+  if (!payload || !payload.assignments) {
+    return `<p class="subtle role-alert-debuff-assign-empty">Analyze a raid with a comp board to see debuff responsibilities.</p>`;
+  }
+  const gaps = Array.isArray(payload.gaps) ? payload.gaps : [];
+  const rows = Array.isArray(payload.assignments) ? payload.assignments : [];
+  const byCat = new Map();
+  for (const row of rows) {
+    const cat = String(row.category || "other");
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat).push(row);
+  }
+  const catOrder = ["armor", "spell", "attack"];
+  const sections = [];
+  for (const cat of catOrder) {
+    const list = byCat.get(cat);
+    if (!list?.length) continue;
+    const body = list
+      .map((row) => {
+        const primary = row.primary;
+        const backups = Array.isArray(row.backups) ? row.backups : [];
+        const who = primary
+          ? `<strong>${esc(primary.label)}</strong>${primary.groupTag ? ` <span class="role-alert-debuff-assign-grp">${esc(primary.groupTag)}</span>` : ""}<span class="subtle"> · ${esc(primary.meta)}</span>`
+          : `<span class="role-alert-debuff-assign-missing">No match on roster</span>`;
+        const backupTxt =
+          backups.length > 0
+            ? `<div class="role-alert-debuff-assign-backups subtle">Backup: ${backups
+                .map(
+                  (b) =>
+                    `${esc(b.label)}${b.groupTag ? ` (${esc(b.groupTag)})` : ""} · ${esc(b.meta)}`
+                )
+                .join(" · ")}</div>`
+            : "";
+        const orNote = row.orGroupLabel
+          ? `<span class="role-alert-debuff-assign-or subtle"> · ${esc(row.orGroupLabel)}</span>`
+          : row.orNote
+            ? `<span class="role-alert-debuff-assign-or subtle"> · ${esc(row.orNote)}</span>`
+            : "";
+        const roleNote = row.roleNote
+          ? `<div class="role-alert-debuff-assign-note subtle">${esc(row.roleNote)}</div>`
+          : "";
+        return `<tr>
+          <td>${esc(row.name)}${orNote}</td>
+          <td class="subtle">${esc(row.appliedBy || "—")}</td>
+          <td>${who}${backupTxt}${roleNote}</td>
+        </tr>`;
+      })
+      .join("");
+    sections.push(`<section class="role-alert-debuff-assign-cat">
+      <h5 class="role-alert-debuff-assign-cat-title">${esc(roleAlertsDebuffAssignmentsCategoryLabel(cat))}</h5>
+      <div class="admin-table-wrap">
+        <table class="admin-table role-alert-debuff-assign-table">
+          <thead><tr><th>Debuff</th><th>Class</th><th>Responsible raider</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </section>`);
+  }
+  const gapHtml =
+    gaps.length > 0
+      ? `<p class="subtle role-alert-debuff-assign-gaps"><strong>${gaps.length}</strong> debuff(s) have no suitable raider on this comp — assign a bench alt or adjust the comp.</p>`
+      : "";
+  return `<p class="subtle" style="margin:0 0 10px">
+    Suggested uptime owners from the current <strong>Raid Helper comp</strong> (${Number(payload.raiderCount) || 0} raiders).
+    Either/or groups pick one primary (e.g. Expose over Sunder when a Combat Rogue is present).
+  </p>${gapHtml}${sections.join("")}`;
+}
+
+function roleAlertsDebuffAssignmentsSectionHtml() {
+  const inner = roleAlertsRenderDebuffAssignmentsHtml(roleAlertsDebuffAssignmentsState);
+  return `<details class="role-alert-debuff-assign-panel card" open>
+    <summary class="role-alert-debuff-assign-summary">Boss debuff uptime — roster responsibilities</summary>
+    <div id="roleAlertsDebuffAssignmentsHost" class="role-alert-debuff-assign-host">${inner}</div>
+  </details>`;
+}
+
+async function roleAlertsRefreshDebuffAssignmentsFromDraft() {
+  const host = document.getElementById("roleAlertsDebuffAssignmentsHost");
+  const draft = roleAlertsRaidComposerDraft;
+  if (!host || !draft?.compBoard?.groups) {
+    roleAlertsDebuffAssignmentsState = null;
+    return;
+  }
+  const seq = ++roleAlertsDebuffAssignmentsFetchSeq;
+  host.innerHTML = `<p class="subtle">Updating debuff assignments…</p>`;
+  try {
+    const res = await fetch("/api/admin/role-alerts/debuff-assignments", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ compBoard: draft.compBoard }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (seq !== roleAlertsDebuffAssignmentsFetchSeq) return;
+    if (!res.ok || !payload?.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    roleAlertsDebuffAssignmentsState = payload.debuffAssignments;
+    host.innerHTML = roleAlertsRenderDebuffAssignmentsHtml(roleAlertsDebuffAssignmentsState);
+  } catch (err) {
+    if (seq !== roleAlertsDebuffAssignmentsFetchSeq) return;
+    host.innerHTML = `<p class="subtle">Debuff assignments unavailable: ${esc(err?.message || err)}</p>`;
+  }
+}
+
 function roleAlertsRaidComposerSectionHtml(analysis) {
   if (!analysis?.compUsed || !analysis?.compBoard) {
     return `${roleAlertsCompBoardHtml(analysis)}${roleAlertsAllSignupsHtml(analysis)}`;
@@ -3912,6 +4035,7 @@ async function roleAlertsRefreshRaidComposerDom() {
   }
   roleAlertsComposerAfterDomRefresh(inner);
   roleAlertsComposerApplyViewModeExpansions();
+  void roleAlertsRefreshDebuffAssignmentsFromDraft();
   const writeBtn = document.getElementById("roleAlertsRaidComposerWriteBtn");
   const badge = document.getElementById("roleAlertsRaidComposerDirtyBadge");
   const dirty = roleAlertsRaidComposerDirtyJson();
@@ -4604,11 +4728,13 @@ function renderRoleAlertsAnalysis(analysis, options = {}) {
       ? roleAlertsAnalysisState.wclPhaseAvgs.byRhKey
       : {};
   roleAlertsWclPhaseAvgsUpdatedAt = Number(roleAlertsAnalysisState?.wclPhaseAvgs?.updatedAt || 0);
+  roleAlertsDebuffAssignmentsState = roleAlertsAnalysisState?.debuffAssignments || null;
   if (!roleAlertsAnalysisState) {
     roleAlertsRaidComposerBaseline = null;
     roleAlertsRaidComposerDraft = null;
     roleAlertsWclPhaseAvgsByKey = {};
     roleAlertsWclPhaseAvgsUpdatedAt = 0;
+    roleAlertsDebuffAssignmentsState = null;
   } else {
     const candidateIds = new Set(
       (Array.isArray(roleAlertsAnalysisState.candidateTargets) ? roleAlertsAnalysisState.candidateTargets : [])
@@ -4639,12 +4765,14 @@ function renderRoleAlertsAnalysis(analysis, options = {}) {
       )} primary / ${Number(roleAlertsAnalysisState?.signups?.blockers || 0)} blockers
     </p>
     ${roleAlertsRaidComposerSectionHtml(roleAlertsAnalysisState)}
+    ${analysis?.compUsed && analysis?.compBoard ? roleAlertsDebuffAssignmentsSectionHtml() : ""}
     ${roleAlertsCompositionRowsHtml(roleAlertsAnalysisState)}
     ${roleAlertsLfmMessageHtml(roleAlertsAnalysisState)}
     ${roleAlertsCandidatesHtml(roleAlertsAnalysisState)}
     ${roleAlertsDmSendResultHtml()}
   `;
   void roleAlertsRefreshRaidComposerDom();
+  void roleAlertsRefreshDebuffAssignmentsFromDraft();
   void roleAlertsLoadGearSummaries(roleAlertsAnalysisState).then(() => {
     if (roleAlertsAnalysisState === analysis) roleAlertsRefreshRaidComposerDom();
   });
@@ -6567,6 +6695,52 @@ document.getElementById("gargulSaveBtn")?.addEventListener("click", async () => 
   } catch (error) {
     status(error?.message || "Save failed");
   }
+});
+
+document.getElementById("eventImportBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("eventImportBtn");
+  const input = document.getElementById("eventImportUrl");
+  const url = String(input?.value || "").trim();
+  if (!url) {
+    status("Paste a Warcraft Logs report URL first.");
+    input?.focus();
+    return;
+  }
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Add to list", loading: "Importing…", success: "Added", failure: "Import failed" },
+      async () => {
+        const res = await getJson("/api/loot-history/events/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        if (!res?.ok) throw new Error(res?.error || "Import failed");
+        mergeRaidIntoAllRaidsState(res.report);
+        if (Array.isArray(res.selectedReportCodes)) {
+          selectedReportCodesState = new Set(
+            res.selectedReportCodes.map((x) => String(x || "").trim()).filter(Boolean)
+          );
+        } else if (res.selectionAppended && res.report?.reportCode) {
+          selectedReportCodesState.add(String(res.report.reportCode));
+        }
+        renderEventSelection();
+        renderTargetReportSelect();
+        if (input) input.value = "";
+        const label = res.report?.reportTitle || res.report?.reportCode || "report";
+        status(res.note || `Imported “${label}” (${res.raidAppearancesRowsWritten ?? 0} roster links).`);
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Import failed");
+  }
+});
+
+document.getElementById("eventImportUrl")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  document.getElementById("eventImportBtn")?.click();
 });
 
 document.getElementById("saveEventSelectionBtn")?.addEventListener("click", async () => {

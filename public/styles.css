@@ -4321,6 +4321,24 @@ button.raid-cal-run.raid-cal-run--column:hover {
   margin-top: 10px;
 }
 
+.admin-event-import {
+  margin: 0 0 14px;
+}
+
+.admin-event-import-row {
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.admin-event-import-input {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.admin-event-import-hint {
+  margin: 8px 0 0;
+}
+
 .admin-actions--tight {
   margin-top: 0;
 }
@@ -8895,6 +8913,61 @@ tr.plb-gear-row--miss th {
     border-color 0.15s ease,
     background 0.15s ease,
     box-shadow 0.15s ease;
+}
+
+.role-alert-debuff-assign-panel {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(52, 211, 153, 0.22);
+  background: rgba(6, 40, 30, 0.12);
+}
+
+.role-alert-debuff-assign-summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+  color: rgba(167, 243, 208, 0.95);
+}
+
+.role-alert-debuff-assign-cat {
+  margin-top: 12px;
+}
+
+.role-alert-debuff-assign-cat-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.role-alert-debuff-assign-table td {
+  vertical-align: top;
+}
+
+.role-alert-debuff-assign-grp {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(167, 139, 250, 0.9);
+}
+
+.role-alert-debuff-assign-missing {
+  color: #f87171;
+  font-weight: 700;
+}
+
+.role-alert-debuff-assign-backups,
+.role-alert-debuff-assign-note {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.role-alert-debuff-assign-or {
+  font-size: 11px;
 }
 
 .role-alert-composer-empty-inner {

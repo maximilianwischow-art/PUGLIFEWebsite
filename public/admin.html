@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260519plb-blocker-druid-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260522plb-event-import-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -139,6 +139,25 @@
             <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
               <h3 class="section-title">Event Management</h3>
               <p class="subtle">Select which raid events feed guild loot data (Leaderboard expand / APIs) for all users.</p>
+              <div class="admin-event-import">
+                <label class="subtle" for="eventImportUrl">Add report by Warcraft Logs link</label>
+                <div class="admin-actions admin-actions--tight admin-event-import-row">
+                  <input
+                    id="eventImportUrl"
+                    class="admin-input admin-event-import-input"
+                    type="url"
+                    inputmode="url"
+                    placeholder="https://fresh.warcraftlogs.com/reports/…"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <button type="button" class="event-signup-btn" id="eventImportBtn">Add to list</button>
+                </div>
+                <p class="subtle admin-event-import-hint">
+                  Fetches the ranked roster from Warcraft Logs and adds the raid to the table below — including logs that are
+                  not in the automatic guild sync window yet.
+                </p>
+              </div>
               <div id="eventSelectionList" class="admin-grid-note">Loading events...</div>
               <div class="admin-actions">
                 <button type="button" class="event-signup-btn" id="saveEventSelectionBtn">Save Event Selection</button>
@@ -653,7 +672,7 @@
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/events-roster-ui.js?v=20260519plb-blocker-druid-v1"></script>
-    <script defer src="/admin.js?v=20260519plb-phase-alt-v1"></script>
+    <script defer src="/admin.js?v=20260519plb-debuff-assign-v1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
