@@ -417,7 +417,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-ssc-first-clear-v1";
+const API_BUILD_ID = "20260522-plb-role-alerts-event-resolve-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -7659,14 +7659,78 @@ async function publicFutureEventSnapshotFallback(eventId) {
     const events = Array.isArray(hit?.payload?.events) ? hit.payload.events : [];
     const event = events.find((row) => String(row?.id || "").trim() === id);
     if (!event) continue;
+    const storedSignups = Array.isArray(event?.raidHelperSignUps) ? event.raidHelperSignUps : [];
     const confirmedRoster = Array.isArray(event?.confirmedRoster) ? event.confirmedRoster : [];
     const total = Number(event?.signups?.total || 0);
     const confirmed = Number(event?.signups?.confirmed || confirmedRoster.length || 0);
-    if (total <= 0 && confirmed <= 0 && confirmedRoster.length <= 0) continue;
+    const hasSignupPayload = storedSignups.length > 0 || confirmedRoster.length > 0;
+    const hasSignupCounts = total > 0 || confirmed > 0;
+    if (!hasSignupPayload && !hasSignupCounts) continue;
     matches.push({ key, syncedAt: Number(hit?.syncedAt || 0), event });
   }
   matches.sort((a, b) => b.syncedAt - a.syncedAt);
   return matches[0] || null;
+}
+
+/**
+ * Resolve Raid Helper event detail for Role Alerts: live API, snapshot, then posted-events stub.
+ * @returns {Promise<{ detail: object|null, reason: string, warnings: string[] }>}
+ */
+async function resolveRaidHelperEventDetailForRoleAlerts(eventId) {
+  const id = String(eventId || "").trim();
+  const warnings = [];
+  if (!id) return { detail: null, reason: "missing_id", warnings };
+
+  let detail = await fetchRaidHelperEventDetail(id);
+  if (detail) return { detail, reason: "raid_helper_api", warnings };
+
+  detail = await raidHelperEventDetailFallbackFromPublicSnapshot(id);
+  if (detail) {
+    warnings.push(
+      "Raid Helper event detail was not available from the API; using the latest cached public snapshot for signups."
+    );
+    return { detail, reason: "public_snapshot", warnings };
+  }
+
+  const serverId = raidHelperDiscordGuildId();
+  if (serverId) {
+    try {
+      const posted = await fetchRaidHelperServerEvents(serverId);
+      const row = (Array.isArray(posted) ? posted : []).find(
+        (event) => String(event?.id || event?.eventId || event?.eventID || "").trim() === id
+      );
+      if (row) {
+        await sleepMs(450);
+        detail = await fetchRaidHelperEventDetail(id);
+        if (detail) return { detail, reason: "raid_helper_api_retry", warnings };
+
+        const title = String(row.title || row.name || "Raid event").trim();
+        const startTime = Number(row.startTime || row.timestamp || row.time || row.start || 0);
+        warnings.push(
+          "Raid Helper lists this event but signup detail could not be loaded (rate limit or temporary API error). Comp board may still load; reload or try again shortly."
+        );
+        return {
+          detail: {
+            id,
+            title,
+            name: title,
+            description: String(row.description || ""),
+            startTime,
+            channelId: String(row?.channelId || row?.channelID || ""),
+            softresId: String(row?.softresId || row?.softresID || ""),
+            signUps: [],
+            _fallbackSource: "posted-events-list",
+          },
+          reason: "posted_events_list",
+          warnings,
+        };
+      }
+    } catch {
+      /* ignore — fall through to not_found */
+    }
+  }
+
+  return { detail: null, reason: "not_found", warnings };
 }
 
 async function raidHelperEventDetailFallbackFromPublicSnapshot(eventId) {
@@ -9150,16 +9214,24 @@ app.get("/api/admin/role-alerts/events", async (req, res) => {
     }
     const nowSec = Math.floor(Date.now() / 1000);
     const events = await fetchRaidHelperServerEvents(serverId);
-    const future = (Array.isArray(events) ? events : [])
-      .map((event) => ({
-        id: String(event.id || event.eventId || event.eventID || "").trim(),
+    const mappedById = new Map();
+    for (const event of Array.isArray(events) ? events : []) {
+      const id = raidHelperPostedEventId(event);
+      const startTime = Number(event.startTime || event.timestamp || event.time || event.start || 0);
+      if (!id || !Number.isFinite(startTime) || startTime < nowSec) continue;
+      mappedById.set(id, {
+        id,
         title: String(event.title || event.name || "Unnamed Event").trim(),
-        startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
-      }))
-      .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime >= nowSec)
+        startTime,
+      });
+    }
+    const future = [...mappedById.values()]
       .sort((a, b) => a.startTime - b.startTime)
       .slice(0, 30)
-      .map((event) => ({ ...event, roleTargets: roleAlertDesiredByRoleForEvent(event.id) }));
+      .map((event) => ({
+        ...event,
+        roleTargets: roleAlertDesiredByRoleForEvent(event.id),
+      }));
     return res.json({ ok: true, events: future });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load role-alert events" });
@@ -9205,16 +9277,27 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     const eventId = String(req.body?.eventId || "").trim();
     if (!eventId) return res.status(400).json({ ok: false, error: "eventId is required" });
     const overrides = req.body?.overrides && typeof req.body.overrides === "object" ? req.body.overrides : {};
-    const detailWarnings = [];
-    let detail = await fetchRaidHelperEventDetail(eventId);
+    const resolved = await resolveRaidHelperEventDetailForRoleAlerts(eventId);
+    const detail = resolved.detail;
+    const detailWarnings = [...(Array.isArray(resolved.warnings) ? resolved.warnings : [])];
     if (!detail) {
-      const fallbackDetail = await raidHelperEventDetailFallbackFromPublicSnapshot(eventId);
-      if (fallbackDetail) {
-        detail = fallbackDetail;
-        detailWarnings.push("Raid Helper API is rate-limited; using the latest local public snapshot for roster/signups.");
+      const hints = [];
+      if (!String(process.env.RAID_HELPER_API_KEY || "").trim()) {
+        hints.push("Set RAID_HELPER_API_KEY on the server.");
       }
+      hints.push(
+        "Confirm the event id (paste a raid-helper.xyz event/plan link), click Reload events, or pick an event from the dropdown."
+      );
+      if (resolved.reason === "not_found") {
+        hints.push("This id may be wrong, from another guild, or removed from Raid Helper.");
+      }
+      return res.status(404).json({
+        ok: false,
+        error: "Raid event not found",
+        hint: hints.join(" "),
+        reason: resolved.reason,
+      });
     }
-    if (!detail) return res.status(404).json({ ok: false, error: "Raid event not found" });
     const existingPrimaryNames = new Set(
       (Array.isArray(detail?.signUps) ? detail.signUps : [])
         .filter((entry) => String(entry?.status || "").toLowerCase() === "primary")
@@ -19725,6 +19808,21 @@ function firstClearParticipantsByRaidFromReports(reports, raidNames) {
   });
 }
 
+function raidHelperPostedEventId(row) {
+  return String(row?.id || row?.eventId || row?.eventID || "").trim();
+}
+
+/** Raid Helper paginated `/servers/{id}/events` often repeats rows across pages. */
+function dedupeRaidHelperPostedEventsById(rows) {
+  const byId = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = raidHelperPostedEventId(row);
+    if (!id || byId.has(id)) continue;
+    byId.set(id, row);
+  }
+  return [...byId.values()];
+}
+
 async function fetchRaidHelperServerEvents(serverId) {
   const apiKey = process.env.RAID_HELPER_API_KEY;
   if (!apiKey) throw new Error("Missing RAID_HELPER_API_KEY in .env");
@@ -19752,7 +19850,7 @@ async function fetchRaidHelperServerEvents(serverId) {
     events.push(...(payload?.postedEvents || []));
   }
 
-  return events;
+  return dedupeRaidHelperPostedEventsById(events);
 }
 
 /**

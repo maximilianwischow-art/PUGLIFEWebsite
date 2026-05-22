@@ -37,6 +37,9 @@ let roleAlertsComposerViewModeState = (() => {
 /** Active roster players for Detailed view cards (guild-wide, not per event). */
 let roleAlertsComposerRosterPlayers = null;
 let roleAlertsComposerRosterLoadPromise = null;
+/** Suppress empty-slot click right after drag-and-drop. */
+let roleAlertsComposerSuppressClick = false;
+let roleAlertsTbcSpecCatalogPromise = null;
 
 function roleAlertsComposerClearDropHighlight() {
   if (roleAlertsComposerDropHighlightEl) {
@@ -428,7 +431,12 @@ function renderRhWclUnmatched(stats) {
 async function getJson(url, opts) {
   const res = await fetch(url, { credentials: "include", ...(opts || {}) });
   const payload = await res.json().catch(() => ({}));
-  if (!res.ok || payload?.ok === false) throw new Error(payload?.error || `Request failed (${res.status})`);
+  if (!res.ok || payload?.ok === false) {
+    const err = new Error(payload?.error || `Request failed (${res.status})`);
+    if (payload?.hint) err.hint = String(payload.hint);
+    if (payload?.reason) err.reason = String(payload.reason);
+    throw err;
+  }
   return payload;
 }
 
@@ -1971,8 +1979,18 @@ function roleAlertsEnsureEventOptionInSelect(eventId, label) {
   select.value = id;
 }
 
+function roleAlertsDedupeEventsById(events) {
+  const byId = new Map();
+  for (const event of Array.isArray(events) ? events : []) {
+    const id = String(event?.id || "").trim();
+    if (!id || byId.has(id)) continue;
+    byId.set(id, event);
+  }
+  return [...byId.values()];
+}
+
 function renderRoleAlertsEventSelect(events) {
-  roleAlertsEventsState = Array.isArray(events) ? events : [];
+  roleAlertsEventsState = roleAlertsDedupeEventsById(events);
   roleAlertsSavedTargetsByEventId = new Map(
     roleAlertsEventsState
       .map((event) => {
@@ -2079,10 +2097,13 @@ async function runRoleAlertsAnalyzeFromSelect(options = {}) {
   } catch (error) {
     if (seq !== roleAlertsAnalyzeSeq) return;
     roleAlertsAnalysisState = null;
+    const errMsg = String(error?.message || "Unknown error");
+    const errHint = String(error?.hint || "").trim();
+    const displayMsg = errHint ? `${errMsg} — ${errHint}` : errMsg;
     if (host) {
-      host.innerHTML = `<p class="subtle">Could not load roster: ${esc(error?.message || "Unknown error")}</p>`;
+      host.innerHTML = `<p class="subtle">Could not load roster: ${esc(displayMsg)}</p>`;
     }
-    status(error?.message || "Failed to analyze selected event");
+    status(displayMsg || "Failed to analyze selected event");
   }
 }
 
@@ -3004,7 +3025,7 @@ function roleAlertComposerEmptySlotHtml(slot, group, attrStr = "") {
   const dropAttr = roleAlertsComposerSlotDropAttrs(slot, group);
   const sn = Number(slot?.slotNumber || 0);
   const slotHint = sn > 0 ? `Slot ${sn}` : "Empty slot";
-  return `<div class="role-alert-slot role-alert-slot--composer-empty role-alert-composer-slot"${dropAttr}${attrStr} title="${esc(slotHint)} — drop a player here">
+  return `<div class="role-alert-slot role-alert-slot--composer-empty role-alert-composer-slot" data-role-alert-composer-empty-pick="1"${dropAttr}${attrStr} title="${esc(slotHint)} — click to set class &amp; spec placeholder, or drop a player here">
       <div class="role-alert-composer-empty-inner">
         <span class="role-alert-composer-empty-icon" aria-hidden="true">+</span>
         <span class="role-alert-composer-empty-label">Drop here</span>
@@ -3576,6 +3597,102 @@ function roleAlertsEmptyCompSlot(slot) {
   slot.isEmpty = true;
 }
 
+/** Client mirror of server `inferRoleFromClassSpecName`. */
+function roleAlertsInferRoleFromClassSpec(classNameRaw, specNameRaw, nameRaw = "") {
+  const className = String(classNameRaw || "").trim().toLowerCase();
+  const specName = String(specNameRaw || "").trim().toLowerCase();
+  const name = String(nameRaw || "").trim().toLowerCase();
+  const raw = `${className} ${specName} ${name}`;
+  if (/\b(tank|protection|guardian)\b/.test(raw)) return "Tanks";
+  if (/\b(healer|holy|resto|restoration|discipline|disc|smite)\b/.test(raw)) return "Healers";
+  if (/\b(arms|fury|combat|assassination|subtlety|retribution|ret|enhancement|enh|feral)\b/.test(raw)) return "Melee";
+  if (
+    /\b(arcane|fire|frost|shadow|elemental|ele|destruction|destro|demonology|demo|affliction|balance|boomkin|dreamstate|beastmastery|marksmanship|survival|hunter|mage|warlock)\b/.test(
+      raw
+    )
+  ) {
+    return "Ranged";
+  }
+  return "Melee";
+}
+
+function roleAlertsNormClassSpecKey(className, specName) {
+  return `${String(className || "").trim().toLowerCase()}|${String(specName || "").trim().toLowerCase()}`;
+}
+
+function roleAlertsFindEmoteIdsForClassSpec(draft, className, specName) {
+  const key = roleAlertsNormClassSpecKey(className, specName);
+  if (!key || key === "|" || !draft) return { classEmoteId: "", specEmoteId: "" };
+  const probe = (row) => {
+    if (!row) return null;
+    const cls = String(row.className || row.raidHelperPatchClassName || "").trim();
+    const spec = String(row.specName || "").trim();
+    if (roleAlertsNormClassSpecKey(cls, spec) !== key) return null;
+    const classEmoteId = String(row.classEmoteId || "").trim();
+    const specEmoteId = String(row.specEmoteId || "").trim();
+    if (!classEmoteId && !specEmoteId) return null;
+    return { classEmoteId, specEmoteId };
+  };
+  for (const row of draft.allSignups || []) {
+    const hit = probe(row);
+    if (hit) return hit;
+  }
+  for (const g of draft.compBoard?.groups || []) {
+    for (const slot of g.slots || []) {
+      const hit = probe(slot);
+      if (hit) return hit;
+    }
+  }
+  return { classEmoteId: "", specEmoteId: "" };
+}
+
+function roleAlertsApplySpecPlaceholderToSlot(slot, draft, { className, specName }) {
+  if (!slot || !draft) return;
+  const cls = String(className || "").trim();
+  const spec = String(specName || "").trim();
+  if (!cls || !spec) return;
+  const roleName = roleAlertsInferRoleFromClassSpec(cls, spec, spec) || "Melee";
+  const label = roleAlertWowClassLabelFromSlot({ className: cls }) || cls;
+  const wowSlug = adminIdentitySlug(label);
+  const color =
+    (wowSlug && ADMIN_WOW_CLASS_COLORS_BY_SLUG[wowSlug]) ||
+    ADMIN_WOW_CLASS_COLORS[label] ||
+    "";
+  const emotes = roleAlertsFindEmoteIdsForClassSpec(draft, cls, spec);
+  slot.name = spec;
+  slot.displayCharacterName = spec;
+  slot.className = cls;
+  slot.specName = spec;
+  slot.roleName = roleName;
+  slot.color = color;
+  slot.classEmoteId = emotes.classEmoteId;
+  slot.specEmoteId = emotes.specEmoteId;
+  slot._occupantSignupId = null;
+  slot.isKnownSignup = false;
+  slot.isBlocker = true;
+  slot.isEmpty = false;
+  slot.peakParse = undefined;
+  slot.peakParseBracket = undefined;
+  slot.peakParseSource = undefined;
+  slot.gearScore = undefined;
+  slot.classicArmoryCharacterUrl = "";
+  slot.wclEventCount = null;
+  slot.raiderCard = null;
+  roleAlertsRecomputeComposerOnComp(draft);
+}
+
+/** Clear a user-placed spec placeholder; restore baseline RH blocker when applicable. */
+function roleAlertsComposerClearPlaceholderSlot(slot) {
+  if (!slot) return;
+  const baselineBoard = roleAlertsRaidComposerBaseline?.compBoard;
+  const bs = roleAlertsFindBaselineSlot(slot, baselineBoard);
+  if (bs?.isBlocker) {
+    roleAlertsClearSlotFromBaseline(slot, baselineBoard);
+    return;
+  }
+  roleAlertsEmptyCompSlot(slot);
+}
+
 function roleAlertsRemoveSignupFromRosterGrid(draft, signupId) {
   roleAlertsRemoveSignupFromAllCompSlots(draft, signupId);
 }
@@ -3829,12 +3946,14 @@ function roleAlertsRaidComposerSlotRowHtml(slot, group, heatStats, wclMeta, wclT
       : "";
   const dropAttr = roleAlertsComposerSlotDropAttrs(slot, group);
   const blockerHint = slot?.isBlocker
-    ? ` title="${esc("Drop a player here to replace this placeholder (e.g. " + String(slot.name || "blocker") + ")")}"`
+    ? ` title="${esc("Drop a player here to replace this placeholder (e.g. " + String(slot.name || "blocker") + "). Double-click to clear.")}"`
     : "";
   const dblAttr =
     occ && !slot?.isBlocker
       ? ` data-role-alert-composer-dbl="1" data-signup-id="${esc(String(occ))}" title="Double-click to remove from roster"`
-      : "";
+      : slot?.isBlocker && !occ
+        ? ` data-role-alert-composer-dbl-placeholder="1" data-slot-id="${sid}" data-rh-group-id="${gid}" data-rh-slot-number="${sn}" title="Double-click to clear placeholder"`
+        : "";
   const face = roleAlertsComposerCardFaceHtml(slot, heatStats, wclMeta, wclTitleBase, {
     outerClass: cls,
     rootAttrs: `data-role-alert-composer-slot-wrap="1"${dropAttr}${dragAttr}${dblAttr}${blockerHint}`,
@@ -4242,7 +4361,9 @@ function roleAlertsBuildApplyRaidHelperDraftPayload() {
         slotNumber: resolved.slotNumber,
       };
       if (occRow?.classEmoteId) body.classEmoteId = String(occRow.classEmoteId);
+      else if (slot.classEmoteId) body.classEmoteId = String(slot.classEmoteId);
       if (occRow?.specEmoteId) body.specEmoteId = String(occRow.specEmoteId);
+      else if (slot.specEmoteId) body.specEmoteId = String(slot.specEmoteId);
       slotPatches.push({
         groupId: resolved.groupId || undefined,
         slotId: resolved.slotId || undefined,
@@ -4511,11 +4632,17 @@ document.addEventListener("drop", (event) => {
     const poolKey = String(drop.getAttribute("data-pool") || "").trim();
     roleAlertsComposerHandleDropOnPool(draft, payload, poolKey);
   }
+  roleAlertsComposerSuppressClick = true;
   roleAlertsRefreshRaidComposerDom();
 });
 
 document.addEventListener("dragend", () => {
   roleAlertsComposerClearDropHighlight();
+  if (roleAlertsComposerSuppressClick) {
+    window.setTimeout(() => {
+      roleAlertsComposerSuppressClick = false;
+    }, 320);
+  }
 });
 
 document.addEventListener("click", (event) => {
@@ -4525,6 +4652,27 @@ document.addEventListener("click", (event) => {
   if (viewBtn && root.contains(viewBtn)) {
     event.preventDefault();
     roleAlertsSetComposerViewMode(viewBtn.getAttribute("data-composer-view"));
+    return;
+  }
+  const emptyPick = event.target.closest("[data-role-alert-composer-empty-pick]");
+  if (emptyPick && root.contains(emptyPick) && !roleAlertsComposerSuppressClick) {
+    if (!roleAlertsRaidComposerDraft) return;
+    const groupId = String(emptyPick.getAttribute("data-rh-group-id") || "").trim();
+    const slotId = String(emptyPick.getAttribute("data-slot-id") || "").trim();
+    const slotNumber = Number(emptyPick.getAttribute("data-rh-slot-number") || 0);
+    const hit = roleAlertsFindSlotByIds(roleAlertsRaidComposerDraft, groupId, slotId, slotNumber);
+    if (!hit?.slot || !roleAlertSlotIsEmpty(hit.slot)) return;
+    event.preventDefault();
+    const gn = Number(hit.group?.groupNumber || 0);
+    const sn = Number(hit.slot.slotNumber || 0);
+    void (async () => {
+      const picked = await showRoleAlertsSpecPlaceholderModal({
+        title: `Class & spec placeholder${gn > 0 ? ` · Group ${gn}` : ""}${sn > 0 ? ` · Slot ${sn}` : ""}`,
+      });
+      if (!picked || !roleAlertsRaidComposerDraft) return;
+      roleAlertsApplySpecPlaceholderToSlot(hit.slot, roleAlertsRaidComposerDraft, picked);
+      roleAlertsRefreshRaidComposerDom();
+    })();
     return;
   }
   if (roleAlertsComposerViewModeState === "detailed") return;
@@ -4539,7 +4687,21 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("dblclick", (event) => {
   clearTimeout(roleAlertsComposerExpandClickTimer);
-  if (!event.target.closest("#roleAlertsRaidComposerRoot")) return;
+  const root = event.target.closest("#roleAlertsRaidComposerRoot");
+  if (!root) return;
+  const placeholderEl = event.target.closest("[data-role-alert-composer-dbl-placeholder]");
+  if (placeholderEl && root.contains(placeholderEl) && roleAlertsRaidComposerDraft) {
+    const groupId = String(placeholderEl.getAttribute("data-rh-group-id") || "").trim();
+    const slotId = String(placeholderEl.getAttribute("data-slot-id") || "").trim();
+    const slotNumber = Number(placeholderEl.getAttribute("data-rh-slot-number") || 0);
+    const hit = roleAlertsFindSlotByIds(roleAlertsRaidComposerDraft, groupId, slotId, slotNumber);
+    if (!hit?.slot?.isBlocker || Number(hit.slot._occupantSignupId || 0)) return;
+    event.preventDefault();
+    roleAlertsComposerClearPlaceholderSlot(hit.slot);
+    roleAlertsRecomputeComposerOnComp(roleAlertsRaidComposerDraft);
+    roleAlertsRefreshRaidComposerDom();
+    return;
+  }
   const el = event.target.closest("[data-role-alert-composer-dbl]");
   if (!el) return;
   const signupId = Number(el.getAttribute("data-signup-id") || 0);
@@ -9573,6 +9735,158 @@ async function resolveIdentityBacklogItem(itemId, note = "") {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ itemId, note }),
+  });
+}
+
+const ROLE_ALERTS_TBC_CLASS_ORDER = [
+  "Warrior",
+  "Paladin",
+  "Hunter",
+  "Rogue",
+  "Priest",
+  "Shaman",
+  "Mage",
+  "Warlock",
+  "Druid",
+];
+
+async function roleAlertsLoadTbcSpecCatalog() {
+  if (!roleAlertsTbcSpecCatalogPromise) {
+    roleAlertsTbcSpecCatalogPromise = fetch("/tbc-spec-icons.json", { credentials: "same-origin" })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null);
+  }
+  const data = await roleAlertsTbcSpecCatalogPromise;
+  const entries = Array.isArray(data?.entries) ? data.entries : [];
+  const byClass = new Map();
+  for (const row of entries) {
+    const className = String(row?.className || "").trim();
+    const specName = String(row?.specName || "").trim();
+    if (!className || !specName) continue;
+    if (!byClass.has(className)) byClass.set(className, []);
+    byClass.get(className).push({
+      className,
+      specName,
+      iconUrl: String(row?.iconUrl || "").trim(),
+      key: String(row?.key || "").trim(),
+    });
+  }
+  for (const list of byClass.values()) {
+    list.sort((a, b) => a.specName.localeCompare(b.specName));
+  }
+  return { byClass, classNames: ROLE_ALERTS_TBC_CLASS_ORDER.filter((c) => byClass.has(c)) };
+}
+
+function showRoleAlertsSpecPlaceholderModal({ title = "Class & spec placeholder" } = {}) {
+  return new Promise((resolve) => {
+    let selectedClass = ROLE_ALERTS_TBC_CLASS_ORDER[0];
+    let selectedSpec = "";
+    let catalog = null;
+    const overlay = document.createElement("div");
+    overlay.className = "role-alert-spec-picker-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "role-alert-spec-picker-title");
+
+    const cleanup = (value) => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+      overlay.remove();
+      resolve(value);
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") cleanup(null);
+    };
+
+    const renderSpecGrid = () => {
+      const grid = overlay.querySelector("[data-role-alert-spec-grid]");
+      if (!grid || !catalog) return;
+      const specs = catalog.byClass.get(selectedClass) || [];
+      selectedSpec = specs.some((s) => s.specName === selectedSpec) ? selectedSpec : specs[0]?.specName || "";
+      grid.innerHTML = specs
+        .map((row) => {
+          const active = row.specName === selectedSpec ? " is-active" : "";
+          const icon = row.iconUrl
+            ? `<img class="role-alert-spec-picker-spec-icon" src="${esc(row.iconUrl)}" alt="" width="40" height="40" loading="lazy" decoding="async" />`
+            : `<span class="role-alert-spec-picker-spec-icon role-alert-spec-picker-spec-icon--empty" aria-hidden="true"></span>`;
+          return `<button type="button" class="role-alert-spec-picker-spec${active}" data-spec-name="${esc(row.specName)}">
+            ${icon}
+            <span class="role-alert-spec-picker-spec-label">${esc(row.specName)}</span>
+          </button>`;
+        })
+        .join("");
+      const applyBtn = overlay.querySelector("[data-role-alert-spec-apply]");
+      if (applyBtn) applyBtn.disabled = !selectedSpec;
+    };
+
+    const renderClassTabs = () => {
+      const tabs = overlay.querySelector("[data-role-alert-spec-classes]");
+      if (!tabs || !catalog) return;
+      tabs.innerHTML = catalog.classNames
+        .map((className) => {
+          const active = className === selectedClass ? " is-active" : "";
+          const slug = adminIdentitySlug(className);
+          const accent = (slug && ADMIN_WOW_CLASS_COLORS_BY_SLUG[slug]) || ADMIN_WOW_CLASS_COLORS[className] || "";
+          const style = accent ? ` style="--spec-picker-class-accent:${esc(accent)}"` : "";
+          return `<button type="button" class="role-alert-spec-picker-class${active}" data-class-name="${esc(className)}"${style}>${esc(className)}</button>`;
+        })
+        .join("");
+      renderSpecGrid();
+    };
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    overlay.innerHTML = `<div class="role-alert-spec-picker-dialog" data-role-alert-spec-dialog>
+      <h3 class="section-title" id="role-alert-spec-picker-title" style="margin-top:0">${esc(title)}</h3>
+      <p class="subtle" style="margin:0 0 12px">Choose a class and spec. The slot will show as a Raid Helper–style placeholder until a player is dropped on it.</p>
+      <div class="role-alert-spec-picker-classes" data-role-alert-spec-classes role="tablist" aria-label="Class"></div>
+      <div class="role-alert-spec-picker-grid" data-role-alert-spec-grid role="group" aria-label="Specialization"></div>
+      <div class="admin-actions admin-actions--tight" style="justify-content:flex-end;margin-top:14px">
+        <button type="button" class="event-signup-btn event-signup-btn--softres" data-role-alert-spec-cancel>Cancel</button>
+        <button type="button" class="event-signup-btn" data-role-alert-spec-apply disabled>Apply placeholder</button>
+      </div>
+    </div>`;
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) cleanup(null);
+    });
+    overlay.querySelector("[data-role-alert-spec-cancel]")?.addEventListener("click", () => cleanup(null));
+    overlay.querySelector("[data-role-alert-spec-apply]")?.addEventListener("click", () => {
+      if (!selectedClass || !selectedSpec) return;
+      cleanup({ className: selectedClass, specName: selectedSpec });
+    });
+    overlay.querySelector("[data-role-alert-spec-classes]")?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-class-name]");
+      if (!btn) return;
+      selectedClass = String(btn.getAttribute("data-class-name") || "").trim();
+      selectedSpec = "";
+      renderClassTabs();
+    });
+    overlay.querySelector("[data-role-alert-spec-grid]")?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-spec-name]");
+      if (!btn) return;
+      selectedSpec = String(btn.getAttribute("data-spec-name") || "").trim();
+      renderSpecGrid();
+    });
+
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKeyDown);
+
+    void roleAlertsLoadTbcSpecCatalog().then((loaded) => {
+      catalog = loaded;
+      if (!catalog?.classNames?.length) {
+        const grid = overlay.querySelector("[data-role-alert-spec-grid]");
+        if (grid) grid.innerHTML = `<p class="subtle">Could not load spec list.</p>`;
+        return;
+      }
+      if (!catalog.classNames.includes(selectedClass)) selectedClass = catalog.classNames[0];
+      renderClassTabs();
+    });
   });
 }
 
