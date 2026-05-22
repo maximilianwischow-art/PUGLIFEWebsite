@@ -8296,6 +8296,7 @@ let identityBacklogLoaded = false;
 let identityAccountsState = [];
 let identityAccountsLoaded = false;
 let identityAccountsSearchValue = "";
+let identityAccountsGuildRoleFilter = "";
 let identityAccountsActivityCutoffValue = "";
 let identityAccountsSortState = { key: "lastActivity", dir: "desc" };
 let identityAccountsTotal = 0;
@@ -8791,6 +8792,19 @@ function filterIdentityAccountsByActivity(accounts) {
   return (Array.isArray(accounts) ? accounts : []).filter((account) => Number(account?.lastActivity?.at || 0) >= cutoffMs);
 }
 
+function filterIdentityAccountsByGuildRole(accounts) {
+  const roleFilter = String(identityAccountsGuildRoleFilter || "").trim();
+  if (!roleFilter) return Array.isArray(accounts) ? accounts : [];
+  const want = normalizeGuildRoleValue(roleFilter);
+  return (Array.isArray(accounts) ? accounts : []).filter(
+    (account) => normalizeGuildRoleValue(account?.guildRole) === want
+  );
+}
+
+function filterIdentityAccountsVisible(accounts) {
+  return filterIdentityAccountsByGuildRole(filterIdentityAccountsByActivity(accounts));
+}
+
 function syncIdentityActivityCutoffFromPayload(payload) {
   const cutoff = String(payload?.publicVisibility?.lastActivityCutoff || "").trim();
   if (cutoff === identityAccountsActivityCutoffValue) return;
@@ -8821,11 +8835,21 @@ function renderIdentityAccountsSummary(payload) {
     identityAccountsServerShown = Number(payload.shown || 0);
   }
   const cutoffMs = identityActivityCutoffMs();
-  const shownAfterCutoff = filterIdentityAccountsByActivity(identityAccountsState).length;
-  const cutoffText = cutoffMs
-    ? ` Public website cutoff: last activity on/after <strong>${esc(new Date(cutoffMs).toLocaleDateString())}</strong>; ${Math.max(0, identityAccountsServerShown - shownAfterCutoff)} hidden from public profile lists.`
+  const loadedCount = Array.isArray(identityAccountsState) ? identityAccountsState.length : 0;
+  const shownAfterFilters = filterIdentityAccountsVisible(identityAccountsState).length;
+  const shownAfterActivity = filterIdentityAccountsByActivity(identityAccountsState).length;
+  const roleFilter = String(identityAccountsGuildRoleFilter || "").trim();
+  const roleText = roleFilter
+    ? ` Guild role: <strong>${esc(displayGuildRoleOptionLabel(normalizeGuildRoleValue(roleFilter)))}</strong>.`
     : "";
-  host.innerHTML = `<p class="subtle"><strong>${shownAfterCutoff}</strong> of <strong>${identityAccountsTotal}</strong> identities shown.${cutoffText}</p>`;
+  const cutoffText = cutoffMs
+    ? ` Public website cutoff: last activity on/after <strong>${esc(new Date(cutoffMs).toLocaleDateString())}</strong>; ${Math.max(0, loadedCount - shownAfterActivity)} hidden from public profile lists.`
+    : "";
+  const searchNote =
+    identityAccountsSearchValue && loadedCount < identityAccountsTotal
+      ? ` (${loadedCount} loaded from search of ${identityAccountsTotal} total)`
+      : "";
+  host.innerHTML = `<p class="subtle"><strong>${shownAfterFilters}</strong> of <strong>${loadedCount || identityAccountsTotal}</strong> identities shown.${roleText}${cutoffText}${searchNote}</p>`;
 }
 
 function setIdentityAccountsTableMaximized(isMaximized) {
@@ -8882,7 +8906,7 @@ function identitySortButton(key, label) {
 function renderIdentityAccountsTable(accounts) {
   const host = document.getElementById("identityAccountsTableHost");
   if (!host) return;
-  const visibleAccounts = filterIdentityAccountsByActivity(accounts);
+  const visibleAccounts = filterIdentityAccountsVisible(accounts);
   renderIdentityAccountsSummary();
   if (!visibleAccounts.length) {
     host.innerHTML = `<p class="subtle">No identities match the current filter.</p>`;
@@ -10069,6 +10093,13 @@ document.addEventListener("DOMContentLoaded", () => {
       identityAccountsSearchValue = String(identitySearch.value || "").trim();
       if (identitySearchTimer) clearTimeout(identitySearchTimer);
       identitySearchTimer = setTimeout(() => loadIdentityAccounts({ silent: true }), 250);
+    });
+  }
+  const identityGuildRole = document.getElementById("identityAccountsGuildRole");
+  if (identityGuildRole) {
+    identityGuildRole.addEventListener("change", () => {
+      identityAccountsGuildRoleFilter = String(identityGuildRole.value || "").trim();
+      renderIdentityAccountsTable(identityAccountsState);
     });
   }
   const identityActivityCutoff = document.getElementById("identityAccountsActivityCutoff");
