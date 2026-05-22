@@ -1,5 +1,5 @@
 const PHASE2_OVERVIEW_GUILD_ID = 817080;
-const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v6";
+const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v7";
 const PHASE2_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
 
 function esc(v) {
@@ -285,7 +285,12 @@ async function loadPhase2RaidOverview(host, { force = false } = {}) {
       guildId: String(PHASE2_OVERVIEW_GUILD_ID),
       limit: "50",
     });
-    const payload = await apiGetJson(`/api/raids/phase2/overview?${q}`, { credentials: "include" });
+    q.set("nocache", "1");
+    q.set("t", String(Date.now()));
+    const payload = await apiGetJson(`/api/raids/phase2/overview?${q}`, {
+      credentials: "include",
+      skipCache: true,
+    });
     if (!payload?.raids?.length) throw new Error("No raid data returned.");
     phase2OverviewPayload = payload;
     writeOverviewCache(payload);

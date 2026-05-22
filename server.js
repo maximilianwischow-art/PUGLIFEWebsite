@@ -417,7 +417,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-performance-event-import-v1";
+const API_BUILD_ID = "20260522-plb-rh-roster-writeback-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -5198,18 +5198,47 @@ function buildCompSlotTemplateIndex(compPayload) {
     const sn = Math.max(1, Math.floor(Number(slot?.slotNumber || 0)));
     if (!sn) return;
     const id = String(slot?.id ?? slot?._id ?? "").trim();
-    const gid = String(rhGroupId ?? slot?.groupId ?? slot?.groupID ?? slot?.group?.id ?? gn).trim();
-    index.set(`${gn}:${sn}`, { id, rhGroupId: gid || String(gn), groupNumber: gn, slotNumber: sn });
+    const gid = String(rhGroupId ?? slot?.groupId ?? slot?.groupID ?? slot?.group?.id ?? "").trim();
+    index.set(`${gn}:${sn}`, { id, rhGroupId: gid, groupNumber: gn, slotNumber: sn });
   };
   for (const g of Array.isArray(compPayload?.groups) ? compPayload.groups : []) {
     const gn = Number(g.groupNumber ?? g.number ?? 0);
-    const gid = String(g.id ?? g.groupId ?? g.groupID ?? gn).trim();
+    const gid = String(g.id ?? g.groupId ?? g.groupID ?? "").trim();
     for (const slot of Array.isArray(g?.slots) ? g.slots : []) put(slot, gn, gid);
   }
   for (const slot of Array.isArray(compPayload?.slots) ? compPayload.slots : []) {
     put(slot, slot?.groupNumber, slot?.groupId ?? slot?.groupID ?? slot?.group?.id);
   }
   return index;
+}
+
+function compSlotRhTemplateEntriesFromIndex(templateIndex) {
+  if (!templateIndex || !(templateIndex instanceof Map)) return [];
+  return [...templateIndex.entries()].map(([key, row]) => ({
+    key: String(key),
+    id: String(row?.id || "").trim(),
+    rhGroupId: String(row?.rhGroupId || "").trim(),
+    groupNumber: Number(row?.groupNumber || 0),
+    slotNumber: Number(row?.slotNumber || 0),
+  }));
+}
+
+/** Fill missing comp slot ids/group ids from a live Raid Helper comp payload. */
+function attachCompSlotRhIdsToCompBoard(compBoard, templateIndex) {
+  if (!compBoard?.groups || !templateIndex) return;
+  for (const group of compBoard.groups) {
+    const gn = Math.max(1, Math.floor(Number(group.groupNumber || 0)));
+    const defaultGid = String(group.rhGroupId || group.groupId || gn).trim();
+    for (const slot of group.slots || []) {
+      const sn = Math.max(1, Math.floor(Number(slot.slotNumber || 0)));
+      if (!sn) continue;
+      const hit = templateIndex.get(`${gn}:${sn}`);
+      if (!hit) continue;
+      if (!String(slot.id || "").trim() && hit.id) slot.id = String(hit.id);
+      if (!String(slot.rhGroupId || "").trim() && hit.rhGroupId) slot.rhGroupId = String(hit.rhGroupId);
+      else if (!String(slot.rhGroupId || "").trim()) slot.rhGroupId = defaultGid;
+    }
+  }
 }
 
 function compSlotLooksEmpty(slot) {
@@ -9139,17 +9168,22 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
     let compBlockers = [];
     let compBoard = null;
     let compUsed = false;
+    let compSlotRhTemplate = [];
     try {
       const comp = await fetchRaidHelperCompPayload(eventId);
       if (comp) {
         compBlockers = compBlockerRowsFromPayload(comp, existingPrimaryNames);
         compBoard = buildCompBoardFromPayload(comp, existingPrimaryNames);
+        const templateIndex = buildCompSlotTemplateIndex(comp);
+        attachCompSlotRhIdsToCompBoard(compBoard, templateIndex);
+        compSlotRhTemplate = compSlotRhTemplateEntriesFromIndex(templateIndex);
         compUsed = true;
       }
     } catch {
       compBlockers = [];
       compBoard = null;
       compUsed = false;
+      compSlotRhTemplate = [];
     }
     let peakMaps = null;
     if (compBoard) {
@@ -9371,6 +9405,7 @@ app.post("/api/admin/role-alerts/analyze", async (req, res) => {
       compUsed,
       compBlockerRowsAdded: compBlockers.length,
       compBoard,
+      compSlotRhTemplate,
       allSignups,
       signups: {
         total: summary.signupsTotal,
@@ -9483,12 +9518,11 @@ app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
       if (compSlotTemplateIndex && gn > 0 && sn > 0) {
         const hit = compSlotTemplateIndex.get(`${gn}:${sn}`);
         if (hit) {
-          if (!sid && hit.id) sid = hit.id;
-          if (!gid && hit.rhGroupId) gid = hit.rhGroupId;
+          if (!sid && hit.id) sid = String(hit.id).trim();
+          if (!gid && hit.rhGroupId) gid = String(hit.rhGroupId).trim();
         }
       }
-      if (!gid && gn > 0) gid = String(gn);
-      return { groupId: gid, slotId: sid };
+      return { groupId: gid, slotId: sid, groupNumber: gn, slotNumber: sn };
     };
     for (let i = 0; i < signupPatches.length; i += 1) {
       const p = signupPatches[i];
@@ -9517,15 +9551,27 @@ app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
       const resolved = resolveCompSlotPatchIds(p?.groupId, p?.slotId, body);
       const groupId = resolved.groupId;
       const slotId = resolved.slotId;
-      if (!groupId || !slotId || !body) {
+      if (!body) {
         errors.push({
           step: "slotPatch",
           index: i,
           groupId,
           slotId,
-          error: !body
-            ? "missing body"
-            : "missing Raid Helper comp slot id (re-open analysis and try again)",
+          error: "missing body",
+        });
+        continue;
+      }
+      if (!groupId || !slotId) {
+        const pos =
+          resolved.groupNumber > 0 && resolved.slotNumber > 0
+            ? ` (group ${resolved.groupNumber}, slot ${resolved.slotNumber})`
+            : "";
+        errors.push({
+          step: "slotPatch",
+          index: i,
+          groupId,
+          slotId,
+          error: `missing Raid Helper comp slot id${pos} — re-run Analyze, then Write back`,
         });
         continue;
       }
@@ -9543,8 +9589,10 @@ app.post("/api/admin/role-alerts/apply-raid-helper-draft", async (req, res) => {
         });
       }
     }
+    const appliedTotal = Number(applied.signupPatches || 0) + Number(applied.slotPatches || 0);
     return res.json({
       ok: errors.length === 0,
+      partial: errors.length > 0 && appliedTotal > 0,
       applied,
       errors,
     });
@@ -19332,6 +19380,13 @@ function eventManagementDashboardMaxReportFetches() {
   return 24;
 }
 
+/** WCL public report codes are alphanumeric (~16 chars). Skip Gargul import placeholders. */
+function isFetchableWclReportCode(reportCode) {
+  const code = String(reportCode || "").trim();
+  if (!code || code.startsWith("gargul-")) return false;
+  return /^[a-zA-Z0-9]{10,24}$/.test(code);
+}
+
 async function fetchGuildDashboardReportByCode(reportCode) {
   const code = String(reportCode || "").trim();
   if (!code) return null;
@@ -19378,7 +19433,7 @@ function eventManagementReportCodesOrderedForDashboard() {
   for (const code of gargulLootState?.selectedReportCodes || []) {
     push(code);
   }
-  return ordered;
+  return ordered.filter((code) => isFetchableWclReportCode(code));
 }
 
 /**

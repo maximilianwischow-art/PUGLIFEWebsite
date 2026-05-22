@@ -3,7 +3,7 @@
  * Only stores successful responses (HTTP ok, not `{ ok: false }`). Cleared on logout via `clearAll()`.
  */
 (function () {
-  const PREFIX = "plb-api-v1:";
+  const PREFIX = "plb-api-v2:";
   const TTL_MS = 5 * 60 * 1000;
   const inFlight = new Set();
 
@@ -16,6 +16,7 @@
       if (p === "/api/raid-helper/future-events") return true;
       if (p === "/api/raid-helper/events-kpi") return true;
       if (p === "/api/nether-vortex/needs") return true;
+      if (p === "/api/raids/phase2/overview") return true;
       return false;
     } catch {
       return true;
