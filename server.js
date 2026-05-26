@@ -57,6 +57,11 @@ import {
 import { debuffCatalogForApi, debuffOrGroupsForApi } from "./lib/wcl/important-debuffs.mjs";
 import { buildDebuffAssignmentsFromCompBoard } from "./lib/wcl/debuff-roster-assignments.mjs";
 import {
+  createDebuffTrendSnapshotStore,
+  debuffTrendRaidFilterMatches,
+  debuffTrendRaidKeyFromTitle,
+} from "./lib/wcl/debuff-trend-snapshots.mjs";
+import {
   CONSUMABLE_CATEGORIES,
   consumableCatalogForApi,
   fetchConsumablesForFight,
@@ -417,7 +422,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-ssc-tk-role-template-v1";
+const API_BUILD_ID = "20260522-plb-debuff-trends-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -759,6 +764,8 @@ const rhWclProposalsPath = path.join(dataDir, "rh-wcl-pending-proposals.json");
 /** Admin-hidden identity backlog items. This is only a UI resolution log; canonical data stays in SQLite. */
 const identityBacklogResolvedPath = path.join(dataDir, "identity-backlog-resolved.json");
 const wclCharacterPhaseAvgPath = path.join(dataDir, "wcl-character-phase-avg.json");
+const debuffTrendSnapshotsPath = path.join(dataDir, "wcl-debuff-trend-snapshots.json");
+const debuffTrendSnapshots = createDebuffTrendSnapshotStore({ filePath: debuffTrendSnapshotsPath });
 /** Rejected proposals are remembered for 30 days so a subsequent sync doesn't re-suggest the same WCL name immediately after the admin dismissed it. */
 const RH_WCL_PROPOSAL_REJECTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const apiCacheDir = path.join(dataDir, "cache");
@@ -10707,6 +10714,7 @@ async function buildWclDebuffUptimePayload({ reportCode, encounterId, overview }
       mode: "overview",
       reportCode: code,
       reportTitle: report.title,
+      reportStartTime: reportStartTimeMs(report?.startTime),
       archiveStatus: report.archiveStatus ?? null,
       selectedReportCodes,
       encounters,
@@ -11213,6 +11221,144 @@ async function buildRaidLeadEventReportsPayload({ forceRefresh = false } = {}) {
   return { ok: true, allRaids, selectedReportCodes };
 }
 
+async function warmDebuffTrendSnapshotsForCodes(codes, raidByCode, { maxReports = 3, maxMs = 25000, concurrency = 2 } = {}) {
+  const list = (Array.isArray(codes) ? codes : [])
+    .map((c) => String(c || "").trim())
+    .filter(Boolean)
+    .slice(0, maxReports);
+  if (!list.length) return { warmed: [], failed: [] };
+
+  const started = Date.now();
+  const warmed = [];
+  const failed = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < list.length && Date.now() - started < maxMs) {
+      const code = list[index++];
+      try {
+        const payload = await getOrRefreshCachedPayload(`wcl-debuff-uptime-overview-v9-${code}`, {
+          ttlMs: 24 * 60 * 60 * 1000,
+          maxStaleMs: 48 * 60 * 60 * 1000,
+          loader: () => buildWclDebuffUptimePayload({ reportCode: code, overview: true }),
+        });
+        if (!payload?.ok || payload?.mode !== "overview") {
+          failed.push({ reportCode: code, error: payload?.error || "overview_failed" });
+          continue;
+        }
+        const raid = raidByCode.get(code);
+        const title = String(raid?.reportTitle || payload.reportTitle || "").trim();
+        await debuffTrendSnapshots.upsertFromOverview(payload, {
+          startTime: Number(raid?.reportStartTime || payload.reportStartTime || 0) || null,
+          raidKey: debuffTrendRaidKeyFromTitle(title || raid?.reportRaidName || ""),
+        });
+        warmed.push(code);
+      } catch (error) {
+        failed.push({ reportCode: code, error: error?.message || "warm_failed" });
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, list.length) }, () => worker());
+  await Promise.all(workers);
+  return { warmed, failed };
+}
+
+async function buildWclDebuffTrendsPayload({ raidFilter = "all", limit = 24, refresh = false } = {}) {
+  await ensureGargulLootHistoryStore();
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+  const eventPayload = await buildRaidLeadEventReportsPayload();
+  const allRaids = Array.isArray(eventPayload?.allRaids) ? eventPayload.allRaids : [];
+  const raidByCode = new Map();
+  for (const raid of allRaids) {
+    const code = String(raid?.reportCode || "").trim();
+    if (code) raidByCode.set(code, raid);
+  }
+
+  const lim = Math.min(40, Math.max(1, Number(limit) || 24));
+  const filter = String(raidFilter || "all").trim().toLowerCase() || "all";
+
+  let rows = selectedReportCodes.map((code) => {
+    const raid = raidByCode.get(code);
+    const title = String(raid?.reportTitle || code).trim();
+    return {
+      reportCode: code,
+      reportTitle: title,
+      startTime: Number(raid?.reportStartTime || 0),
+      raidKey: debuffTrendRaidKeyFromTitle(title || raid?.reportRaidName || ""),
+    };
+  });
+  rows = rows.filter((row) => debuffTrendRaidFilterMatches(row.raidKey, filter));
+  rows.sort((a, b) => Number(b.startTime || 0) - Number(a.startTime || 0));
+  rows = rows.slice(0, lim);
+  rows.sort((a, b) => Number(a.startTime || 0) - Number(b.startTime || 0));
+
+  await debuffTrendSnapshots.ensureLoaded();
+  let snapshots = await debuffTrendSnapshots.getAllSnapshots();
+
+  const pendingCodes = rows
+    .map((r) => r.reportCode)
+    .filter((code) => {
+      const snap = snapshots.get(code);
+      return !snap || snap.overallPct == null;
+    });
+
+  if (refresh && pendingCodes.length) {
+    await warmDebuffTrendSnapshotsForCodes(pendingCodes, raidByCode);
+    snapshots = await debuffTrendSnapshots.getAllSnapshots();
+  }
+
+  const pending = [];
+  const points = [];
+  for (const row of rows) {
+    const snap = snapshots.get(row.reportCode);
+    if (!snap || snap.overallPct == null) {
+      pending.push({
+        reportCode: row.reportCode,
+        reportTitle: row.reportTitle,
+        reason: "no_snapshot",
+      });
+      continue;
+    }
+    points.push({
+      reportCode: row.reportCode,
+      reportTitle: snap.reportTitle || row.reportTitle,
+      startTime: Number(snap.startTime || row.startTime || 0),
+      raidKey: snap.raidKey || row.raidKey,
+      overallPct: snap.overallPct,
+      overallTier: snap.overallTier,
+      categoryPct: snap.categoryPct || {},
+      bossesScored: snap.bossesScored,
+      deltaOverallPct: null,
+    });
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1].overallPct;
+    const cur = points[i].overallPct;
+    if (prev != null && cur != null && Number.isFinite(prev) && Number.isFinite(cur)) {
+      points[i].deltaOverallPct = Math.round((cur - prev) * 10) / 10;
+    }
+  }
+
+  const startTimes = points.map((p) => Number(p.startTime || 0)).filter((t) => t > 0);
+  return {
+    ok: true,
+    points,
+    pending,
+    meta: {
+      curatedCount: selectedReportCodes.length,
+      scoredCount: points.length,
+      oldestStartTime: startTimes.length ? Math.min(...startTimes) : null,
+      newestStartTime: startTimes.length ? Math.max(...startTimes) : null,
+      raidFilter: filter,
+      limit: lim,
+    },
+  };
+}
+
 app.get("/api/raid-lead/event-reports", async (req, res) => {
   try {
     const session = requireRaidLeadSession(req, res);
@@ -11260,9 +11406,28 @@ app.get("/api/raid-lead/wcl-debuff-uptime", async (req, res) => {
       maxStaleMs: 48 * 60 * 60 * 1000,
       loader: () => buildWclDebuffUptimePayload({ reportCode, encounterId, overview }),
     });
+    if (overview && payload?.ok && payload?.mode === "overview") {
+      void debuffTrendSnapshots.upsertFromOverview(payload).catch((err) => {
+        console.warn("[debuff-trends] snapshot upsert failed:", err?.message || err);
+      });
+    }
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "WCL debuff uptime failed" });
+  }
+});
+
+app.get("/api/raid-lead/wcl-debuff-trends", async (req, res) => {
+  try {
+    const session = requireRaidLeadSession(req, res);
+    if (!session) return;
+    const raidFilter = String(req.query?.raid || "all").trim().toLowerCase() || "all";
+    const limit = Math.min(40, Math.max(1, Number(req.query?.limit) || 24));
+    const refresh = String(req.query?.refresh || "").trim() === "1";
+    const payload = await buildWclDebuffTrendsPayload({ raidFilter, limit, refresh });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "WCL debuff trends failed" });
   }
 });
 

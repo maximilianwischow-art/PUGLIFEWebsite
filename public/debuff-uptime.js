@@ -48,6 +48,7 @@ function raidLabel(raid) {
 }
 
 const WCL_DEBUFF_API = "/api/raid-lead/wcl-debuff-uptime";
+const WCL_DEBUFF_TRENDS_API = "/api/raid-lead/wcl-debuff-trends";
 const WCL_CONSUMABLES_API = "/api/raid-lead/wcl-consumables";
 const WCL_GEAR_AUDIT_API = "/api/raid-lead/armory-gear-audit";
 let allRaidsState = [];
@@ -92,6 +93,17 @@ let wclDetailMode = "debuffs";
 let wclDebuffOverviewCache = null;
 let wclDebuffOverviewReportCode = "";
 let wclDebuffSpellMetaById = new Map();
+let wclProgressCache = null;
+let wclProgressRaidFilter = "all";
+let wclProgressLoaded = false;
+
+const WCL_PROGRESS_RAID_LABEL = {
+  ssc: "SSC",
+  tk: "TK",
+  kara: "Kara",
+  gruul: "Gruul",
+  mag: "Mag",
+};
 
 const WCL_DEBUFF_OR_GROUP_LABELS = {
   "armor-major": "Sunder or Expose",
@@ -742,8 +754,257 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
   }
 }
 
+function wclProgressRaidLabel(raidKey) {
+  const key = String(raidKey || "").trim();
+  return WCL_PROGRESS_RAID_LABEL[key] || key || "—";
+}
+
+function fmtProgressDate(startTime) {
+  const ms = num(startTime) > 1e12 ? num(startTime) : num(startTime) * 1000;
+  const dt = new Date(ms);
+  return Number.isNaN(dt.getTime())
+    ? "—"
+    : dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function wclDebuffProgressBarHtml(uptimePct, { compact = false, label = "" } = {}) {
+  const tier = wclDebuffUptimeTier(uptimePct);
+  const n = Number(uptimePct);
+  const hasValue = Number.isFinite(n);
+  const width = hasValue ? Math.min(100, Math.max(0, n)) : 0;
+  const text = hasValue ? `${n.toFixed(compact ? 0 : 1)}%` : "—";
+  const aria = hasValue
+    ? ` role="progressbar" aria-valuenow="${width}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(label || "Uptime")} ${esc(text)}"`
+    : "";
+  return `<div class="plb-debuff-uptime-bar plb-debuff-uptime-bar--${tier}${
+    compact ? " plb-debuff-uptime-bar--compact" : ""
+  }"${aria}>
+    <span class="plb-debuff-uptime-bar-track"><span class="plb-debuff-uptime-bar-fill" style="width:${width}%"></span></span>
+    <span class="plb-debuff-uptime-bar-label">${esc(text)}</span>
+  </div>`;
+}
+
+function wclDebuffProgressDeltaHtml(delta) {
+  const n = Number(delta);
+  if (!Number.isFinite(n)) return `<span class="plb-debuff-progress-delta plb-debuff-progress-delta--none">—</span>`;
+  const sign = n > 0 ? "+" : "";
+  const tone = n > 0 ? "up" : n < 0 ? "down" : "flat";
+  return `<span class="plb-debuff-progress-delta plb-debuff-progress-delta--${tone}">${sign}${n.toFixed(1)}%</span>`;
+}
+
+function wclDebuffProgressChartSvg(points) {
+  const vals = (Array.isArray(points) ? points : [])
+    .map((p) => Number(p?.overallPct))
+    .filter((n) => Number.isFinite(n));
+  if (vals.length < 2) {
+    return `<p class="subtle plb-debuff-progress-chart-empty">Need at least two scored raids to draw a trend line.</p>`;
+  }
+  const w = 640;
+  const h = 160;
+  const padX = 28;
+  const padY = 18;
+  const minY = Math.max(0, Math.min(...vals) - 8);
+  const maxY = Math.min(100, Math.max(...vals) + 8);
+  const spanY = Math.max(12, maxY - minY);
+  const coords = vals.map((v, i) => {
+    const x = padX + (i / (vals.length - 1)) * (w - padX * 2);
+    const y = padY + (1 - (v - minY) / spanY) * (h - padY * 2);
+    return { x, y, v };
+  });
+  const poly = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const dots = coords
+    .map(
+      (c, i) =>
+        `<circle class="plb-debuff-progress-chart-dot" cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(
+          1
+        )}" r="4" data-wcl-progress-idx="${i}" aria-hidden="true" />`
+    )
+    .join("");
+  const yLabels = [maxY, minY + spanY / 2, minY]
+    .map((v, i) => {
+      const y = padY + (i / 2) * (h - padY * 2);
+      return `<text class="plb-debuff-progress-chart-ylabel" x="4" y="${(y + 4).toFixed(1)}">${Math.round(v)}%</text>`;
+    })
+    .join("");
+  return `<svg class="plb-debuff-progress-chart-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Debuff coverage trend across raids">
+    ${yLabels}
+    <polyline class="plb-debuff-progress-chart-line" points="${poly}" fill="none" />
+    ${dots}
+  </svg>`;
+}
+
+function renderWclDebuffProgress(payload) {
+  const host = document.getElementById("wclProgressResultsHost");
+  if (!host) return;
+  if (!payload?.ok) {
+    host.innerHTML = `<p class="subtle">${esc(payload?.error || "Trends failed.")}</p>`;
+    return;
+  }
+  const points = Array.isArray(payload.points) ? payload.points : [];
+  const pending = Array.isArray(payload.pending) ? payload.pending : [];
+  const tableRows = [...points].reverse();
+  const latest = tableRows[0] || null;
+  const warmBtn = document.getElementById("wclProgressWarmBtn");
+  if (warmBtn) warmBtn.hidden = pending.length === 0;
+
+  if (!points.length && !pending.length) {
+    host.innerHTML = `<p class="subtle">No curated reports in Event Management yet. Select WCL reports in Admin → Event Management, then open each raid’s debuff overview or use <strong>Build missing snapshots</strong>.</p>`;
+    return;
+  }
+
+  const summaryHtml = latest
+    ? `<div class="plb-debuff-progress-summary">
+        <div class="plb-debuff-progress-summary-main">
+          <span class="plb-debuff-progress-summary-label">Latest raid</span>
+          <strong class="plb-debuff-progress-summary-pct">${esc(Number(latest.overallPct).toFixed(1))}%</strong>
+          <span class="plb-debuff-encounter-grade plb-debuff-tier-badge plb-debuff-tier-badge--${esc(
+            latest.overallTier || "none"
+          )}">${esc(wclDebuffTierLabel(latest.overallTier))}</span>
+        </div>
+        <div class="plb-debuff-progress-summary-meta">
+          <span>${esc(latest.reportTitle || latest.reportCode || "")}</span>
+          <span class="plb-debuff-progress-summary-delta">vs previous: ${wclDebuffProgressDeltaHtml(
+            latest.deltaOverallPct
+          )}</span>
+        </div>
+      </div>`
+    : `<p class="subtle">No scored raids yet for this filter. ${pending.length ? "Build snapshots below." : ""}</p>`;
+
+  const chartHtml = `<div class="plb-debuff-progress-chart">${wclDebuffProgressChartSvg(points)}</div>`;
+
+  const tableHtml = tableRows.length
+    ? `<div class="plb-debuff-progress-table-wrap">
+        <table class="plb-debuff-progress-table">
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Raid</th>
+              <th scope="col">Overall</th>
+              <th scope="col">Armor</th>
+              <th scope="col">Spell</th>
+              <th scope="col">Attack</th>
+              <th scope="col">Δ</th>
+              <th scope="col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows
+              .map(
+                (row) => `<tr>
+              <td>${esc(fmtProgressDate(row.startTime))}</td>
+              <td>${esc(wclProgressRaidLabel(row.raidKey))}</td>
+              <td>${wclDebuffProgressBarHtml(row.overallPct, { compact: true, label: "Overall" })}</td>
+              <td>${wclDebuffProgressBarHtml(row.categoryPct?.armor, { compact: true, label: "Armor" })}</td>
+              <td>${wclDebuffProgressBarHtml(row.categoryPct?.spell, { compact: true, label: "Spell" })}</td>
+              <td>${wclDebuffProgressBarHtml(row.categoryPct?.attack, { compact: true, label: "Attack" })}</td>
+              <td>${wclDebuffProgressDeltaHtml(row.deltaOverallPct)}</td>
+              <td><button type="button" class="event-signup-btn event-signup-btn--softres plb-debuff-progress-view" data-wcl-progress-view="${esc(
+                row.reportCode
+              )}">View report</button></td>
+            </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`
+    : "";
+
+  const pendingHtml = pending.length
+    ? `<p class="plb-debuff-progress-pending subtle">${pending.length} curated raid(s) still need a debuff overview snapshot.</p>`
+    : "";
+
+  host.innerHTML = `
+    <p class="plb-debuff-hint">Curated Event Management reports only. Scores average important debuff uptime per boss (latest kill), same tiers as the overview.</p>
+    ${summaryHtml}
+    ${chartHtml}
+    ${tableHtml}
+    ${pendingHtml}
+  `;
+}
+
+async function loadWclDebuffProgress({ refresh = false, raid = wclProgressRaidFilter } = {}) {
+  const host = document.getElementById("wclProgressResultsHost");
+  if (host && !wclProgressLoaded) {
+    host.innerHTML = `<p class="subtle">Loading progress…</p>`;
+  }
+  const params = new URLSearchParams();
+  if (raid && raid !== "all") params.set("raid", raid);
+  if (refresh) params.set("refresh", "1");
+  const payload = await getJson(`${WCL_DEBUFF_TRENDS_API}?${params.toString()}`);
+  wclProgressCache = payload;
+  wclProgressLoaded = true;
+  renderWclDebuffProgress(payload);
+  const scored = Number(payload?.meta?.scoredCount ?? payload?.points?.length ?? 0);
+  const curated = Number(payload?.meta?.curatedCount ?? 0);
+  const pending = Array.isArray(payload?.pending) ? payload.pending.length : 0;
+  setWclDebuffStatusLine(
+    `Progress: ${scored}/${curated} curated raid(s) scored${pending ? ` · ${pending} pending snapshot(s)` : ""}.`
+  );
+  return payload;
+}
+
+async function warmWclDebuffProgressPending() {
+  const pending = Array.isArray(wclProgressCache?.pending) ? wclProgressCache.pending : [];
+  if (!pending.length) return loadWclDebuffProgress({ raid: wclProgressRaidFilter });
+  const btn = document.getElementById("wclProgressWarmBtn");
+  const defaultText = "Build missing snapshots";
+  for (let i = 0; i < pending.length; i++) {
+    const row = pending[i];
+    const code = String(row?.reportCode || "").trim();
+    if (!code) continue;
+    if (btn) setButtonFeedback(btn, `Building ${i + 1}/${pending.length}…`, "info");
+    setWclDebuffStatusLine(`Building snapshot ${i + 1}/${pending.length}: ${row.reportTitle || code}…`);
+    await getJson(`${WCL_DEBUFF_API}?reportCode=${encodeURIComponent(code)}&overview=1`);
+  }
+  if (btn) resetButtonFeedback(btn, defaultText);
+  return loadWclDebuffProgress({ raid: wclProgressRaidFilter });
+}
+
+function wclEnsureReportOptionInSelect(reportCode, reportTitle) {
+  const select = document.getElementById("wclDebuffReportSelect");
+  if (!select) return;
+  const code = String(reportCode || "").trim();
+  if (!code) return;
+  if ([...select.options].some((o) => o.value === code)) {
+    select.value = code;
+    return;
+  }
+  const opt = document.createElement("option");
+  opt.value = code;
+  opt.textContent = reportTitle || code;
+  select.appendChild(opt);
+  select.value = code;
+}
+
+async function wclViewDebuffReport(reportCode) {
+  const code = String(reportCode || "").trim();
+  if (!code) return;
+  const row =
+    (wclProgressCache?.points || []).find((p) => p.reportCode === code) ||
+    (wclProgressCache?.pending || []).find((p) => p.reportCode === code);
+  wclEnsureReportOptionInSelect(code, row?.reportTitle);
+  wclSetActivePanelTab("debuffs");
+  await loadWclDebuffOverview(code);
+}
+
+function wclSetProgressRaidFilter(raid) {
+  wclProgressRaidFilter = String(raid || "all").trim().toLowerCase() || "all";
+  document.querySelectorAll("[data-wcl-progress-raid]").forEach((btn) => {
+    const on = btn.getAttribute("data-wcl-progress-raid") === wclProgressRaidFilter;
+    btn.classList.toggle("plb-debuff-progress-chip--active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
 function wclSetActivePanelTab(tab) {
-  const next = tab === "consumables" ? "consumables" : tab === "gear" ? "gear" : "debuffs";
+  const next =
+    tab === "consumables"
+      ? "consumables"
+      : tab === "gear"
+        ? "gear"
+        : tab === "progress"
+          ? "progress"
+          : "debuffs";
   wclActivePanelTab = next;
   document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
     const on = btn.getAttribute("data-wcl-panel-tab") === next;
@@ -753,15 +1014,21 @@ function wclSetActivePanelTab(tab) {
   const debuffHost = document.getElementById("wclDebuffResultsHost");
   const consumeHost = document.getElementById("wclConsumablesResultsHost");
   const gearHost = document.getElementById("wclGearAuditResultsHost");
+  const progressHost = document.getElementById("wclProgressResultsHost");
   const debuffLegend = document.getElementById("wclDebuffLegend");
   const consumeLegend = document.getElementById("wclConsumablesLegend");
   const gearLegend = document.getElementById("wclGearLegend");
+  const reportToolbar = document.getElementById("wclDebuffReportToolbar");
+  const progressToolbar = document.getElementById("wclProgressToolbar");
   if (debuffHost) debuffHost.hidden = next !== "debuffs";
   if (consumeHost) consumeHost.hidden = next !== "consumables";
   if (gearHost) gearHost.hidden = next !== "gear";
+  if (progressHost) progressHost.hidden = next !== "progress";
   if (debuffLegend) debuffLegend.hidden = next !== "debuffs";
   if (consumeLegend) consumeLegend.hidden = next !== "consumables";
   if (gearLegend) gearLegend.hidden = next !== "gear";
+  if (reportToolbar) reportToolbar.hidden = next === "progress";
+  if (progressToolbar) progressToolbar.hidden = next !== "progress";
 }
 
 function wclConsumeChip(slot, label) {
@@ -1414,6 +1681,12 @@ document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tab = btn.getAttribute("data-wcl-panel-tab") || "debuffs";
     wclSetActivePanelTab(tab);
+    if (tab === "progress") {
+      loadWclDebuffProgress({ raid: wclProgressRaidFilter }).catch((error) => {
+        setWclDebuffStatusLine(error?.message || "Failed to load progress.");
+      });
+      return;
+    }
     const code = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
     if (!code) return;
     if (tab === "consumables" && wclConsumablesOverviewReportCode === code && wclConsumablesOverviewCache) {
@@ -1462,6 +1735,41 @@ document.getElementById("wclDebuffReloadBtn")?.addEventListener("click", (event)
   const code = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
   const refresh = wclActivePanelTab === "gear";
   loadWclActiveOverview(code, { btn: event.currentTarget, refresh }).catch(() => {});
+});
+
+document.querySelectorAll("[data-wcl-progress-raid]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const raid = btn.getAttribute("data-wcl-progress-raid") || "all";
+    wclSetProgressRaidFilter(raid);
+    wclProgressLoaded = false;
+    loadWclDebuffProgress({ raid }).catch((error) => {
+      setWclDebuffStatusLine(error?.message || "Failed to load progress.");
+    });
+  });
+});
+
+document.getElementById("wclProgressRefreshBtn")?.addEventListener("click", (event) => {
+  const btn = event.currentTarget;
+  setButtonFeedback(btn, "Refreshing…", "info");
+  loadWclDebuffProgress({ refresh: true, raid: wclProgressRaidFilter })
+    .catch((error) => setWclDebuffStatusLine(error?.message || "Refresh failed."))
+    .finally(() => resetButtonFeedback(btn, "Refresh trends"));
+});
+
+document.getElementById("wclProgressWarmBtn")?.addEventListener("click", (event) => {
+  warmWclDebuffProgressPending().catch((error) => {
+    setWclDebuffStatusLine(error?.message || "Build snapshots failed.");
+    resetButtonFeedback(event.currentTarget, "Build missing snapshots");
+  });
+});
+
+document.getElementById("wclProgressResultsHost")?.addEventListener("click", (event) => {
+  const view = event.target.closest("[data-wcl-progress-view]");
+  if (!view) return;
+  const code = view.getAttribute("data-wcl-progress-view");
+  wclViewDebuffReport(code).catch((error) => {
+    setWclDebuffStatusLine(error?.message || "Failed to open report.");
+  });
 });
 
 document.getElementById("wclDebuffResultsHost")?.addEventListener("click", (event) => {

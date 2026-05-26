@@ -39,6 +39,8 @@ let roleAlertsComposerRosterPlayers = null;
 let roleAlertsComposerRosterLoadPromise = null;
 /** Suppress empty-slot click right after drag-and-drop. */
 let roleAlertsComposerSuppressClick = false;
+/** Fallback when dataTransfer is empty on drop (some browsers / drag from nested nodes). */
+let roleAlertsComposerActiveDrag = null;
 let roleAlertsTbcSpecCatalogPromise = null;
 
 function roleAlertsComposerClearDropHighlight() {
@@ -4589,8 +4591,10 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("dragstart", (event) => {
+  const root = event.target.closest("#roleAlertsRaidComposerRoot");
+  if (!root) return;
   const el = event.target.closest("[data-role-alert-composer-drag]");
-  if (!el || !event.target.closest("#roleAlertsRaidComposerRoot")) return;
+  if (!el || !root.contains(el)) return;
   const signupId = String(el.getAttribute("data-signup-id") || "").trim();
   if (!signupId) return;
   const source = String(el.getAttribute("data-role-alert-composer-source") || "").trim();
@@ -4604,6 +4608,8 @@ document.addEventListener("dragstart", (event) => {
         }
       : { type: "pool", pool: String(el.getAttribute("data-pool") || "").trim() };
   const payload = { signupId: Number(signupId), from };
+  roleAlertsComposerActiveDrag = payload;
+  el.classList.add("is-composer-dragging");
   const raw = JSON.stringify(payload);
   try {
     event.dataTransfer.setData(ROLE_ALERTS_COMPOSER_DRAG_MIME, raw);
@@ -4630,21 +4636,39 @@ document.addEventListener("dragover", (event) => {
   }
 });
 
+document.addEventListener("dragleave", (event) => {
+  const drop = event.target.closest("[data-role-alert-composer-drop]");
+  if (!drop || !event.target.closest("#roleAlertsRaidComposerRoot")) return;
+  const related = event.relatedTarget;
+  if (related && drop.contains(related)) return;
+  if (roleAlertsComposerDropHighlightEl === drop) roleAlertsComposerClearDropHighlight();
+});
+
 document.addEventListener("drop", (event) => {
   const drop = event.target.closest("[data-role-alert-composer-drop]");
   if (!drop || !event.target.closest("#roleAlertsRaidComposerRoot")) return;
   event.preventDefault();
+  event.stopPropagation();
   roleAlertsComposerClearDropHighlight();
-  let raw = event.dataTransfer.getData(ROLE_ALERTS_COMPOSER_DRAG_MIME);
-  if (!raw) raw = event.dataTransfer.getData("text/plain");
-  if (!raw || !roleAlertsRaidComposerDraft) return;
-  let payload;
+  let raw = "";
   try {
-    payload = JSON.parse(raw);
+    raw = event.dataTransfer.getData(ROLE_ALERTS_COMPOSER_DRAG_MIME);
+    if (!raw) raw = event.dataTransfer.getData("text/plain");
   } catch {
-    return;
+    raw = "";
   }
-  if (!payload?.signupId) return;
+  let payload = null;
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      payload = null;
+    }
+  }
+  if (!payload?.signupId && roleAlertsComposerActiveDrag?.signupId) {
+    payload = roleAlertsComposerActiveDrag;
+  }
+  if (!payload?.signupId || !roleAlertsRaidComposerDraft) return;
   const draft = roleAlertsRaidComposerDraft;
   if (drop.hasAttribute("data-role-alert-composer-drop") && drop.hasAttribute("data-rh-group-id")) {
     const slotId = String(drop.getAttribute("data-slot-id") || "").trim();
@@ -4659,7 +4683,11 @@ document.addEventListener("drop", (event) => {
   roleAlertsRefreshRaidComposerDom();
 });
 
-document.addEventListener("dragend", () => {
+document.addEventListener("dragend", (event) => {
+  event.target
+    .closest?.("[data-role-alert-composer-drag]")
+    ?.classList?.remove("is-composer-dragging");
+  roleAlertsComposerActiveDrag = null;
   roleAlertsComposerClearDropHighlight();
   if (roleAlertsComposerSuppressClick) {
     window.setTimeout(() => {
@@ -4671,6 +4699,7 @@ document.addEventListener("dragend", () => {
 document.addEventListener("click", (event) => {
   const root = event.target.closest("#roleAlertsRaidComposerRoot");
   if (!root) return;
+  if (event.detail > 1) return;
   const viewBtn = event.target.closest("[data-composer-view]");
   if (viewBtn && root.contains(viewBtn)) {
     event.preventDefault();
@@ -4726,10 +4755,11 @@ document.addEventListener("dblclick", (event) => {
     return;
   }
   const el = event.target.closest("[data-role-alert-composer-dbl]");
-  if (!el) return;
+  if (!el || !root.contains(el)) return;
   const signupId = Number(el.getAttribute("data-signup-id") || 0);
   if (!signupId || !roleAlertsRaidComposerDraft) return;
   event.preventDefault();
+  event.stopPropagation();
   if (roleAlertsComposerToggleSignupOnRoster(roleAlertsRaidComposerDraft, signupId)) {
     roleAlertsRefreshRaidComposerDom();
   }
