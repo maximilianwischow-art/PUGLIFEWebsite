@@ -56,6 +56,7 @@ import {
 } from "./lib/wcl/debuff-uptime.mjs";
 import { debuffCatalogForApi, debuffOrGroupsForApi } from "./lib/wcl/important-debuffs.mjs";
 import { buildDebuffAssignmentsFromCompBoard } from "./lib/wcl/debuff-roster-assignments.mjs";
+import { scoreDebuffOverview } from "./lib/wcl/debuff-scores.mjs";
 import {
   createDebuffTrendSnapshotStore,
   debuffTrendRaidFilterMatches,
@@ -422,7 +423,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-debuff-trends-v1";
+const API_BUILD_ID = "20260522-plb-debuff-ihm-cache-v12";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -10709,6 +10710,8 @@ async function buildWclDebuffUptimePayload({ reportCode, encounterId, overview }
         debuffs,
       });
     }
+    const overviewForScore = { catalog, bossRows };
+    const raidScore = scoreDebuffOverview(overviewForScore);
     return {
       ok: true,
       mode: "overview",
@@ -10722,6 +10725,7 @@ async function buildWclDebuffUptimePayload({ reportCode, encounterId, overview }
       catalog,
       orGroups,
       bossRows,
+      raidScore,
       fights: [],
     };
   }
@@ -11237,7 +11241,7 @@ async function warmDebuffTrendSnapshotsForCodes(codes, raidByCode, { maxReports 
     while (index < list.length && Date.now() - started < maxMs) {
       const code = list[index++];
       try {
-        const payload = await getOrRefreshCachedPayload(`wcl-debuff-uptime-overview-v9-${code}`, {
+        const payload = await getOrRefreshCachedPayload(`wcl-debuff-uptime-overview-v12-${code}`, {
           ttlMs: 24 * 60 * 60 * 1000,
           maxStaleMs: 48 * 60 * 60 * 1000,
           loader: () => buildWclDebuffUptimePayload({ reportCode: code, overview: true }),
@@ -11395,17 +11399,24 @@ app.get("/api/raid-lead/wcl-debuff-uptime", async (req, res) => {
       });
     }
 
-    const cacheKey = encounterId
-      ? `wcl-debuff-uptime-detail-v9-${reportCode}-${String(encounterId).trim()}`
-      : overview
-        ? `wcl-debuff-uptime-overview-v9-${reportCode}`
-        : `wcl-debuff-uptime-meta-v9-${reportCode}`;
+    const forceRefresh =
+      String(req.query?.refresh || "").trim() === "1" ||
+      String(req.query?.refresh || "").trim().toLowerCase() === "true";
 
-    const payload = await getOrRefreshCachedPayload(cacheKey, {
-      ttlMs: 24 * 60 * 60 * 1000,
-      maxStaleMs: 48 * 60 * 60 * 1000,
-      loader: () => buildWclDebuffUptimePayload({ reportCode, encounterId, overview }),
-    });
+    const cacheKey = encounterId
+      ? `wcl-debuff-uptime-detail-v12-${reportCode}-${String(encounterId).trim()}`
+      : overview
+        ? `wcl-debuff-uptime-overview-v12-${reportCode}`
+        : `wcl-debuff-uptime-meta-v12-${reportCode}`;
+
+    const loader = () => buildWclDebuffUptimePayload({ reportCode, encounterId, overview });
+    const payload = forceRefresh
+      ? await forceRefreshCachedPayload(cacheKey, loader)
+      : await getOrRefreshCachedPayload(cacheKey, {
+          ttlMs: 24 * 60 * 60 * 1000,
+          maxStaleMs: 48 * 60 * 60 * 1000,
+          loader,
+        });
     if (overview && payload?.ok && payload?.mode === "overview") {
       void debuffTrendSnapshots.upsertFromOverview(payload).catch((err) => {
         console.warn("[debuff-trends] snapshot upsert failed:", err?.message || err);

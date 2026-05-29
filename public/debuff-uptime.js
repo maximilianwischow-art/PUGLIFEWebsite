@@ -169,10 +169,12 @@ function wclDebuffTierLabel(tier) {
   return WCL_DEBUFF_TIER_LABEL[tier] || WCL_DEBUFF_TIER_LABEL.none;
 }
 
-function wclDebuffEncounterOverallTier(debuffs, catalog) {
+function wclDebuffCollectCatalogUptimeValues(debuffs, catalog, { categoryId = null } = {}) {
   const values = [];
   const seenOr = new Set();
+  const catFilter = categoryId != null ? String(categoryId) : null;
   for (const def of Array.isArray(catalog) ? catalog : []) {
+    if (catFilter && String(def?.category || "") !== catFilter) continue;
     const og = String(def?.orGroup || "").trim();
     if (og) {
       if (seenOr.has(og)) continue;
@@ -189,9 +191,294 @@ function wclDebuffEncounterOverallTier(debuffs, catalog) {
       values.push(Number(row.uptimePct));
     }
   }
-  if (!values.length) return "none";
-  const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+  return values;
+}
+
+function wclDebuffAveragePct(values) {
+  if (!values.length) return null;
+  return Math.round((values.reduce((sum, v) => sum + v, 0) / values.length) * 10) / 10;
+}
+
+function wclDebuffEncounterOverallPct(debuffs, catalog) {
+  return wclDebuffAveragePct(wclDebuffCollectCatalogUptimeValues(debuffs, catalog));
+}
+
+function wclDebuffEncounterOverallTier(debuffs, catalog) {
+  const avg = wclDebuffEncounterOverallPct(debuffs, catalog);
+  if (avg == null) return "none";
   return wclDebuffUptimeTier(avg);
+}
+
+function wclDebuffComputeRaidScore(payload) {
+  if (payload?.raidScore && payload.raidScore.overallPct != null) {
+    return payload.raidScore;
+  }
+  const catalog = Array.isArray(payload?.catalog) ? payload.catalog : [];
+  const bossRows = Array.isArray(payload?.bossRows) ? payload.bossRows : [];
+  const categoryIds = ["armor", "spell", "attack"];
+  const bossPcts = [];
+  const categorySums = Object.fromEntries(categoryIds.map((id) => [id, []]));
+  for (const boss of bossRows) {
+    if (boss?.noKills || !boss?.killCount) continue;
+    const overallPct = wclDebuffEncounterOverallPct(boss.debuffs, catalog);
+    if (overallPct == null) continue;
+    bossPcts.push(overallPct);
+    for (const catId of categoryIds) {
+      const catPct = wclDebuffAveragePct(
+        wclDebuffCollectCatalogUptimeValues(boss.debuffs, catalog, { categoryId: catId })
+      );
+      if (catPct != null) categorySums[catId].push(catPct);
+    }
+  }
+  const overallPct = wclDebuffAveragePct(bossPcts);
+  const categoryPct = {};
+  for (const catId of categoryIds) {
+    categoryPct[catId] = wclDebuffAveragePct(categorySums[catId]);
+  }
+  return {
+    overallPct,
+    overallTier: overallPct == null ? "none" : wclDebuffUptimeTier(overallPct),
+    categoryPct,
+    bossesScored: bossPcts.length,
+    bossesTotal: bossRows.length,
+  };
+}
+
+function wclDebuffMostCommonApplier(appliers) {
+  const counts = new Map();
+  for (const name of Array.isArray(appliers) ? appliers : []) {
+    const key = String(name || "").trim();
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let best = "";
+  let bestN = 0;
+  for (const [name, n] of counts) {
+    if (n > bestN) {
+      best = name;
+      bestN = n;
+    }
+  }
+  return best || null;
+}
+
+function wclDebuffBuildRaidAggregateDebuffs(bossRows, catalog) {
+  const bosses = (Array.isArray(bossRows) ? bossRows : []).filter((b) => !b?.noKills && b?.killCount);
+  const out = [];
+  for (const def of Array.isArray(catalog) ? catalog : []) {
+    const values = [];
+    const appliers = [];
+    for (const boss of bosses) {
+      const row = wclFindDebuff(boss.debuffs, def);
+      if (row?.uptimePct != null && Number.isFinite(Number(row.uptimePct))) {
+        values.push(Number(row.uptimePct));
+      }
+      if (row?.appliedByPlayer) appliers.push(String(row.appliedByPlayer));
+    }
+    out.push({
+      key: def.key,
+      spellId: def.spellId,
+      name: def.name,
+      appliedBy: def.appliedBy,
+      category: def.category,
+      orNote: def.orNote,
+      description: def.description,
+      uptimePct: wclDebuffAveragePct(values),
+      appliedByPlayer: wclDebuffMostCommonApplier(appliers),
+      present: values.length > 0,
+    });
+  }
+  return out;
+}
+
+function wclDebuffRaidDrillIdForItem(item) {
+  if (item?.kind === "orCombined") {
+    const og = String(item.orGroupId || "").trim();
+    return og ? `or:${og}` : "";
+  }
+  const key = String(item?.def?.key || "").trim();
+  return key ? `key:${key}` : "";
+}
+
+function wclDebuffParseRaidDrillId(drillId) {
+  const raw = String(drillId || "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("or:")) {
+    const orGroupId = raw.slice(3).trim();
+    return orGroupId ? { kind: "or", orGroupId } : null;
+  }
+  if (raw.startsWith("key:")) {
+    const key = raw.slice(4).trim();
+    return key ? { kind: "key", key } : null;
+  }
+  return null;
+}
+
+function wclDebuffCatalogDefForDrill(drillSpec, catalog) {
+  if (!drillSpec || drillSpec.kind !== "key") return null;
+  const key = String(drillSpec.key || "").trim();
+  return (Array.isArray(catalog) ? catalog : []).find((d) => d?.key === key) || null;
+}
+
+function wclDebuffRaidDrillTitle(drillSpec, catalog) {
+  if (!drillSpec) return "Debuff";
+  if (drillSpec.kind === "or") {
+    const members = wclDebuffCatalogDefsForOrGroup(catalog, drillSpec.orGroupId);
+    const label = wclDebuffOrGroupLabel(drillSpec.orGroupId, members);
+    return `Combined (${label})`;
+  }
+  const def = wclDebuffCatalogDefForDrill(drillSpec, catalog);
+  return def?.name || drillSpec.key || "Debuff";
+}
+
+function wclDebuffRaidDrillUptimePct(boss, drillSpec, catalog) {
+  if (!boss || boss.noKills) return null;
+  if (drillSpec.kind === "or") {
+    const members = wclDebuffCatalogDefsForOrGroup(catalog, drillSpec.orGroupId);
+    return wclDebuffCombineOrGroupUptime(boss.debuffs, members);
+  }
+  const def = wclDebuffCatalogDefForDrill(drillSpec, catalog);
+  if (!def) return null;
+  const row = wclFindDebuff(boss.debuffs, def);
+  if (row?.uptimePct == null || !Number.isFinite(Number(row.uptimePct))) return null;
+  return Number(row.uptimePct);
+}
+
+function wclDebuffRaidDrillApplierHtml(boss, drillSpec, catalog) {
+  if (!boss || boss.noKills) {
+    return `<span class="plb-debuff-row-applier-empty">—</span>`;
+  }
+  if (drillSpec.kind === "or") {
+    const members = wclDebuffCatalogDefsForOrGroup(catalog, drillSpec.orGroupId);
+    return wclDebuffOrCombinedAppliersHtml(boss.debuffs, members);
+  }
+  const def = wclDebuffCatalogDefForDrill(drillSpec, catalog);
+  const row = wclFindDebuff(boss.debuffs, def);
+  return row?.appliedByPlayer
+    ? esc(row.appliedByPlayer)
+    : `<span class="plb-debuff-row-applier-empty">—</span>`;
+}
+
+function wclDebuffRenderRaidDisplayItemsHtml(items, debuffs) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const drillId = wclDebuffRaidDrillIdForItem(item);
+      const drillOpts = drillId ? { drillId } : {};
+      if (item?.kind === "orCombined") {
+        return wclDebuffOrCombinedRowHtml(item.orGroupId, item.members, debuffs, drillOpts);
+      }
+      return wclDebuffDebuffRowHtml(item.def, wclFindDebuff(debuffs, item.def), drillOpts);
+    })
+    .join("");
+}
+
+function wclDebuffEncounterSummaryHeader({ name, noteHtml = "", overallPct, overallTier }) {
+  const pct =
+    overallPct != null && Number.isFinite(Number(overallPct))
+      ? `<span class="plb-debuff-encounter-pct">${esc(Number(overallPct).toFixed(1))}%</span>`
+      : "";
+  const tier = overallTier || "none";
+  return `<span class="plb-debuff-encounter-summary-main">
+    <span class="plb-debuff-encounter-name">${esc(name)}</span>
+    ${noteHtml}
+    ${pct}
+    <span class="plb-debuff-encounter-grade plb-debuff-tier-badge plb-debuff-tier-badge--${esc(tier)}">${esc(
+      wclDebuffTierLabel(tier)
+    )}</span>
+  </span>`;
+}
+
+function wclDebuffRaidOverviewDetailsHtml(payload, catalog, categories, grouped, catLabel) {
+  const raidScore = wclDebuffComputeRaidScore(payload);
+  const bossRows = Array.isArray(payload?.bossRows) ? payload.bossRows : [];
+  const scored = Number(raidScore.bossesScored || 0);
+  const total = Number(raidScore.bossesTotal || 0);
+  if (!scored || raidScore.overallPct == null) {
+    return `<p class="subtle plb-debuff-raid-overview-empty">Raid average unavailable — no boss kills with debuff data.</p>`;
+  }
+  const aggregateDebuffs = wclDebuffBuildRaidAggregateDebuffs(bossRows, catalog);
+  const bossNote = `${scored} boss${scored === 1 ? "" : "es"} with kills${
+    total > scored ? ` · ${total - scored} skipped` : ""
+  } · click bar for per-boss`;
+  const categoryBlocks = grouped
+    .map((g) => {
+      const rows = wclDebuffRenderRaidDisplayItemsHtml(
+        wclDebuffExpandCategoryDisplayItems(g.defs, catalog),
+        aggregateDebuffs
+      );
+      return `<section class="plb-debuff-cat-block plb-debuff-cat-block--${esc(g.id)}">
+        <h5 class="plb-debuff-cat-block-title">${catLabel(g.id)}</h5>
+        <div class="plb-debuff-cat-rows">${rows}</div>
+      </section>`;
+    })
+    .join("");
+  return `<details class="plb-debuff-encounter plb-debuff-encounter--raid" open>
+    <summary class="plb-debuff-encounter-summary">
+      ${wclDebuffEncounterSummaryHeader({
+        name: "Raid average",
+        noteHtml: `<span class="plb-debuff-encounter-note">${esc(bossNote)}</span>`,
+        overallPct: raidScore.overallPct,
+        overallTier: raidScore.overallTier,
+      })}
+    </summary>
+    <div class="plb-debuff-encounter-body">${categoryBlocks}</div>
+  </details>`;
+}
+
+function renderWclDebuffRaidDrillInto(host, payload, drillSpec) {
+  if (!host || !drillSpec) return;
+  const catalog = Array.isArray(payload?.catalog) ? payload.catalog : [];
+  const bossRows = (Array.isArray(payload?.bossRows) ? payload.bossRows : []).filter(
+    (b) => !b?.noKills && b?.killCount
+  );
+  if (!bossRows.length) {
+    host.innerHTML = `<p class="subtle">No boss kills in this report.</p>`;
+    return;
+  }
+  const rows = bossRows
+    .map((boss) => {
+      const pct = wclDebuffRaidDrillUptimePct(boss, drillSpec, catalog);
+      return `<tr>
+        <th scope="row">${esc(boss.name || "Boss")}</th>
+        <td class="plb-debuff-bar-cell">${wclDebuffUptimeBarHtml(pct)}</td>
+        <td class="plb-debuff-applier-cell">${wclDebuffRaidDrillApplierHtml(boss, drillSpec, catalog)}</td>
+      </tr>`;
+    })
+    .join("");
+  host.innerHTML = `<table class="plb-debuff-detail-table plb-debuff-raid-drill-table">
+    <thead>
+      <tr>
+        <th scope="col">Encounter</th>
+        <th scope="col">Uptime</th>
+        <th scope="col">Applied by</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function openWclDebuffRaidDebuffDrill(drillId) {
+  const drillSpec = wclDebuffParseRaidDrillId(drillId);
+  if (!drillSpec) return;
+  const payload = wclDebuffOverviewCache;
+  if (!payload?.ok) return;
+  const catalog = Array.isArray(payload.catalog) ? payload.catalog : [];
+  const reportCode = String(
+    wclDebuffOverviewReportCode || document.getElementById("wclDebuffReportSelect")?.value || ""
+  ).trim();
+  const debuffTitle = wclDebuffRaidDrillTitle(drillSpec, catalog);
+  const dialog = document.getElementById("wclDebuffDetailDialog");
+  const host = document.getElementById("wclDebuffDetailHost");
+  const title = document.getElementById("wclDebuffDetailTitle");
+  const statusLine = document.getElementById("wclDebuffDetailStatus");
+  if (title) title.textContent = debuffTitle;
+  if (statusLine) {
+    const scored = (payload.bossRows || []).filter((b) => !b?.noKills && b?.killCount).length;
+    statusLine.textContent = `${payload.reportTitle || reportCode || "Report"} · ${scored} encounter(s) with kills`;
+  }
+  renderWclDebuffRaidDrillInto(host, payload, drillSpec);
+  wclDebuffBindSpellTooltips(host);
+  if (dialog && typeof dialog.showModal === "function") dialog.showModal();
 }
 
 function wclDebuffUptimeBarHtml(uptimePct, { compact = false } = {}) {
@@ -328,7 +615,7 @@ function wclDebuffOrCombinedCellHtml(orGroupId, members, debuffs) {
   </tr>`;
 }
 
-function wclDebuffOrCombinedRowHtml(orGroupId, members, debuffs) {
+function wclDebuffOrCombinedRowHtml(orGroupId, members, debuffs, { drillId = null } = {}) {
   const combined = wclDebuffCombineOrGroupUptime(debuffs, members);
   const label = wclDebuffOrGroupLabel(orGroupId, members);
   const memberNames = (members || []).map((m) => m?.name).filter(Boolean).join(", ");
@@ -336,12 +623,13 @@ function wclDebuffOrCombinedRowHtml(orGroupId, members, debuffs) {
     `Combined uptime (${label})`,
     "Either/or debuffs — uptimes are added (max 100%), not stacked.",
     memberNames ? `Includes: ${memberNames}` : "",
+    drillId ? "Click bar for per-encounter breakdown" : "",
   ]
     .filter(Boolean)
     .join("\n");
   return `<div class="plb-debuff-row plb-debuff-row--or-combined" title="${esc(title)}">
     <div class="plb-debuff-row-name"><strong>Combined</strong> <span class="plb-debuff-or-note">${esc(label)}</span></div>
-    <div class="plb-debuff-row-bar">${wclDebuffUptimeBarHtml(combined)}</div>
+    ${wclDebuffRowBarHtml(combined, { drillId })}
     <div class="plb-debuff-row-applier" title="Applied by">${wclDebuffOrCombinedAppliersHtml(debuffs, members)}</div>
   </div>`;
 }
@@ -428,7 +716,15 @@ async function loadWclDebuffSpellMeta(catalog) {
   wclDebuffSpellMetaById = next;
 }
 
-function wclDebuffDebuffRowHtml(def, debuff) {
+function wclDebuffRowBarHtml(uptimePct, { compact = false, drillId = null } = {}) {
+  const bar = wclDebuffUptimeBarHtml(uptimePct, { compact });
+  if (!drillId) return `<div class="plb-debuff-row-bar">${bar}</div>`;
+  return `<div class="plb-debuff-row-bar plb-debuff-row-bar--drill" data-wcl-debuff-raid-drill="${esc(
+    drillId
+  )}" role="button" tabindex="0" title="Per-encounter breakdown">${bar}</div>`;
+}
+
+function wclDebuffDebuffRowHtml(def, debuff, { drillId = null } = {}) {
   const row = debuff || {};
   const applier = row.appliedByPlayer
     ? esc(row.appliedByPlayer)
@@ -438,13 +734,14 @@ function wclDebuffDebuffRowHtml(def, debuff) {
     def?.appliedBy ? `Expected: ${def.appliedBy}` : "",
     def?.description,
     row.appliedByPlayer ? `Applied by: ${row.appliedByPlayer}` : "",
+    drillId ? "Click bar for per-encounter breakdown" : "",
   ]
     .filter(Boolean)
     .join("\n");
   const orNote = def?.orNote ? ` <span class="plb-debuff-or-note">(${esc(def.orNote)})</span>` : "";
   return `<div class="plb-debuff-row" title="${esc(title)}">
     <div class="plb-debuff-row-name">${wclDebuffSpellTriggerHtml(def.spellId, def.name)}${orNote}</div>
-    <div class="plb-debuff-row-bar">${wclDebuffUptimeBarHtml(row.uptimePct)}</div>
+    ${wclDebuffRowBarHtml(row.uptimePct, { drillId })}
     <div class="plb-debuff-row-applier" title="Applied by">${applier}</div>
   </div>`;
 }
@@ -517,17 +814,21 @@ function renderWclDebuffOverview(payload) {
   }
   const grouped = wclDebuffCatalogByCategory(catalog, categories);
   const catLabel = (id) => esc(categories.find((c) => c.id === id)?.label || id);
+  const raidDetailsHtml = wclDebuffRaidOverviewDetailsHtml(payload, catalog, categories, grouped, catLabel);
   const encounterCards = bossRows
-    .map((boss, idx) => {
-      const name = esc(boss.name || "Boss");
+    .map((boss) => {
+      const name = boss.name || "Boss";
       if (boss.noKills) {
         return `<article class="plb-debuff-encounter plb-debuff-encounter--nokill">
-          <div class="plb-debuff-encounter-static">
-            <h4 class="plb-debuff-encounter-name">${name}</h4>
-            <span class="plb-debuff-encounter-grade plb-debuff-tier-badge plb-debuff-tier-badge--none">No kill</span>
+          <div class="plb-debuff-encounter-static plb-debuff-encounter-summary">
+            <span class="plb-debuff-encounter-summary-main">
+              <span class="plb-debuff-encounter-name">${esc(name)}</span>
+              <span class="plb-debuff-encounter-grade plb-debuff-tier-badge plb-debuff-tier-badge--none">No kill</span>
+            </span>
           </div>
         </article>`;
       }
+      const overallPct = wclDebuffEncounterOverallPct(boss.debuffs, catalog);
       const overallTier = wclDebuffEncounterOverallTier(boss.debuffs, catalog);
       const killNote =
         boss.killCount > 1
@@ -545,15 +846,14 @@ function renderWclDebuffOverview(payload) {
           </section>`;
         })
         .join("");
-      return `<details class="plb-debuff-encounter" ${idx === 0 ? "open" : ""}>
+      return `<details class="plb-debuff-encounter">
         <summary class="plb-debuff-encounter-summary">
-          <span class="plb-debuff-encounter-summary-main">
-            <span class="plb-debuff-encounter-name">${name}</span>
-            ${killNote}
-            <span class="plb-debuff-encounter-grade plb-debuff-tier-badge plb-debuff-tier-badge--${overallTier}">${esc(
-              wclDebuffTierLabel(overallTier)
-            )}</span>
-          </span>
+          ${wclDebuffEncounterSummaryHeader({
+            name,
+            noteHtml: killNote,
+            overallPct,
+            overallTier,
+          })}
           <button
             type="button"
             class="plb-debuff-encounter-drill event-signup-btn event-signup-btn--softres"
@@ -566,8 +866,11 @@ function renderWclDebuffOverview(payload) {
     })
     .join("");
   host.innerHTML = `
-    <p class="plb-debuff-hint">Expand an encounter for debuff uptime bars (latest kill). <strong>Combined</strong> rows sum either/or debuffs (e.g. Sunder + Expose) capped at 100%. Use <strong>All kill pulls</strong> for every attempt.</p>
-    <div class="plb-debuff-encounters">${encounterCards}</div>
+    <p class="plb-debuff-hint"><strong>Raid average</strong> is mean uptime per debuff across bosses. Click a raid-average bar for per-encounter breakdown. Expand a boss for latest-kill bars; <strong>Combined</strong> rows sum either/or debuffs capped at 100%.</p>
+    <div class="plb-debuff-encounters">
+      ${raidDetailsHtml}
+      ${encounterCards}
+    </div>
   `;
   wclDebuffBindSpellTooltips(host);
 }
@@ -676,7 +979,7 @@ function setWclDebuffStatusLine(text) {
   if (line) line.textContent = String(text || "");
 }
 
-async function loadWclDebuffOverview(reportCode, { silent = false, btn = null } = {}) {
+async function loadWclDebuffOverview(reportCode, { silent = false, btn = null, refresh = false } = {}) {
   const code = String(reportCode || "").trim();
   const reloadBtn = document.getElementById("wclDebuffReloadBtn");
   if (!code) {
@@ -704,10 +1007,15 @@ async function loadWclDebuffOverview(reportCode, { silent = false, btn = null } 
     wclDebuffOverviewReportCode = code;
     await loadWclDebuffSpellMeta(payload.catalog || []);
     renderWclDebuffOverview(payload);
+    const raidScore = wclDebuffComputeRaidScore(payload);
     const killBosses = (payload.bossRows || []).filter((b) => !b.noKills).length;
     const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);
+    const raidNote =
+      raidScore?.overallPct != null
+        ? ` · raid debuff uptime ${Number(raidScore.overallPct).toFixed(1)}% (${wclDebuffTierLabel(raidScore.overallTier)})`
+        : "";
     setWclDebuffStatusLine(
-      `${payload.reportTitle || code}: ${killBosses} boss(es) with kills (latest pull each).${archiveNote}`
+      `${payload.reportTitle || code}: ${killBosses} boss(es) with kills (latest pull each)${raidNote}.${archiveNote}`
     );
     return payload;
   } catch (error) {
@@ -723,7 +1031,7 @@ async function loadWclDebuffOverview(reportCode, { silent = false, btn = null } 
   }
 }
 
-async function openWclDebuffEncounterDetail(encounterId, encounterName) {
+async function openWclDebuffEncounterDetail(encounterId, encounterName, { refresh = false } = {}) {
   const reportCode = String(wclDebuffOverviewReportCode || document.getElementById("wclDebuffReportSelect")?.value || "").trim();
   const eid = String(encounterId || "").trim();
   if (!reportCode || !eid) return;
@@ -737,8 +1045,9 @@ async function openWclDebuffEncounterDetail(encounterId, encounterName) {
   if (host) host.innerHTML = `<p class="subtle">Loading…</p>`;
   if (dialog && typeof dialog.showModal === "function") dialog.showModal();
   try {
+    const refreshQ = refresh ? "&refresh=1" : "";
     const payload = await getJson(
-      `${WCL_DEBUFF_API}?reportCode=${encodeURIComponent(reportCode)}&encounterId=${encodeURIComponent(eid)}`
+      `${WCL_DEBUFF_API}?reportCode=${encodeURIComponent(reportCode)}&encounterId=${encodeURIComponent(eid)}${refreshQ}`
     );
     if (!payload?.ok) throw new Error(payload?.error || "Detail failed");
     const fightCount = Array.isArray(payload.fights) ? payload.fights.length : 0;
@@ -1652,7 +1961,7 @@ async function loadWclActiveOverview(reportCode, opts = {}) {
     await loadWclGearAuditOverview(code, { ...opts, refresh: Boolean(opts.refresh) });
     return;
   }
-  await loadWclDebuffOverview(code, opts);
+  await loadWclDebuffOverview(code, { ...opts, refresh: Boolean(opts.refresh) });
 }
 
 async function loadRaidLeadEventReports({ refresh = false } = {}) {
@@ -1733,8 +2042,7 @@ document.getElementById("wclDebuffReportSelect")?.addEventListener("change", asy
 
 document.getElementById("wclDebuffReloadBtn")?.addEventListener("click", (event) => {
   const code = String(document.getElementById("wclDebuffReportSelect")?.value || "").trim();
-  const refresh = wclActivePanelTab === "gear";
-  loadWclActiveOverview(code, { btn: event.currentTarget, refresh }).catch(() => {});
+  loadWclActiveOverview(code, { btn: event.currentTarget, refresh: true }).catch(() => {});
 });
 
 document.querySelectorAll("[data-wcl-progress-raid]").forEach((btn) => {
@@ -1773,6 +2081,14 @@ document.getElementById("wclProgressResultsHost")?.addEventListener("click", (ev
 });
 
 document.getElementById("wclDebuffResultsHost")?.addEventListener("click", (event) => {
+  const raidDrill = event.target.closest("[data-wcl-debuff-raid-drill]");
+  if (raidDrill) {
+    event.preventDefault();
+    event.stopPropagation();
+    const drillId = raidDrill.getAttribute("data-wcl-debuff-raid-drill");
+    if (drillId) openWclDebuffRaidDebuffDrill(drillId);
+    return;
+  }
   const drill = event.target.closest("[data-wcl-debuff-boss]");
   if (!drill) return;
   event.preventDefault();
@@ -1780,6 +2096,15 @@ document.getElementById("wclDebuffResultsHost")?.addEventListener("click", (even
   const encounterId = drill.getAttribute("data-wcl-debuff-boss");
   const encounterName = drill.getAttribute("data-wcl-debuff-boss-name") || "";
   if (encounterId) openWclDebuffEncounterDetail(encounterId, encounterName).catch(() => {});
+});
+
+document.getElementById("wclDebuffResultsHost")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const raidDrill = event.target.closest("[data-wcl-debuff-raid-drill]");
+  if (!raidDrill) return;
+  event.preventDefault();
+  const drillId = raidDrill.getAttribute("data-wcl-debuff-raid-drill");
+  if (drillId) openWclDebuffRaidDebuffDrill(drillId);
 });
 
 document.getElementById("wclConsumablesResultsHost")?.addEventListener("click", (event) => {

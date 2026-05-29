@@ -6015,6 +6015,89 @@ tr.plb-gear-row--miss th {
   color: var(--plb-ds-muted-fg);
 }
 
+.plb-debuff-raid-overview {
+  margin-bottom: 16px;
+  padding: 12px 14px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  background: color-mix(in srgb, var(--plb-ds-card) 88%, #1e1b4b 12%);
+}
+
+.plb-debuff-raid-overview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 6px;
+}
+
+.plb-debuff-raid-overview-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.plb-debuff-raid-overview-meta {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-raid-overview-body {
+  display: grid;
+  gap: 12px;
+}
+
+.plb-debuff-row-bar--drill {
+  cursor: pointer;
+  border-radius: 6px;
+  transition: box-shadow 0.15s ease, outline 0.15s ease;
+}
+
+.plb-debuff-row-bar--drill:hover,
+.plb-debuff-row-bar--drill:focus-visible {
+  outline: 2px solid color-mix(in srgb, #a855f7 55%, transparent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.2);
+}
+
+.plb-debuff-raid-drill-table {
+  width: 100%;
+}
+
+.plb-debuff-raid-summary {
+  margin-bottom: 4px;
+}
+
+.plb-debuff-raid-summary-cats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.plb-debuff-raid-summary-cat {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plb-debuff-raid-summary-cat-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .plb-debuff-raid-summary-cats {
+    grid-template-columns: 1fr;
+  }
+}
+
 .plb-debuff-progress-chart {
   padding: 12px 8px 4px;
   border-radius: 12px;
@@ -6286,6 +6369,21 @@ tr.plb-gear-row--miss th {
 .plb-debuff-encounter-note {
   font-size: var(--text-xs, 12px);
   color: var(--plb-ds-muted-fg);
+}
+
+.plb-debuff-encounter-pct {
+  font-size: var(--text-sm, 14px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: #f8fafc;
+}
+
+.plb-debuff-encounter--raid {
+  border-color: color-mix(in srgb, #a855f7 35%, var(--plb-ds-border));
+}
+
+.plb-debuff-encounter--raid[open] .plb-debuff-encounter-summary {
+  background: color-mix(in srgb, #a855f7 10%, var(--plb-ds-card));
 }
 
 .plb-debuff-encounter-drill {
