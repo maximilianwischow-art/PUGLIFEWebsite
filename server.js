@@ -423,7 +423,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522-plb-debuff-ihm-cache-v12";
+const API_BUILD_ID = "20260607-plb-tk-first-kael-kill-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -13870,6 +13870,17 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     startMs: Date.UTC(2026, 4, 20, 22, 0, 0),
     endMs: Date.UTC(2026, 4, 22, 4, 0, 0),
     reportCodes: ["c8dgnLmWCZ7xyvzG"],
+  },
+  {
+    badgeId: "tk-first-kael-kill",
+    label: "TK First Kael Kill",
+    description:
+      "Attended the guild's first Tempest Keep raid with a Kael'thas Sunstrider kill on 7 June 2026. Awarded to every canonical user with a Warcraft Logs appearance in report NnHhqGbLQZvMXd96 (tk0607, 4/4 TK).",
+    icon: "/images/achievements/tk-first-kael-kill.png",
+    /* June 7 2026 00:00 CEST = June 6 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 5, 6, 22, 0, 0),
+    endMs: Date.UTC(2026, 5, 8, 4, 0, 0),
+    reportCodes: ["NnHhqGbLQZvMXd96"],
   },
 ];
 

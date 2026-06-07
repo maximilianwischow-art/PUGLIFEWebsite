@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260522plb-ssc-first-clear-v1";
+const IMAGE_ASSET_VERSION = "20260607plb-tk-first-kael-kill-v1";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -176,6 +176,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "aoe-cleave": "#f97316",
     "ssc-first-event": "#14b8a6",
     "ssc-first-clear": "#14b8a6",
+    "tk-first-kael-kill": "#22c55e",
   };
   if (byId[id]) return byId[id];
   if (id.includes("first-time-clear")) return "#22c55e";
@@ -1494,6 +1495,13 @@ function rosterAchievementBadgesHtml(player) {
         "SSC First Clear — Attended the guild's first Serpentshrine Cavern full clear on 21 May 2026 (6/6, WCL report c8dgnLmWCZ7xyvzG).",
       alt: "SSC First Clear",
       ok: playerEarnedSpecificEventBadge(player, "ssc-first-clear"),
+    },
+    {
+      file: "tk-first-kael-kill.png",
+      title:
+        "TK First Kael Kill — Attended the guild's first Tempest Keep raid with a Kael'thas Sunstrider kill on 7 June 2026 (4/4, WCL report NnHhqGbLQZvMXd96).",
+      alt: "TK First Kael Kill",
+      ok: playerEarnedSpecificEventBadge(player, "tk-first-kael-kill"),
     },
     {
       file: "iron-attendance.png",
