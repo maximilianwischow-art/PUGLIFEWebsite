@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260607plb-tk-first-kael-kill-v1";
+const IMAGE_ASSET_VERSION = "20260607plb-tk-first-kael-kill-v2";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1546,7 +1546,7 @@ function rosterAchievementBadgesHtml(player) {
       const meta = badgeTooltipMeta(badgeId, b.alt, badgeTooltipFallbackDescription(b.title, b.alt), "epic");
       const icon = achievementBadgeIconUrlWithFallback(b.file);
       const fallbackTitle = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-      return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} aria-label="${escapeHtml(fallbackTitle)}">
+      return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(badgeId)}" aria-label="${escapeHtml(fallbackTitle)}">
         <span ${achievementBadgeFrameAttrs(meta)}>
           <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.alt)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
           <span class="achievement-badge-glow" aria-hidden="true"></span>

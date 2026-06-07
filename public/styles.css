@@ -3063,6 +3063,12 @@ body.framework-bg-vivid {
   transform-origin: center center;
 }
 
+/* TK First Kael Kill — square asset with no in-file padding; default zoom crops the frame. */
+.raider-badge-slot--achievement-earned[data-badge-id="tk-first-kael-kill"] .raider-badge-achievement-img {
+  --achievement-badge-zoom: 1;
+  object-fit: contain;
+}
+
 .raider-badge-slot--pending {
   opacity: 0.55;
   border-style: dotted;
@@ -8448,6 +8454,11 @@ tr.plb-gear-row--miss th {
 
 .leaderboard-player-badges .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
   --achievement-badge-zoom: 1.8;
+}
+
+.leaderboard-player-badges .raider-badge-slot--achievement-earned[data-badge-id="tk-first-kael-kill"] .raider-badge-achievement-img {
+  --achievement-badge-zoom: 1;
+  object-fit: contain;
 }
 
 .leaderboard-player-badges .raider-badge-slot--achievement-earned {
