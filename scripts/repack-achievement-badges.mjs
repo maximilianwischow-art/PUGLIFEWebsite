@@ -1,32 +1,44 @@
 /**
  * Normalize achievement badge PNGs for roster/leaderboard display.
  *
- * Each asset is trimmed to its visible art, scaled to the same content size
- * used by the working badges (~570px), centered on the standard 1024×935
- * canvas, and paired SVG wrappers are regenerated.
- *
- * Run `npm run audit:badges` afterward — all files should report status `ok`.
+ * Art is trimmed and scaled to fit inside the visible crop window for both
+ * roster (1.72×) and leaderboard (1.72×) so frames are not clipped.
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { writeSvgForBadgePng } from "../lib/badge-png-svg-sync.mjs";
 
-const BADGE_DIR = path.resolve("public/images/achievements");
-const TARGET_W = 1024;
-const TARGET_H = 935;
-const TARGET_CONTENT_MAX = 585;
-const TRIM_THRESHOLD = 28;
+export const BADGE_DIR = path.resolve("public/images/achievements");
+export const TARGET_W = 1024;
+export const TARGET_H = 935;
+export const ROSTER_ZOOM = 1.72;
+export const LEADERBOARD_ZOOM = 1.72;
+export const MAX_ART_W = Math.min(
+  Math.floor(TARGET_W / ROSTER_ZOOM),
+  Math.floor(TARGET_W / LEADERBOARD_ZOOM)
+);
+export const MAX_ART_H = Math.min(
+  Math.floor(TARGET_H / ROSTER_ZOOM),
+  Math.floor(TARGET_H / LEADERBOARD_ZOOM)
+);
+export const TRIM_THRESHOLD = 28;
 
-async function repackAchievementPng(fileName) {
-  const filePath = path.join(BADGE_DIR, fileName);
+export function scaleForBadgeCrop(width, height) {
+  if (!width || !height) return 1;
+  return Math.min(MAX_ART_W / width, MAX_ART_H / height, 1);
+}
+
+export async function repackAchievementPng(fileName, badgeDir = BADGE_DIR) {
+  const filePath = path.join(badgeDir, fileName);
   const trimmedBuf = await sharp(filePath).trim({ threshold: TRIM_THRESHOLD }).png().toBuffer();
   const { width, height } = await sharp(trimmedBuf).metadata();
   if (!width || !height) {
     throw new Error(`No visible content in ${fileName}`);
   }
 
-  const scale = TARGET_CONTENT_MAX / Math.max(width, height);
+  const scale = scaleForBadgeCrop(width, height);
   const art = await sharp(trimmedBuf)
     .resize(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)), {
       fit: "fill",
@@ -55,27 +67,36 @@ async function repackAchievementPng(fileName) {
     fileName,
     artW: artMeta.width,
     artH: artMeta.height,
+    scale,
   };
 }
 
 const only = process.argv.slice(2).filter(Boolean);
-const files = fs
-  .readdirSync(BADGE_DIR)
-  .filter((f) => f.toLowerCase().endsWith(".png"))
-  .filter((f) => !only.length || only.includes(f))
-  .sort();
+const isMain =
+  process.argv[1] &&
+  path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
 
-if (!files.length) {
-  console.error("No achievement PNGs matched.");
-  process.exit(1);
-}
+if (isMain) {
+  const files = fs
+    .readdirSync(BADGE_DIR)
+    .filter((f) => f.toLowerCase().endsWith(".png"))
+    .filter((f) => !only.length || only.includes(f))
+    .sort();
 
-const results = [];
-for (const file of files) {
-  results.push(await repackAchievementPng(file));
-}
+  if (!files.length) {
+    console.error("No achievement PNGs matched.");
+    process.exit(1);
+  }
 
-console.log(`Repacked ${results.length} badge(s) to ${TARGET_W}x${TARGET_H} canvas:`);
-for (const row of results) {
-  console.log(`  ${row.fileName} -> art ${row.artW}x${row.artH}`);
+  const results = [];
+  for (const file of files) {
+    results.push(await repackAchievementPng(file));
+  }
+
+  console.log(
+    `Repacked ${results.length} badge(s) to ${TARGET_W}x${TARGET_H} (max art ${MAX_ART_W}x${MAX_ART_H}):`
+  );
+  for (const row of results) {
+    console.log(`  ${row.fileName} -> art ${row.artW}x${row.artH} (scale ${row.scale.toFixed(3)})`);
+  }
 }

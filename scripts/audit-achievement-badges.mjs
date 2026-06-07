@@ -1,26 +1,25 @@
 /**
- * Audit achievement badge PNGs for roster/leaderboard display.
- * Badges should use a 1024×935 canvas with art centered at ~1/zoom of width
- * so the default CSS crop fills the slot without clipping the frame or
- * showing black letterboxing.
+ * Audit achievement badge PNGs for roster (1.72×) and leaderboard (1.8×) display.
  */
 import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
+import {
+  BADGE_DIR,
+  LEADERBOARD_ZOOM,
+  ROSTER_ZOOM,
+  TARGET_H,
+  TARGET_W,
+  TRIM_THRESHOLD,
+} from "./repack-achievement-badges.mjs";
 
-const BADGE_DIR = path.resolve("public/images/achievements");
-const ROSTER_ZOOM = 1.72;
-const LEADERBOARD_ZOOM = 1.8;
-const TARGET_W = 1024;
-const TARGET_H = 935;
-const TARGET_ART = Math.round(TARGET_W / ROSTER_ZOOM);
-const LUMINANCE_THRESHOLD = 28;
+const LUMINANCE_THRESHOLD = TRIM_THRESHOLD;
 
 function luminance(r, g, b) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-async function contentBounds(filePath) {
+export async function contentBounds(filePath) {
   const img = sharp(filePath);
   const { width, height } = await img.metadata();
   const { data, info } = await img.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -44,28 +43,28 @@ async function contentBounds(filePath) {
     }
   }
   if (maxX < minX || maxY < minY) {
-    return { width, height, contentW: 0, contentH: 0, padX: 1, padY: 1, fillW: 0, fillH: 0 };
+    return { width, height, contentW: 0, contentH: 0, fills: {} };
   }
   const contentW = maxX - minX + 1;
   const contentH = maxY - minY + 1;
-  const padX = (width - contentW) / width;
-  const padY = (height - contentH) / height;
-  const visibleW = width / ROSTER_ZOOM;
-  const visibleH = height / ROSTER_ZOOM;
-  const fillW = contentW / visibleW;
-  const fillH = contentH / visibleH;
-  return { width, height, contentW, contentH, padX, padY, fillW, fillH };
+  const fills = {
+    rosterW: contentW / (TARGET_W / ROSTER_ZOOM),
+    rosterH: contentH / (TARGET_H / ROSTER_ZOOM),
+    leaderboardW: contentW / (TARGET_W / LEADERBOARD_ZOOM),
+    leaderboardH: contentH / (TARGET_H / LEADERBOARD_ZOOM),
+  };
+  return { width, height, contentW, contentH, fills };
 }
 
-function statusForMetrics(m) {
-  const idealPad = 1 - 1 / ROSTER_ZOOM;
-  const padOk = Math.abs(m.padX - idealPad) < 0.06 && Math.abs(m.padY - idealPad) < 0.08;
+export function statusForMetrics(m) {
   const sizeOk = m.width === TARGET_W && m.height === TARGET_H;
-  const fillOk = m.fillW >= 0.9 && m.fillW <= 1.08 && m.fillH >= 0.9 && m.fillH <= 1.08;
-  if (padOk && sizeOk && fillOk) return "ok";
-  if (m.fillW > 1.12 || m.fillH > 1.12) return "too_tight";
-  if (m.fillW < 0.88 || m.fillH < 0.88) return "too_loose";
   if (!sizeOk) return "wrong_canvas";
+  const vals = Object.values(m.fills || {});
+  if (!vals.length) return "empty";
+  const ok = vals.every((f) => f >= 0.9 && f <= 1.05);
+  if (ok) return "ok";
+  if (vals.some((f) => f > 1.05)) return "too_tight";
+  if (vals.some((f) => f < 0.9)) return "too_loose";
   return "needs_repack";
 }
 
@@ -81,16 +80,19 @@ for (const file of files) {
   rows.push({ file, ...m, status: statusForMetrics(m) });
 }
 
-console.log(`Target canvas ${TARGET_W}x${TARGET_H}, art ~${TARGET_ART}px, roster zoom ${ROSTER_ZOOM}, leaderboard ${LEADERBOARD_ZOOM}\n`);
-console.log("file | canvas | content | pad% | fill@1.72 | status");
+console.log(
+  `Canvas ${TARGET_W}x${TARGET_H} · roster ${ROSTER_ZOOM}× · leaderboard ${LEADERBOARD_ZOOM}×\n`
+);
+console.log("file | canvas | content | roster fill | lb fill | status");
 for (const r of rows) {
+  const f = r.fills || {};
   console.log(
     [
       r.file.padEnd(32),
       `${r.width}x${r.height}`.padEnd(10),
       `${r.contentW}x${r.contentH}`.padEnd(10),
-      `x${(r.padX * 100).toFixed(0)}/y${(r.padY * 100).toFixed(0)}`.padEnd(10),
-      `${r.fillW.toFixed(2)}x${r.fillH.toFixed(2)}`.padEnd(10),
+      `${(f.rosterW || 0).toFixed(2)}x${(f.rosterH || 0).toFixed(2)}`.padEnd(11),
+      `${(f.leaderboardW || 0).toFixed(2)}x${(f.leaderboardH || 0).toFixed(2)}`.padEnd(11),
       r.status,
     ].join(" | ")
   );
