@@ -3041,6 +3041,7 @@ body.framework-bg-vivid {
 /*
  * Earned achievements — match guild-rank badge fill: many PNGs have extra padding in-file;
  * scale+clip like `.raider-badge-role-img` (tune --achievement-badge-zoom if a set needs less crop).
+ * New PNGs: run `npm run fix:badges` so art is centered on the 1024×935 canvas.
  */
 .raider-badge-slot--achievement-earned {
   --achievement-badge-zoom: 1.72;
