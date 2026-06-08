@@ -356,15 +356,15 @@ function hofRaiderCell(row) {
   const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
   const baseBadges = plb.rosterBadgeRowHtml(p);
   const hasAnyBaseBadge = /<img\b/i.test(String(baseBadges || ""));
-  const cacheKey = "20260506hofbadges1";
+  const cacheKey = plb?.IMAGE_ASSET_VERSION || "20260608hofbadges1";
   const fallbackBadge = (pngFile, title, alt) => {
     const png = `/images/achievements/${pngFile}?v=${cacheKey}`;
     const svg = pngFile.toLowerCase().endsWith(".png")
       ? `/images/achievements/${pngFile.replace(/\.png$/i, ".svg")}?v=${cacheKey}`
       : png;
-    return `<span class="raider-badge-slot raider-badge-slot--achievement-earned" title="${esc(title)}"><img class="raider-badge-achievement-img" src="${esc(svg)}" alt="${esc(alt)}" width="44" height="44" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${esc(
+    return `<span class="raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container" title="${esc(title)}"><span class="achievement-badge-frame achievement-badge-frame--epic"><img class="raider-badge-achievement-img achievement-badge-img" src="${esc(svg)}" alt="${esc(alt)}" width="52" height="52" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${esc(
       png
-    )}'" /></span>`;
+    )}'" /><span class="achievement-badge-glow" aria-hidden="true"></span></span></span>`;
   };
   const parse = Number(row?.peakParse || 0);
   const fallbackBadges = [
@@ -697,9 +697,9 @@ function renderHofPlayerCard(player, idx, ctx) {
           <div class="hof-player-card-player">${playerCell.playerHtml}</div>
           <p class="hof-player-card-latest subtle">${escapeHtml(latestSubtitle)}</p>
           <p class="hof-player-card-quote">${escapeHtml(quote)}</p>
-          ${playerCell.badgesHtml}
         </div>
       </div>
+      ${playerCell.badgesHtml ? `<div class="hof-player-card-badges">${playerCell.badgesHtml}</div>` : ""}
       ${
         winCount > 0
           ? `<button

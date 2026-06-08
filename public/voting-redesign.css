@@ -670,9 +670,56 @@
   margin: 0;
 }
 
-.hof-player-card .hof-mvp-badges .raider-badge-slot {
-  width: 44px;
-  height: 44px;
+.hof-player-card-badges {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.hof-player-card .hof-player-card-badges .leaderboard-player-badges {
+  width: 100%;
+}
+
+.hof-player-card .hof-player-card-badges .raider-badges {
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  margin-top: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hof-player-card .hof-player-card-badges .raider-badge-slot {
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 8px;
+  background: #000;
+  overflow: hidden;
+}
+
+.hof-player-card .hof-player-card-badges .raider-badge-role-img,
+.hof-player-card .hof-player-card-badges .raider-badge-achievement-img {
+  width: 52px;
+  height: 52px;
+}
+
+.hof-player-card .hof-player-card-badges .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
+  --achievement-badge-zoom: 1.72;
+}
+
+.hof-player-card .hof-player-card-badges .raider-badge-slot--achievement-earned {
+  box-shadow:
+    inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2)),
+    0 0 10px color-mix(in srgb, var(--achievement-glow-color, #a855f7) 22%, transparent);
+}
+
+.hof-player-card .hof-player-card-badges .achievement-badge-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.hof-player-card .hof-player-card-badges .raider-badge-slot--guild-role .raider-badge-role-img {
+  --role-badge-zoom: 1.72;
 }
 
 .hof-player-expand {
