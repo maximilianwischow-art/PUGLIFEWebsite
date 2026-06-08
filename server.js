@@ -424,7 +424,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260608-plb-hof-player-cards-v1";
+const API_BUILD_ID = "20260608-plb-hof-player-quote-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -4132,6 +4132,32 @@ function lookupHofNoteForRow(row) {
   return { note: best, keys };
 }
 
+/** One quote per MVP winner — keyed by canonical player id or normalized name. */
+function lookupHofNoteForPlayer(row) {
+  const map =
+    hofNotesState?.byWinnerRaidKey && typeof hofNotesState.byWinnerRaidKey === "object"
+      ? hofNotesState.byWinnerRaidKey
+      : {};
+  const playerQuoteKey = playerKeyForHallOfFameRow(row);
+  const keys = [playerQuoteKey];
+  let best = map[playerQuoteKey] || null;
+
+  const legacy = lookupHofNoteForRow(row);
+  if (legacy.note && (!best || Number(legacy.note.updatedAt || 0) >= Number(best.updatedAt || 0))) {
+    best = legacy.note;
+    for (const k of legacy.keys || []) {
+      if (k && !keys.includes(k)) keys.push(k);
+    }
+  }
+
+  return { note: best, keys, playerQuoteKey };
+}
+
+function isLegacyHofWinnerRaidKey(key) {
+  const k = String(key || "").trim();
+  return k.includes("::") && !k.startsWith("uid:") && !k.startsWith("name:");
+}
+
 async function readHofNotesStateFromJsonFile() {
   try {
     const raw = await readFile(hofNotesPath, "utf8");
@@ -4187,10 +4213,11 @@ async function reloadHofNotesStateFromPersistence() {
 function applyHofNotesToHallOfFameRows(rows) {
   if (!Array.isArray(rows)) return rows;
   return rows.map((row) => {
-    const { note, keys } = lookupHofNoteForRow(row);
-    const winnerRaidKey = keys[0] || normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
+    const { note, keys, playerQuoteKey } = lookupHofNoteForPlayer(row);
+    const winnerRaidKey = keys[0] || playerQuoteKey || normalizeHofWinnerRaidKey(row?.raidCode, row?.winnerName);
     return {
       ...row,
+      playerQuoteKey,
       winnerRaidKey,
       customQuote: String(note?.quote || ""),
     };
@@ -10459,49 +10486,50 @@ app.get("/api/admin/hof-notes", async (req, res) => {
     if (!session) return;
     await ensureHofNotesStore();
     await reloadHofNotesStateFromPersistence();
-    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 24);
-    let rows = hallOfFame.map((row) => {
-      const winnerName = String(row?.winnerName || "").trim();
-      const raidCode = String(row?.raidCode || "").trim();
-      const { note, keys } = lookupHofNoteForRow(row);
-      const winnerRaidKey = keys[0] || normalizeHofWinnerRaidKey(raidCode, winnerName);
+    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 200);
+    const aggregated = buildHallOfFameApiPayload(hallOfFame, {
+      resolvePlayerKey: playerKeyForHallOfFameRow,
+    });
+    let rows = (aggregated.players || []).map((player) => {
+      const { note, playerQuoteKey } = lookupHofNoteForPlayer({
+        winnerName: player?.winnerName,
+        player: player?.player,
+      });
       return {
-        winnerRaidKey,
-        roundKey: String(row?.roundKey || "").trim(),
-        winnerName,
-        raidCode,
-        raidName: String(row?.raidName || row?.raidCode || "").trim(),
-        raidStartTime: Number(row?.raidStartTime || 0),
-        quote: String(note?.quote || row?.customQuote || ""),
+        playerQuoteKey,
+        winnerName: String(player?.winnerName || "").trim(),
+        mvpCount: Number(player?.mvpCount || 0),
+        raidName: String(player?.latestRaidName || "").trim(),
+        raidStartTime: Number(player?.latestRaidStartTime || 0),
+        quote: String(note?.quote || player?.customQuote || ""),
         updatedAt: Number(note?.updatedAt || 0),
         updatedBy: String(note?.updatedBy || ""),
       };
     });
     if (!rows.length) {
       const now = Date.now();
-      const mockRows = [
+      const mockPlayers = [
         {
           winnerName: "Highbullet",
-          raidCode: "MOCK-SWP-HIGHBULLET",
-          raidName: "Sunwell Plateau",
-          raidStartTime: now - 7 * 24 * 60 * 60 * 1000,
+          mvpCount: 1,
+          latestRaidName: "Sunwell Plateau",
+          latestRaidStartTime: now - 7 * 24 * 60 * 60 * 1000,
         },
         {
           winnerName: "Glutelf",
-          raidCode: "MOCK-BT-GLUTELF",
-          raidName: "Black Temple",
-          raidStartTime: now - 14 * 24 * 60 * 60 * 1000,
+          mvpCount: 1,
+          latestRaidName: "Black Temple",
+          latestRaidStartTime: now - 14 * 24 * 60 * 60 * 1000,
         },
       ];
-      rows = mockRows.map((row) => {
-        const winnerRaidKey = normalizeHofWinnerRaidKey(row.raidCode, row.winnerName);
-        const note = winnerRaidKey ? hofNotesState.byWinnerRaidKey[winnerRaidKey] : null;
+      rows = mockPlayers.map((player) => {
+        const { note, playerQuoteKey } = lookupHofNoteForPlayer({ winnerName: player.winnerName });
         return {
-          winnerRaidKey,
-          winnerName: row.winnerName,
-          raidCode: row.raidCode,
-          raidName: row.raidName,
-          raidStartTime: Number(row.raidStartTime || 0),
+          playerQuoteKey,
+          winnerName: player.winnerName,
+          mvpCount: player.mvpCount,
+          raidName: player.latestRaidName,
+          raidStartTime: player.latestRaidStartTime,
           quote: String(note?.quote || ""),
           updatedAt: Number(note?.updatedAt || 0),
           updatedBy: String(note?.updatedBy || ""),
@@ -10518,12 +10546,24 @@ app.put("/api/admin/hof-notes", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
     if (!session) return;
-    const winnerRaidKey = String(req.body?.winnerRaidKey || "").trim().slice(0, 220);
     const quote = String(req.body?.quote || "")
       .trim()
       .slice(0, 320);
-    if (!winnerRaidKey) {
-      return res.status(400).json({ ok: false, error: "winnerRaidKey is required" });
+    const winnerName = String(req.body?.winnerName || "").trim();
+    let playerQuoteKey = String(req.body?.playerQuoteKey || req.body?.winnerRaidKey || "")
+      .trim()
+      .slice(0, 220);
+    if (isLegacyHofWinnerRaidKey(playerQuoteKey)) {
+      playerQuoteKey = "";
+    }
+    if (!playerQuoteKey && winnerName) {
+      playerQuoteKey = playerKeyForHallOfFameRow({
+        winnerName,
+        player: Number(req.body?.dbUserId) > 0 ? { dbUserId: Number(req.body.dbUserId) } : null,
+      });
+    }
+    if (!playerQuoteKey) {
+      return res.status(400).json({ ok: false, error: "playerQuoteKey or winnerName is required" });
     }
     await ensureHofNotesStore();
     await reloadHofNotesStateFromPersistence();
@@ -10531,20 +10571,20 @@ app.put("/api/admin/hof-notes", async (req, res) => {
       String(session?.user?.globalName || "").trim() || String(session?.user?.username || "").trim() || "admin";
     const aliasRow = {
       raidCode: String(req.body?.raidCode || "").trim(),
-      winnerName: String(req.body?.winnerName || "").trim(),
+      winnerName,
       roundKey: String(req.body?.roundKey || "").trim(),
     };
-    const keysToWrite = new Set([winnerRaidKey, ...hofNoteLookupKeysForRow(aliasRow)]);
+    const legacyKeys = hofNoteLookupKeysForRow(aliasRow).filter((k) => isLegacyHofWinnerRaidKey(k));
     hofNotesWriteChain = hofNotesWriteChain.catch(() => {}).then(async () => {
       const note = { quote, updatedAt: Date.now(), updatedBy: actor };
-      for (const key of keysToWrite) {
-        if (!key) continue;
-        hofNotesState.byWinnerRaidKey[key] = note;
+      hofNotesState.byWinnerRaidKey[playerQuoteKey] = note;
+      for (const legacyKey of legacyKeys) {
+        delete hofNotesState.byWinnerRaidKey[legacyKey];
       }
       await persistHofNotesStore();
     });
     await hofNotesWriteChain;
-    return res.json({ ok: true, winnerRaidKey, quote, keysWritten: [...keysToWrite] });
+    return res.json({ ok: true, playerQuoteKey, quote, keysWritten: [playerQuoteKey] });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save hall of fame note" });
   }
@@ -15770,6 +15810,14 @@ app.get("/api/voting/hall-of-fame", async (_req, res) => {
     const hallOfFame = await getHallOfFameForGuild(votingGuildId, 200);
     const payload = buildHallOfFameApiPayload(hallOfFame, {
       resolvePlayerKey: playerKeyForHallOfFameRow,
+    });
+    payload.players = (payload.players || []).map((player) => {
+      const { note } = lookupHofNoteForPlayer({
+        winnerName: player?.winnerName,
+        player: player?.player,
+      });
+      const customQuote = String(note?.quote || player?.customQuote || "").trim();
+      return { ...player, customQuote };
     });
     return res.json({ ok: true, ...payload });
   } catch (error) {

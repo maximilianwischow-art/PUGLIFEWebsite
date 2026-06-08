@@ -6246,30 +6246,29 @@ function renderHofNotesTable(payload) {
     <div class="admin-table-wrap role-alert-candidates-wrap">
       <table class="admin-table role-alert-candidates-table">
         <thead>
-          <tr><th>Winner</th><th>Raid</th><th>Date</th><th>Quote</th><th>Updated</th><th>Save</th></tr>
+          <tr><th>Winner</th><th>MVP wins</th><th>Latest raid</th><th>Quote</th><th>Updated</th><th>Save</th></tr>
         </thead>
         <tbody>
           ${rows
             .map(
-              (row) => `<tr data-hof-note-row="${esc(String(row.winnerRaidKey || ""))}"
-                data-hof-note-round-key="${esc(String(row.roundKey || ""))}"
-                data-hof-note-raid-code="${esc(String(row.raidCode || ""))}"
+              (row) => `<tr data-hof-note-row="${esc(String(row.playerQuoteKey || row.winnerRaidKey || ""))}"
+                data-hof-note-player-key="${esc(String(row.playerQuoteKey || row.winnerRaidKey || ""))}"
                 data-hof-note-winner-name="${esc(String(row.winnerName || ""))}">
                 <td>${esc(String(row.winnerName || "-"))}</td>
-                <td>${esc(String(row.raidName || row.raidCode || "-"))}</td>
-                <td>${esc(fmtWhen(row.raidStartTime))}</td>
+                <td>${esc(String(row.mvpCount != null ? row.mvpCount : 1))}</td>
+                <td>${esc(String(row.raidName || "-"))}${row.raidStartTime ? `<br /><span class="subtle">${esc(fmtWhen(row.raidStartTime))}</span>` : ""}</td>
                 <td>
                   <textarea
                     class="admin-input"
                     data-hof-note-quote
                     rows="2"
                     maxlength="320"
-                    placeholder="Type quote..."
+                    placeholder="One quote for this MVP winner..."
                   >${esc(String(row.quote || ""))}</textarea>
                 </td>
                 <td class="subtle">${esc(row.updatedAt ? `${fmtWhen(row.updatedAt)}${row.updatedBy ? ` · ${row.updatedBy}` : ""}` : "-")}</td>
                 <td>
-                  <button type="button" class="event-signup-btn" data-hof-note-save="${esc(String(row.winnerRaidKey || ""))}">Save</button>
+                  <button type="button" class="event-signup-btn" data-hof-note-save="${esc(String(row.playerQuoteKey || row.winnerRaidKey || ""))}">Save</button>
                 </td>
               </tr>`
             )
@@ -8500,8 +8499,8 @@ document.getElementById("adminHofNotesReloadBtn")?.addEventListener("click", asy
 document.addEventListener("click", async (event) => {
   const saveBtn = event.target.closest("[data-hof-note-save]");
   if (!saveBtn) return;
-  const winnerRaidKey = String(saveBtn.getAttribute("data-hof-note-save") || "").trim();
-  if (!winnerRaidKey) return;
+  const playerQuoteKey = String(saveBtn.getAttribute("data-hof-note-save") || "").trim();
+  if (!playerQuoteKey) return;
   const row = saveBtn.closest("[data-hof-note-row]");
   const quote = String(row?.querySelector("[data-hof-note-quote]")?.value || "").trim();
   saveBtn.disabled = true;
@@ -8514,10 +8513,8 @@ document.addEventListener("click", async (event) => {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            winnerRaidKey,
+            playerQuoteKey,
             quote,
-            roundKey: String(row?.getAttribute("data-hof-note-round-key") || "").trim(),
-            raidCode: String(row?.getAttribute("data-hof-note-raid-code") || "").trim(),
             winnerName: String(row?.getAttribute("data-hof-note-winner-name") || "").trim(),
           }),
         });

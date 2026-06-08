@@ -575,6 +575,11 @@ function aggregateHallOfFameClient(rows) {
         latestRaidStartTime: Number(latest?.raidStartTime || 0),
         latestRaidName: String(latest?.raidName || latest?.raidCode || "").trim(),
         player: latest?.player || group.player,
+        customQuote: String(
+          latest?.customQuote ||
+            wins.map((w) => String(w?.customQuote || "").trim()).find(Boolean) ||
+            ""
+        ),
         wins,
       };
     })
@@ -626,11 +631,10 @@ function hofCompactPortraitHtml(row, className = "hof-player-card-portrait") {
 }
 
 function renderHofWinRow(win, ctx) {
-  const { roleLabelForRow, quoteForRow } = ctx;
+  const { roleLabelForRow } = ctx;
   const raidName = String(win?.raidName || win?.raidCode || "Raid").trim();
   const when = win?.raidStartTime ? new Date(win.raidStartTime).toLocaleDateString() : "Unknown date";
   const votes = Number(win?.winnerVotes || 0);
-  const quote = quoteForRow(win);
   const peak = hofPeakParseCellHtml(win);
   const role = roleLabelForRow(win);
   return `
@@ -644,9 +648,17 @@ function renderHofWinRow(win, ctx) {
       </div>
       <div class="hof-win-row-body">
         <div class="hof-win-row-stat"><span class="subtle">Peak parse</span>${peak}</div>
-        ${quote ? `<p class="hof-win-row-quote">${escapeHtml(quote)}</p>` : ""}
       </div>
     </div>`;
+}
+
+function playerQuoteForCard(player, ctx) {
+  const custom = String(player?.customQuote || "").trim();
+  if (custom) return custom;
+  const role = ctx.roleLabelForRow({ ...player?.wins?.[0], player: player?.player });
+  if (role === "TANK") return '"Frontline unbroken."';
+  if (role === "HEALER") return '"Hold the raid together."';
+  return '"Push for every percent."';
 }
 
 function renderHofPlayerCard(player, idx, ctx) {
@@ -658,6 +670,7 @@ function renderHofPlayerCard(player, idx, ctx) {
   const playerCell = hofRaiderCell({ ...rowForRole, winnerName: player?.winnerName });
   const mvpCount = Number(player?.mvpCount || player?.wins?.length || 0);
   const latestSubtitle = championSubtitleForRow(rowForRole);
+  const quote = playerQuoteForCard(player, ctx);
   const winCount = Number(player?.wins?.length || mvpCount || 0);
   const winsHtml = (player?.wins || [])
     .map((win) => renderHofWinRow(win, ctx))
@@ -683,6 +696,7 @@ function renderHofPlayerCard(player, idx, ctx) {
           </div>
           <div class="hof-player-card-player">${playerCell.playerHtml}</div>
           <p class="hof-player-card-latest subtle">${escapeHtml(latestSubtitle)}</p>
+          <p class="hof-player-card-quote">${escapeHtml(quote)}</p>
           ${playerCell.badgesHtml}
         </div>
       </div>

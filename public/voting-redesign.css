@@ -656,6 +656,16 @@
   line-height: 1.35;
 }
 
+.hof-player-card-quote {
+  margin: 0;
+  font-style: italic;
+  color: #f5d892;
+  font-size: 14px;
+  line-height: 1.35;
+  font-family: "Cinzel", "Times New Roman", serif;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
+}
+
 .hof-player-card .hof-mvp-badges {
   margin: 0;
 }
