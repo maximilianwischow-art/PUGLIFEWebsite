@@ -2,8 +2,10 @@ import {
   buildParseSeriesForLinkedGroup,
   buildEventPointsForLinkedGroup,
   filterSeriesByRaid,
+  isCoreParseEligibleGuildRole,
   pickDisplayParseRuns,
   raidKeyFromPrimaryRaid,
+  resolveParseDisplayCombatRole,
   trendDeltaForSeries,
 } from "../lib/wcl/parse-development.mjs";
 
@@ -84,6 +86,27 @@ console.assert(sscOnly.length === 2, "ssc filter keeps two nights");
 
 const delta = trendDeltaForSeries(built.points);
 console.assert(delta === 16, `trend delta 16 got ${delta}`);
+
+console.assert(isCoreParseEligibleGuildRole("Core"), "Core eligible");
+console.assert(isCoreParseEligibleGuildRole("Raidlead"), "Raidlead eligible");
+console.assert(!isCoreParseEligibleGuildRole("Veteran"), "Veteran not eligible");
+
+const bxziRole = resolveParseDisplayCombatRole({
+  guildRole: "Core",
+  rhRoleName: "Ranged",
+  className: "Hunter",
+  specName: "Marksmanship",
+});
+console.assert(bxziRole === "Ranged", `bxzi-style hunter is ranged, got ${bxziRole}`);
+
+const tankParseNoise = resolveParseDisplayCombatRole({
+  guildRole: "Core",
+  rhRoleName: "Ranged",
+});
+console.assert(tankParseNoise === "Ranged", "RH ranged beats incidental tank parse");
+
+const healLead = resolveParseDisplayCombatRole({ guildRole: "Heallead", rhRoleName: "Tanks" });
+console.assert(healLead === "Healers", "Heallead pins heal bracket");
 
 const baseUrl = process.argv[2];
 if (baseUrl) {

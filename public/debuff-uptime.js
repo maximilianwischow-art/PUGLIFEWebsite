@@ -1456,6 +1456,11 @@ function wclParseBracketLabel(bracket) {
   return "DPS";
 }
 
+function wclCoreParseGuildRoleLabel(guildRole) {
+  const role = String(guildRole || "Core").trim();
+  return role || "Core";
+}
+
 function wclCoreParseSparklineSvg(points) {
   const scored = (Array.isArray(points) ? points : []).filter((p) => Number.isFinite(Number(p?.parsePct)));
   if (scored.length < 2) {
@@ -1518,12 +1523,13 @@ function wclCoreParsePlayerCardHtml(player) {
   const name = esc(player?.displayName || player?.raidHelperName || "?");
   const delta = wclDebuffProgressDeltaHtml(player?.trendDelta);
   const bracket = esc(wclParseBracketLabel(player?.bracket));
+  const guildRole = esc(wclCoreParseGuildRoleLabel(player?.guildRole));
   const wclList = Array.isArray(player?.wclCharacters) ? player.wclCharacters : [];
   if (!player?.hasWclMapping) {
     return `<article class="plb-core-parse-card plb-core-parse-card--empty">
       <header class="plb-core-parse-card-head">
         <h3 class="plb-core-parse-card-name">${name}</h3>
-        <span class="plb-core-parse-role">Core</span>
+        <span class="plb-core-parse-role">${guildRole}</span>
       </header>
       <p class="subtle">No WCL mapping — link characters in Account Assignment.</p>
     </article>`;
@@ -1533,7 +1539,7 @@ function wclCoreParsePlayerCardHtml(player) {
     return `<article class="plb-core-parse-card plb-core-parse-card--empty">
       <header class="plb-core-parse-card-head">
         <h3 class="plb-core-parse-card-name">${name}</h3>
-        <span class="plb-core-parse-role">Core · ${bracket}</span>
+        <span class="plb-core-parse-role">${guildRole} · ${bracket}</span>
         <span class="plb-core-parse-trend">Trend: ${delta}</span>
       </header>
       <p class="subtle">No parse data for this raid window.</p>
@@ -1545,7 +1551,7 @@ function wclCoreParsePlayerCardHtml(player) {
     <header class="plb-core-parse-card-head">
       <div class="plb-core-parse-card-meta">
         <h3 class="plb-core-parse-card-name">${name}</h3>
-        <span class="plb-core-parse-role">Core · ${bracket}</span>
+        <span class="plb-core-parse-role">${guildRole} · ${bracket}</span>
         <span class="plb-core-parse-wcl-names subtle">${esc(wclList.join(", "))}</span>
       </div>
       <div class="plb-core-parse-card-trend">
@@ -1616,15 +1622,15 @@ function wclUpdateCoreParseMemberToggleLabel(players) {
   if (!btn) return;
   const total = players.length;
   if (!total) {
-    btn.textContent = "No Core members";
+    btn.textContent = "No raiders";
     return;
   }
   if (wclCoreParseSelectedMembers == null) {
-    btn.textContent = `All Core members (${total})`;
+    btn.textContent = `All raiders (${total})`;
     return;
   }
   const selected = players.filter((p) => wclCoreParseMemberIsSelected(wclCoreParseMemberKey(p))).length;
-  btn.textContent = `${selected} of ${total} Core members`;
+  btn.textContent = `${selected} of ${total} raiders`;
 }
 
 function wclRenderCoreParseMemberDropdown(players) {
@@ -1632,7 +1638,7 @@ function wclRenderCoreParseMemberDropdown(players) {
   if (!listHost) return;
   wclEnsureCoreParseMemberSelection(players);
   if (!players.length) {
-    listHost.innerHTML = `<p class="subtle plb-core-parse-member-empty">No Core members assigned.</p>`;
+    listHost.innerHTML = `<p class="subtle plb-core-parse-member-empty">No Core or lead raiders assigned.</p>`;
     wclUpdateCoreParseMemberToggleLabel(players);
     return;
   }
@@ -1641,10 +1647,11 @@ function wclRenderCoreParseMemberDropdown(players) {
       const key = wclCoreParseMemberKey(player);
       const name = esc(player?.displayName || player?.raidHelperName || key);
       const checked = wclCoreParseMemberIsSelected(key);
+      const roleTag = esc(wclCoreParseGuildRoleLabel(player?.guildRole));
       const mapNote = player?.hasWclMapping ? "" : `<span class="plb-core-parse-member-option-meta subtle">no WCL map</span>`;
       return `<label class="plb-core-parse-member-option" role="option" aria-selected="${checked ? "true" : "false"}">
         <input type="checkbox" class="plb-core-parse-member-checkbox" data-wcl-core-parse-member="${esc(key)}" ${checked ? "checked" : ""} />
-        <span class="plb-core-parse-member-option-name">${name}</span>
+        <span class="plb-core-parse-member-option-name">${name} <span class="plb-core-parse-member-option-role">${roleTag}</span></span>
         ${mapNote}
       </label>`;
     })
@@ -1690,7 +1697,7 @@ function renderWclCoreParse(payload) {
   }
   const players = wclCoreParsePlayersFromPayload(payload);
   if (!players.length) {
-    host.innerHTML = `<p class="subtle">No Core raiders in Account Assignment yet. Assign the <strong>Core</strong> guild role to tracked players in Admin → Account Assignment.</p>`;
+    host.innerHTML = `<p class="subtle">No eligible raiders yet. Assign <strong>Core</strong> or a lead role (Raid lead, Heal lead, DPS lead, Pug lead) in Admin → Account Assignment.</p>`;
     wclRenderCoreParseMemberDropdown([]);
     return;
   }
@@ -1703,18 +1710,18 @@ function renderWclCoreParse(payload) {
       : "";
   const memberNote =
     wclCoreParseSelectedMembers != null
-      ? `<span class="plb-debuff-progress-filter-note">Showing ${visible.length} of ${players.length} Core members</span>`
+      ? `<span class="plb-debuff-progress-filter-note">Showing ${visible.length} of ${players.length} raiders</span>`
       : "";
   if (!visible.length) {
     host.innerHTML = `
-      <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core raiders with mapped log names. ${filterNote} ${memberNote}</p>
-      <p class="subtle">No Core members selected. Use the <strong>Core members</strong> dropdown to choose who appears in this view.</p>
+      <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote}</p>
+      <p class="subtle">No raiders selected. Use the <strong>Roster filter</strong> dropdown to choose who appears in this view.</p>
     `;
     return;
   }
   const cards = visible.map(wclCoreParsePlayerCardHtml).join("");
   host.innerHTML = `
-    <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core raiders with mapped log names. ${filterNote} ${memberNote}</p>
+    <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote}</p>
     <div class="plb-core-parse-grid">${cards}</div>
   `;
 }

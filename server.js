@@ -67,6 +67,8 @@ import {
   buildEventPointsForLinkedGroup,
   buildParseSeriesForLinkedGroup,
   filterSeriesByRaid,
+  isCoreParseEligibleGuildRole,
+  resolveParseDisplayCombatRole,
   trendDeltaForSeries,
 } from "./lib/wcl/parse-development.mjs";
 import {
@@ -430,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260608-plb-core-parse-dev-v3";
+const API_BUILD_ID = "20260608-plb-core-parse-dev-v4";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -11505,16 +11507,98 @@ app.get("/api/raid-lead/wcl-debuff-trends", async (req, res) => {
   }
 });
 
-function inferRoleNameFromParseSummaries(parseSummaries) {
-  if (!parseSummaries || typeof parseSummaries !== "object") return "Ranged";
-  if (parseSummaries.encounterTopHeal === true) return "Healers";
-  if (parseSummaries.encounterTopTank === true) return "Tanks";
-  const bh = finiteParseNum(parseSummaries.bestHeal);
-  const bt = finiteParseNum(parseSummaries.bestTank);
-  const bd = finiteParseNum(parseSummaries.bestDps);
-  if (bh != null && bh > 0 && (bt == null || bh >= bt) && (bd == null || bh >= bd)) return "Healers";
-  if (bt != null && bt > 0 && (bd == null || bt >= bd)) return "Tanks";
-  return "Ranged";
+/**
+ * Most recent Raid Helper primary signup role per display key (newest events first).
+ * @returns {Promise<Map<string, { roleName: string, className: string, specName: string }>>}
+ */
+async function collectRhCombatRoleByRhKey(maxPastEvents = 30) {
+  /** @type {Map<string, { roleName: string, className: string, specName: string }>} */
+  const out = new Map();
+  const serverId = raidHelperDiscordGuildId();
+  if (!serverId) return out;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const allEvents = await fetchRaidHelperServerEvents(serverId);
+  const pastEvents = allEvents
+    .map((event) => ({
+      id: String(event.id || event.eventId || event.eventID || ""),
+      startTime: Number(event.startTime || event.timestamp || event.time || event.start || 0),
+    }))
+    .filter((event) => event.id && Number.isFinite(event.startTime) && event.startTime > 0 && event.startTime <= nowSec)
+    .sort((a, b) => b.startTime - a.startTime)
+    .slice(0, Math.max(1, Math.min(60, Math.floor(Number(maxPastEvents) || 30))));
+
+  for (const ev of pastEvents) {
+    const detail = await fetchRaidHelperEventDetail(ev.id);
+    const signUps = Array.isArray(detail?.signUps) ? detail.signUps : [];
+    for (const entry of signUps) {
+      if (String(entry?.status || "").toLowerCase() !== "primary") continue;
+      if (signupLooksLikeBlocker(entry)) continue;
+      const name = String(entry?.name || "").trim();
+      const rhKey = normalizeRaidHelperDisplayKey(name);
+      if (!rhKey || out.has(rhKey)) continue;
+      const classDisplay = englishWowClassDisplayFromRaidHelper(raidHelperClassNameFromSignUpEntry(entry));
+      const specName = normalizeProtectionSpecLabel(String(entry?.specName || entry?.cSpecName || "").trim());
+      const roleRaw = normalizeRaidHelperRoleLabel(
+        String(entry?.roleName || entry?.role || entry?.cRoleName || entry?.cRole || "").trim()
+      );
+      const inferredRole = inferRoleFromClassSpecName(classDisplay, specName, name);
+      const roleName = normalizeNeedRoleKey(roleRaw || inferredRole);
+      const className = normalizeNeedClassKey(classDisplay);
+      const specRow = { specName, className: classDisplay, roleName: roleName || inferredRole || "Ranged" };
+      const specInferred = inferActiveRosterRoleNameFromSpec(specRow);
+      out.set(rhKey, {
+        roleName: roleName || specInferred || inferredRole || "Ranged",
+        className: className || classDisplay,
+        specName,
+      });
+    }
+  }
+  return out;
+}
+
+function identityCombatRoleByRhKeyForLinks(links) {
+  /** @type {Map<string, { roleName: string, className: string, specName: string }>} */
+  const out = new Map();
+  if (!materializeIdentityEnabled()) return out;
+  for (const entry of Array.isArray(links) ? links : []) {
+    const rhKey = normalizeRaidHelperDisplayKey(String(entry?.raidHelperName || ""));
+    if (!rhKey || out.has(rhKey)) continue;
+    let user = null;
+    const discordId = sanitizeDiscordUserId(entry?.discordUserId);
+    if (discordId) user = identityUserGetByDiscordId(discordId);
+    if (!user) user = identityUserGetByRaidHelperKey(rhKey);
+    if (!user?.id) continue;
+    const chars = identityCharactersListAll({}).filter((c) => Number(c.userId) === Number(user.id));
+    const mainChar =
+      chars.find((c) => Number(c.id) === Number(user.mainCharacterId)) ||
+      chars.find((c) => c.wowSpec || c.wowClass) ||
+      chars[0] ||
+      null;
+    if (!mainChar) continue;
+    const className = englishWowClassDisplayFromRaidHelper(String(mainChar.wowClass || "").trim());
+    const specName = normalizeProtectionSpecLabel(String(mainChar.wowSpec || "").trim());
+    const specRow = { className, specName, roleName: "Ranged" };
+    const roleName =
+      inferActiveRosterRoleNameFromSpec(specRow) ||
+      inferRoleFromClassSpecName(className, specName, entry?.raidHelperName) ||
+      "Ranged";
+    out.set(rhKey, { roleName, className, specName });
+  }
+  return out;
+}
+
+function resolveParseDisplayRoleNameForLink(entry, rhRoleByKey, identityRoleByKey) {
+  const rhKey = normalizeRaidHelperDisplayKey(String(entry?.raidHelperName || ""));
+  const rh = rhKey ? rhRoleByKey.get(rhKey) : null;
+  const ident = rhKey ? identityRoleByKey.get(rhKey) : null;
+  return resolveParseDisplayCombatRole({
+    guildRole: entry?.guildRole,
+    rhRoleName: rh?.roleName || "",
+    className: rh?.className || ident?.className || "",
+    specName: rh?.specName || ident?.specName || "",
+    displayName: entry?.raidHelperName,
+    inferFromClassSpecFn: inferRoleFromClassSpecName,
+  });
 }
 
 async function buildCoreParseDevelopmentPayload({ raidFilter = "all", limit = 40 } = {}) {
@@ -11554,12 +11638,14 @@ async function buildCoreParseDevelopmentPayload({ raidFilter = "all", limit = 40
     }
   }
 
-  const coreLinks = (rhWclLinksState?.links || []).filter(
-    (entry) => normalizeRhWclGuildRole(entry?.guildRole) === "Core"
+  const eligibleLinks = (rhWclLinksState?.links || []).filter((entry) =>
+    isCoreParseEligibleGuildRole(entry?.guildRole)
   );
+  const rhRoleByKey = await collectRhCombatRoleByRhKey(30);
+  const identityRoleByKey = identityCombatRoleByRhKeyForLinks(eligibleLinks);
 
   const players = [];
-  for (const entry of coreLinks) {
+  for (const entry of eligibleLinks) {
     const displayName = String(entry?.raidHelperName || "").trim();
     if (!displayName) continue;
     const logicalKey = normalizeRaidHelperDisplayKey(displayName);
@@ -11582,18 +11668,14 @@ async function buildCoreParseDevelopmentPayload({ raidFilter = "all", limit = 40
       .map((x) => String(x || "").trim())
       .filter(Boolean);
     const hasWclMapping = mappedNames.length > 0;
+    const guildRole = normalizeRhWclGuildRole(entry?.guildRole);
+    const roleName = resolveParseDisplayRoleNameForLink(entry, rhRoleByKey, identityRoleByKey);
 
     const group = { displayName, wclLower };
     let points = [];
-    let bracket = "dps";
+    let bracket = rosterParseBracketFromCompSlotRoleName(roleName);
 
     if (hasWclMapping) {
-      const parseSummaries = summarizeParsesForLinkedGroup(
-        group,
-        attendanceRankingPayloads,
-        wclDisplayByLower
-      );
-      const roleName = inferRoleNameFromParseSummaries(parseSummaries);
       const built = buildEventPointsForLinkedGroup(
         group,
         attendanceRankingPayloads,
@@ -11608,7 +11690,8 @@ async function buildCoreParseDevelopmentPayload({ raidFilter = "all", limit = 40
     players.push({
       raidHelperName: displayName,
       displayName,
-      guildRole: "Core",
+      guildRole,
+      roleName,
       wclCharacters: mappedNames,
       hasWclMapping,
       bracket,
@@ -11640,7 +11723,7 @@ app.get("/api/raid-lead/core-parse-development", async (req, res) => {
     const raidFilter = String(req.query?.raid || "all").trim().toLowerCase() || "all";
     const limit = Math.min(60, Math.max(1, Number(req.query?.limit) || 40));
     const refresh = String(req.query?.refresh || "").trim() === "1";
-    const cacheKey = `core-parse-dev-v1-${raidFilter}-${limit}`;
+    const cacheKey = `core-parse-dev-v2-${raidFilter}-${limit}`;
     const loader = () => buildCoreParseDevelopmentPayload({ raidFilter, limit });
     const payload = refresh
       ? await forceRefreshCachedPayload(cacheKey, loader)
