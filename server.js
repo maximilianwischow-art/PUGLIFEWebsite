@@ -16,6 +16,7 @@ import {
   sortRhWclLinkRows,
   splitMergeByConfidence,
 } from "./lib/rh-wcl-guess.mjs";
+import { buildHallOfFameApiPayload } from "./lib/hall-of-fame-aggregate.mjs";
 import { syncBadgePngsToSvgs, watchBadgePngsToSvgs } from "./lib/badge-png-svg-sync.mjs";
 import {
   registerSyncTask,
@@ -423,7 +424,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260607-plb-badge-frame-v5";
+const API_BUILD_ID = "20260608-plb-hof-player-cards-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -2249,6 +2250,18 @@ function identityUserIdForHallOfFameWinner(winnerName) {
     /* identity optional */
   }
   return null;
+}
+
+function playerKeyForHallOfFameRow(row) {
+  const uid =
+    Number(row?.player?.dbUserId) > 0
+      ? Number(row.player.dbUserId)
+      : resolveCanonicalUserIdForHallOfFameWinner(row?.winnerName);
+  if (Number.isInteger(uid) && uid > 0) return `uid:${uid}`;
+  const keys = [...hallOfFameWinnerLookupKeys(row?.winnerName)].sort();
+  if (keys[0]) return `name:${keys[0]}`;
+  const fallback = normalizeRaidHelperDisplayKey(row?.winnerName);
+  return fallback ? `name:${fallback}` : "name:unknown";
 }
 
 function hallOfFamePeakParseSource(raidCode, metric, pick, winnerName) {
@@ -15754,8 +15767,11 @@ app.get("/api/admin/wcl-attendee-names", async (req, res) => {
 app.get("/api/voting/hall-of-fame", async (_req, res) => {
   try {
     res.setHeader("Cache-Control", "no-store, max-age=0");
-    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 24);
-    return res.json({ ok: true, hallOfFame });
+    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 200);
+    const payload = buildHallOfFameApiPayload(hallOfFame, {
+      resolvePlayerKey: playerKeyForHallOfFameRow,
+    });
+    return res.json({ ok: true, ...payload });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame" });
   }

@@ -20,7 +20,8 @@
     "guess-rh-wcl": "node scripts/guess-rh-wcl-links.mjs",
     "import-live-db": "node scripts/import-live-db-snapshot.mjs",
     "test:kara-roster": "node scripts/test-future-events-kara.mjs http://localhost:8787",
-    "test:parse-badges": "node scripts/simulate-parse-badges.mjs http://localhost:8787"
+    "test:parse-badges": "node scripts/simulate-parse-badges.mjs http://localhost:8787",
+    "test:hof-aggregate": "node scripts/test-hall-of-fame-aggregate.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",

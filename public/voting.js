@@ -520,6 +520,211 @@ function hofPlayerForChronicle(row) {
   };
 }
 
+function hofNormalizeNameKey(name) {
+  let s = String(name || "")
+    .trim()
+    .replace(/\u00a0/g, " ");
+  const slash = s.indexOf("/");
+  if (slash > 0) s = s.slice(0, slash).trim();
+  return s
+    .replace(/\s*[-–—]\s*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\-\s]*$/u, "")
+    .toLowerCase();
+}
+
+function hofPlayerKeyForRow(row) {
+  const uid = Number(row?.player?.dbUserId);
+  if (Number.isInteger(uid) && uid > 0) return `uid:${uid}`;
+  const name = String(row?.winnerName || row?.player?.characterName || row?.player?.name || "").trim();
+  const key = hofNormalizeNameKey(name);
+  return key ? `name:${key}` : "name:unknown";
+}
+
+/** Client-side aggregation fallback when API omits `players[]`. */
+function aggregateHallOfFameClient(rows) {
+  const sorted = [...(Array.isArray(rows) ? rows : [])].sort(
+    (a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0)
+  );
+  const groups = new Map();
+  for (const row of sorted) {
+    const playerKey = hofPlayerKeyForRow(row);
+    if (!groups.has(playerKey)) {
+      groups.set(playerKey, {
+        playerKey,
+        winnerName: String(row?.winnerName || "Unknown"),
+        player: row?.player || null,
+        wins: [],
+      });
+    }
+    const group = groups.get(playerKey);
+    group.wins.push(row);
+    if (group.wins.length === 1) {
+      group.winnerName = String(row?.winnerName || group.winnerName);
+      group.player = row?.player || group.player;
+    }
+  }
+  const players = [...groups.values()]
+    .map((group) => {
+      const wins = [...group.wins].sort(
+        (a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0)
+      );
+      const latest = wins[0] || null;
+      return {
+        playerKey: group.playerKey,
+        winnerName: String(latest?.winnerName || group.winnerName || "Unknown"),
+        mvpCount: wins.length,
+        latestRaidStartTime: Number(latest?.raidStartTime || 0),
+        latestRaidName: String(latest?.raidName || latest?.raidCode || "").trim(),
+        player: latest?.player || group.player,
+        wins,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.mvpCount || 0) - Number(a.mvpCount || 0) ||
+        Number(b.latestRaidStartTime || 0) - Number(a.latestRaidStartTime || 0)
+    );
+  return {
+    hallOfFame: sorted,
+    latestChampion: sorted[0] || null,
+    players,
+  };
+}
+
+function resolveHallOfFamePayload(payload) {
+  const apiRows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
+  const rowsUnsorted = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
+  const isMock = apiRows.length === 0;
+  if (Array.isArray(payload?.players) && payload.players.length) {
+    return {
+      hallOfFame: rowsUnsorted,
+      latestChampion: payload.latestChampion || rowsUnsorted[0] || null,
+      players: payload.players,
+      isMock,
+    };
+  }
+  const aggregated = aggregateHallOfFameClient(rowsUnsorted);
+  return { ...aggregated, isMock };
+}
+
+function hofCompactPortraitHtml(row, className = "hof-player-card-portrait") {
+  const plb = window.plbEventsRoster;
+  const esc = plb?.escapeHtml || escapeHtml;
+  const p = row?.player;
+  const fallback = "/images/achievements/hall-of-fame.png?v=20260608hof1";
+  const classIconFallback = p?.className ? `/class-icons/${encodeURIComponent(String(p.className))}.jpg` : "";
+  if (!plb || !p) {
+    return `<img class="${className}" src="${fallback}" alt="Player portrait" width="72" height="72" loading="lazy" decoding="async" />`;
+  }
+  let chain = [];
+  if (typeof plb.rosterPortraitChain === "function") chain = plb.rosterPortraitChain(p) || [];
+  if ((!Array.isArray(chain) || !chain.length) && typeof plb.specBadgePortraitChain === "function") {
+    chain = plb.specBadgePortraitChain(p) || [];
+  }
+  const urls = (Array.isArray(chain) ? chain : []).map((u) => String(u || "").trim()).filter(Boolean);
+  const src = esc(urls[0] || classIconFallback || fallback);
+  return `<img class="${className}" src="${src}" alt="${esc(String(p.specName || "Player portrait"))}" width="72" height="72" loading="lazy" decoding="async" />`;
+}
+
+function renderHofWinRow(win, ctx) {
+  const { roleLabelForRow, quoteForRow } = ctx;
+  const raidName = String(win?.raidName || win?.raidCode || "Raid").trim();
+  const when = win?.raidStartTime ? new Date(win.raidStartTime).toLocaleDateString() : "Unknown date";
+  const votes = Number(win?.winnerVotes || 0);
+  const quote = quoteForRow(win);
+  const peak = hofPeakParseCellHtml(win);
+  const role = roleLabelForRow(win);
+  return `
+    <div class="hof-win-row">
+      <div class="hof-win-row-head">
+        <div class="hof-win-row-title">
+          <strong>${escapeHtml(raidName)}</strong>
+          <span class="subtle">${escapeHtml(when)} · ${escapeHtml(numberFmt(votes))} vote${votes === 1 ? "" : "s"}</span>
+        </div>
+        <span class="hof-win-row-role tw-plb-chip">${escapeHtml(role)}</span>
+      </div>
+      <div class="hof-win-row-body">
+        <div class="hof-win-row-stat"><span class="subtle">Peak parse</span>${peak}</div>
+        ${quote ? `<p class="hof-win-row-quote">${escapeHtml(quote)}</p>` : ""}
+      </div>
+    </div>`;
+}
+
+function renderHofPlayerCard(player, idx, ctx) {
+  const { plb, roleLabelForRow, championSubtitleForRow } = ctx;
+  const latestWin = player?.wins?.[0] || player;
+  const rowForRole = { ...latestWin, player: player?.player || latestWin?.player };
+  const role = roleLabelForRow(rowForRole);
+  const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
+  const playerCell = hofRaiderCell({ ...rowForRole, winnerName: player?.winnerName });
+  const mvpCount = Number(player?.mvpCount || player?.wins?.length || 0);
+  const latestSubtitle = championSubtitleForRow(rowForRole);
+  const winCount = Number(player?.wins?.length || mvpCount || 0);
+  const winsHtml = (player?.wins || [])
+    .map((win) => renderHofWinRow(win, ctx))
+    .join("");
+  const cardId = `hof-player-${idx}`;
+  const guildRoleToken =
+    player?.player && plb?.rosterRoleIconHtml
+      ? plb.rosterRoleIconHtml(player.player, { className: "hof-guild-role-token" })
+      : "";
+
+  return `
+    <article
+      class="hof-player-card ${roleCls}"
+      data-hof-player-key="${escapeHtml(player?.playerKey || "")}"
+      style="--hof-stagger-index:${idx}"
+    >
+      <div class="hof-player-card-head">
+        <div class="hof-player-card-portrait-wrap">${hofCompactPortraitHtml(rowForRole)}</div>
+        <div class="hof-player-card-body">
+          <div class="hof-player-card-topline">
+            <span class="hof-mvp-counter" title="Raid MVP wins">${escapeHtml(`×${mvpCount}`)} MVP</span>
+            ${guildRoleToken}
+          </div>
+          <div class="hof-player-card-player">${playerCell.playerHtml}</div>
+          <p class="hof-player-card-latest subtle">${escapeHtml(latestSubtitle)}</p>
+          ${playerCell.badgesHtml}
+        </div>
+      </div>
+      ${
+        winCount > 0
+          ? `<button
+              type="button"
+              class="hof-player-expand btn btn-secondary"
+              aria-expanded="false"
+              aria-controls="${cardId}-wins"
+              data-hof-expand
+            >
+              <span class="hof-player-expand-label">${escapeHtml(`${winCount} win${winCount === 1 ? "" : "s"} · show history`)}</span>
+              <span class="hof-player-expand-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="hof-player-wins" id="${cardId}-wins" hidden data-hof-wins>${winsHtml}</div>`
+          : ""
+      }
+    </article>`;
+}
+
+function bindHofCardInteractions(host) {
+  if (!host) return;
+  host.querySelectorAll("[data-hof-expand]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const panel = btn.parentElement?.querySelector("[data-hof-wins]");
+      if (!panel) return;
+      const open = panel.hidden;
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      const countMatch = btn.querySelector(".hof-player-expand-label")?.textContent?.match(/^(\d+)/);
+      const count = countMatch ? countMatch[1] : "";
+      const label = btn.querySelector(".hof-player-expand-label");
+      if (label) {
+        label.textContent = open
+          ? `${count} win${count === "1" ? "" : "s"} · hide history`
+          : `${count} win${count === "1" ? "" : "s"} · show history`;
+      }
+    });
+  });
+}
+
 function renderHallOfFameChampionCard(row, idx, ctx) {
   const { plb, roleLabelForRow, championSubtitleForRow, quoteForRow, roleIconForRow, attendancePct, highestPeakPct, totalRaids } =
     ctx;
@@ -531,6 +736,7 @@ function renderHallOfFameChampionCard(row, idx, ctx) {
   const roleCls = role === "TANK" ? "hof-role-tank" : role === "HEALER" ? "hof-role-heal" : "hof-role-dps";
   const rowDirCls = idx % 2 === 1 ? "hof-cine-row--reverse" : "";
   const parityCls = idx % 2 === 0 ? "hof-champion-card--parity-a" : "hof-champion-card--parity-b";
+  const spotlightCls = ctx.spotlight ? " hof-champion-card--spotlight" : "";
   const roleIcon = roleIconForRow(row);
   const specPortrait = hofWinnerSpecPortraitHtml(row);
   const guildRoleToken =
@@ -538,7 +744,7 @@ function renderHallOfFameChampionCard(row, idx, ctx) {
       ? plb.rosterRoleIconHtml(chronicleRow.player, { className: "hof-guild-role-token" })
       : "";
   return `
-        <article class="hof-champion-card ${parityCls} ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
+        <article class="hof-champion-card ${parityCls}${spotlightCls} ${roleCls}" data-hof-winner="${escapeHtml(row?.winnerName || "")}">
           <div class="hof-cine-row ${rowDirCls}">
             <div class="hof-champion-main">
               <div class="hof-champion-topline">
@@ -572,10 +778,8 @@ function renderHallOfFameChampionCard(row, idx, ctx) {
 function renderHallOfFame(payload) {
   const host = document.getElementById("votingHallOfFame");
   const plb = window.plbEventsRoster;
-  const apiRows = Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [];
-  const rowsUnsorted = apiRows.length ? apiRows : buildMockHallOfFamePreviewRows();
-  const rows = [...rowsUnsorted].sort((a, b) => Number(b?.raidStartTime || 0) - Number(a?.raidStartTime || 0));
-  const isMock = apiRows.length === 0;
+  const resolved = resolveHallOfFamePayload(payload);
+  const { latestChampion, players, isMock } = resolved;
   const roleLabelForRow = (row) => {
     const bracket = String(row?.bracket || row?.peakParseBracket || "").trim().toLowerCase();
     if (bracket === "heal" || bracket === "healer") return "HEALER";
@@ -630,40 +834,29 @@ function renderHallOfFame(payload) {
     highestPeakPct,
     totalRaids,
   };
-  const recent = rows[0] || null;
-  const archive = rows.slice(1);
-  const recentHtml = recent ? renderHallOfFameChampionCard(recent, 0, cardCtx) : "";
-  const archiveHtml = archive.map((row, idx) => renderHallOfFameChampionCard(row, idx + 1, cardCtx)).join("");
-  const archiveCount = archive.length;
-  const totalCount = rows.length;
-  host.innerHTML = `
-    <div class="hof-recent-wrap">
-      ${recent ? `<p class="hof-recent-kicker subtle">Latest MVP champion</p>${recentHtml}` : `<p class="subtle">No hall of fame entries yet.</p>`}
-    </div>
-    ${
-      archiveCount
-        ? `<div class="hof-archive-wrap" hidden>
-            <p class="hof-archive-kicker subtle">Earlier champions (${archiveCount})</p>
-            <div class="hof-list hof-list--archive">${archiveHtml}</div>
-          </div>
-          <button type="button" class="btn btn-secondary hof-archive-toggle" id="hofArchiveToggle" aria-expanded="false">
-            View all Hall of Fame winners (${totalCount})
-          </button>`
-        : ""
-    }
-  `;
-  const toggle = document.getElementById("hofArchiveToggle");
-  const archiveWrap = host.querySelector(".hof-archive-wrap");
-  if (toggle && archiveWrap) {
-    toggle.addEventListener("click", () => {
-      const open = archiveWrap.hidden;
-      archiveWrap.hidden = !open;
-      toggle.setAttribute("aria-expanded", open ? "true" : "false");
-      toggle.textContent = open
-        ? "Hide earlier Hall of Fame winners"
-        : `View all Hall of Fame winners (${totalCount})`;
-    });
-  }
+
+  const spotlightHtml = latestChampion
+    ? `<div class="hof-spotlight-wrap">
+        <p class="hof-recent-kicker subtle">Latest MVP champion</p>
+        ${renderHallOfFameChampionCard(
+          { ...latestChampion, player: hofPlayerForChronicle(latestChampion) },
+          0,
+          { ...cardCtx, spotlight: true }
+        )}
+      </div>`
+    : `<p class="subtle">No hall of fame entries yet.</p>`;
+
+  const playerCards = Array.isArray(players) ? players : [];
+  const gridHtml = playerCards.length
+    ? `<div class="hof-players-section">
+        <p class="hof-players-kicker subtle">Eternal champions · ${escapeHtml(String(playerCards.length))} player${playerCards.length === 1 ? "" : "s"}</p>
+        <div class="hof-player-grid">${playerCards.map((p, idx) => renderHofPlayerCard(p, idx, cardCtx)).join("")}</div>
+      </div>`
+    : "";
+
+  host.innerHTML = `${spotlightHtml}${gridHtml}`;
+  bindHofCardInteractions(host);
+
   if (isMock) {
     host.insertAdjacentHTML(
       "afterbegin",
@@ -705,14 +898,13 @@ async function loadHallOfFame() {
     const payload = await votingGetJson("/api/voting/hall-of-fame", {
       credentials: "include",
     });
-    // Pull profile-picture overrides for the embedded `row.player` records
-    // (each has the canonical `discordUserId`) so portraits show the avatar
-    // instead of the class crest.
+    const resolved = resolveHallOfFamePayload(payload);
     const plb = window.plbEventsRoster;
     if (plb && typeof plb.prefetchRosterProfilePictures === "function") {
-      const players = (Array.isArray(payload?.hallOfFame) ? payload.hallOfFame : [])
-        .map((row) => row?.player)
-        .filter(Boolean);
+      const players = [
+        ...(Array.isArray(resolved?.players) ? resolved.players.map((p) => p?.player).filter(Boolean) : []),
+        ...(Array.isArray(resolved?.hallOfFame) ? resolved.hallOfFame.map((row) => row?.player).filter(Boolean) : []),
+      ];
       try {
         await plb.prefetchRosterProfilePictures(players);
       } catch {
