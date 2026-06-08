@@ -6330,15 +6330,70 @@ tr.plb-gear-row--miss th {
   border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(10, 10, 10, 0.42);
-  padding: 14px 16px 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.plb-core-parse-card--expandable {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.plb-core-parse-card--expandable:hover {
+  border-color: rgba(168, 85, 247, 0.35);
+}
+
+.plb-core-parse-card--expanded {
+  border-color: rgba(168, 85, 247, 0.42);
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.12);
+}
+
+.plb-core-parse-card-summary {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 14px 16px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.plb-core-parse-card-summary:focus-visible {
+  outline: 2px solid rgba(168, 85, 247, 0.65);
+  outline-offset: -2px;
+}
+
+.plb-core-parse-expand-cue {
+  align-self: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+
+.plb-core-parse-card--expanded .plb-core-parse-expand-cue {
+  color: var(--text2);
+}
+
+.plb-core-parse-card-details {
+  padding: 0 16px 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .plb-core-parse-card--empty {
   border-style: dashed;
   opacity: 0.92;
+  padding: 14px 16px 16px;
+  gap: 12px;
 }
 
 .plb-core-parse-card-head {
@@ -6402,7 +6457,7 @@ tr.plb-gear-row--miss th {
 }
 
 .plb-core-parse-table-wrap {
-  margin-top: 2px;
+  margin-top: 12px;
 }
 
 .plb-core-parse-table {

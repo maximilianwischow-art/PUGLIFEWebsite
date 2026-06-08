@@ -104,6 +104,8 @@ let wclCoreParseLoaded = false;
 /** @type {Set<string>|null} null = all Core members selected */
 let wclCoreParseSelectedMembers = null;
 let wclCoreParseMemberMenuOpen = false;
+/** @type {Set<string>} */
+let wclCoreParseExpandedKeys = new Set();
 
 const WCL_PROGRESS_RAID_LABEL = {
   ssc: "SSC",
@@ -1519,7 +1521,7 @@ function wclCoreParseEventRowHtml(point) {
   </tr>`;
 }
 
-function wclCoreParsePlayerCardHtml(player) {
+function wclCoreParsePlayerCardHtml(player, cardIdx = 0) {
   const name = esc(player?.displayName || player?.raidHelperName || "?");
   const delta = wclDebuffProgressDeltaHtml(player?.trendDelta);
   const bracket = esc(wclParseBracketLabel(player?.bracket));
@@ -1546,36 +1548,53 @@ function wclCoreParsePlayerCardHtml(player) {
       <p class="subtle plb-core-parse-wcl-names">WCL: ${esc(wclList.join(", ") || "—")}</p>
     </article>`;
   }
+  const rawKey = wclCoreParseMemberKey(player);
+  const playerKey = esc(rawKey);
+  const domId = `wcl-core-parse-details-${Number(cardIdx) || 0}`;
+  const expanded = wclCoreParseExpandedKeys.has(rawKey);
   const tableRows = points.map(wclCoreParseEventRowHtml).join("");
-  return `<article class="plb-core-parse-card">
-    <header class="plb-core-parse-card-head">
-      <div class="plb-core-parse-card-meta">
-        <h3 class="plb-core-parse-card-name">${name}</h3>
-        <span class="plb-core-parse-role">${guildRole} · ${bracket}</span>
-        <span class="plb-core-parse-wcl-names subtle">${esc(wclList.join(", "))}</span>
+  return `<article class="plb-core-parse-card plb-core-parse-card--expandable${expanded ? " plb-core-parse-card--expanded" : ""}" data-wcl-core-parse-key="${playerKey}">
+    <button type="button" class="plb-core-parse-card-summary" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${domId}">
+      <header class="plb-core-parse-card-head">
+        <div class="plb-core-parse-card-meta">
+          <h3 class="plb-core-parse-card-name">${name}</h3>
+          <span class="plb-core-parse-role">${guildRole} · ${bracket}</span>
+          <span class="plb-core-parse-wcl-names subtle">${esc(wclList.join(", "))}</span>
+        </div>
+        <div class="plb-core-parse-card-trend">
+          <span class="plb-core-parse-trend-label">Since first event</span>
+          ${delta}
+        </div>
+      </header>
+      ${wclCoreParseSparklineSvg(points)}
+      <span class="plb-core-parse-expand-cue">${expanded ? "Hide event details" : `Show ${points.length} event(s)`}</span>
+    </button>
+    <div class="plb-core-parse-card-details" id="${domId}" ${expanded ? "" : "hidden"}>
+      <div class="plb-debuff-progress-table-wrap plb-core-parse-table-wrap">
+        <table class="plb-debuff-progress-table plb-core-parse-table">
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Raid</th>
+              <th scope="col">Parse</th>
+              <th scope="col">Boss</th>
+              <th scope="col">Bracket</th>
+              <th scope="col">Report</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
       </div>
-      <div class="plb-core-parse-card-trend">
-        <span class="plb-core-parse-trend-label">Since first event</span>
-        ${delta}
-      </div>
-    </header>
-    ${wclCoreParseSparklineSvg(points)}
-    <div class="plb-debuff-progress-table-wrap plb-core-parse-table-wrap">
-      <table class="plb-debuff-progress-table plb-core-parse-table">
-        <thead>
-          <tr>
-            <th scope="col">Date</th>
-            <th scope="col">Raid</th>
-            <th scope="col">Parse</th>
-            <th scope="col">Boss</th>
-            <th scope="col">Bracket</th>
-            <th scope="col">Report</th>
-          </tr>
-        </thead>
-        <tbody>${tableRows}</tbody>
-      </table>
     </div>
   </article>`;
+}
+
+function wclToggleCoreParseCardExpanded(key) {
+  const id = String(key || "").trim();
+  if (!id) return;
+  if (wclCoreParseExpandedKeys.has(id)) wclCoreParseExpandedKeys.delete(id);
+  else wclCoreParseExpandedKeys.add(id);
+  if (wclCoreParseCache?.ok) renderWclCoreParse(wclCoreParseCache);
 }
 
 function wclCoreParseMemberKey(player) {
@@ -1719,7 +1738,7 @@ function renderWclCoreParse(payload) {
     `;
     return;
   }
-  const cards = visible.map(wclCoreParsePlayerCardHtml).join("");
+  const cards = visible.map((player, idx) => wclCoreParsePlayerCardHtml(player, idx)).join("");
   host.innerHTML = `
     <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote}</p>
     <div class="plb-core-parse-grid">${cards}</div>
@@ -2586,6 +2605,25 @@ document.addEventListener("click", (event) => {
   const dropdown = document.getElementById("wclCoreParseMemberDropdown");
   if (dropdown?.contains(event.target)) return;
   wclSetCoreParseMemberMenuOpen(false);
+});
+
+document.getElementById("wclCoreParseHost")?.addEventListener("click", (event) => {
+  if (event.target.closest(".plb-core-parse-report-link")) return;
+  const summary = event.target.closest(".plb-core-parse-card-summary");
+  if (!summary) return;
+  const card = summary.closest("[data-wcl-core-parse-key]");
+  const key = card?.getAttribute("data-wcl-core-parse-key");
+  if (key) wclToggleCoreParseCardExpanded(key);
+});
+
+document.getElementById("wclCoreParseHost")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const summary = event.target.closest(".plb-core-parse-card-summary");
+  if (!summary) return;
+  event.preventDefault();
+  const card = summary.closest("[data-wcl-core-parse-key]");
+  const key = card?.getAttribute("data-wcl-core-parse-key");
+  if (key) wclToggleCoreParseCardExpanded(key);
 });
 
 document.getElementById("wclCoreParseRefreshBtn")?.addEventListener("click", (event) => {
