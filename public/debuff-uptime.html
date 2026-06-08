@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Debuff Uptime</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260522plb-debuff-ihm-cache-v12" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260608plb-core-parse-dev-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft debuff-uptime-page">
@@ -105,7 +105,26 @@
                   </span>
                   <span class="plb-wcl-mode-copy">
                     <span class="plb-wcl-mode-title">Progress</span>
-                    <span class="plb-wcl-mode-desc">Raid-by-raid improvement</span>
+                    <span class="plb-wcl-mode-desc">Raid nights &amp; boss progress</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="plb-wcl-mode plb-wcl-mode--core-parse plb-debuff-tab"
+                  role="tab"
+                  aria-selected="false"
+                  data-wcl-panel-tab="core-parse"
+                  id="wclTabCoreParse"
+                >
+                  <span class="plb-wcl-mode-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <path d="M4 19V5M4 19h16" stroke-linecap="round" />
+                      <path d="M6 16l3-9 3 5 2-3 4 7" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
+                  <span class="plb-wcl-mode-copy">
+                    <span class="plb-wcl-mode-title">Core Parses</span>
+                    <span class="plb-wcl-mode-desc">Per-event parse development</span>
                   </span>
                 </button>
                 <button
@@ -140,13 +159,34 @@
                 Reload overview
               </button>
             </div>
-            <div class="plb-debuff-toolbar plb-debuff-progress-toolbar surface-elevated" id="wclProgressToolbar" hidden>
+            <div class="plb-debuff-toolbar plb-core-parse-toolbar surface-elevated" id="wclCoreParseToolbar" hidden>
               <div class="plb-debuff-progress-filters" role="group" aria-label="Raid filter">
                 <span class="plb-debuff-progress-filters-label">Raid</span>
-                <button type="button" class="plb-debuff-progress-chip plb-debuff-progress-chip--active" data-wcl-progress-raid="all">All</button>
-                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="ssc">SSC</button>
-                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="tk">TK</button>
-                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="kara">Kara</button>
+                <button type="button" class="plb-debuff-progress-chip plb-debuff-progress-chip--active" data-wcl-core-parse-raid="all" aria-pressed="true">All raids</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-core-parse-raid="kara" aria-pressed="false">All Kara</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-core-parse-raid="gruul" aria-pressed="false">All Gruul</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-core-parse-raid="mag" aria-pressed="false">All Mag</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-core-parse-raid="ssc" aria-pressed="false">All SSC</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-core-parse-raid="tk" aria-pressed="false">All TK</button>
+              </div>
+              <button type="button" class="event-signup-btn event-signup-btn--softres" id="wclCoreParseRefreshBtn">
+                Refresh parses
+              </button>
+            </div>
+            <div class="plb-debuff-toolbar plb-debuff-progress-toolbar surface-elevated" id="wclProgressToolbar" hidden>
+              <div class="plb-debuff-progress-view-toggle" role="group" aria-label="Progress view">
+                <span class="plb-debuff-progress-filters-label">View</span>
+                <button type="button" class="plb-debuff-progress-chip plb-debuff-progress-chip--active" data-wcl-progress-view-mode="raid" aria-pressed="true">By raid night</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-view-mode="boss" aria-pressed="false">By boss</button>
+              </div>
+              <div class="plb-debuff-progress-filters" role="group" aria-label="Raid filter">
+                <span class="plb-debuff-progress-filters-label">Raid</span>
+                <button type="button" class="plb-debuff-progress-chip plb-debuff-progress-chip--active" data-wcl-progress-raid="all" aria-pressed="true">All raids</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="kara" aria-pressed="false">All Kara</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="gruul" aria-pressed="false">All Gruul</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="mag" aria-pressed="false">All Mag</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="ssc" aria-pressed="false">All SSC</button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-progress-raid="tk" aria-pressed="false">All TK</button>
               </div>
               <button type="button" class="event-signup-btn event-signup-btn--softres" id="wclProgressRefreshBtn">
                 Refresh trends
@@ -180,6 +220,32 @@
                 <span class="plb-consume-legend-pill plb-consume-legend-pill--miss">Missing</span>
                 <span class="subtle plb-consume-flask-note">Flask counts as battle + guardian elixir (TBC).</span>
               </div>
+              <div class="plb-debuff-legend plb-debuff-legend--progress" id="wclProgressLegend" role="group" aria-label="Uptime quality" hidden>
+                <span class="plb-debuff-legend-label">Bar colors</span>
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--excellent"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>≥95%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--good"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>85–94%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--average"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>70–84%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--poor"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>50–69%</span
+                >
+                <span class="plb-debuff-legend-pill plb-debuff-legend-pill--critical"
+                  ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>&lt;50%</span
+                >
+              </div>
+              <div class="plb-debuff-legend plb-debuff-legend--core-parse" id="wclCoreParseLegend" role="group" aria-label="WCL parse tiers" hidden>
+                <span class="plb-debuff-legend-label">Parse %</span>
+                <span class="leaderboard-peak-parse leaderboard-peak-parse--wcl100">100</span>
+                <span class="leaderboard-peak-parse leaderboard-peak-parse--wcl99">99+</span>
+                <span class="leaderboard-peak-parse leaderboard-peak-parse--wcl95">95+</span>
+                <span class="leaderboard-peak-parse leaderboard-peak-parse--wcl75">75+</span>
+                <span class="leaderboard-peak-parse leaderboard-peak-parse--wcl50">50+</span>
+              </div>
               <div class="plb-debuff-legend plb-debuff-legend--gear" id="wclGearLegend" role="group" aria-label="Gear audit" hidden>
                 <span class="plb-debuff-legend-label">Classic Armory</span>
                 <span class="plb-gem-q plb-gem-q--purple" title="Epic">Purple · Epic</span>
@@ -196,6 +262,7 @@
           <div id="wclConsumablesResultsHost" class="plb-debuff-results plb-consumables-results" hidden></div>
           <div id="wclGearAuditResultsHost" class="plb-debuff-results plb-gear-audit-results" hidden></div>
           <div id="wclProgressResultsHost" class="plb-debuff-results plb-debuff-progress-results" hidden></div>
+          <div id="wclCoreParseHost" class="plb-debuff-results plb-core-parse-results" hidden></div>
         </section>
       </main>
     </div>
@@ -214,6 +281,6 @@
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
-    <script defer src="/debuff-uptime.js?v=20260522plb-debuff-ihm-cache-v12"></script>
+    <script defer src="/debuff-uptime.js?v=20260608plb-core-parse-dev-v1"></script>
   </body>
 </html>

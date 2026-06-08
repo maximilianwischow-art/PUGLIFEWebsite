@@ -64,6 +64,12 @@ import {
   debuffTrendRaidKeyFromTitle,
 } from "./lib/wcl/debuff-trend-snapshots.mjs";
 import {
+  buildEventPointsForLinkedGroup,
+  buildParseSeriesForLinkedGroup,
+  filterSeriesByRaid,
+  trendDeltaForSeries,
+} from "./lib/wcl/parse-development.mjs";
+import {
   CONSUMABLE_CATEGORIES,
   consumableCatalogForApi,
   fetchConsumablesForFight,
@@ -424,7 +430,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260608-plb-hof-player-badges-v1";
+const API_BUILD_ID = "20260608-plb-core-parse-dev-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -8562,12 +8568,16 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
     );
   }
 
+  const fullEventScope = Boolean(options.fullEventScope);
   const detailCapOpt = options?.maxDetailedReports;
   const detailCap =
     Number.isFinite(Number(detailCapOpt)) && Number(detailCapOpt) > 0
       ? Math.min(100, Math.floor(Number(detailCapOpt)))
-      : wclPerReportDetailCap();
-  const attendanceRecentCap = forAttendancePercent ? wclAttendanceRecentRaidCount() : Number.POSITIVE_INFINITY;
+      : fullEventScope
+        ? Math.min(100, Math.max(1, Number(reportLimit) || wclPerReportDetailCap()))
+        : wclPerReportDetailCap();
+  const attendanceRecentCap =
+    forAttendancePercent && !fullEventScope ? wclAttendanceRecentRaidCount() : Number.POSITIVE_INFINITY;
   const effectiveCap = Math.min(detailCap, attendanceRecentCap);
   const cappedForAttendance = trackedReports.slice(0, effectiveCap);
 
@@ -11492,6 +11502,156 @@ app.get("/api/raid-lead/wcl-debuff-trends", async (req, res) => {
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "WCL debuff trends failed" });
+  }
+});
+
+function inferRoleNameFromParseSummaries(parseSummaries) {
+  if (!parseSummaries || typeof parseSummaries !== "object") return "Ranged";
+  if (parseSummaries.encounterTopHeal === true) return "Healers";
+  if (parseSummaries.encounterTopTank === true) return "Tanks";
+  const bh = finiteParseNum(parseSummaries.bestHeal);
+  const bt = finiteParseNum(parseSummaries.bestTank);
+  const bd = finiteParseNum(parseSummaries.bestDps);
+  if (bh != null && bh > 0 && (bt == null || bh >= bt) && (bd == null || bh >= bd)) return "Healers";
+  if (bt != null && bt > 0 && (bd == null || bt >= bd)) return "Tanks";
+  return "Ranged";
+}
+
+async function buildCoreParseDevelopmentPayload({ raidFilter = "all", limit = 40 } = {}) {
+  await ensureGargulLootHistoryStore();
+  await ensureRhWclLinksStore();
+
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  const lim = Math.min(60, Math.max(1, Number(limit) || 40));
+  const filter = String(raidFilter || "all").trim().toLowerCase() || "all";
+  const maxDetailed = selectedReportCodes.length > 0 ? Math.max(selectedReportCodes.length, lim) : lim;
+
+  const { raidSnapshots, wclDisplayByLower, raidRankingPayloads } = await gatherAttendanceRaidSnapshots(
+    votingGuildId,
+    lim,
+    {
+      attendancePercentMetrics: true,
+      fullEventScope: true,
+      maxDetailedReports: maxDetailed,
+    }
+  );
+
+  let attendanceSnapshots = raidSnapshots;
+  let attendanceRankingPayloads = raidRankingPayloads;
+  const selectedCurationSet = selectedReportCodes.length > 0 ? new Set(selectedReportCodes) : null;
+  if (selectedCurationSet) {
+    const filteredSnapshots = raidSnapshots.filter((snap) =>
+      selectedCurationSet.has(String(snap?.reportCode || ""))
+    );
+    if (filteredSnapshots.length > 0) {
+      attendanceSnapshots = filteredSnapshots;
+      attendanceRankingPayloads = raidRankingPayloads.filter((row) =>
+        selectedCurationSet.has(String(row?.reportCode || ""))
+      );
+    }
+  }
+
+  const coreLinks = (rhWclLinksState?.links || []).filter(
+    (entry) => normalizeRhWclGuildRole(entry?.guildRole) === "Core"
+  );
+
+  const players = [];
+  for (const entry of coreLinks) {
+    const displayName = String(entry?.raidHelperName || "").trim();
+    if (!displayName) continue;
+    const logicalKey = normalizeRaidHelperDisplayKey(displayName);
+    const wclLower = new Set();
+    for (const cn of Array.isArray(entry?.wclCharacterNames) ? entry.wclCharacterNames : []) {
+      const low = String(cn || "").trim().toLowerCase();
+      if (low) wclLower.add(low);
+    }
+    if (logicalKey) wclLower.add(logicalKey);
+
+    const wclCharacters = [...wclLower]
+      .map((low) => wclDisplayByLower.get(low) || low)
+      .filter((name, idx, arr) => {
+        const low = String(name || "").toLowerCase();
+        return low !== logicalKey || arr.indexOf(name) === idx;
+      })
+      .sort((a, b) => a.localeCompare(b));
+
+    const mappedNames = (Array.isArray(entry?.wclCharacterNames) ? entry.wclCharacterNames : [])
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    const hasWclMapping = mappedNames.length > 0;
+
+    const group = { displayName, wclLower };
+    let points = [];
+    let bracket = "dps";
+
+    if (hasWclMapping) {
+      const parseSummaries = summarizeParsesForLinkedGroup(
+        group,
+        attendanceRankingPayloads,
+        wclDisplayByLower
+      );
+      const roleName = inferRoleNameFromParseSummaries(parseSummaries);
+      const built = buildEventPointsForLinkedGroup(
+        group,
+        attendanceRankingPayloads,
+        wclDisplayByLower,
+        bracketParseBestEncounterOneRaidDetailed,
+        { playerRole: roleName, raidSnapshots: attendanceSnapshots }
+      );
+      bracket = built.displayBracket;
+      points = filterSeriesByRaid(built.points, filter);
+    }
+
+    players.push({
+      raidHelperName: displayName,
+      displayName,
+      guildRole: "Core",
+      wclCharacters: mappedNames,
+      hasWclMapping,
+      bracket,
+      trendDelta: trendDeltaForSeries(points),
+      points,
+    });
+  }
+
+  players.sort((a, b) => String(a.displayName || "").localeCompare(String(b.displayName || "")));
+
+  return {
+    ok: true,
+    raidFilter: filter,
+    meta: {
+      reportCount: attendanceRankingPayloads.length,
+      coreRaiderCount: players.length,
+      selectedReportCodes,
+      generatedAt: new Date().toISOString(),
+      limit: lim,
+    },
+    players,
+  };
+}
+
+app.get("/api/raid-lead/core-parse-development", async (req, res) => {
+  try {
+    const session = requireRaidLeadSession(req, res);
+    if (!session) return;
+    const raidFilter = String(req.query?.raid || "all").trim().toLowerCase() || "all";
+    const limit = Math.min(60, Math.max(1, Number(req.query?.limit) || 40));
+    const refresh = String(req.query?.refresh || "").trim() === "1";
+    const cacheKey = `core-parse-dev-v1-${raidFilter}-${limit}`;
+    const loader = () => buildCoreParseDevelopmentPayload({ raidFilter, limit });
+    const payload = refresh
+      ? await forceRefreshCachedPayload(cacheKey, loader)
+      : await getOrRefreshCachedPayload(cacheKey, {
+          ttlMs: 6 * 60 * 60 * 1000,
+          maxStaleMs: 12 * 60 * 60 * 1000,
+          loader,
+        });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Core parse development failed" });
   }
 });
 
@@ -16604,30 +16764,12 @@ function summarizeParsesForLinkedGroup(group, raidRankingPayloads, wclDisplayByL
   };
   if (!Array.isArray(raidRankingPayloads) || raidRankingPayloads.length === 0) return empty;
 
-  const names = [...group.wclLower]
-    .sort()
-    .map((low) => String(wclDisplayByLower.get(low) || low || "").trim())
-    .filter(Boolean);
-
-  const tankRuns = [];
-  const dpsRuns = [];
-  const healRuns = [];
-
-  for (const entry of raidRankingPayloads) {
-    const reportCode = String(entry?.reportCode || "");
-    const reportStartTime = Number(entry?.startTime || 0);
-    const mergedDps = entry?.mergedDps;
-    const mergedHps = entry?.mergedHps;
-
-    const td = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "tank", names);
-    if (td) tankRuns.push({ ...td, bracket: "tank", reportCode, reportStartTime });
-
-    const dd = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "dps", names);
-    if (dd) dpsRuns.push({ ...dd, bracket: "dps", reportCode, reportStartTime });
-
-    const hd = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "heal", names);
-    if (hd) healRuns.push({ ...hd, bracket: "heal", reportCode, reportStartTime });
-  }
+  const { tankRuns, dpsRuns, healRuns } = buildParseSeriesForLinkedGroup(
+    group,
+    raidRankingPayloads,
+    wclDisplayByLower,
+    bracketParseBestEncounterOneRaidDetailed
+  );
 
   const tankPick = pickGlobalBestParseRun(tankRuns);
   const dpsPick = pickGlobalBestParseRun(dpsRuns);

@@ -6197,6 +6197,125 @@ tr.plb-gear-row--miss th {
   margin: 0;
 }
 
+.plb-core-parse-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.plb-core-parse-results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.plb-core-parse-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 16px;
+}
+
+.plb-core-parse-card {
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(10, 10, 10, 0.42);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plb-core-parse-card--empty {
+  border-style: dashed;
+  opacity: 0.92;
+}
+
+.plb-core-parse-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.plb-core-parse-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plb-core-parse-card-name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.plb-core-parse-role {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--plb-ds-tier-good);
+}
+
+.plb-core-parse-wcl-names {
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.plb-core-parse-card-trend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+
+.plb-core-parse-trend-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.plb-core-parse-chart {
+  margin: 0;
+}
+
+.plb-core-parse-chart-empty {
+  margin: 0;
+  text-align: center;
+}
+
+.plb-core-parse-table-wrap {
+  margin-top: 2px;
+}
+
+.plb-core-parse-table {
+  min-width: 560px;
+}
+
+.plb-core-parse-report-link {
+  color: var(--plb-ds-tier-good);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.plb-core-parse-report-link:hover {
+  text-decoration: underline;
+}
+
+.plb-debuff-legend--core-parse .leaderboard-peak-parse {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 .plb-debuff-meta {
   display: flex;
   flex-wrap: wrap;
