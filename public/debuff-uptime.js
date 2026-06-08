@@ -1617,7 +1617,7 @@ function wclEnsureCoreParseMemberSelection(players) {
   for (const key of wclCoreParseSelectedMembers) {
     if (keySet.has(key)) next.add(key);
   }
-  if (!next.size || next.size === keys.length) {
+  if (next.size === keys.length) {
     wclCoreParseSelectedMembers = null;
     return;
   }
@@ -1636,6 +1636,31 @@ function wclFilterCoreParsePlayers(players) {
   return list.filter((p) => wclCoreParseMemberIsSelected(wclCoreParseMemberKey(p)));
 }
 
+function wclCoreParsePointCount(player) {
+  return Array.isArray(player?.points) ? player.points.length : 0;
+}
+
+/** Roster filter, then hide raiders with no events when a raid chip is active. */
+function wclFilterCoreParsePlayersForView(players, raidFilter) {
+  const rosterFiltered = wclFilterCoreParsePlayers(players);
+  const raid = String(raidFilter || "all").trim().toLowerCase() || "all";
+  if (raid === "all") return rosterFiltered;
+  return rosterFiltered.filter((p) => wclCoreParsePointCount(p) > 0);
+}
+
+function wclShowCoreParseLoadError(error) {
+  const host = document.getElementById("wclCoreParseHost");
+  const msg = String(error?.message || "Failed to load Core parses.").trim();
+  if (host) {
+    if (/login required/i.test(msg)) {
+      host.innerHTML = `<p class="subtle">Sign in with a raid-lead account to view Core parse trends.</p>`;
+    } else {
+      host.innerHTML = `<p class="subtle">${esc(msg)}</p>`;
+    }
+  }
+  setWclDebuffStatusLine(msg);
+}
+
 function wclUpdateCoreParseMemberToggleLabel(players) {
   const btn = document.getElementById("wclCoreParseMemberToggle");
   if (!btn) return;
@@ -1646,6 +1671,10 @@ function wclUpdateCoreParseMemberToggleLabel(players) {
   }
   if (wclCoreParseSelectedMembers == null) {
     btn.textContent = `All raiders (${total})`;
+    return;
+  }
+  if (wclCoreParseSelectedMembers.size === 0) {
+    btn.textContent = `0 of ${total} raiders`;
     return;
   }
   const selected = players.filter((p) => wclCoreParseMemberIsSelected(wclCoreParseMemberKey(p))).length;
@@ -1721,26 +1750,39 @@ function renderWclCoreParse(payload) {
     return;
   }
   wclRenderCoreParseMemberDropdown(players);
-  const visible = wclFilterCoreParsePlayers(players);
   const raidFilter = String(payload?.raidFilter || wclCoreParseRaidFilter || "all");
+  const rosterFiltered = wclFilterCoreParsePlayers(players);
+  const visible = wclFilterCoreParsePlayersForView(players, raidFilter);
   const filterNote =
     raidFilter !== "all"
       ? `<span class="plb-debuff-progress-filter-note">Showing ${esc(wclProgressRaidLabel(raidFilter))} only</span>`
       : "";
   const memberNote =
     wclCoreParseSelectedMembers != null
-      ? `<span class="plb-debuff-progress-filter-note">Showing ${visible.length} of ${players.length} raiders</span>`
+      ? `<span class="plb-debuff-progress-filter-note">Showing ${rosterFiltered.length} of ${players.length} raiders</span>`
+      : "";
+  const raidHiddenCount =
+    raidFilter !== "all" ? Math.max(0, rosterFiltered.length - visible.length) : 0;
+  const raidHiddenNote =
+    raidHiddenCount > 0
+      ? `<span class="plb-debuff-progress-filter-note">${raidHiddenCount} raider(s) hidden — no ${esc(wclProgressRaidLabel(raidFilter))} parses in this window</span>`
       : "";
   if (!visible.length) {
+    const emptyCopy =
+      wclCoreParseSelectedMembers != null && wclCoreParseSelectedMembers.size === 0
+        ? `No raiders selected. Use the <strong>Roster filter</strong> dropdown to choose who appears in this view.`
+        : raidFilter !== "all"
+          ? `No raiders with ${esc(wclProgressRaidLabel(raidFilter))} parse data in this window. Try <strong>All raids</strong> or another raid filter.`
+          : `No raiders selected. Use the <strong>Roster filter</strong> dropdown to choose who appears in this view.`;
     host.innerHTML = `
-      <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote}</p>
-      <p class="subtle">No raiders selected. Use the <strong>Roster filter</strong> dropdown to choose who appears in this view.</p>
+      <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote} ${raidHiddenNote}</p>
+      <p class="subtle">${emptyCopy}</p>
     `;
     return;
   }
   const cards = visible.map((player, idx) => wclCoreParsePlayerCardHtml(player, idx)).join("");
   host.innerHTML = `
-    <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote}</p>
+    <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core and lead raiders with mapped log names. Parse bracket follows guild role and Raid Helper signup — not incidental off-role parses. ${filterNote} ${memberNote} ${raidHiddenNote}</p>
     <div class="plb-core-parse-grid">${cards}</div>
   `;
 }
@@ -1750,24 +1792,36 @@ async function loadWclCoreParse({ refresh = false, raid = wclCoreParseRaidFilter
   if (host && !wclCoreParseLoaded) {
     host.innerHTML = `<p class="subtle">Loading Core parse trends…</p>`;
   }
-  const params = new URLSearchParams();
-  if (raid && raid !== "all") params.set("raid", raid);
-  params.set("limit", "40");
-  if (refresh) params.set("refresh", "1");
-  const payload = await getJson(`${WCL_CORE_PARSE_API}?${params.toString()}`);
-  wclCoreParseCache = payload;
-  wclCoreParseLoaded = true;
-  renderWclCoreParse(payload);
-  const coreCount = Number(payload?.meta?.coreRaiderCount ?? payload?.players?.length ?? 0);
-  const visibleCount = wclFilterCoreParsePlayers(wclCoreParsePlayersFromPayload(payload)).length;
-  const reportCount = Number(payload?.meta?.reportCount ?? 0);
-  const filterLabel = raid && raid !== "all" ? ` · ${wclProgressRaidLabel(raid)} filter` : "";
-  const memberLabel =
-    wclCoreParseSelectedMembers != null && visibleCount !== coreCount ? ` · ${visibleCount}/${coreCount} shown` : "";
-  setWclDebuffStatusLine(
-    `Core parses: ${coreCount} Core raider(s) across ${reportCount} event report(s)${filterLabel}${memberLabel}.`
-  );
-  return payload;
+  try {
+    const params = new URLSearchParams();
+    if (raid && raid !== "all") params.set("raid", raid);
+    params.set("limit", "40");
+    if (refresh) params.set("refresh", "1");
+    const payload = await getJson(`${WCL_CORE_PARSE_API}?${params.toString()}`);
+    wclCoreParseCache = payload;
+    wclCoreParseLoaded = true;
+    renderWclCoreParse(payload);
+    const players = wclCoreParsePlayersFromPayload(payload);
+    const coreCount = Number(payload?.meta?.coreRaiderCount ?? players.length ?? 0);
+    const visibleCount = wclFilterCoreParsePlayersForView(players, raid).length;
+    const reportCount = Number(payload?.meta?.reportCount ?? 0);
+    const filterLabel = raid && raid !== "all" ? ` · ${wclProgressRaidLabel(raid)} filter` : "";
+    const memberLabel =
+      wclCoreParseSelectedMembers != null && wclFilterCoreParsePlayers(players).length !== coreCount
+        ? ` · ${wclFilterCoreParsePlayers(players).length}/${coreCount} roster`
+        : "";
+    const viewLabel =
+      raid && raid !== "all" && visibleCount !== wclFilterCoreParsePlayers(players).length
+        ? ` · ${visibleCount} with ${wclProgressRaidLabel(raid)} data`
+        : "";
+    setWclDebuffStatusLine(
+      `Core parses: ${coreCount} Core raider(s) across ${reportCount} event report(s)${filterLabel}${memberLabel}${viewLabel}.`
+    );
+    return payload;
+  } catch (error) {
+    wclShowCoreParseLoadError(error);
+    throw error;
+  }
 }
 
 function wclSetCoreParseRaidFilter(raid) {
@@ -2475,9 +2529,7 @@ document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
     const tab = btn.getAttribute("data-wcl-panel-tab") || "debuffs";
     wclSetActivePanelTab(tab);
     if (tab === "core-parse") {
-      loadWclCoreParse({ raid: wclCoreParseRaidFilter }).catch((error) => {
-        setWclDebuffStatusLine(error?.message || "Failed to load Core parses.");
-      });
+      loadWclCoreParse({ raid: wclCoreParseRaidFilter }).catch(() => {});
       return;
     }
     if (tab === "progress") {
@@ -2563,9 +2615,7 @@ document.querySelectorAll("[data-wcl-core-parse-raid]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const raid = btn.getAttribute("data-wcl-core-parse-raid") || "all";
     wclSetCoreParseRaidFilter(raid);
-    loadWclCoreParse({ raid }).catch((error) => {
-      setWclDebuffStatusLine(error?.message || "Failed to load Core parses.");
-    });
+    loadWclCoreParse({ raid }).catch(() => {});
   });
 });
 
@@ -2630,7 +2680,7 @@ document.getElementById("wclCoreParseRefreshBtn")?.addEventListener("click", (ev
   const btn = event.currentTarget;
   setButtonFeedback(btn, "Refreshing…", "info");
   loadWclCoreParse({ refresh: true, raid: wclCoreParseRaidFilter })
-    .catch((error) => setWclDebuffStatusLine(error?.message || "Refresh failed."))
+    .catch(() => {})
     .finally(() => resetButtonFeedback(btn, "Refresh parses"));
 });
 
