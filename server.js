@@ -430,7 +430,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260608-plb-core-parse-dev-v2";
+const API_BUILD_ID = "20260608-plb-core-parse-dev-v3";
 
 const TRACKED_RAIDS = {
   Karazhan: [

@@ -101,6 +101,9 @@ let wclProgressLoaded = false;
 let wclCoreParseCache = null;
 let wclCoreParseRaidFilter = "all";
 let wclCoreParseLoaded = false;
+/** @type {Set<string>|null} null = all Core members selected */
+let wclCoreParseSelectedMembers = null;
+let wclCoreParseMemberMenuOpen = false;
 
 const WCL_PROGRESS_RAID_LABEL = {
   ssc: "SSC",
@@ -1569,6 +1572,115 @@ function wclCoreParsePlayerCardHtml(player) {
   </article>`;
 }
 
+function wclCoreParseMemberKey(player) {
+  return String(player?.raidHelperName || player?.displayName || "").trim();
+}
+
+function wclCoreParsePlayersFromPayload(payload) {
+  return Array.isArray(payload?.players) ? payload.players : [];
+}
+
+function wclEnsureCoreParseMemberSelection(players) {
+  const keys = players.map(wclCoreParseMemberKey).filter(Boolean);
+  if (!keys.length) {
+    wclCoreParseSelectedMembers = null;
+    return;
+  }
+  if (wclCoreParseSelectedMembers == null) return;
+  const keySet = new Set(keys);
+  const next = new Set();
+  for (const key of wclCoreParseSelectedMembers) {
+    if (keySet.has(key)) next.add(key);
+  }
+  if (!next.size || next.size === keys.length) {
+    wclCoreParseSelectedMembers = null;
+    return;
+  }
+  wclCoreParseSelectedMembers = next;
+}
+
+function wclCoreParseMemberIsSelected(key) {
+  if (!key) return false;
+  if (wclCoreParseSelectedMembers == null) return true;
+  return wclCoreParseSelectedMembers.has(key);
+}
+
+function wclFilterCoreParsePlayers(players) {
+  const list = Array.isArray(players) ? players : [];
+  if (wclCoreParseSelectedMembers == null) return list;
+  return list.filter((p) => wclCoreParseMemberIsSelected(wclCoreParseMemberKey(p)));
+}
+
+function wclUpdateCoreParseMemberToggleLabel(players) {
+  const btn = document.getElementById("wclCoreParseMemberToggle");
+  if (!btn) return;
+  const total = players.length;
+  if (!total) {
+    btn.textContent = "No Core members";
+    return;
+  }
+  if (wclCoreParseSelectedMembers == null) {
+    btn.textContent = `All Core members (${total})`;
+    return;
+  }
+  const selected = players.filter((p) => wclCoreParseMemberIsSelected(wclCoreParseMemberKey(p))).length;
+  btn.textContent = `${selected} of ${total} Core members`;
+}
+
+function wclRenderCoreParseMemberDropdown(players) {
+  const listHost = document.getElementById("wclCoreParseMemberList");
+  if (!listHost) return;
+  wclEnsureCoreParseMemberSelection(players);
+  if (!players.length) {
+    listHost.innerHTML = `<p class="subtle plb-core-parse-member-empty">No Core members assigned.</p>`;
+    wclUpdateCoreParseMemberToggleLabel(players);
+    return;
+  }
+  listHost.innerHTML = players
+    .map((player) => {
+      const key = wclCoreParseMemberKey(player);
+      const name = esc(player?.displayName || player?.raidHelperName || key);
+      const checked = wclCoreParseMemberIsSelected(key);
+      const mapNote = player?.hasWclMapping ? "" : `<span class="plb-core-parse-member-option-meta subtle">no WCL map</span>`;
+      return `<label class="plb-core-parse-member-option" role="option" aria-selected="${checked ? "true" : "false"}">
+        <input type="checkbox" class="plb-core-parse-member-checkbox" data-wcl-core-parse-member="${esc(key)}" ${checked ? "checked" : ""} />
+        <span class="plb-core-parse-member-option-name">${name}</span>
+        ${mapNote}
+      </label>`;
+    })
+    .join("");
+  wclUpdateCoreParseMemberToggleLabel(players);
+}
+
+function wclSetCoreParseMemberMenuOpen(open) {
+  wclCoreParseMemberMenuOpen = Boolean(open);
+  const menu = document.getElementById("wclCoreParseMemberMenu");
+  const toggle = document.getElementById("wclCoreParseMemberToggle");
+  if (menu) menu.hidden = !wclCoreParseMemberMenuOpen;
+  if (toggle) toggle.setAttribute("aria-expanded", wclCoreParseMemberMenuOpen ? "true" : "false");
+}
+
+function wclApplyCoreParseMemberSelectionFromDom() {
+  const players = wclCoreParsePlayersFromPayload(wclCoreParseCache);
+  const boxes = document.querySelectorAll(".plb-core-parse-member-checkbox");
+  if (!boxes.length) return;
+  const selected = new Set();
+  boxes.forEach((box) => {
+    if (!box.checked) return;
+    const key = String(box.getAttribute("data-wcl-core-parse-member") || "").trim();
+    if (key) selected.add(key);
+  });
+  if (selected.size === 0) {
+    wclCoreParseSelectedMembers = new Set();
+  } else if (selected.size === players.length) {
+    wclCoreParseSelectedMembers = null;
+  } else {
+    wclCoreParseSelectedMembers = selected;
+  }
+  wclUpdateCoreParseMemberToggleLabel(players);
+  if (wclCoreParseCache?.ok) renderWclCoreParse(wclCoreParseCache);
+}
+
 function renderWclCoreParse(payload) {
   const host = document.getElementById("wclCoreParseHost");
   if (!host) return;
@@ -1576,19 +1688,33 @@ function renderWclCoreParse(payload) {
     host.innerHTML = `<p class="subtle">${esc(payload?.error || "Core parse data failed.")}</p>`;
     return;
   }
-  const players = Array.isArray(payload.players) ? payload.players : [];
+  const players = wclCoreParsePlayersFromPayload(payload);
   if (!players.length) {
     host.innerHTML = `<p class="subtle">No Core raiders in Account Assignment yet. Assign the <strong>Core</strong> guild role to tracked players in Admin → Account Assignment.</p>`;
+    wclRenderCoreParseMemberDropdown([]);
     return;
   }
+  wclRenderCoreParseMemberDropdown(players);
+  const visible = wclFilterCoreParsePlayers(players);
   const raidFilter = String(payload?.raidFilter || wclCoreParseRaidFilter || "all");
   const filterNote =
     raidFilter !== "all"
       ? `<span class="plb-debuff-progress-filter-note">Showing ${esc(wclProgressRaidLabel(raidFilter))} only</span>`
       : "";
-  const cards = players.map(wclCoreParsePlayerCardHtml).join("");
+  const memberNote =
+    wclCoreParseSelectedMembers != null
+      ? `<span class="plb-debuff-progress-filter-note">Showing ${visible.length} of ${players.length} Core members</span>`
+      : "";
+  if (!visible.length) {
+    host.innerHTML = `
+      <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core raiders with mapped log names. ${filterNote} ${memberNote}</p>
+      <p class="subtle">No Core members selected. Use the <strong>Core members</strong> dropdown to choose who appears in this view.</p>
+    `;
+    return;
+  }
+  const cards = visible.map(wclCoreParsePlayerCardHtml).join("");
   host.innerHTML = `
-    <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core raiders with mapped log names. ${filterNote}</p>
+    <p class="plb-debuff-hint">Best single-boss WCL percentile per curated event night for Core raiders with mapped log names. ${filterNote} ${memberNote}</p>
     <div class="plb-core-parse-grid">${cards}</div>
   `;
 }
@@ -1607,9 +1733,14 @@ async function loadWclCoreParse({ refresh = false, raid = wclCoreParseRaidFilter
   wclCoreParseLoaded = true;
   renderWclCoreParse(payload);
   const coreCount = Number(payload?.meta?.coreRaiderCount ?? payload?.players?.length ?? 0);
+  const visibleCount = wclFilterCoreParsePlayers(wclCoreParsePlayersFromPayload(payload)).length;
   const reportCount = Number(payload?.meta?.reportCount ?? 0);
   const filterLabel = raid && raid !== "all" ? ` · ${wclProgressRaidLabel(raid)} filter` : "";
-  setWclDebuffStatusLine(`Core parses: ${coreCount} Core raider(s) across ${reportCount} event report(s)${filterLabel}.`);
+  const memberLabel =
+    wclCoreParseSelectedMembers != null && visibleCount !== coreCount ? ` · ${visibleCount}/${coreCount} shown` : "";
+  setWclDebuffStatusLine(
+    `Core parses: ${coreCount} Core raider(s) across ${reportCount} event report(s)${filterLabel}${memberLabel}.`
+  );
   return payload;
 }
 
@@ -2413,6 +2544,42 @@ document.querySelectorAll("[data-wcl-core-parse-raid]").forEach((btn) => {
 });
 
 wclSetCoreParseRaidFilter(wclCoreParseRaidFilter);
+
+document.getElementById("wclCoreParseMemberToggle")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  wclSetCoreParseMemberMenuOpen(!wclCoreParseMemberMenuOpen);
+});
+
+document.getElementById("wclCoreParseMemberMenu")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+
+document.getElementById("wclCoreParseMemberList")?.addEventListener("change", (event) => {
+  const box = event.target.closest(".plb-core-parse-member-checkbox");
+  if (!box) return;
+  wclApplyCoreParseMemberSelectionFromDom();
+});
+
+document.querySelector("[data-wcl-core-parse-member-all]")?.addEventListener("click", () => {
+  wclCoreParseSelectedMembers = null;
+  const players = wclCoreParsePlayersFromPayload(wclCoreParseCache);
+  wclRenderCoreParseMemberDropdown(players);
+  if (wclCoreParseCache?.ok) renderWclCoreParse(wclCoreParseCache);
+});
+
+document.querySelector("[data-wcl-core-parse-member-none]")?.addEventListener("click", () => {
+  wclCoreParseSelectedMembers = new Set();
+  const players = wclCoreParsePlayersFromPayload(wclCoreParseCache);
+  wclRenderCoreParseMemberDropdown(players);
+  if (wclCoreParseCache?.ok) renderWclCoreParse(wclCoreParseCache);
+});
+
+document.addEventListener("click", (event) => {
+  if (!wclCoreParseMemberMenuOpen) return;
+  const dropdown = document.getElementById("wclCoreParseMemberDropdown");
+  if (dropdown?.contains(event.target)) return;
+  wclSetCoreParseMemberMenuOpen(false);
+});
 
 document.getElementById("wclCoreParseRefreshBtn")?.addEventListener("click", (event) => {
   const btn = event.currentTarget;

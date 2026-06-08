@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Debuff Uptime</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260608plb-core-parse-dev-v2" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260608plb-core-parse-dev-v3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft debuff-uptime-page">
@@ -160,6 +160,34 @@
               </button>
             </div>
             <div class="plb-debuff-toolbar plb-core-parse-toolbar surface-elevated" id="wclCoreParseToolbar" hidden>
+              <div class="plb-core-parse-member-filter">
+                <span class="plb-debuff-progress-filters-label" id="wclCoreParseMemberLabel">Core members</span>
+                <div class="plb-core-parse-member-dropdown" id="wclCoreParseMemberDropdown">
+                  <button
+                    type="button"
+                    class="admin-input plb-core-parse-member-toggle"
+                    id="wclCoreParseMemberToggle"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-labelledby="wclCoreParseMemberLabel"
+                  >
+                    All Core members
+                  </button>
+                  <div class="plb-core-parse-member-menu" id="wclCoreParseMemberMenu" hidden>
+                    <div class="plb-core-parse-member-menu-actions">
+                      <button type="button" class="plb-core-parse-member-action" data-wcl-core-parse-member-all>Select all</button>
+                      <button type="button" class="plb-core-parse-member-action" data-wcl-core-parse-member-none>Clear all</button>
+                    </div>
+                    <div
+                      class="plb-core-parse-member-list"
+                      id="wclCoreParseMemberList"
+                      role="listbox"
+                      aria-multiselectable="true"
+                      aria-label="Core members"
+                    ></div>
+                  </div>
+                </div>
+              </div>
               <div class="plb-debuff-progress-filters" role="group" aria-label="Raid filter">
                 <span class="plb-debuff-progress-filters-label">Raid</span>
                 <button type="button" class="plb-debuff-progress-chip plb-debuff-progress-chip--active" data-wcl-core-parse-raid="all" aria-pressed="true">All raids</button>
@@ -281,6 +309,6 @@
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
-    <script defer src="/debuff-uptime.js?v=20260608plb-core-parse-dev-v1"></script>
+    <script defer src="/debuff-uptime.js?v=20260608plb-core-parse-dev-v3"></script>
   </body>
 </html>
