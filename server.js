@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260608-plb-badge-repack-v1";
+const API_BUILD_ID = "20260608-plb-hof-speed-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -963,6 +963,8 @@ let discordDmSubscribersState = { subscribersByUserId: {}, notifiedEventIds: [] 
 let discordProfileIngestState = { lastMessageId: "", lastScanAt: 0, lastError: "", proposals: [], rejected: [] };
 let roleAlertDmLogState = { byEventId: {} };
 let hofNotesState = { byWinnerRaidKey: {} };
+let hofNotesLastReloadAt = 0;
+const HOF_NOTES_RELOAD_TTL_MS = 60_000;
 let raidHelperDmPollTimer = null;
 let raidHelperDmPollRunning = false;
 
@@ -2785,17 +2787,32 @@ async function enrichHallOfFameRows(guildId, rows) {
 
   await ensureRhWclLinksStore();
 
-  let players = [];
-  try {
-    const payload = await buildActiveRosterPlayersForGuild(guildId, {
+  const codes = [...new Set(rows.map((r) => String(r?.raidCode || "").trim()).filter(Boolean))];
+
+  const [rosterPayload, bundleEntries] = await Promise.all([
+    buildActiveRosterPlayersForGuild(guildId, {
       reportLimit: 40,
       top: 250,
       maxRhPastEvents: 0,
-    });
-    players = payload.players || [];
-  } catch {
-    players = [];
-  }
+    }).catch(() => ({ players: [] })),
+    Promise.all(
+      codes.map(async (code) => {
+        try {
+          const cacheKey = `hof-merged-rankings-v1-${code}`;
+          const bundle = await getOrRefreshCachedPayload(cacheKey, {
+            ttlMs: 7 * 24 * 60 * 60 * 1000,
+            maxStaleMs: 14 * 24 * 60 * 60 * 1000,
+            loader: () => loadMergedRankingsBundleForHallOfFameUncached(code),
+          });
+          return [code, bundle];
+        } catch {
+          return [code, null];
+        }
+      })
+    ),
+  ]);
+  const players = rosterPayload?.players || [];
+  const bundleByCode = new Map(bundleEntries);
 
   /** @type {Map<number, object> | null} */
   let materialisedByUserId = null;
@@ -2817,22 +2834,6 @@ async function enrichHallOfFameRows(guildId, rows) {
     }
     return materialisedByUserId.get(uid) || null;
   };
-
-  const codes = [...new Set(rows.map((r) => String(r?.raidCode || "").trim()).filter(Boolean))];
-  const bundleByCode = new Map();
-  for (const code of codes) {
-    try {
-      const cacheKey = `hof-merged-rankings-v1-${code}`;
-      const bundle = await getOrRefreshCachedPayload(cacheKey, {
-        ttlMs: 7 * 24 * 60 * 60 * 1000,
-        maxStaleMs: 14 * 24 * 60 * 60 * 1000,
-        loader: () => loadMergedRankingsBundleForHallOfFameUncached(code),
-      });
-      bundleByCode.set(code, bundle);
-    } catch {
-      bundleByCode.set(code, null);
-    }
-  }
 
   return rows.map((row) => {
     let matched = matchHallOfFameRosterPlayer(players, row.winnerName);
@@ -2907,7 +2908,7 @@ function sortHallOfFameRowsByRaidStartDesc(list) {
 async function getHallOfFameForGuild(guildId, limit = 10) {
   await ensureVotingStore();
   await ensureHofNotesStore();
-  await reloadHofNotesStateFromPersistence();
+  await reloadHofNotesStateIfStale();
   const voting = await getCurrentVotingRoundCached(guildId);
   const currentRoundKey = voting?.roundKey || "";
   let identityRows = votingHallOfFame(currentRoundKey, limit);
@@ -4215,7 +4216,15 @@ async function reloadHofNotesStateFromPersistence() {
     return hofNotesState;
   }
   hofNotesState = mergeHofNotesByWinnerRaidKey(...sources);
+  hofNotesLastReloadAt = Date.now();
   return hofNotesState;
+}
+
+/** Re-read quotes from disk at most once per minute on public read paths. */
+async function reloadHofNotesStateIfStale(force = false) {
+  const now = Date.now();
+  if (!force && now - hofNotesLastReloadAt < HOF_NOTES_RELOAD_TTL_MS) return hofNotesState;
+  return reloadHofNotesStateFromPersistence();
 }
 
 function applyHofNotesToHallOfFameRows(rows) {
@@ -16049,12 +16058,28 @@ app.get("/api/admin/wcl-attendee-names", async (req, res) => {
 
 app.get("/api/voting/hall-of-fame", async (_req, res) => {
   try {
-    res.setHeader("Cache-Control", "no-store, max-age=0");
-    const hallOfFame = await getHallOfFameForGuild(votingGuildId, 200);
-    const payload = buildHallOfFameApiPayload(hallOfFame, {
-      resolvePlayerKey: playerKeyForHallOfFameRow,
+    await ensureVotingStore();
+    const voting = await getCurrentVotingRoundCached(votingGuildId);
+    const currentRoundKey = voting?.roundKey || "";
+    let identityRows = votingHallOfFame(currentRoundKey, 200);
+    if (!identityRows.length) identityRows = buildMockHallOfFameRows(200);
+    identityRows = sortHallOfFameRowsByRaidStartDesc(identityRows);
+    const fingerprint = computeHallOfFameWinnerFingerprint(identityRows);
+
+    const payload = await getOrRefreshCachedPayload(`hof-api-payload-v1-${votingGuildId}-${fingerprint}`, {
+      ttlMs: 15 * 60 * 1000,
+      maxStaleMs: 60 * 60 * 1000,
+      loader: async () => {
+        const hallOfFame = await getHallOfFameForGuild(votingGuildId, 200);
+        return buildHallOfFameApiPayload(hallOfFame, {
+          resolvePlayerKey: playerKeyForHallOfFameRow,
+        });
+      },
     });
-    payload.players = (payload.players || []).map((player) => {
+
+    await ensureHofNotesStore();
+    await reloadHofNotesStateIfStale();
+    const playersWithQuotes = (payload.players || []).map((player) => {
       const { note } = lookupHofNoteForPlayer({
         winnerName: player?.winnerName,
         player: player?.player,
@@ -16062,7 +16087,8 @@ app.get("/api/voting/hall-of-fame", async (_req, res) => {
       const customQuote = String(note?.quote || player?.customQuote || "").trim();
       return { ...player, customQuote };
     });
-    return res.json({ ok: true, ...payload });
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return res.json({ ok: true, ...payload, players: playersWithQuotes });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame" });
   }

@@ -907,11 +907,12 @@ function preloadVotingPlbData() {
 async function loadHallOfFame() {
   const host = document.getElementById("votingHallOfFame");
   host.innerHTML = `<div class="subtle">Loading…</div>`;
-  const preload = preloadVotingPlbData();
+  void preloadVotingPlbData();
   try {
     const payload = await votingGetJson("/api/voting/hall-of-fame", {
       credentials: "include",
     });
+    renderHallOfFame(payload);
     const resolved = resolveHallOfFamePayload(payload);
     const plb = window.plbEventsRoster;
     if (plb && typeof plb.prefetchRosterProfilePictures === "function") {
@@ -919,15 +920,11 @@ async function loadHallOfFame() {
         ...(Array.isArray(resolved?.players) ? resolved.players.map((p) => p?.player).filter(Boolean) : []),
         ...(Array.isArray(resolved?.hallOfFame) ? resolved.hallOfFame.map((row) => row?.player).filter(Boolean) : []),
       ];
-      try {
-        await plb.prefetchRosterProfilePictures(players);
-      } catch {
-        /* best-effort */
-      }
+      void plb.prefetchRosterProfilePictures(players).then(
+        () => renderHallOfFame(payload),
+        () => undefined
+      );
     }
-    renderHallOfFame(payload);
-    await preload;
-    renderHallOfFame(payload);
   } catch (error) {
     host.innerHTML = `<div class="subtle">${escapeHtml(error?.message || "Failed to load hall of fame.")}</div>`;
   }
@@ -1012,5 +1009,5 @@ document.addEventListener("click", async (event) => {
 });
 
 scheduleNonCritical(initBackgroundStars, 900);
-scheduleNonCritical(loadHallOfFame, 1400);
+void loadHallOfFame();
 loadVotingRound();
