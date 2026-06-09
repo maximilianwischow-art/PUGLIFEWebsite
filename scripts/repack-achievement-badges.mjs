@@ -25,9 +25,20 @@ export const MAX_ART_H = Math.min(
 );
 export const TRIM_THRESHOLD = 28;
 
+const MIN_FILL = 0.901;
+
 export function scaleForBadgeCrop(width, height) {
   if (!width || !height) return 1;
-  return Math.min(MAX_ART_W / width, MAX_ART_H / height, 1);
+  return Math.min(MAX_ART_W / width, MAX_ART_H / height);
+}
+
+/** True when art is height-bound but still too narrow for the crop window. */
+export function needsCoverCrop(width, height, scale) {
+  const artW = width * scale;
+  const artH = height * scale;
+  const fillW = artW / MAX_ART_W;
+  const fillH = artH / MAX_ART_H;
+  return fillW < MIN_FILL && fillH >= MIN_FILL && scale >= MAX_ART_H / height - 0.001;
 }
 
 export async function repackAchievementPng(fileName, badgeDir = BADGE_DIR) {
@@ -39,12 +50,17 @@ export async function repackAchievementPng(fileName, badgeDir = BADGE_DIR) {
   }
 
   const scale = scaleForBadgeCrop(width, height);
-  const art = await sharp(trimmedBuf)
-    .resize(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)), {
-      fit: "fill",
-    })
-    .png()
-    .toBuffer();
+  const art = needsCoverCrop(width, height, scale)
+    ? await sharp(trimmedBuf)
+        .resize(MAX_ART_W, MAX_ART_H, { fit: "cover", position: "centre" })
+        .png()
+        .toBuffer()
+    : await sharp(trimmedBuf)
+        .resize(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)), {
+          fit: "fill",
+        })
+        .png()
+        .toBuffer();
 
   const tmpPath = `${filePath}.repack.tmp`;
   await sharp({

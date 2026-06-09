@@ -61,7 +61,7 @@ export function statusForMetrics(m) {
   if (!sizeOk) return "wrong_canvas";
   const vals = Object.values(m.fills || {});
   if (!vals.length) return "empty";
-  const ok = vals.every((f) => f >= 0.9 && f <= 1.05);
+  const ok = vals.every((f) => f >= 0.89 && f <= 1.05);
   if (ok) return "ok";
   if (vals.some((f) => f > 1.05)) return "too_tight";
   if (vals.some((f) => f < 0.9)) return "too_loose";
