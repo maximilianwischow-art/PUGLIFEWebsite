@@ -177,6 +177,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "ssc-first-event": "#14b8a6",
     "ssc-first-clear": "#14b8a6",
     "tk-first-kael-kill": "#22c55e",
+    "ssc-0611-2026": "#a855f7",
   };
   if (byId[id]) return byId[id];
   if (id.includes("first-time-clear")) return "#22c55e";
@@ -1502,6 +1503,13 @@ function rosterAchievementBadgesHtml(player) {
         "TK First Kael Kill — Attended the guild's first Tempest Keep raid with a Kael'thas Sunstrider kill on 7 June 2026 (4/4, WCL report NnHhqGbLQZvMXd96).",
       alt: "TK First Kael Kill",
       ok: playerEarnedSpecificEventBadge(player, "tk-first-kael-kill"),
+    },
+    {
+      file: "ssc-0611-2026.png",
+      title:
+        "SSC 11 June 2026 — Attended the Serpentshrine Cavern raid on 11 June 2026 (6/6, WCL report F6njKd7MJ3xPpqL1).",
+      alt: "SSC 11 June 2026",
+      ok: playerEarnedSpecificEventBadge(player, "ssc-0611-2026"),
     },
     {
       file: "iron-attendance.png",

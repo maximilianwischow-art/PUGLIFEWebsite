@@ -94,6 +94,7 @@
       "ssc-first-event": "#14b8a6",
       "ssc-first-clear": "#14b8a6",
       "tk-first-kael-kill": "#22c55e",
+      "ssc-0611-2026": "#a855f7",
     };
     if (byId[id]) return byId[id];
     if (id.includes("first-time-clear")) return "#22c55e";
@@ -645,6 +646,10 @@
       "tk-first-kael-kill":
         typeof plb.playerEarnedSpecificEventBadge === "function"
           ? (p) => plb.playerEarnedSpecificEventBadge(p, "tk-first-kael-kill")
+          : () => false,
+      "ssc-0611-2026":
+        typeof plb.playerEarnedSpecificEventBadge === "function"
+          ? (p) => plb.playerEarnedSpecificEventBadge(p, "ssc-0611-2026")
           : () => false,
     };
 

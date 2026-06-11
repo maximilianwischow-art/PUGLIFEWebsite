@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260608-plb-hof-speed-v1";
+const API_BUILD_ID = "20260611-plb-ssc-0611-badge-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -14186,6 +14186,18 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     startMs: Date.UTC(2026, 5, 6, 22, 0, 0),
     endMs: Date.UTC(2026, 5, 8, 4, 0, 0),
     reportCodes: ["NnHhqGbLQZvMXd96"],
+  },
+  {
+    badgeId: "ssc-0611-2026",
+    label: "SSC 11 June 2026",
+    description:
+      "Attended the Serpentshrine Cavern raid on 11 June 2026 (6/6). Awarded to every canonical user with a Warcraft Logs appearance in report F6njKd7MJ3xPpqL1.",
+    icon: "/images/achievements/ssc-0611-2026.png",
+    /* June 11 2026 00:00 CEST = June 10 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 5, 10, 22, 0, 0),
+    endMs: Date.UTC(2026, 5, 12, 4, 0, 0),
+    reportCodes: ["F6njKd7MJ3xPpqL1"],
+    raidHelperEventIds: ["1511633862738972723"],
   },
 ];
 
