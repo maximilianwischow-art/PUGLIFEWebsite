@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260612-plb-badge-panel-guild-perf-v1";
+const API_BUILD_ID = "20260612-plb-badge-phase-reorg-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -14472,15 +14472,15 @@ const BADGE_CATALOG = [
   {
     id: "raid-loyalty",
     label: "Raid loyalty",
-    phase: "cross",
+    phase: "meta",
     description: "Lifetime guild raid milestones and perfect attendance in the tracked window.",
     badges: [
-      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png", phase: "cross", sortOrder: 5, description: "Appeared in at least 5 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png", phase: "cross", sortOrder: 10, description: "Appeared in at least 10 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", phase: "cross", sortOrder: 25, description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", phase: "cross", sortOrder: 50, description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", phase: "cross", sortOrder: 100, description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "cross", description: "100% attendance in the current tracked raid window." },
+      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png", phase: "meta", sortOrder: 5, description: "Appeared in at least 5 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png", phase: "meta", sortOrder: 10, description: "Appeared in at least 10 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", phase: "meta", sortOrder: 25, description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", phase: "meta", sortOrder: 50, description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", phase: "meta", sortOrder: 100, description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "meta", description: "100% attendance in the current tracked raid window." },
     ],
   },
   {
@@ -14520,18 +14520,18 @@ const BADGE_CATALOG = [
     phase: "performance",
     description: "Parse, speed, and death-window performance badges.",
     badges: [
-      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "cross", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
-      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "cross", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
-      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", phase: "cross", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
+      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "performance", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
+      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "performance", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
+      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", phase: "performance", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
     ],
   },
   {
     id: "honour",
     label: "Honour",
-    phase: "cross",
+    phase: "performance",
     description: "Raid MVP hall of fame honours.",
     badges: [
-      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png", phase: "cross", description: "You won a raid MVP vote in a past round listed on the Hall of Fame page." },
+      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png", phase: "performance", description: "You won a raid MVP vote in a past round listed on the Hall of Fame page." },
     ],
   },
   {
@@ -14626,7 +14626,7 @@ function mergedBadgeCatalogCategories() {
   const overrides = badgeTooltipsState?.byBadgeId || {};
   return BADGE_CATALOG.map((cat) => ({
     ...cat,
-    phase: cat.phase || "cross",
+    phase: cat.phase || "P1",
     badges: (cat.badges || []).map((badge) => {
       const defaultDescription = String(badge.description || cat.description || "").trim();
       const defaultRarity = badgeCatalogRarityForCategory(cat.id, badge);
@@ -14635,7 +14635,7 @@ function mergedBadgeCatalogCategories() {
       const rarity = sanitizeBadgeTooltipRarity(override?.rarity) || defaultRarity;
       return {
         ...badge,
-        phase: badge.phase || cat.phase || "cross",
+        phase: badge.phase || cat.phase || "P1",
         categoryId: cat.id,
         categoryLabel: cat.label,
         defaultDescription,

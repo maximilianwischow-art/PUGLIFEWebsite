@@ -5,7 +5,6 @@
   const PHASE_TAB_ORDER = [
     { id: "P1", label: "P1" },
     { id: "P2", label: "P2" },
-    { id: "cross", label: "Cross-phase" },
     { id: "performance", label: "Performance" },
     { id: "meta", label: "Guild" },
     { id: "P3", label: "P3" },
@@ -142,11 +141,14 @@
 
   function categoriesForPhase(categories, phaseId) {
     return (categories || []).filter((cat) => {
-      const phase = String(cat.phase || "cross");
+      const phase = String(cat.phase || "");
       const catId = String(cat.id || "");
-      if (phaseId === "cross") return phase === "cross";
-      if (phaseId === "meta") return phase === "meta" || catId === "guild-rank";
-      if (phaseId === "performance") return phase === "performance" || catId === "performance";
+      if (phaseId === "meta") {
+        return phase === "meta" || catId === "guild-rank" || catId === "raid-loyalty";
+      }
+      if (phaseId === "performance") {
+        return phase === "performance" || catId === "performance" || catId === "honour";
+      }
       return phase === phaseId;
     });
   }
@@ -169,7 +171,7 @@
       if (tab.id === "P3") return phaseHasBadges(cats, "P3");
       return phaseHasBadges(cats, tab.id);
     });
-    const defaultTab = tabs[0]?.id || "cross";
+    const defaultTab = tabs[0]?.id || "P1";
     const tabButtons = tabs
       .map((tab, idx) => {
         const active = tab.id === defaultTab;

@@ -1426,6 +1426,7 @@ const LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS = [
   "best-time-participant",
   "parsing-ceiling",
   "most-deaths-last-6-raids",
+  "hall-of-fame",
 ];
 
 const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
@@ -1461,7 +1462,6 @@ function leaderboardRowBadgeDisplayOrder(earnedSet) {
     if (set.has(id) && !out.includes(id)) out.push(id);
   };
   for (const id of LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS) push(id);
-  push("hall-of-fame");
   push("iron-attendance");
   for (const id of LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS) push(id);
   for (const id of LEADERBOARD_ROW_EVENT_BADGE_RECENCY) push(id);
