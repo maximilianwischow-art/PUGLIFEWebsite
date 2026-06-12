@@ -8668,22 +8668,24 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-badge-strip .achievement-tooltip {
-  top: auto;
-  bottom: calc(100% + 10px);
-  z-index: 130;
+  display: none !important;
+}
+
+.leaderboard-row-badge-tooltip-host {
+  position: fixed;
+  z-index: 10050;
+  pointer-events: none;
   width: min(280px, calc(100vw - 32px));
   min-width: min(220px, calc(100vw - 32px));
 }
 
-.leaderboard-badge-strip-icons > .achievement-badge-container:first-child .achievement-tooltip,
-.leaderboard-badge-strip-icons > .guild-role-token:first-child .achievement-tooltip {
-  left: 0;
-  transform: none;
+.leaderboard-row-badge-tooltip-host[hidden] {
+  display: none !important;
 }
 
-.leaderboard-table tbody tr:nth-child(-n + 4) .leaderboard-badge-strip .achievement-tooltip {
-  top: calc(100% + 10px);
-  bottom: auto;
+.leaderboard-row-badge-tooltip-host .achievement-tooltip-box {
+  display: block;
+  width: 100%;
 }
 
 .leaderboard-badge-strip .achievement-badge-container:hover .achievement-badge-frame,

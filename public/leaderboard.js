@@ -625,6 +625,77 @@ function renderLeaderboardTable() {
     }
   });
 
+  wireLeaderboardRowBadgeTooltips();
+}
+
+let lbRowBadgeTooltipEl = null;
+let lbBadgeTooltipWireAbort = null;
+
+function ensureLbRowBadgeTooltipHost() {
+  if (lbRowBadgeTooltipEl) return lbRowBadgeTooltipEl;
+  lbRowBadgeTooltipEl = document.createElement("div");
+  lbRowBadgeTooltipEl.id = "leaderboardRowBadgeTooltip";
+  lbRowBadgeTooltipEl.className = "leaderboard-row-badge-tooltip-host";
+  lbRowBadgeTooltipEl.hidden = true;
+  document.body.appendChild(lbRowBadgeTooltipEl);
+  return lbRowBadgeTooltipEl;
+}
+
+function hideLbRowBadgeTooltip() {
+  if (!lbRowBadgeTooltipEl) return;
+  lbRowBadgeTooltipEl.hidden = true;
+  lbRowBadgeTooltipEl.innerHTML = "";
+  lbRowBadgeTooltipEl.removeAttribute("data-lb-tip-anchor");
+}
+
+function positionLbRowBadgeTooltip(anchor, host) {
+  const rect = anchor.getBoundingClientRect();
+  const tipRect = host.getBoundingClientRect();
+  const pad = 10;
+  let top = rect.top - tipRect.height - pad;
+  let left = rect.left + rect.width / 2 - tipRect.width / 2;
+  if (top < 8) top = rect.bottom + pad;
+  left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+  host.style.top = `${Math.round(top)}px`;
+  host.style.left = `${Math.round(left)}px`;
+}
+
+function showLbRowBadgeTooltip(anchor) {
+  const source = anchor.querySelector(".achievement-tooltip");
+  if (!source) return;
+  const host = ensureLbRowBadgeTooltipHost();
+  host.innerHTML = source.innerHTML;
+  host.hidden = false;
+  host.style.visibility = "hidden";
+  positionLbRowBadgeTooltip(anchor, host);
+  host.style.visibility = "visible";
+  host.dataset.lbTipAnchor = "1";
+}
+
+function wireLeaderboardRowBadgeTooltips() {
+  if (!leaderboardTbody) return;
+  lbBadgeTooltipWireAbort?.abort();
+  lbBadgeTooltipWireAbort = new AbortController();
+  const { signal } = lbBadgeTooltipWireAbort;
+  const selector =
+    ".leaderboard-badge-strip-icons .achievement-badge-container, .leaderboard-badge-strip-icons .guild-role-token";
+
+  leaderboardTbody.querySelectorAll(selector).forEach((badge) => {
+    if (!badge.hasAttribute("tabindex")) badge.setAttribute("tabindex", "0");
+    badge.addEventListener("mouseenter", () => showLbRowBadgeTooltip(badge), { signal });
+    badge.addEventListener("mouseleave", hideLbRowBadgeTooltip, { signal });
+    badge.addEventListener("focus", () => showLbRowBadgeTooltip(badge), { signal });
+    badge.addEventListener("blur", hideLbRowBadgeTooltip, { signal });
+  });
+
+  leaderboardTbody.querySelectorAll(".leaderboard-badge-strip-icons").forEach((scroller) => {
+    scroller.addEventListener("scroll", hideLbRowBadgeTooltip, { passive: true, signal });
+  });
+
+  document.querySelector(".leaderboard-table-scroll")?.addEventListener("scroll", hideLbRowBadgeTooltip, {
+    passive: true,
+    signal,
+  });
 }
 
 function toggleLeaderboardRowByKey(key) {
