@@ -8431,7 +8431,7 @@ tr.plb-gear-row--miss th {
 .leaderboard-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   font-size: 13px;
   min-width: 920px;
 }
@@ -8494,14 +8494,20 @@ tr.plb-gear-row--miss th {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.leaderboard-table thead th:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
 .leaderboard-td-player {
-  width: 28%;
-  min-width: 220px;
-  padding-right: 8px;
+  width: 1%;
+  white-space: nowrap;
+  vertical-align: middle;
+  padding-right: 10px;
 }
 
 .leaderboard-td-badges {
-  width: 72%;
+  width: auto;
   min-width: 0;
   overflow: hidden;
 }
@@ -8859,13 +8865,14 @@ tr.plb-gear-row--miss th {
   flex-shrink: 0;
 }
 
-.leaderboard-spec-img {
+.leaderboard-player-row .raider-champion-img.leaderboard-spec-img {
   /* Match collapsed badge row height — keeps the raider block narrow for the badge strip. */
   width: 62px;
   height: 62px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 
 .leaderboard-player-cell {
@@ -8902,9 +8909,9 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-kpi-inline {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 8px;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 1px 10px;
   font-size: 11px;
   line-height: 1.35;
 }
