@@ -147,10 +147,14 @@ function leaderboardBadgesColumnHtml(p, isOpen) {
   const roleBadge = plb.rosterRoleIconHtml
     ? plb.rosterRoleIconHtml(p, { hideLabel: true, className: "role-badge-group-token leaderboard-role-badge-token" })
     : "";
+  const attendanceCompanion =
+    typeof plb.rosterAttendanceCompanionBadgeHtml === "function"
+      ? plb.rosterAttendanceCompanionBadgeHtml(p)
+      : "";
   const crafterRoleBadges = plb.rosterPugMasterCrafterBadgesHtml
     ? plb.rosterPugMasterCrafterBadgesHtml(p, { className: "role-badge-group-token leaderboard-role-badge-token" })
     : "";
-  const roleBadges = `${roleBadge}${crafterRoleBadges}`;
+  const roleBadges = `${roleBadge}${attendanceCompanion}${crafterRoleBadges}`;
   const ui = window.plbBadgeCatalogUi;
   const earnedIds = earnedBadgeIdsForPlayer(p);
   const earned = ui

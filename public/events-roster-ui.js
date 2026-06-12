@@ -1419,14 +1419,12 @@ function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
 
 /**
  * Leaderboard collapsed-row badge policy (Events KPI already shows raid count).
- * Pinned: honour + performance. First clears: always if earned. Events: newest first.
+ * Strip order: guild role tokens (rendered first) → performance → everything else.
  * Milestone tiers (raids-with-guild-*) stay in expand panel only.
  */
-const LEADERBOARD_ROW_PINNED_BADGE_IDS = [
-  "hall-of-fame",
+const LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS = [
   "best-time-participant",
   "parsing-ceiling",
-  "iron-attendance",
   "most-deaths-last-6-raids",
 ];
 
@@ -1462,11 +1460,15 @@ function leaderboardRowBadgeDisplayOrder(earnedSet) {
   const push = (id) => {
     if (set.has(id) && !out.includes(id)) out.push(id);
   };
-  for (const id of LEADERBOARD_ROW_PINNED_BADGE_IDS) push(id);
+  for (const id of LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS) push(id);
+  push("hall-of-fame");
+  push("iron-attendance");
   for (const id of LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS) push(id);
   for (const id of LEADERBOARD_ROW_EVENT_BADGE_RECENCY) push(id);
   for (const id of set) {
     if (String(id).startsWith("raids-with-guild-")) continue;
+    if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
+    if (LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS.includes(id)) continue;
     if (!out.includes(id)) out.push(id);
   }
   return out;
