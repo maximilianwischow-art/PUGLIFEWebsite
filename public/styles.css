@@ -8723,24 +8723,50 @@ tr.plb-gear-row--miss th {
 
 .leaderboard-badge-panel .profile-badge-category,
 .leaderboard-badge-panel .profile-badge-grid,
-.leaderboard-badge-panel .profile-badge-tile {
+.leaderboard-badge-panel .profile-badge-tile,
+.profile-badges-phased .profile-badge-category,
+.profile-badges-phased .profile-badge-grid,
+.profile-badges-phased .profile-badge-tile {
   overflow: visible;
 }
 
-/* Drop below the tile so the panel top edge does not clip. */
-.leaderboard-badge-panel .profile-badge-tile .achievement-tooltip {
-  top: calc(100% + 10px);
-  bottom: auto;
-  z-index: 120;
+.leaderboard-badge-panel .profile-badge-category + .profile-badge-category,
+.profile-badges-phased .profile-badge-category + .profile-badge-category {
+  margin-top: 1.25rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(167, 139, 250, 0.14);
+}
+
+/* Expand panels: float above the tile so tooltips do not cover the next category row. */
+.leaderboard-badge-panel .profile-badge-tile,
+.profile-badges-phased .profile-badge-tile {
+  position: relative;
+}
+
+.leaderboard-badge-panel .profile-badge-tile:hover,
+.leaderboard-badge-panel .profile-badge-tile:focus-within,
+.profile-badges-phased .profile-badge-tile:hover,
+.profile-badges-phased .profile-badge-tile:focus-within {
+  z-index: 130;
+}
+
+.leaderboard-badge-panel .profile-badge-tile .achievement-tooltip,
+.profile-badges-phased .profile-badge-tile .achievement-tooltip {
+  top: auto;
+  bottom: calc(100% + 10px);
+  z-index: 140;
 }
 
 .leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:first-child .achievement-tooltip,
-.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:nth-child(6n + 1) .achievement-tooltip {
+.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:nth-child(6n + 1) .achievement-tooltip,
+.profile-badges-phased .profile-badge-grid .profile-badge-tile:first-child .achievement-tooltip,
+.profile-badges-phased .profile-badge-grid .profile-badge-tile:nth-child(6n + 1) .achievement-tooltip {
   left: 0;
   transform: none;
 }
 
-.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:nth-child(6n) .achievement-tooltip {
+.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:nth-child(6n) .achievement-tooltip,
+.profile-badges-phased .profile-badge-grid .profile-badge-tile:nth-child(6n) .achievement-tooltip {
   left: auto;
   right: 0;
   transform: none;
