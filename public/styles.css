@@ -8431,6 +8431,7 @@ tr.plb-gear-row--miss th {
 .leaderboard-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
   min-width: 920px;
 }
@@ -8500,6 +8501,8 @@ tr.plb-gear-row--miss th {
 
 .leaderboard-td-badges {
   width: 66%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Raid rank: gold pill — matches Leaderboard reference (border + caps label). */
@@ -8548,10 +8551,11 @@ tr.plb-gear-row--miss th {
 .leaderboard-badge-strip {
   /* ~68% of 92px portrait — visually lines up with the spec icon column. */
   --lb-row-badge-size: 62px;
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-width: 0;
   min-height: var(--lb-row-badge-size);
 }
@@ -8562,7 +8566,6 @@ tr.plb-gear-row--miss th {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex: 1 1 auto;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -8579,8 +8582,9 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-badge-strip .leaderboard-badge-chip--summary {
-  flex: 0 0 auto;
-  margin-left: auto;
+  flex-shrink: 0;
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .leaderboard-td-badges {
