@@ -103,12 +103,21 @@
     const hasLazy = (cat.badges || []).some((b) => lazySet.has(b.id));
     const earnedCount = (cat.badges || []).filter((b) => earnedSet.has(b.id) || b.earned).length;
     const total = (cat.badges || []).length;
+    const catId = String(cat.id || "");
+    const isGuildCategory = catId === "guild-rank" || catId === "raid-loyalty";
     const items = (cat.badges || [])
       .map((b) => {
         const isEarned = earnedSet.has(b.id) || !!b.earned;
-        const cls = isEarned
-          ? "profile-badge-tile achievement-badge-container is-earned"
-          : "profile-badge-tile achievement-badge-container is-locked";
+        const isGuildRole =
+          isGuildCategory || String(b.icon || "").includes("/guild-roles/");
+        const cls = [
+          isEarned
+            ? "profile-badge-tile achievement-badge-container is-earned"
+            : "profile-badge-tile achievement-badge-container is-locked",
+          isGuildRole ? "profile-badge-tile--guild-role" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
         const desc = `${b.name} — ${b.description || b.defaultDescription || (isEarned ? "earned" : "not yet earned")}`;
         const plb = window.plbEventsRoster;
         const icon =
@@ -118,7 +127,7 @@
         return `
           <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" aria-label="${escapeHtml(desc)}">
             <div ${badgeFrameAttrs(b)} aria-hidden="true">
-              <img class="achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async"${icon.onerror} />
+              <img class="achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" loading="lazy" decoding="async"${icon.onerror} />
               <span class="achievement-badge-glow" aria-hidden="true"></span>
             </div>
             <span class="profile-badge-name">${escapeHtml(b.name)}</span>

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const version = "20260612plb-badge-panel-tooltip-v1";
+const version = "20260612plb-guild-badge-icon-fix-v1";
 const dir = path.join(process.cwd(), "public");
 for (const f of fs.readdirSync(dir)) {
   if (!f.endsWith(".html")) continue;

@@ -1509,8 +1509,12 @@ function badgeIconSrcFromCatalogPath(iconPath, badgeId) {
     const dir = base.slice(0, base.lastIndexOf("/"));
     const file = base.slice(base.lastIndexOf("/") + 1);
     const stem = file.replace(/\.(png|svg|jpg|jpeg|webp)$/i, "");
-    const svg = `${dir}/${stem}.svg?v=${IMAGE_ASSET_VERSION}`;
     const png = `${dir}/${stem}.png?v=${IMAGE_ASSET_VERSION}`;
+    /* Guild-role art is shipped as PNG on live; optional SVGs are not deployed. */
+    if (dir.endsWith("/guild-roles")) {
+      return { src: png, onerror: "" };
+    }
+    const svg = `${dir}/${stem}.svg?v=${IMAGE_ASSET_VERSION}`;
     return { src: svg, onerror: ` onerror="this.onerror=null;this.src='${png}'"` };
   }
   return achievementBadgeIconUrlWithFallback(achievementPngFileFromIconUrl(raw, badgeId));
@@ -2260,8 +2264,7 @@ function rosterPugMasterCrafterBadgesHtml(player, opts = {}) {
     .map((badge) => {
       const meta = badgeTooltipMeta(badge.badgeId, badge.name, badge.description, "legendary");
       const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-      const src = escapeHtml(`/images/guild-roles/${badge.slug}.svg?v=${IMAGE_ASSET_VERSION}`);
-      const pngFallback = escapeHtml(`/images/guild-roles/${badge.slug}.png?v=${IMAGE_ASSET_VERSION}`);
+      const src = escapeHtml(`/images/guild-roles/${badge.slug}.png?v=${IMAGE_ASSET_VERSION}`);
       const classes = [
         "guild-role-token",
         "guild-role-token--assigned",
@@ -2272,7 +2275,7 @@ function rosterPugMasterCrafterBadgesHtml(player, opts = {}) {
         .join(" ");
       return `<span class="${escapeHtml(classes)}" aria-label="${escapeHtml(title)}">
         <span class="guild-role-token-frame achievement-badge-frame--${escapeHtml(meta.rarity)}">
-          <img class="guild-role-token-img" src="${src}" alt="" width="34" height="34" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${pngFallback}'" />
+          <img class="guild-role-token-img" src="${src}" alt="" width="34" height="34" loading="lazy" decoding="async" />
           <span class="achievement-badge-glow" aria-hidden="true"></span>
         </span>
         ${achievementTooltipHtml(meta)}

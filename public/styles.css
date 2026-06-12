@@ -13123,6 +13123,12 @@ tr.plb-gear-row--miss th {
   height: 56px;
   margin-top: 6px;
 }
+.profile-badge-tile--guild-role .profile-badge-tile-icon {
+  --guild-role-badge-zoom: 1.45;
+}
+.profile-badge-tile--guild-role .profile-badge-tile-icon .achievement-badge-img {
+  transform: scale(var(--guild-role-badge-zoom, 1.45));
+}
 .profile-badge-tile .achievement-tooltip {
   bottom: calc(100% + 10px);
 }
