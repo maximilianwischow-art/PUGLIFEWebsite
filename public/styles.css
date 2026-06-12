@@ -8544,25 +8544,110 @@ tr.plb-gear-row--miss th {
   background: rgba(0, 0, 0, 0.28);
 }
 
-.leaderboard-badge-summary {
+/* One row: guild role + achievements + chips — uniform 44px slots. */
+.leaderboard-badge-strip {
+  /* ~68% of 92px portrait — visually lines up with the spec icon column. */
+  --lb-row-badge-size: 62px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-}
-
-.leaderboard-badge-summary-roles {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.leaderboard-badge-summary-chips {
-  display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  min-height: var(--lb-row-badge-size);
+}
+
+.leaderboard-badge-strip-icons {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(167, 139, 250, 0.45) transparent;
+}
+
+.leaderboard-badge-strip-icons::-webkit-scrollbar {
+  height: 4px;
+}
+
+.leaderboard-badge-strip-icons::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.45);
+}
+
+.leaderboard-badge-strip .leaderboard-badge-chip--summary {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.leaderboard-td-badges {
+  vertical-align: middle;
+}
+
+.leaderboard-badge-strip .guild-role-token,
+.leaderboard-badge-strip .raider-badge-slot {
+  width: var(--lb-row-badge-size);
+  height: var(--lb-row-badge-size);
+  flex: 0 0 var(--lb-row-badge-size);
+  margin: 0;
+  padding: 0;
+  border-width: 0;
+  gap: 0;
+  vertical-align: top;
+  line-height: 0;
+}
+
+.leaderboard-badge-strip .guild-role-token-frame,
+.leaderboard-badge-strip .achievement-badge-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.leaderboard-badge-strip .guild-role-token-img,
+.leaderboard-badge-strip .raider-badge-achievement-img,
+.leaderboard-badge-strip .raider-badge-role-img {
+  width: 100%;
+  height: 100%;
+}
+
+.leaderboard-badge-strip .guild-role-token-img {
+  transform: scale(1.72);
+  transform-origin: center center;
+}
+
+.leaderboard-badge-strip .raider-badge-slot--achievement-earned {
+  background: #000;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2));
+}
+
+.leaderboard-badge-strip .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
+  --achievement-badge-zoom: 1.72;
+  transform: scale(var(--achievement-badge-zoom));
+  transform-origin: center center;
+}
+
+.leaderboard-badge-strip .achievement-badge-container:hover .achievement-badge-frame,
+.leaderboard-badge-strip .achievement-badge-container:focus-visible .achievement-badge-frame,
+.leaderboard-badge-strip .guild-role-token:hover .guild-role-token-frame,
+.leaderboard-badge-strip .guild-role-token:focus-visible .guild-role-token-frame {
+  transform: none;
+}
+
+.leaderboard-badge-strip .leaderboard-badge-chip {
+  height: var(--lb-row-badge-size);
+  padding: 0 10px;
+  align-self: center;
+}
+
+.leaderboard-badge-chip--more {
+  border-color: rgba(167, 139, 250, 0.5);
+  color: #ddd6fe;
 }
 
 .leaderboard-badge-chip {
@@ -8611,10 +8696,46 @@ tr.plb-gear-row--miss th {
   max-height: none;
 }
 
+/* No inner overflow scroll — it clips position:absolute tooltips (CSS forces both axes auto). */
 .leaderboard-badge-panel .badge-phase-panels {
-  max-height: min(420px, 55vh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: visible;
+  max-height: none;
+}
+
+.leaderboard-row-badges,
+.leaderboard-row-badges td,
+.leaderboard-td-badges-panel {
+  overflow: visible;
+}
+
+.leaderboard-row-badges {
+  position: relative;
+  z-index: 4;
+}
+
+.leaderboard-badge-panel .profile-badge-category,
+.leaderboard-badge-panel .profile-badge-grid,
+.leaderboard-badge-panel .profile-badge-tile {
+  overflow: visible;
+}
+
+/* Drop below the tile so the panel top edge does not clip. */
+.leaderboard-badge-panel .profile-badge-tile .achievement-tooltip {
+  top: calc(100% + 10px);
+  bottom: auto;
+  z-index: 120;
+}
+
+.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:first-child .achievement-tooltip,
+.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:nth-child(6n + 1) .achievement-tooltip {
+  left: 0;
+  transform: none;
+}
+
+.leaderboard-badge-panel .profile-badge-grid .profile-badge-tile:nth-child(6n) .achievement-tooltip {
+  left: auto;
+  right: 0;
+  transform: none;
 }
 
 .leaderboard-badge-panel .profile-badge-category {
@@ -8683,11 +8804,6 @@ tr.plb-gear-row--miss th {
 }
 
 @media (max-width: 720px) {
-  .leaderboard-badge-summary {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .leaderboard-td-badges {
     min-width: 0;
   }
@@ -12957,6 +13073,7 @@ tr.plb-gear-row--miss th {
   overflow: visible;
 }
 .profile-badge-tile .profile-badge-tile-icon {
+  --achievement-badge-zoom: 1.72;
   width: 68px;
   height: 68px;
   aspect-ratio: 1 / 1;
@@ -12964,6 +13081,8 @@ tr.plb-gear-row--miss th {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: #000;
+  contain: paint;
 }
 .profile-badge-tile.is-locked .profile-badge-tile-icon {
   width: 56px;
@@ -12978,13 +13097,18 @@ tr.plb-gear-row--miss th {
   left: 0;
   transform: none;
 }
-.profile-badge-tile-icon img {
+/* Match roster/leaderboard crop: PNGs ship with padding on the canvas. */
+.profile-badge-tile-icon .achievement-badge-img {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  display: block;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 0;
+  transform: scale(var(--achievement-badge-zoom, 1.72));
+  transform-origin: center center;
 }
-.profile-badge-tile.is-locked .profile-badge-tile-icon img {
+.profile-badge-tile.is-locked .profile-badge-tile-icon .achievement-badge-img {
   filter: grayscale(1) brightness(0.45);
   opacity: 0.7;
 }

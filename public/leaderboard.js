@@ -140,24 +140,27 @@ function leaderboardBadgesColumnHtml(p, isOpen) {
     ? plb.rosterPugMasterCrafterBadgesHtml(p, { className: "role-badge-group-token leaderboard-role-badge-token" })
     : "";
   const roleBadges = `${roleBadge}${crafterRoleBadges}`;
-  const milestoneChip =
-    typeof plb.leaderboardMilestoneChipHtml === "function" ? plb.leaderboardMilestoneChipHtml(p) : "";
   const ui = window.plbBadgeCatalogUi;
+  const earnedIds = earnedBadgeIdsForPlayer(p);
   const earned = ui
-    ? ui.countEarnedAchievementBadges(leaderboardBadgeCatalog, earnedBadgeIdsForPlayer(p))
-    : earnedBadgeIdsForPlayer(p).length;
+    ? ui.countEarnedAchievementBadges(leaderboardBadgeCatalog, earnedIds)
+    : earnedIds.length;
   const total = leaderboardAchievementBadgeTotal || 0;
+  const rowBadges =
+    typeof plb.leaderboardRowBadgesHtml === "function"
+      ? plb.leaderboardRowBadgesHtml(p, { catalog: leaderboardBadgeCatalog, earnedIds })
+      : "";
   const summaryChip =
     typeof plb.leaderboardBadgeSummaryChipHtml === "function"
       ? plb.leaderboardBadgeSummaryChipHtml(earned, total, isOpen)
       : `<span class="leaderboard-badge-chip leaderboard-badge-chip--summary">${earned}/${total} earned</span>`;
   return `
-    <div class="leaderboard-badge-summary">
-      ${roleBadges ? `<div class="leaderboard-badge-summary-roles">${roleBadges}</div>` : ""}
-      <div class="leaderboard-badge-summary-chips">
-        ${milestoneChip}
-        ${summaryChip}
+    <div class="leaderboard-badge-strip">
+      <div class="leaderboard-badge-strip-icons">
+        ${roleBadges}
+        ${rowBadges}
       </div>
+      ${summaryChip}
     </div>`;
 }
 

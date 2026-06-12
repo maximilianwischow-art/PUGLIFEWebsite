@@ -1417,12 +1417,101 @@ function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
   return 0;
 }
 
-/** Compact milestone chip for leaderboard collapsed rows. */
-function leaderboardMilestoneChipHtml(player) {
-  const tier = highestEarnedRaidsWithGuildMilestoneThreshold(player);
-  if (!tier) return "";
-  const tip = `${tier} raids with the guild — distinct WCL guild raid reports in admin Event Management.`;
-  return `<span class="leaderboard-badge-chip leaderboard-badge-chip--milestone" title="${escapeHtml(tip)}">${tier} raids</span>`;
+/**
+ * Leaderboard collapsed-row badge policy (Events KPI already shows raid count).
+ * Pinned: honour + performance. First clears: always if earned. Events: newest first.
+ * Milestone tiers (raids-with-guild-*) stay in expand panel only.
+ */
+const LEADERBOARD_ROW_PINNED_BADGE_IDS = [
+  "hall-of-fame",
+  "best-time-participant",
+  "parsing-ceiling",
+  "iron-attendance",
+  "most-deaths-last-6-raids",
+];
+
+const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
+  "kara-first-time-clear",
+  "gruul-first-time-clear",
+  "magtheridon-first-time-clear",
+];
+
+/** Newest event-night badges first — prepend future dated IDs here. */
+const LEADERBOARD_ROW_EVENT_BADGE_RECENCY = [
+  "ssc-0611-2026",
+  "tk-first-kael-kill",
+  "ssc-first-clear",
+  "ssc-first-event",
+  "aoe-cleave",
+];
+
+function leaderboardBadgeCatalogEntry(catalog, badgeId) {
+  const id = String(badgeId || "").trim();
+  if (!id) return null;
+  for (const cat of catalog || []) {
+    for (const b of cat.badges || []) {
+      if (String(b.id || "") === id) return b;
+    }
+  }
+  return null;
+}
+
+function leaderboardRowBadgeDisplayOrder(earnedSet) {
+  const set = earnedSet instanceof Set ? earnedSet : new Set(earnedSet || []);
+  const out = [];
+  const push = (id) => {
+    if (set.has(id) && !out.includes(id)) out.push(id);
+  };
+  for (const id of LEADERBOARD_ROW_PINNED_BADGE_IDS) push(id);
+  for (const id of LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS) push(id);
+  for (const id of LEADERBOARD_ROW_EVENT_BADGE_RECENCY) push(id);
+  for (const id of set) {
+    if (String(id).startsWith("raids-with-guild-")) continue;
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+function achievementPngFileFromIconUrl(iconUrl, badgeId) {
+  const raw = String(iconUrl || "").trim();
+  const match = raw.match(/\/([^/]+\.png)(?:\?.*)?$/i);
+  if (match) return match[1];
+  const id = String(badgeId || "").trim();
+  return id ? `${id}.png` : "best-time-participant.png";
+}
+
+function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry) {
+  const id = String(badgeId || "").trim();
+  if (!id) return "";
+  const name = String(catalogEntry?.name || id).trim();
+  const description = String(catalogEntry?.description || catalogEntry?.defaultDescription || "").trim();
+  const rarity = String(catalogEntry?.rarity || catalogEntry?.defaultRarity || "epic").trim() || "epic";
+  const meta = badgeTooltipMeta(id, name, description, rarity);
+  const file = achievementPngFileFromIconUrl(catalogEntry?.icon, id);
+  const icon = achievementBadgeIconUrlWithFallback(file);
+  const tip = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
+  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(id)}" aria-label="${escapeHtml(tip)}">
+    <span ${achievementBadgeFrameAttrs(meta)}>
+      <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(name)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
+      <span class="achievement-badge-glow" aria-hidden="true"></span>
+    </span>
+    ${achievementTooltipHtml(meta)}
+  </span>`;
+}
+
+/** Compact earned achievement icons for leaderboard collapsed rows (all earned, one line). */
+function leaderboardRowBadgesHtml(player, opts = {}) {
+  const catalog = Array.isArray(opts.catalog) ? opts.catalog : [];
+  const earnedRaw = Array.isArray(opts.earnedIds)
+    ? opts.earnedIds
+    : Array.isArray(player?.earnedBadgeIds)
+      ? player.earnedBadgeIds
+      : [];
+  const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
+  const ordered = leaderboardRowBadgeDisplayOrder(earnedSet);
+  return ordered
+    .map((id) => renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id)))
+    .join("");
 }
 
 /** Earned/total summary chip with chevron for leaderboard expand affordance. */
@@ -2358,7 +2447,7 @@ window.plbEventsRoster = {
   rosterPugMasterCrafterBadgesHtml,
   playerEarnedPugMasterCrafterBadge,
   rosterAchievementBadgeRowHtml,
-  leaderboardMilestoneChipHtml,
+  leaderboardRowBadgesHtml,
   leaderboardBadgeSummaryChipHtml,
   highestEarnedRaidsWithGuildMilestoneThreshold,
   rosterBucketRoleName,
