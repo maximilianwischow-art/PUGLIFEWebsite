@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-lb-player-shrink-fit-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-lb-player-layout-v2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
     <style>
       .leaderboard-controls {
@@ -61,9 +61,9 @@
           align-items: center;
         }
         .leaderboard-row-leader .leaderboard-kpi-inline {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 4px 8px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 2px 8px;
         }
       }
     </style>
@@ -170,7 +170,7 @@
     <script defer src="/gear-audit-display.js?v=20260519plb-gear-compact-v1"></script>
     <script defer src="/events-roster-ui.js?v=20260612plb-guild-badge-icon-fix-v1"></script>
     <script defer src="/badge-catalog-ui.js?v=20260612plb-guild-badge-icon-fix-v1"></script>
-    <script defer src="/leaderboard.js?v=20260612plb-lb-player-column-compact-v1"></script>
+    <script defer src="/leaderboard.js?v=20260612plb-lb-player-layout-v2"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
