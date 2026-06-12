@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260612-plb-lb-badge-row-icon-fix-v1";
+const API_BUILD_ID = "20260612-plb-badge-panel-guild-perf-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -14517,7 +14517,7 @@ const BADGE_CATALOG = [
   {
     id: "performance",
     label: "Performance",
-    phase: "cross",
+    phase: "performance",
     description: "Parse, speed, and death-window performance badges.",
     badges: [
       { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "cross", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },

@@ -2220,6 +2220,24 @@ function rosterRoleIconHtml(player, opts = {}) {
   </span>`;
 }
 
+/** Guild-rank + crafter honour ids earned by this roster row (for badge expand panels). */
+function earnedGuildBadgeIdsForPlayer(player) {
+  if (!player) return [];
+  const earned = new Set();
+  const role = effectiveGuildRole(player);
+  if (role?.slug) earned.add(role.slug);
+  const assigned = assignedGuildRoleFromPlayer(player);
+  if (MANUAL_ONLY_GUILD_ROLES.has(assigned)) {
+    earned.add(guildRoleBadgeImageSlug(attendanceTierGuildRole(player)));
+    if (String(assigned).toLowerCase().replace(/[\s_-]+/g, "") === "core") earned.add("core");
+  }
+  for (const badge of PUG_MASTER_CRAFTER_ROLE_BADGES) {
+    if (playerEarnedPugMasterCrafterBadge(player, badge.badgeId)) earned.add(badge.badgeId);
+  }
+  earned.delete("");
+  return [...earned];
+}
+
 function playerEarnedPugMasterCrafterBadge(player, badgeId) {
   const cfg = PUG_MASTER_CRAFTER_ROLE_BADGES.find((badge) => badge.badgeId === String(badgeId || "").trim());
   if (!cfg) return false;
@@ -2484,6 +2502,8 @@ window.plbEventsRoster = {
   rosterAchievementBadgeRowHtml,
   leaderboardRowBadgesHtml,
   leaderboardBadgeSummaryChipHtml,
+  earnedGuildBadgeIdsForPlayer,
+  badgeIconSrcFromCatalogPath,
   highestEarnedRaidsWithGuildMilestoneThreshold,
   rosterBucketRoleName,
   eventsRosterCharacterLabel,

@@ -6,6 +6,7 @@
     { id: "P1", label: "P1" },
     { id: "P2", label: "P2" },
     { id: "cross", label: "Cross-phase" },
+    { id: "performance", label: "Performance" },
     { id: "meta", label: "Guild" },
     { id: "P3", label: "P3" },
   ];
@@ -110,10 +111,15 @@
           ? "profile-badge-tile achievement-badge-container is-earned"
           : "profile-badge-tile achievement-badge-container is-locked";
         const desc = `${b.name} — ${b.description || b.defaultDescription || (isEarned ? "earned" : "not yet earned")}`;
+        const plb = window.plbEventsRoster;
+        const icon =
+          plb && typeof plb.badgeIconSrcFromCatalogPath === "function"
+            ? plb.badgeIconSrcFromCatalogPath(b.icon, b.id)
+            : { src: String(b.icon || ""), onerror: "" };
         return `
           <div class="${cls}" data-badge-id="${escapeHtml(b.id)}" aria-label="${escapeHtml(desc)}">
             <div ${badgeFrameAttrs(b)} aria-hidden="true">
-              <img class="achievement-badge-img" src="${escapeHtml(b.icon)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async" />
+              <img class="achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(b.name)}" loading="lazy" decoding="async"${icon.onerror} />
               <span class="achievement-badge-glow" aria-hidden="true"></span>
             </div>
             <span class="profile-badge-name">${escapeHtml(b.name)}</span>
@@ -137,7 +143,10 @@
   function categoriesForPhase(categories, phaseId) {
     return (categories || []).filter((cat) => {
       const phase = String(cat.phase || "cross");
+      const catId = String(cat.id || "");
       if (phaseId === "cross") return phase === "cross";
+      if (phaseId === "meta") return phase === "meta" || catId === "guild-rank";
+      if (phaseId === "performance") return phase === "performance" || catId === "performance";
       return phase === phaseId;
     });
   }

@@ -20,6 +20,8 @@ let expandedPlayerKey = null;
 
 /** Achievement badge catalog from `GET /api/badge-tooltips` (session-cached). */
 let leaderboardBadgeCatalog = [];
+/** Full catalog incl. guild-rank — used by the per-row badge expand panel. */
+let leaderboardBadgeCatalogFull = [];
 let leaderboardBadgeCatalogPromise = null;
 let leaderboardAchievementBadgeTotal = 0;
 
@@ -110,6 +112,7 @@ async function ensureBadgeCatalogLoaded() {
       const payload = await lbApiGetJson("/api/badge-tooltips");
       const categories = Array.isArray(payload?.categories) ? payload.categories : [];
       const ui = window.plbBadgeCatalogUi;
+      leaderboardBadgeCatalogFull = categories.filter((cat) => (cat.badges || []).length > 0);
       leaderboardBadgeCatalog = ui
         ? ui.achievementCategoriesFromCatalog(categories)
         : categories.filter((cat) => cat.id !== "guild-rank" && (cat.badges || []).length > 0);
@@ -118,6 +121,7 @@ async function ensureBadgeCatalogLoaded() {
         : leaderboardBadgeCatalog.reduce((n, cat) => n + (cat.badges || []).length, 0);
     } catch {
       leaderboardBadgeCatalog = [];
+      leaderboardBadgeCatalogFull = [];
       leaderboardAchievementBadgeTotal = 0;
       leaderboardBadgeCatalogPromise = null;
     }
@@ -129,6 +133,13 @@ async function ensureBadgeCatalogLoaded() {
 function earnedBadgeIdsForPlayer(p) {
   if (Array.isArray(p?.earnedBadgeIds)) return p.earnedBadgeIds;
   return [];
+}
+
+function earnedBadgeIdsForPanel(p) {
+  const base = earnedBadgeIdsForPlayer(p);
+  const guild =
+    plb && typeof plb.earnedGuildBadgeIdsForPlayer === "function" ? plb.earnedGuildBadgeIdsForPlayer(p) : [];
+  return [...new Set([...base, ...guild])];
 }
 
 function leaderboardBadgesColumnHtml(p, isOpen) {
@@ -166,11 +177,12 @@ function leaderboardBadgesColumnHtml(p, isOpen) {
 
 function leaderboardBadgePanelHtml(p) {
   const ui = window.plbBadgeCatalogUi;
-  if (!ui || !leaderboardBadgeCatalog.length) {
+  const panelCatalog = leaderboardBadgeCatalogFull.length ? leaderboardBadgeCatalogFull : leaderboardBadgeCatalog;
+  if (!ui || !panelCatalog.length) {
     return `<div class="leaderboard-badge-panel"><p class="subtle">Loading badges…</p></div>`;
   }
-  return ui.renderPhasedBadgePanel(leaderboardBadgeCatalog, earnedBadgeIdsForPlayer(p), {
-    includeMeta: false,
+  return ui.renderPhasedBadgePanel(panelCatalog, earnedBadgeIdsForPanel(p), {
+    includeMeta: true,
     panelClass: "leaderboard-badge-panel",
     title: "Badge collection",
   });

@@ -45,6 +45,8 @@
   let savedMainCharacterName = null;
   /** Cached profile payload so we can reuse picture metadata after a partial update. */
   let lastProfile = null;
+  /** Full badge catalog (incl. guild-rank) for the phased overview panel. */
+  let profileBadgePanelCategories = [];
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -461,36 +463,58 @@
     if (!els.badgesHost) return;
     const plb = window.plbEventsRoster;
     try {
-      const res = await fetch("/api/profile/me/badges", { credentials: "include" });
-      if (res.status === 401) {
+      const [badgeRes, tooltipRes] = await Promise.all([
+        fetch("/api/profile/me/badges", { credentials: "include" }),
+        fetch("/api/badge-tooltips", { credentials: "include" }),
+      ]);
+      if (badgeRes.status === 401) {
         els.badgesHost.innerHTML = '<p class="subtle">Sign in to view your badges.</p>';
         return;
       }
-      const payload = await res.json();
+      const payload = await badgeRes.json();
       if (!payload?.ok) throw new Error(payload?.error || "Failed to load badges");
-      const categories = Array.isArray(payload.categories) ? payload.categories : [];
-      if (!categories.length) {
+      const achievementCategories = Array.isArray(payload.categories) ? payload.categories : [];
+      const tooltipPayload = tooltipRes.ok ? await tooltipRes.json() : { categories: [] };
+      const fullCategories = Array.isArray(tooltipPayload?.categories)
+        ? tooltipPayload.categories.filter((cat) => (cat.badges || []).length > 0)
+        : achievementCategories;
+      profileBadgePanelCategories = fullCategories.length ? fullCategories : achievementCategories;
+      if (!profileBadgePanelCategories.length) {
         els.badgesHost.innerHTML = '<p class="subtle">No badges defined yet.</p>';
         return;
       }
       const lazyBadgeIds = Array.isArray(payload.lazyBadges) ? payload.lazyBadges : [];
-      const earnedIds = [];
-      for (const cat of categories) {
+      const earnedIds = new Set();
+      for (const cat of achievementCategories) {
         for (const b of cat.badges || []) {
-          if (b?.earned && b?.id) earnedIds.push(b.id);
+          if (b?.earned && b?.id) earnedIds.add(b.id);
         }
+      }
+      const linkedCharacters = Array.isArray(payload.linkedCharacters) ? payload.linkedCharacters : [];
+      try {
+        const rosterPayload = await fetchActiveRosterOnce();
+        const rosterPlayer = findRosterRowForLinkedNames(
+          rosterPayload,
+          linkedCharacters,
+          lastProfile?.mainCharacterName || savedMainCharacterName || null,
+        );
+        if (rosterPlayer && plb && typeof plb.earnedGuildBadgeIdsForPlayer === "function") {
+          for (const id of plb.earnedGuildBadgeIdsForPlayer(rosterPlayer)) earnedIds.add(id);
+        }
+      } catch {
+        /* guild tab still renders locked tiles without roster */
       }
       const ui = badgeCatalogUi();
       if (ui) {
-        els.badgesHost.innerHTML = ui.renderPhasedBadgePanel(categories, earnedIds, {
-          includeMeta: false,
+        els.badgesHost.innerHTML = ui.renderPhasedBadgePanel(profileBadgePanelCategories, [...earnedIds], {
+          includeMeta: true,
           panelClass: "profile-badges-phased",
-          title: "Achievements",
+          title: "Badge collection",
           lazyBadgeIds,
         });
         ui.wirePhaseTabs(els.badgesHost);
       } else {
-        els.badgesHost.innerHTML = categories
+        els.badgesHost.innerHTML = profileBadgePanelCategories
           .map((cat) => renderBadgeCategoryHtml(cat, lazyBadgeIds))
           .join("");
       }
@@ -501,7 +525,6 @@
       // by name (HoF, first clears) all light up — even when the server-side
       // resolver missed them (e.g. linked names not present on the Account
       // Assignment row, cold WCL cache, etc.).
-      const linkedCharacters = Array.isArray(payload.linkedCharacters) ? payload.linkedCharacters : [];
       if (lazyBadgeIds.length) {
         const wclWarmup =
           plb && typeof plb.loadWclAttendanceForEvents === "function"
@@ -509,7 +532,7 @@
                 console.warn("[profile] WCL fallback failed:", error?.message || error);
               })
             : Promise.resolve();
-        resolveBadgesClientSide(linkedCharacters, categories, wclWarmup).catch(() => {
+        resolveBadgesClientSide(linkedCharacters, achievementCategories, wclWarmup).catch(() => {
           finalizeLazyBadgeCategoriesUI();
         });
       }
@@ -627,6 +650,9 @@
     };
 
     const earnedFromClient = new Set();
+    if (rosterPlayer && typeof plb.earnedGuildBadgeIdsForPlayer === "function") {
+      for (const id of plb.earnedGuildBadgeIdsForPlayer(rosterPlayer)) earnedFromClient.add(id);
+    }
     for (const [badgeId, fn] of Object.entries(resolvers)) {
       if (typeof fn !== "function") continue;
       try {
