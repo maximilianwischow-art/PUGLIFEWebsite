@@ -580,7 +580,7 @@ function renderLeaderboardTable() {
       const isOpen = expandedPlayerKey && expandedPlayerKey === rowKey;
       const playerCell = raiderCellHtml(p, recentCap, considered);
       const badgesCell = leaderboardBadgesColumnHtml(p, isOpen);
-      const hint = "Click to expand badge collection";
+      const rowLabel = plb.eventsRosterCharacterLabel ? plb.eventsRosterCharacterLabel(p) : String(p?.name || "Raider");
       const panelId = `lb-badges-${idx}`;
 
       return `
@@ -591,7 +591,7 @@ function renderLeaderboardTable() {
           tabindex="0"
           aria-expanded="${isOpen ? "true" : "false"}"
           aria-controls="${panelId}"
-          title="${escapeHtml(hint)}"
+          aria-label="${escapeHtml(`${rowLabel} — expand badge collection`)}"
         >
           <td class="leaderboard-td-player">${playerCell}</td>
           <td class="leaderboard-td-badges">${badgesCell}</td>
@@ -657,6 +657,13 @@ function wireLeaderboardRowExpand() {
   if (!leaderboardTbody) return;
   leaderboardTbody.addEventListener("click", (ev) => {
     if (ev.target.closest("a, button")) return;
+    if (
+      ev.target.closest(
+        ".leaderboard-badge-strip-icons .achievement-badge-container, .leaderboard-badge-strip-icons .guild-role-token"
+      )
+    ) {
+      return;
+    }
     const tr = ev.target.closest("tr.leaderboard-row-leader");
     if (!tr) return;
     const key = tr.getAttribute("data-lb-key");

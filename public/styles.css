@@ -8537,6 +8537,12 @@ tr.plb-gear-row--miss th {
 .leaderboard-row-leader {
   cursor: pointer;
   transition: background 0.12s ease;
+  overflow: visible;
+}
+
+.leaderboard-row-leader td {
+  overflow: visible;
+  position: relative;
 }
 
 .leaderboard-row-leader:hover td {
