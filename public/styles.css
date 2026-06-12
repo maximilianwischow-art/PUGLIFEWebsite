@@ -8495,12 +8495,12 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-table thead th:first-child {
-  width: 248px;
+  width: 300px;
 }
 
 .leaderboard-td-player {
-  width: 248px;
-  max-width: 248px;
+  width: 300px;
+  max-width: 300px;
   vertical-align: middle;
   padding: 8px 16px 8px 10px;
 }
@@ -8867,9 +8867,9 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-player-row .raider-champion-img.leaderboard-spec-img {
-  width: 64px;
-  height: 64px;
-  border-radius: 8px;
+  width: 92px;
+  height: 92px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.35);
   box-shadow: none;
