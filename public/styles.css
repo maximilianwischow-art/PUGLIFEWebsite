@@ -8628,8 +8628,16 @@ tr.plb-gear-row--miss th {
 
 .leaderboard-badge-strip .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
   --achievement-badge-zoom: 1.72;
+  display: block;
+  object-fit: cover;
+  object-position: center;
   transform: scale(var(--achievement-badge-zoom));
   transform-origin: center center;
+}
+
+/* Collapsed row: native title only — rich tooltips clip inside the 62px strip. */
+.leaderboard-badge-strip .achievement-tooltip {
+  display: none !important;
 }
 
 .leaderboard-badge-strip .achievement-badge-container:hover .achievement-badge-frame,

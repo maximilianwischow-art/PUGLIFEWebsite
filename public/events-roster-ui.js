@@ -1480,6 +1480,40 @@ function achievementPngFileFromIconUrl(iconUrl, badgeId) {
   return id ? `${id}.png` : "best-time-participant.png";
 }
 
+/** Badge ids rendered as guild-role tokens — never duplicate in achievement strip. */
+const LEADERBOARD_ROW_GUILD_BADGE_IDS = new Set([
+  "guildlead",
+  "raidlead",
+  "dpslead",
+  "heallead",
+  "core",
+  "veteran",
+  "grunt",
+  "peon",
+  "master-crafter-tailoring",
+  "master-crafter-leatherworking",
+  "master-crafter-blacksmithing",
+  "portal",
+]);
+
+/**
+ * Resolve icon src from catalog `icon` path (achievements or guild-roles).
+ * Prefer SVG in the same folder, fall back to PNG — never rewrite to /achievements/.
+ */
+function badgeIconSrcFromCatalogPath(iconPath, badgeId) {
+  const raw = String(iconPath || "").trim();
+  if (raw.startsWith("/images/")) {
+    const base = raw.split("?")[0];
+    const dir = base.slice(0, base.lastIndexOf("/"));
+    const file = base.slice(base.lastIndexOf("/") + 1);
+    const stem = file.replace(/\.(png|svg|jpg|jpeg|webp)$/i, "");
+    const svg = `${dir}/${stem}.svg?v=${IMAGE_ASSET_VERSION}`;
+    const png = `${dir}/${stem}.png?v=${IMAGE_ASSET_VERSION}`;
+    return { src: svg, onerror: ` onerror="this.onerror=null;this.src='${png}'"` };
+  }
+  return achievementBadgeIconUrlWithFallback(achievementPngFileFromIconUrl(raw, badgeId));
+}
+
 function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry) {
   const id = String(badgeId || "").trim();
   if (!id) return "";
@@ -1487,15 +1521,13 @@ function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry) {
   const description = String(catalogEntry?.description || catalogEntry?.defaultDescription || "").trim();
   const rarity = String(catalogEntry?.rarity || catalogEntry?.defaultRarity || "epic").trim() || "epic";
   const meta = badgeTooltipMeta(id, name, description, rarity);
-  const file = achievementPngFileFromIconUrl(catalogEntry?.icon, id);
-  const icon = achievementBadgeIconUrlWithFallback(file);
+  const icon = badgeIconSrcFromCatalogPath(catalogEntry?.icon, id);
   const tip = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(id)}" aria-label="${escapeHtml(tip)}">
+  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(id)}" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">
     <span ${achievementBadgeFrameAttrs(meta)}>
-      <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="${escapeHtml(name)}" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
+      <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
       <span class="achievement-badge-glow" aria-hidden="true"></span>
     </span>
-    ${achievementTooltipHtml(meta)}
   </span>`;
 }
 
@@ -1508,7 +1540,9 @@ function leaderboardRowBadgesHtml(player, opts = {}) {
       ? player.earnedBadgeIds
       : [];
   const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
-  const ordered = leaderboardRowBadgeDisplayOrder(earnedSet);
+  const ordered = leaderboardRowBadgeDisplayOrder(earnedSet).filter(
+    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)
+  );
   return ordered
     .map((id) => renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id)))
     .join("");
@@ -2206,7 +2240,8 @@ function rosterPugMasterCrafterBadgesHtml(player, opts = {}) {
     .map((badge) => {
       const meta = badgeTooltipMeta(badge.badgeId, badge.name, badge.description, "legendary");
       const title = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-      const src = escapeHtml(`/images/guild-roles/${badge.slug}.png?v=${IMAGE_ASSET_VERSION}`);
+      const src = escapeHtml(`/images/guild-roles/${badge.slug}.svg?v=${IMAGE_ASSET_VERSION}`);
+      const pngFallback = escapeHtml(`/images/guild-roles/${badge.slug}.png?v=${IMAGE_ASSET_VERSION}`);
       const classes = [
         "guild-role-token",
         "guild-role-token--assigned",
@@ -2217,7 +2252,7 @@ function rosterPugMasterCrafterBadgesHtml(player, opts = {}) {
         .join(" ");
       return `<span class="${escapeHtml(classes)}" aria-label="${escapeHtml(title)}">
         <span class="guild-role-token-frame achievement-badge-frame--${escapeHtml(meta.rarity)}">
-          <img class="guild-role-token-img" src="${src}" alt="${escapeHtml(badge.name)}" width="34" height="34" loading="lazy" decoding="async" />
+          <img class="guild-role-token-img" src="${src}" alt="" width="34" height="34" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='${pngFallback}'" />
           <span class="achievement-badge-glow" aria-hidden="true"></span>
         </span>
         ${achievementTooltipHtml(meta)}
