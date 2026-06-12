@@ -8508,7 +8508,8 @@ tr.plb-gear-row--miss th {
 .leaderboard-td-badges {
   width: auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
+  vertical-align: middle;
 }
 
 /* Raid rank: gold pill — matches Leaderboard reference (border + caps label). */
@@ -8564,6 +8565,7 @@ tr.plb-gear-row--miss th {
   width: 100%;
   min-width: 0;
   min-height: var(--lb-row-badge-size);
+  overflow: visible;
 }
 
 .leaderboard-badge-strip-icons {
@@ -8573,7 +8575,7 @@ tr.plb-gear-row--miss th {
   gap: 8px;
   min-width: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: visible;
   scrollbar-width: thin;
   scrollbar-color: rgba(167, 139, 250, 0.45) transparent;
 }
@@ -8593,8 +8595,8 @@ tr.plb-gear-row--miss th {
   white-space: nowrap;
 }
 
-.leaderboard-td-badges {
-  vertical-align: middle;
+.leaderboard-table tbody td.leaderboard-td-badges {
+  overflow: visible;
 }
 
 .leaderboard-badge-strip .guild-role-token,
@@ -8615,6 +8617,36 @@ tr.plb-gear-row--miss th {
   width: 100%;
   height: 100%;
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.leaderboard-badge-strip .guild-role-token,
+.leaderboard-badge-strip .raider-badge-slot,
+.leaderboard-badge-strip .achievement-badge-container {
+  position: relative;
+  overflow: visible;
+}
+
+.leaderboard-badge-strip .achievement-badge-container:hover,
+.leaderboard-badge-strip .achievement-badge-container:focus-within,
+.leaderboard-badge-strip .guild-role-token:hover,
+.leaderboard-badge-strip .guild-role-token:focus-within {
+  z-index: 120;
+}
+
+.leaderboard-badge-strip .raider-badge-slot--achievement-earned {
+  background: #000;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2));
+}
+
+.leaderboard-badge-strip .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
+  --achievement-badge-zoom: 1.72;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(var(--achievement-badge-zoom));
+  transform-origin: center center;
 }
 
 .leaderboard-badge-strip .guild-role-token-img,
@@ -8629,25 +8661,23 @@ tr.plb-gear-row--miss th {
   transform-origin: center center;
 }
 
-.leaderboard-badge-strip .raider-badge-slot--achievement-earned {
-  background: #000;
-  overflow: hidden;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2));
-}
-
-.leaderboard-badge-strip .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
-  --achievement-badge-zoom: 1.72;
-  display: block;
-  object-fit: cover;
-  object-position: center;
-  transform: scale(var(--achievement-badge-zoom));
-  transform-origin: center center;
-}
-
-/* Collapsed row: native title only — rich tooltips clip inside the 62px strip. */
 .leaderboard-badge-strip .achievement-tooltip {
-  display: none !important;
+  top: auto;
+  bottom: calc(100% + 10px);
+  z-index: 130;
+  width: min(280px, calc(100vw - 32px));
+  min-width: min(220px, calc(100vw - 32px));
+}
+
+.leaderboard-badge-strip-icons > .achievement-badge-container:first-child .achievement-tooltip,
+.leaderboard-badge-strip-icons > .guild-role-token:first-child .achievement-tooltip {
+  left: 0;
+  transform: none;
+}
+
+.leaderboard-table tbody tr:nth-child(-n + 4) .leaderboard-badge-strip .achievement-tooltip {
+  top: calc(100% + 10px);
+  bottom: auto;
 }
 
 .leaderboard-badge-strip .achievement-badge-container:hover .achievement-badge-frame,

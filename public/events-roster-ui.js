@@ -1529,11 +1529,12 @@ function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry) {
   const meta = badgeTooltipMeta(id, name, description, rarity);
   const icon = badgeIconSrcFromCatalogPath(catalogEntry?.icon, id);
   const tip = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(id)}" title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">
+  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(id)}" aria-label="${escapeHtml(tip)}">
     <span ${achievementBadgeFrameAttrs(meta)}>
       <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
       <span class="achievement-badge-glow" aria-hidden="true"></span>
     </span>
+    ${achievementTooltipHtml(meta)}
   </span>`;
 }
 
