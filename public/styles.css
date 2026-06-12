@@ -8495,12 +8495,13 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-td-player {
-  width: 34%;
-  min-width: 300px;
+  width: 28%;
+  min-width: 220px;
+  padding-right: 8px;
 }
 
 .leaderboard-td-badges {
-  width: 66%;
+  width: 72%;
   min-width: 0;
   overflow: hidden;
 }
@@ -8851,7 +8852,7 @@ tr.plb-gear-row--miss th {
   display: flex;
   flex-direction: row;
   align-items: flex-start;
-  gap: 10px;
+  gap: 6px;
 }
 
 .leaderboard-portrait-stack {
@@ -8859,10 +8860,10 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-spec-img {
-  /* Sized to fit a full raider row without dwarfing the name/meta column. */
-  width: 92px;
-  height: 92px;
-  border-radius: 12px;
+  /* Match collapsed badge row height — keeps the raider block narrow for the badge strip. */
+  width: 62px;
+  height: 62px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.35);
 }
@@ -8871,7 +8872,7 @@ tr.plb-gear-row--miss th {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -8903,8 +8904,9 @@ tr.plb-gear-row--miss th {
 .leaderboard-kpi-inline {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  font-size: 12px;
+  gap: 2px 8px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .leaderboard-kpi-inline-item {
