@@ -415,6 +415,32 @@ function raidRankPillHtml(raidRank) {
   return `<span class="leaderboard-raid-rank-pill" title="Raid rank: ${escapeHtml(displayRaw)}">${escapeHtml(display)}</span>`;
 }
 
+function guildRankDescriptionFromCatalog(slug) {
+  const id = String(slug || "").trim();
+  if (!id) return "";
+  const categories = leaderboardBadgeCatalogFull.length ? leaderboardBadgeCatalogFull : [];
+  const guildCat = categories.find((cat) => cat.id === "guild-rank");
+  const badge = (guildCat?.badges || []).find((b) => b.id === id);
+  return String(badge?.description || "").trim();
+}
+
+function leaderboardRoleUnderNameHtml(p) {
+  if (!plb) return "";
+  const escapeHtml = plb.escapeHtml;
+  const role = plb.effectiveGuildRole ? plb.effectiveGuildRole(p) : null;
+  const raw = String(role?.label || p._raidRank || "").trim();
+  if (!raw) return "";
+  const label = role?.displayLabel || displayLeaderboardRaidRank(raw);
+  const description = guildRankDescriptionFromCatalog(role?.slug);
+  const descHtml = description
+    ? `<span class="leaderboard-player-role-desc">${escapeHtml(description)}</span>`
+    : "";
+  return `<div class="leaderboard-player-role-block">
+    <span class="leaderboard-player-role">${escapeHtml(label)}</span>
+    ${descHtml}
+  </div>`;
+}
+
 function attendancePercentTooltip(player, recentRaidCap, consideredRaids) {
   const cap = Number(recentRaidCap) || 6;
   const win = Number(consideredRaids) || 0;
@@ -504,7 +530,7 @@ function raiderCellHtml(p, recentCap, considered) {
       : "";
   const portraitAlt = specLabel ? `${displayName} · ${className} · ${specLabel}` : `${displayName} · ${className}`;
   const metaBits = [specLabel, className].map((x) => String(x || "").trim()).filter(Boolean);
-  const rankPill = raidRankPillHtml(p._raidRank);
+  const roleBlock = leaderboardRoleUnderNameHtml(p);
   return `
     <div class="leaderboard-player-row">
       <div class="leaderboard-portrait-stack">
@@ -524,8 +550,8 @@ function raiderCellHtml(p, recentCap, considered) {
         <div class="leaderboard-player-main">
           <div class="leaderboard-player-name-line">
             <span class="leaderboard-player-name" style="color:${escapeHtml(color)};${priestGlow}">${escapeHtml(displayName)}</span>
-            <span class="leaderboard-player-rank">${rankPill}</span>
           </div>
+          ${roleBlock}
           ${
             metaBits.length
               ? `<span class="leaderboard-player-meta">${escapeHtml(metaBits.join(" · "))}</span>`
