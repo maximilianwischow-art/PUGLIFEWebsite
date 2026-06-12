@@ -1417,6 +1417,23 @@ function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
   return 0;
 }
 
+/** Compact milestone chip for leaderboard collapsed rows. */
+function leaderboardMilestoneChipHtml(player) {
+  const tier = highestEarnedRaidsWithGuildMilestoneThreshold(player);
+  if (!tier) return "";
+  const tip = `${tier} raids with the guild — distinct WCL guild raid reports in admin Event Management.`;
+  return `<span class="leaderboard-badge-chip leaderboard-badge-chip--milestone" title="${escapeHtml(tip)}">${tier} raids</span>`;
+}
+
+/** Earned/total summary chip with chevron for leaderboard expand affordance. */
+function leaderboardBadgeSummaryChipHtml(earned, total, isOpen) {
+  const e = Math.max(0, Math.floor(Number(earned) || 0));
+  const t = Math.max(0, Math.floor(Number(total) || 0));
+  const tip = "Click to expand badge collection";
+  const chevron = isOpen ? "▾" : "▸";
+  return `<span class="leaderboard-badge-chip leaderboard-badge-chip--summary" title="${escapeHtml(tip)}">${e}/${t} earned <span class="leaderboard-badge-chevron" aria-hidden="true">${chevron}</span></span>`;
+}
+
 /** Order: Best time → Hall of Fame → Iron attendance → Parsing ceiling (tooltips are full sentence for title=). */
 function rosterAchievementBadgesHtml(player) {
   const badges = [
@@ -2341,6 +2358,9 @@ window.plbEventsRoster = {
   rosterPugMasterCrafterBadgesHtml,
   playerEarnedPugMasterCrafterBadge,
   rosterAchievementBadgeRowHtml,
+  leaderboardMilestoneChipHtml,
+  leaderboardBadgeSummaryChipHtml,
+  highestEarnedRaidsWithGuildMilestoneThreshold,
   rosterBucketRoleName,
   eventsRosterCharacterLabel,
   rosterParseForDisplay,

@@ -8538,85 +8538,159 @@ tr.plb-gear-row--miss th {
   background: rgba(200, 160, 255, 0.07);
 }
 
-.leaderboard-td-loot {
+.leaderboard-td-badges-panel {
   padding: 0 !important;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.28);
 }
 
-.leaderboard-loot-panel {
-  padding: 12px 14px 14px 16px;
-  max-height: 280px;
-  overflow: auto;
-}
-
-.leaderboard-loot-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.leaderboard-loot-line {
+.leaderboard-badge-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px 12px;
-  font-size: 12px;
-  line-height: 1.35;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  padding-bottom: 6px;
+  gap: 8px 12px;
 }
 
-.leaderboard-loot-line-left {
-  min-width: 0;
-  flex: 1;
+.leaderboard-badge-summary-roles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
-.leaderboard-loot-item-trigger {
-  max-width: 100%;
+.leaderboard-badge-summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
-.leaderboard-loot-item-label {
-  min-width: 0;
-  word-break: break-word;
-}
-
-.leaderboard-loot-panel .loot-item-name[data-loot-item-id] {
-  cursor: help;
-}
-
-.leaderboard-loot-line:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.leaderboard-loot-meta {
+.leaderboard-badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  background: rgba(0, 0, 0, 0.28);
   font-size: 11px;
-  text-align: right;
-  margin-left: auto;
-}
-
-.leaderboard-loot-log {
-  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--fel);
-  margin-left: 4px;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  white-space: nowrap;
 }
 
-.leaderboard-loot-empty {
-  font-size: 12px;
-  margin: 0;
+.leaderboard-badge-chip--milestone {
+  border-color: rgba(168, 85, 247, 0.55);
+  color: #e9d5ff;
 }
 
-.leaderboard-loot-more {
-  margin: 10px 0 0;
+.leaderboard-badge-chip--summary {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(225, 220, 245, 0.9);
+}
+
+.leaderboard-row-leader:not(.leaderboard-row-leader--open) .leaderboard-badge-chip--summary {
+  border-color: rgba(212, 175, 55, 0.4);
+}
+
+.leaderboard-badge-chevron {
   font-size: 11px;
+  margin-left: 2px;
+  color: #f4d03f;
+}
+
+.leaderboard-row-leader:focus-visible td {
+  outline: 2px solid rgba(212, 175, 55, 0.85);
+  outline-offset: -2px;
+}
+
+.leaderboard-badge-panel {
+  padding: 12px 14px 16px;
+  overflow: visible;
+  max-height: none;
+}
+
+.leaderboard-badge-panel .badge-phase-panels {
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.leaderboard-badge-panel .profile-badge-category {
+  padding: 0.75rem 0.85rem;
+}
+
+.leaderboard-badge-panel .profile-badge-category-title {
+  font-size: 1.15rem;
+}
+
+.leaderboard-badge-panel-head {
+  margin-bottom: 10px;
+}
+
+.leaderboard-badge-panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pink-l);
+}
+
+.badge-phase-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.badge-phase-tab {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.badge-phase-tab:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  color: var(--text);
+}
+
+.badge-phase-tab:focus-visible {
+  outline: 2px solid rgba(212, 175, 55, 0.85);
+  outline-offset: 2px;
+}
+
+.badge-phase-tab.is-active {
+  border-color: rgba(212, 175, 55, 0.65);
+  color: #f4d03f;
+  background: rgba(212, 175, 55, 0.1);
+}
+
+.badge-phase-panels .profile-badge-category {
+  margin-bottom: 14px;
+}
+
+.profile-badges-phased .profile-badge-category:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  .leaderboard-badge-summary {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .leaderboard-td-badges {
+    min-width: 0;
+  }
 }
 
 .leaderboard-player-row {

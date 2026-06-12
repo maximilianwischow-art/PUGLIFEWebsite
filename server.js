@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260611-plb-ssc-0611-badge-v1";
+const API_BUILD_ID = "20260611-plb-lb-badge-restructure-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -14446,71 +14446,100 @@ function resolveSpecificRaidAttendanceAwards() {
  * the profile page can render an "all badges" overview. Mirrors the artwork
  * already shipped under `/public/images/`.
  */
+const PHASE_1_EVENT_BADGE_IDS = new Set(["aoe-cleave"]);
+
 const BADGE_CATALOG = [
   {
     id: "guild-rank",
-    label: "Guild rank",
-    description: "Manual officer ranks and attendance-based tiers.",
+    label: "Guild & officers",
+    phase: "meta",
+    description: "Manual officer ranks, attendance-based tiers, and legendary crafter honours.",
     badges: [
-      { id: "guildlead", name: "PUG Lead", icon: "/images/guild-roles/guildlead.png", tier: "officer", description: "Officer rank for guild leadership and raid organization." },
-      { id: "raidlead", name: "Raid Lead", icon: "/images/guild-roles/raidlead.png", tier: "officer", description: "Officer rank for players leading raid nights and roster execution." },
-      { id: "dpslead", name: "DPS Lead", icon: "/images/guild-roles/dpslead.png", tier: "officer", description: "Officer rank for players coordinating DPS assignments and execution." },
-      { id: "heallead", name: "Heal Lead", icon: "/images/guild-roles/heallead.png", tier: "officer", description: "Officer rank for players coordinating healer assignments and cooldowns." },
-      { id: "core", name: "Core", icon: "/images/guild-roles/core.png", tier: "officer", description: "Trusted core raider rank assigned in Account Assignment." },
-      { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance", description: "Attendance rank for consistently joining tracked guild raids." },
-      { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance", description: "Attendance rank for regular participation in tracked guild raids." },
-      { id: "peon", name: "Peon", icon: "/images/guild-roles/peon.png", tier: "attendance", description: "Starting guild rank for new or low-attendance raiders." },
-      { id: "master-crafter-tailoring", name: "PUG Master Crafter: Tailoring", icon: "/images/guild-roles/tailoring.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Tailoring." },
-      { id: "master-crafter-leatherworking", name: "PUG Master Crafter: Leatherworking", icon: "/images/guild-roles/leatherworking.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Leatherworking." },
-      { id: "master-crafter-blacksmithing", name: "PUG Master Crafter: Blacksmithing", icon: "/images/guild-roles/blacksmithing.png", tier: "legendary", description: "Legendary role badge for a trusted PUG master crafter in Blacksmithing." },
-      { id: "portal", name: "Portal", icon: "/images/guild-roles/portal.png", tier: "legendary", description: "Legendary portal honour badge awarded by guild leadership." },
+      { id: "guildlead", name: "PUG Lead", icon: "/images/guild-roles/guildlead.png", tier: "officer", phase: "meta", description: "Officer rank for guild leadership and raid organization." },
+      { id: "raidlead", name: "Raid Lead", icon: "/images/guild-roles/raidlead.png", tier: "officer", phase: "meta", description: "Officer rank for players leading raid nights and roster execution." },
+      { id: "dpslead", name: "DPS Lead", icon: "/images/guild-roles/dpslead.png", tier: "officer", phase: "meta", description: "Officer rank for players coordinating DPS assignments and execution." },
+      { id: "heallead", name: "Heal Lead", icon: "/images/guild-roles/heallead.png", tier: "officer", phase: "meta", description: "Officer rank for players coordinating healer assignments and cooldowns." },
+      { id: "core", name: "Core", icon: "/images/guild-roles/core.png", tier: "officer", phase: "meta", description: "Trusted core raider rank assigned in Account Assignment." },
+      { id: "veteran", name: "Veteran", icon: "/images/guild-roles/veteran.png", tier: "attendance", phase: "meta", description: "Attendance rank for consistently joining tracked guild raids." },
+      { id: "grunt", name: "Grunt", icon: "/images/guild-roles/grunt.png", tier: "attendance", phase: "meta", description: "Attendance rank for regular participation in tracked guild raids." },
+      { id: "peon", name: "Peon", icon: "/images/guild-roles/peon.png", tier: "attendance", phase: "meta", description: "Starting guild rank for new or low-attendance raiders." },
+      { id: "master-crafter-tailoring", name: "PUG Master Crafter: Tailoring", icon: "/images/guild-roles/tailoring.png", tier: "legendary", phase: "meta", description: "Legendary role badge for a trusted PUG master crafter in Tailoring." },
+      { id: "master-crafter-leatherworking", name: "PUG Master Crafter: Leatherworking", icon: "/images/guild-roles/leatherworking.png", tier: "legendary", phase: "meta", description: "Legendary role badge for a trusted PUG master crafter in Leatherworking." },
+      { id: "master-crafter-blacksmithing", name: "PUG Master Crafter: Blacksmithing", icon: "/images/guild-roles/blacksmithing.png", tier: "legendary", phase: "meta", description: "Legendary role badge for a trusted PUG master crafter in Blacksmithing." },
+      { id: "portal", name: "Portal", icon: "/images/guild-roles/portal.png", tier: "legendary", phase: "meta", description: "Legendary portal honour badge awarded by guild leadership." },
     ],
   },
   {
-    id: "achievements",
-    label: "Achievements",
-    description: "Earned by appearing in WCL rosters / MVP votes.",
+    id: "raid-loyalty",
+    label: "Raid loyalty",
+    phase: "cross",
+    description: "Lifetime guild raid milestones and perfect attendance in the tracked window.",
     badges: [
-      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
-      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png", description: "You won a raid MVP vote in a past round listed on the Hall of Fame page." },
-      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", description: "100% attendance in the current tracked raid window." },
-      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
-      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
+      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png", phase: "cross", sortOrder: 5, description: "Appeared in at least 5 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png", phase: "cross", sortOrder: 10, description: "Appeared in at least 10 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", phase: "cross", sortOrder: 25, description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", phase: "cross", sortOrder: 50, description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", phase: "cross", sortOrder: 100, description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "cross", description: "100% attendance in the current tracked raid window." },
     ],
   },
   {
-    id: "event-awards",
-    label: "Event awards",
-    description: "One-off badges pinned to a specific raid night. Earned by appearing in the WCL roster of that raid.",
-    badges: SPECIFIC_RAID_ATTENDANCE_BADGES.map((cfg) => ({
+    id: "phase-1-t4",
+    label: "Phase 1 — Tier 4",
+    phase: "P1",
+    description: "Karazhan, Gruul's Lair, Magtheridon's Lair first clears and Tier 4 event awards.",
+    badges: [
+      { id: "kara-first-time-clear", name: "Karazhan first clear", icon: "/images/achievements/kara-first-time-clear.png", phase: "P1", sortOrder: 1, description: "You were in the ranked roster on the guild's first Karazhan full clear report." },
+      { id: "gruul-first-time-clear", name: "Gruul first clear", icon: "/images/achievements/gruul-first-time-clear.png", phase: "P1", sortOrder: 2, description: "You were in the ranked roster on the guild's first Gruul's Lair full clear report." },
+      { id: "magtheridon-first-time-clear", name: "Magtheridon first clear", icon: "/images/achievements/magtheridon-first-time-clear.png", phase: "P1", sortOrder: 3, description: "You were in the ranked roster on the guild's first Magtheridon's Lair full clear report." },
+      ...SPECIFIC_RAID_ATTENDANCE_BADGES.filter((cfg) => PHASE_1_EVENT_BADGE_IDS.has(cfg.badgeId)).map((cfg) => ({
+        id: cfg.badgeId,
+        name: cfg.label,
+        icon: cfg.icon,
+        phase: "P1",
+        description: cfg.description,
+      })),
+    ],
+  },
+  {
+    id: "phase-2-t5",
+    label: "Phase 2 — Tier 5",
+    phase: "P2",
+    description: "Serpentshrine Cavern and Tempest Keep event awards.",
+    badges: SPECIFIC_RAID_ATTENDANCE_BADGES.filter((cfg) => !PHASE_1_EVENT_BADGE_IDS.has(cfg.badgeId)).map((cfg) => ({
       id: cfg.badgeId,
       name: cfg.label,
       icon: cfg.icon,
+      phase: "P2",
       description: cfg.description,
     })),
   },
   {
-    id: "first-clears",
-    label: "First clears",
-    description: "Listed in the ranked roster of the guild's first full clear of each raid.",
+    id: "performance",
+    label: "Performance",
+    phase: "cross",
+    description: "Parse, speed, and death-window performance badges.",
     badges: [
-      { id: "kara-first-time-clear", name: "Karazhan first clear", icon: "/images/achievements/kara-first-time-clear.png", description: "You were in the ranked roster on the guild's first Karazhan full clear report." },
-      { id: "gruul-first-time-clear", name: "Gruul first clear", icon: "/images/achievements/gruul-first-time-clear.png", description: "You were in the ranked roster on the guild's first Gruul's Lair full clear report." },
-      { id: "magtheridon-first-time-clear", name: "Magtheridon first clear", icon: "/images/achievements/magtheridon-first-time-clear.png", description: "You were in the ranked roster on the guild's first Magtheridon's Lair full clear report." },
+      { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "cross", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
+      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "cross", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
+      { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", phase: "cross", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
     ],
   },
   {
-    id: "raid-milestones",
-    label: "Raid milestones",
-    description:
-      "Distinct guild raid reports a player appeared in on Warcraft Logs, scoped to the admin Event Management selection (only WCL events explicitly marked as guild raids count). Attendance % still uses only the recent WCL window (WCL_ATTENDANCE_RECENT_RAIDS, default 6). On this profile view, **every** milestone tier you have reached is shown (e.g. at 12 events you see both the 5- and 10-raid badges). Compact roster rows elsewhere may still show only the highest milestone icon.",
+    id: "honour",
+    label: "Honour",
+    phase: "cross",
+    description: "Raid MVP hall of fame honours.",
     badges: [
-      { id: "raids-with-guild-5", name: "5 raids with the guild", icon: "/images/achievements/raids-with-guild-5.png", description: "Appeared in at least 5 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-10", name: "10 raids with the guild", icon: "/images/achievements/raids-with-guild-10.png", description: "Appeared in at least 10 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
+      { id: "hall-of-fame", name: "MVP hall of fame", icon: "/images/achievements/hall-of-fame.png", phase: "cross", description: "You won a raid MVP vote in a past round listed on the Hall of Fame page." },
     ],
+  },
+  {
+    id: "phase-3-t6",
+    label: "Phase 3 — Tier 6",
+    phase: "P3",
+    description: "Reserved for Hyjal, Black Temple, and Sunwell Plateau event badges.",
+    badges: [],
   },
 ];
 
@@ -14531,8 +14560,18 @@ const GUILD_ROLE_BADGE_IDS = new Set([
 
 function badgeCatalogRarityForCategory(categoryId, badge) {
   const cat = String(categoryId || "");
-  if (cat === "event-awards") return "legendary";
-  if (cat === "achievements" || cat === "first-clears" || cat === "raid-milestones") return "epic";
+  if (cat === "phase-2-t5" || cat === "event-awards") return "legendary";
+  if (
+    cat === "raid-loyalty" ||
+    cat === "phase-1-t4" ||
+    cat === "performance" ||
+    cat === "honour" ||
+    cat === "achievements" ||
+    cat === "first-clears" ||
+    cat === "raid-milestones"
+  ) {
+    return "epic";
+  }
   const explicitTier = sanitizeBadgeTooltipRarity(badge?.tier);
   if (explicitTier) return explicitTier;
   return String(badge?.tier || "") === "officer" ? "rare" : "common";
@@ -14587,6 +14626,7 @@ function mergedBadgeCatalogCategories() {
   const overrides = badgeTooltipsState?.byBadgeId || {};
   return BADGE_CATALOG.map((cat) => ({
     ...cat,
+    phase: cat.phase || "cross",
     badges: (cat.badges || []).map((badge) => {
       const defaultDescription = String(badge.description || cat.description || "").trim();
       const defaultRarity = badgeCatalogRarityForCategory(cat.id, badge);
@@ -14595,6 +14635,7 @@ function mergedBadgeCatalogCategories() {
       const rarity = sanitizeBadgeTooltipRarity(override?.rarity) || defaultRarity;
       return {
         ...badge,
+        phase: badge.phase || cat.phase || "cross",
         categoryId: cat.id,
         categoryLabel: cat.label,
         defaultDescription,
@@ -14607,6 +14648,10 @@ function mergedBadgeCatalogCategories() {
       };
     }),
   }));
+}
+
+function achievementBadgeCatalogCategories() {
+  return mergedBadgeCatalogCategories().filter((cat) => cat.id !== "guild-rank" && (cat.badges || []).length > 0);
 }
 
 function flatMergedBadgeCatalogRows() {
@@ -14629,13 +14674,10 @@ function flatMergedBadgeCatalogRows() {
 }
 
 function profileAchievementBadgeCatalogCategories() {
-  return mergedBadgeCatalogCategories()
-    .filter((cat) => cat.id !== "guild-rank")
-    .map((cat) => ({
-      ...cat,
-      badges: (cat.badges || []).filter((badge) => !GUILD_ROLE_BADGE_IDS.has(String(badge.id || ""))),
-    }))
-    .filter((cat) => cat.badges.length > 0);
+  return achievementBadgeCatalogCategories().map((cat) => ({
+    ...cat,
+    badges: (cat.badges || []).filter((badge) => !GUILD_ROLE_BADGE_IDS.has(String(badge.id || ""))),
+  }));
 }
 
 app.get("/api/badge-tooltips", async (_req, res) => {
@@ -23592,6 +23634,49 @@ function lootCountByUserMapFromMaterialised() {
   return out;
 }
 
+/** Merge every earned achievement badge id for a leaderboard row (no per-row API on expand). */
+function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadges, linkedCharacters) {
+  const earned = new Set();
+  const uid = Number(userId);
+  if (!Number.isInteger(uid) || uid <= 0) return [];
+
+  if (materializeBadgesEnabled()) {
+    try {
+      for (const st of badgeStateGetByUserId(uid) || []) {
+        if (st?.earned === 1 || st?.earned === true || st?.earned === "1") earned.add(String(st.badgeId || ""));
+      }
+    } catch {
+      /* badge_state optional */
+    }
+  }
+
+  for (const bid of row?.specificEventBadges || []) {
+    const id = String(bid || "").trim();
+    if (id) earned.add(id);
+  }
+
+  const pr = preResolvedBadges || {};
+  if (pr.bestTimeParticipant) earned.add("best-time-participant");
+  if (pr.mostDeathsLastSix) earned.add("most-deaths-last-6-raids");
+  if (pr.firstClearKara) earned.add("kara-first-time-clear");
+  if (pr.firstClearGruul) earned.add("gruul-first-time-clear");
+  if (pr.firstClearMag) earned.add("magtheridon-first-time-clear");
+  if (pr.hallOfFameMvp) earned.add("hall-of-fame");
+
+  const milestoneCount = Math.max(0, Math.floor(Number(row?.wclEventCount ?? row?.rhPastEventCount ?? 0) || 0));
+  for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) earned.add(bid);
+
+  try {
+    const mat = profileMaterializedAchievementResolution({ id: uid }, linkedCharacters);
+    for (const id of mat.earnedIds || []) earned.add(id);
+  } catch {
+    /* materialized achievements optional */
+  }
+
+  earned.delete("");
+  return [...earned];
+}
+
 /**
  * SQLite-only leaderboard bundle. Returns every leaderboard row plus the
  * achievement / KPI fields the client needs in one payload, sourced
@@ -23642,9 +23727,6 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
     mvpAwardCountByUserId = new Map();
   }
 
-  // Loot count hint for the lazy expand panel.
-  const lootCountByUserId = lootCountByUserMapFromMaterialised();
-
   // Specific-raid attendance awards (e.g. "AOE Cleave", SSC first event).
   /** @type {Map<number, string[]>} */
   const specificEventBadgesByUserId = new Map();
@@ -23679,13 +23761,16 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       raidNames: ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"],
     });
     for (const n of grouped?.["Karazhan"]?.participants || []) {
-      firstClearKaraNames.set(String(n || "").trim().toLowerCase(), true);
+      const key = normalizeRaidHelperDisplayKey(String(n || ""));
+      if (key) firstClearKaraNames.set(key, true);
     }
     for (const n of grouped?.["Gruul's Lair"]?.participants || []) {
-      firstClearGruulNames.set(String(n || "").trim().toLowerCase(), true);
+      const key = normalizeRaidHelperDisplayKey(String(n || ""));
+      if (key) firstClearGruulNames.set(key, true);
     }
     for (const n of grouped?.["Magtheridon's Lair"]?.participants || []) {
-      firstClearMagNames.set(String(n || "").trim().toLowerCase(), true);
+      const key = normalizeRaidHelperDisplayKey(String(n || ""));
+      if (key) firstClearMagNames.set(key, true);
     }
   } catch {
     /* first clears optional */
@@ -23696,7 +23781,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
   const bestTimeNames = new Set();
   try {
     for (const row of bestTimeRosterGet({}) || []) {
-      const cn = String(row?.characterName || "").trim().toLowerCase();
+      const cn = normalizeRaidHelperDisplayKey(String(row?.characterName || ""));
       if (cn) bestTimeNames.add(cn);
     }
   } catch {
@@ -23718,7 +23803,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       for (const r of rows) {
         const n = Number(r?.deaths || 0);
         if (n !== max) continue;
-        const cn = String(r?.mainCharacterName || r?.displayName || "").trim().toLowerCase();
+        const cn = normalizeRaidHelperDisplayKey(String(r?.mainCharacterName || r?.displayName || ""));
         if (cn) mostDeathsNames.add(cn);
       }
     }
@@ -23727,7 +23812,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
   }
 
   /* Decorate every base row with class/spec from `user_characters`,
-     mvpAwardCount, lootCount, specificEventBadges, mainCharacterName,
+     mvpAwardCount, earnedBadgeIds, specificEventBadges, mainCharacterName,
      and pre-resolved badge flags for first-clears / best-time / most-deaths. */
   const players = [];
   const publicVisibility = identityPublicVisibilitySettingsPublic();
@@ -23742,7 +23827,6 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
     const className = String(main?.wowClass || "").trim();
     const specName = String(main?.wowSpec || "").trim();
     const mainCharacterName = main?.characterName || row.name || row.raidHelperName || "";
-    const lootCount = Number(lootCountByUserId.get(u.id) || 0);
     const deaths = Number(deathByUserId.get(u.id) || 0);
     const mvpAwardCount = Number(mvpAwardCountByUserId.get(u.id) || 0);
     const specificEventBadges = specificEventBadgesByUserId.get(u.id) || [];
@@ -23751,12 +23835,31 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
        the client matches against today (mirrors `playerMatchesAchievementNameSet`).
        Saves the client from running another network round-trip when the
        legacy `loadWclAttendanceForEvents()` fan-out is dropped. */
-    const nameKey = String(mainCharacterName || "").trim().toLowerCase();
-    const earnedBestTime = nameKey && bestTimeNames.has(nameKey);
-    const earnedMostDeaths = nameKey && mostDeathsNames.has(nameKey);
-    const earnedFirstKara = nameKey && firstClearKaraNames.has(nameKey);
-    const earnedFirstGruul = nameKey && firstClearGruulNames.has(nameKey);
-    const earnedFirstMag = nameKey && firstClearMagNames.has(nameKey);
+    const nameKeys = new Set();
+    for (const cn of [mainCharacterName, ...chars.map((c) => c?.characterName)]) {
+      const key = normalizeRaidHelperDisplayKey(String(cn || ""));
+      if (key) nameKeys.add(key);
+    }
+    const earnedBestTime = [...nameKeys].some((k) => bestTimeNames.has(k));
+    const earnedMostDeaths = [...nameKeys].some((k) => mostDeathsNames.has(k));
+    const earnedFirstKara = [...nameKeys].some((k) => firstClearKaraNames.has(k));
+    const earnedFirstGruul = [...nameKeys].some((k) => firstClearGruulNames.has(k));
+    const earnedFirstMag = [...nameKeys].some((k) => firstClearMagNames.has(k));
+    const preResolvedBadges = {
+      bestTimeParticipant: !!earnedBestTime,
+      mostDeathsLastSix: !!earnedMostDeaths,
+      firstClearKara: !!earnedFirstKara,
+      firstClearGruul: !!earnedFirstGruul,
+      firstClearMag: !!earnedFirstMag,
+      hallOfFameMvp: mvpAwardCount > 0,
+    };
+    const linkedCharacters = [...new Set([mainCharacterName, ...chars.map((c) => c?.characterName)].filter(Boolean))];
+    const earnedBadgeIds = computeEarnedBadgeIdsForLeaderboardPlayer(u.id, {
+      ...row,
+      wclEventCount: row.wclEventCount,
+      rhPastEventCount: row.wclEventCount,
+      specificEventBadges,
+    }, preResolvedBadges, linkedCharacters);
 
     players.push({
       ...row,
@@ -23774,18 +23877,11 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       rhPastEventCount: Number(row.wclEventCount || 0),
       legacyRhSignupCount: 0,
       mvpAwardCount,
-      lootCount,
       deaths,
       _deaths: deaths,
       specificEventBadges,
-      preResolvedBadges: {
-        bestTimeParticipant: !!earnedBestTime,
-        mostDeathsLastSix: !!earnedMostDeaths,
-        firstClearKara: !!earnedFirstKara,
-        firstClearGruul: !!earnedFirstGruul,
-        firstClearMag: !!earnedFirstMag,
-        hallOfFameMvp: mvpAwardCount > 0,
-      },
+      preResolvedBadges,
+      earnedBadgeIds,
     });
   }
 

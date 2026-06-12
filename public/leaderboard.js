@@ -15,11 +15,13 @@ let sortState = { key: "raidRank", dir: "asc" };
 /** @type {object[]} */
 let leaderboardRows = [];
 
-/** Normalized display-name key of the open row (loot sub-row), or null. */
+/** Normalized display-name key of the open row (badge sub-row), or null. */
 let expandedPlayerKey = null;
 
-/** Item metadata from `GET /api/wow-classic/items` for leaderboard loot lines (icons + tooltips). */
-let leaderboardLootItemMetaMap = new Map();
+/** Achievement badge catalog from `GET /api/badge-tooltips` (session-cached). */
+let leaderboardBadgeCatalog = [];
+let leaderboardBadgeCatalogPromise = null;
+let leaderboardAchievementBadgeTotal = 0;
 
 /**
  * Session-only cache (tab lifetime) to avoid re-fetching the leaderboard
@@ -36,15 +38,10 @@ let leaderboardLootItemMetaMap = new Map();
  * from `/api/leaderboard` (single SQLite-only call). Previous v3 entries
  * still carry the legacy multi-fetch shape and must be discarded.
  */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v6";
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v7";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
 /** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
 const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;
-
-/** Per-row loot cache (canonical user id → loot items + item meta), populated lazily on row expand. */
-const lootByDbUserId = new Map();
-/** Inflight per-row loot promises so rapid expand toggles don't dogpile the API. */
-const lootInflightByDbUserId = new Map();
 
 function lbApiGetJson(url, init) {
   const c = window.plbSessionApiCache;
@@ -72,7 +69,7 @@ function readLeaderboardSessionCache(guildId) {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const o = JSON.parse(raw);
-    if (!o || typeof o.at !== "number" || !Array.isArray(o.rows) || !Array.isArray(o.lootEntries)) return null;
+    if (!o || typeof o.at !== "number" || !Array.isArray(o.rows)) return null;
     if (Date.now() - o.at > LEADERBOARD_SESSION_TTL_MS) return null;
     // Defence-in-depth: if a previous session captured rows that were missing
     // className for too many players, those rows would render the question-mark
@@ -91,20 +88,89 @@ function readLeaderboardSessionCache(guildId) {
   }
 }
 
-function writeLeaderboardSessionCache(guildId, rows, lootMap) {
+function writeLeaderboardSessionCache(guildId, rows) {
   try {
-    const lootEntries = [...lootMap.entries()].map(([id, meta]) => [id, meta]);
     sessionStorage.setItem(
       `${LEADERBOARD_SESSION_CACHE_KEY}:${guildId}`,
       JSON.stringify({
         at: Date.now(),
         rows,
-        lootEntries,
       })
     );
   } catch {
     /* QuotaExceeded / private mode — skip */
   }
+}
+
+async function ensureBadgeCatalogLoaded() {
+  if (leaderboardBadgeCatalog.length) return leaderboardBadgeCatalog;
+  if (leaderboardBadgeCatalogPromise) return leaderboardBadgeCatalogPromise;
+  leaderboardBadgeCatalogPromise = (async () => {
+    try {
+      const payload = await lbApiGetJson("/api/badge-tooltips");
+      const categories = Array.isArray(payload?.categories) ? payload.categories : [];
+      const ui = window.plbBadgeCatalogUi;
+      leaderboardBadgeCatalog = ui
+        ? ui.achievementCategoriesFromCatalog(categories)
+        : categories.filter((cat) => cat.id !== "guild-rank" && (cat.badges || []).length > 0);
+      leaderboardAchievementBadgeTotal = ui
+        ? ui.countAchievementBadges(leaderboardBadgeCatalog)
+        : leaderboardBadgeCatalog.reduce((n, cat) => n + (cat.badges || []).length, 0);
+    } catch {
+      leaderboardBadgeCatalog = [];
+      leaderboardAchievementBadgeTotal = 0;
+      leaderboardBadgeCatalogPromise = null;
+    }
+    return leaderboardBadgeCatalog;
+  })();
+  return leaderboardBadgeCatalogPromise;
+}
+
+function earnedBadgeIdsForPlayer(p) {
+  if (Array.isArray(p?.earnedBadgeIds)) return p.earnedBadgeIds;
+  return [];
+}
+
+function leaderboardBadgesColumnHtml(p, isOpen) {
+  const escapeHtml = plb.escapeHtml;
+  const roleBadge = plb.rosterRoleIconHtml
+    ? plb.rosterRoleIconHtml(p, { hideLabel: true, className: "role-badge-group-token leaderboard-role-badge-token" })
+    : "";
+  const crafterRoleBadges = plb.rosterPugMasterCrafterBadgesHtml
+    ? plb.rosterPugMasterCrafterBadgesHtml(p, { className: "role-badge-group-token leaderboard-role-badge-token" })
+    : "";
+  const roleBadges = `${roleBadge}${crafterRoleBadges}`;
+  const milestoneChip =
+    typeof plb.leaderboardMilestoneChipHtml === "function" ? plb.leaderboardMilestoneChipHtml(p) : "";
+  const ui = window.plbBadgeCatalogUi;
+  const earned = ui
+    ? ui.countEarnedAchievementBadges(leaderboardBadgeCatalog, earnedBadgeIdsForPlayer(p))
+    : earnedBadgeIdsForPlayer(p).length;
+  const total = leaderboardAchievementBadgeTotal || 0;
+  const summaryChip =
+    typeof plb.leaderboardBadgeSummaryChipHtml === "function"
+      ? plb.leaderboardBadgeSummaryChipHtml(earned, total, isOpen)
+      : `<span class="leaderboard-badge-chip leaderboard-badge-chip--summary">${earned}/${total} earned</span>`;
+  return `
+    <div class="leaderboard-badge-summary">
+      ${roleBadges ? `<div class="leaderboard-badge-summary-roles">${roleBadges}</div>` : ""}
+      <div class="leaderboard-badge-summary-chips">
+        ${milestoneChip}
+        ${summaryChip}
+      </div>
+    </div>`;
+}
+
+function leaderboardBadgePanelHtml(p) {
+  const ui = window.plbBadgeCatalogUi;
+  if (!ui || !leaderboardBadgeCatalog.length) {
+    return `<div class="leaderboard-badge-panel"><p class="subtle">Loading badges…</p></div>`;
+  }
+  return ui.renderPhasedBadgePanel(leaderboardBadgeCatalog, earnedBadgeIdsForPlayer(p), {
+    includeMeta: false,
+    panelClass: "leaderboard-badge-panel",
+    title: "Badge collection",
+  });
 }
 
 /**
@@ -330,70 +396,6 @@ function raidRankPillHtml(raidRank) {
   return `<span class="leaderboard-raid-rank-pill" title="Raid rank: ${escapeHtml(displayRaw)}">${escapeHtml(display)}</span>`;
 }
 
-function lootItemTooltipTitle(meta) {
-  if (window.WowItemTooltip && typeof window.WowItemTooltip.tooltipText === "function") {
-    return window.WowItemTooltip.tooltipText(meta);
-  }
-  const lines = Array.isArray(meta?.tooltip) ? meta.tooltip : [];
-  return lines.filter(Boolean).join("\n");
-}
-
-function lootPanelHtml(p, itemMetaById) {
-  const escapeHtml = plb.escapeHtml;
-  const map = itemMetaById instanceof Map ? itemMetaById : leaderboardLootItemMetaMap;
-  const items = p._lootItems || [];
-  /* Lazy-load: if the row hasn't been opened yet, render a placeholder
-     instead of "no loot". `ensureLootForRow()` swaps this out as soon
-     as the per-row API call returns. */
-  if (!p._lootHydrated) {
-    const expectedRaw = Number(p?._lootCount || 0);
-    const expectedNote =
-      Number.isFinite(expectedRaw) && expectedRaw > 0
-        ? ` (${expectedRaw} item${expectedRaw === 1 ? "" : "s"} expected)`
-        : "";
-    return `<div class="leaderboard-loot-loading subtle" data-lb-loot-loading="1">Loading loot…${expectedNote}</div>`;
-  }
-  if (!items.length) {
-    return `<div class="leaderboard-loot-empty subtle">No loot matched to this character in the tracked guild loot history yet.</div>`;
-  }
-  const max = 60;
-  const shown = items.slice(0, max);
-  const more = items.length - shown.length;
-  const list = shown
-    .map((it) => {
-      const itemId = Number(it?.itemId || 0);
-      const itemMeta = itemId > 0 ? map.get(itemId) : null;
-      const labelRaw = String(itemMeta?.name || it?.itemName || "Item").trim() || "Item";
-      const nameHtml = escapeHtml(labelRaw);
-      const icon = itemMeta?.icon
-        ? `<img class="loot-item-icon" src="${escapeHtml(itemMeta.icon)}" alt="" loading="lazy" decoding="async" />`
-        : `<span class="loot-item-icon loot-item-icon--fallback" aria-hidden="true"></span>`;
-      const tip = lootItemTooltipTitle(itemMeta);
-      const titleAttr = tip ? ` title="${escapeHtml(tip)}"` : "";
-      const idAttr = itemId > 0 ? ` data-loot-item-id="${itemId}"` : "";
-      const when = formatLootWhen(it?.reportStartTime);
-      const whenPart = when ? ` · ${escapeHtml(when)}` : "";
-      const src = String(it?.source || "").toLowerCase() === "gargul" ? "Gargul" : "WCL";
-      const code = String(it?.reportCode || "").trim();
-      const wclOk = code && !/^gargul-/i.test(code);
-      const log = wclOk
-        ? ` <a href="https://www.warcraftlogs.com/reports/${encodeURIComponent(code)}" target="_blank" rel="noreferrer" class="leaderboard-loot-log">log</a>`
-        : "";
-      return `<li class="leaderboard-loot-line">
-        <div class="leaderboard-loot-line-left">
-          <div class="loot-item-name leaderboard-loot-item-trigger"${idAttr}${titleAttr}>${icon}<span class="leaderboard-loot-item-label">${nameHtml}</span></div>
-        </div>
-        <span class="leaderboard-loot-meta subtle">${escapeHtml(src)}${whenPart}${log}</span>
-      </li>`;
-    })
-    .join("");
-  const moreLine =
-    more > 0
-      ? `<p class="subtle leaderboard-loot-more">…and ${more} more (only the ${max} most recent drops are listed here)</p>`
-      : "";
-  return `<ul class="leaderboard-loot-list" role="list">${list}</ul>${moreLine}`;
-}
-
 function attendancePercentTooltip(player, recentRaidCap, consideredRaids) {
   const cap = Number(recentRaidCap) || 6;
   const win = Number(consideredRaids) || 0;
@@ -532,28 +534,9 @@ function renderLeaderboardTable() {
       const keyAttr = escapeHtml(rowKey);
       const isOpen = expandedPlayerKey && expandedPlayerKey === rowKey;
       const playerCell = raiderCellHtml(p, recentCap, considered);
-      const badges =
-        (typeof plb.rosterAchievementBadgeRowHtml === "function"
-          ? plb.rosterAchievementBadgeRowHtml(p)
-          : plb.rosterBadgeRowHtml(p)) || "";
-      const roleBadge = plb.rosterRoleIconHtml
-        ? plb.rosterRoleIconHtml(p, { hideLabel: true, className: "role-badge-group-token leaderboard-role-badge-token" })
-        : "";
-      const crafterRoleBadges = plb.rosterPugMasterCrafterBadgesHtml
-        ? plb.rosterPugMasterCrafterBadgesHtml(p, { className: "role-badge-group-token leaderboard-role-badge-token" })
-        : "";
-      const roleBadges = `${roleBadge}${crafterRoleBadges}`;
-      /* Prefer the bundle-provided count over `_lootItems.length`, since
-         loot items are now lazy-loaded on row expand and the items array
-         stays empty until the user actually opens that row. */
-      const lootCount = Number(
-        p._lootHydrated ? p._lootItems?.length || 0 : p._lootCount || p._lootItems?.length || 0
-      );
-      const hint =
-        lootCount > 0
-          ? `${lootCount} item${lootCount === 1 ? "" : "s"} in history — click to expand`
-          : "Click to see loot (if any)";
-      const panelId = `lb-loot-${idx}`;
+      const badgesCell = leaderboardBadgesColumnHtml(p, isOpen);
+      const hint = "Click to expand badge collection";
+      const panelId = `lb-badges-${idx}`;
 
       return `
         <tr
@@ -566,70 +549,20 @@ function renderLeaderboardTable() {
           title="${escapeHtml(hint)}"
         >
           <td class="leaderboard-td-player">${playerCell}</td>
-          <td class="leaderboard-td-badges">
-            <div class="leaderboard-player-badges role-separated-badges">
-              ${roleBadges ? `<div class="role-badge-group"><span class="role-badge-group-label">Role</span><div class="role-badge-group-items">${roleBadges}</div></div>` : ""}
-              <div class="achievement-badge-group">
-                <span class="role-badge-group-label">Achievements</span>
-                <div class="raider-badges">${badges || `<span class="subtle">—</span>`}</div>
-              </div>
-            </div>
-          </td>
+          <td class="leaderboard-td-badges">${badgesCell}</td>
         </tr>
-        <tr class="leaderboard-row-loot" data-lb-key="${keyAttr}" data-lb-loot-wrap="1" ${isOpen ? "" : "hidden"}>
-          <td colspan="2" class="leaderboard-td-loot">
-            <div id="${panelId}" class="leaderboard-loot-panel" role="region" aria-label="Loot received">${lootPanelHtml(p, leaderboardLootItemMetaMap)}</div>
+        <tr class="leaderboard-row-badges" data-lb-key="${keyAttr}" data-lb-badges-wrap="1" ${isOpen ? "" : "hidden"}>
+          <td colspan="2" class="leaderboard-td-badges-panel">
+            <div id="${panelId}" role="region" aria-label="Badge collection">${leaderboardBadgePanelHtml(p)}</div>
           </td>
         </tr>`;
     })
     .join("");
 
-  // Upgrade any legacy badge title into the shared WoW-style tooltip card.
-  leaderboardTbody.querySelectorAll(".raider-badge-slot[title]").forEach((el) => {
-    const tip = String(el.getAttribute("title") || "").trim();
-    if (!tip) return;
-    el.removeAttribute("title");
-    el.setAttribute("aria-label", tip);
-    el.classList.add("achievement-badge-container");
-    el.classList.add("achievement-badge-slot--epic");
-    if (!el.querySelector(".achievement-badge-frame")) {
-      const frame = document.createElement("span");
-      frame.className = "achievement-badge-frame achievement-badge-frame--epic";
-      while (el.firstChild) frame.appendChild(el.firstChild);
-      const glow = document.createElement("span");
-      glow.className = "achievement-badge-glow";
-      glow.setAttribute("aria-hidden", "true");
-      frame.appendChild(glow);
-      el.appendChild(frame);
-    }
-    if (!el.querySelector(".achievement-tooltip")) {
-      const [nameRaw, ...descParts] = tip.split(" — ");
-      const tooltip = document.createElement("span");
-      tooltip.className = "achievement-tooltip";
-      tooltip.setAttribute("aria-hidden", "true");
-      const box = document.createElement("span");
-      box.className = "achievement-tooltip-box rarity-epic";
-      box.style.setProperty("--achievement-glow-color", "#f97316");
-      box.style.setProperty("--achievement-rarity-color", "rgba(163, 53, 238, 0.7)");
-      const name = document.createElement("span");
-      name.className = "achievement-name";
-      name.textContent = nameRaw || tip;
-      const desc = document.createElement("span");
-      desc.className = "achievement-description";
-      desc.textContent = descParts.join(" — ");
-      const rarity = document.createElement("span");
-      rarity.className = "achievement-rarity";
-      const rarityText = document.createElement("span");
-      rarityText.className = "achievement-rarity-text";
-      rarityText.textContent = "EPIC";
-      rarity.appendChild(rarityText);
-      box.appendChild(name);
-      if (desc.textContent) box.appendChild(desc);
-      box.appendChild(rarity);
-      tooltip.appendChild(box);
-      el.appendChild(tooltip);
-    }
-  });
+  const ui = window.plbBadgeCatalogUi;
+  if (ui) {
+    leaderboardTbody.querySelectorAll(".leaderboard-badge-panel").forEach((panel) => ui.wirePhaseTabs(panel));
+  }
   document.querySelectorAll("[data-leaderboard-sort]").forEach((btn) => {
     const k = String(btn.getAttribute("data-leaderboard-sort") || "");
     const active = k === sortState.key;
@@ -647,16 +580,6 @@ function renderLeaderboardTable() {
     }
   });
 
-  const lootScroll = document.querySelector(".leaderboard-table-scroll");
-  if (
-    window.WowItemTooltip &&
-    typeof window.WowItemTooltip.bindLootTooltipHandlers === "function" &&
-    (lootScroll || leaderboardTbody)
-  ) {
-    window.WowItemTooltip.bindLootTooltipHandlers(lootScroll || leaderboardTbody, (id) =>
-      leaderboardLootItemMetaMap.get(Number(id))
-    );
-  }
 }
 
 function toggleLeaderboardRowByKey(key) {
@@ -668,46 +591,14 @@ function toggleLeaderboardRowByKey(key) {
     const open = k && expandedPlayerKey === k;
     tr.setAttribute("aria-expanded", open ? "true" : "false");
     tr.classList.toggle("leaderboard-row-leader--open", open);
+    const chevron = tr.querySelector(".leaderboard-badge-chevron");
+    if (chevron) chevron.textContent = open ? "▾" : "▸";
   });
-  leaderboardTbody.querySelectorAll("tr.leaderboard-row-loot").forEach((tr) => {
+  leaderboardTbody.querySelectorAll("tr.leaderboard-row-badges").forEach((tr) => {
     const k = tr.getAttribute("data-lb-key");
     const open = k && expandedPlayerKey === k;
     tr.hidden = !open;
   });
-  /* Lazy-load: when the user opens a row, fetch that player's loot and
-     swap the placeholder for the real list. Cached after the first open
-     so toggling the same row again is instant. */
-  if (expandedPlayerKey === key) {
-    const player = leaderboardRows.find((r) => playerRowKey(r) === key);
-    if (player && !player._lootHydrated) {
-      void hydrateLootForPlayerAndRefreshPanel(player, key);
-    }
-  }
-}
-
-async function hydrateLootForPlayerAndRefreshPanel(player, key) {
-  try {
-    const { items } = await ensureLootForRow(player);
-    player._lootItems = Array.isArray(items) ? items : [];
-    player._lootHydrated = true;
-    /* Replace just the loot panel for this row instead of re-rendering
-       the whole table — keeps scroll position and any open tooltips. */
-    if (!leaderboardTbody) return;
-    const lootRow = leaderboardTbody.querySelector(`tr.leaderboard-row-loot[data-lb-key="${cssEscape(key)}"]`);
-    if (!lootRow) return;
-    const panel = lootRow.querySelector(".leaderboard-loot-panel");
-    if (!panel) return;
-    panel.innerHTML = lootPanelHtml(player, leaderboardLootItemMetaMap);
-    /* Re-bind the Wowhead-style tooltip handlers for the freshly inserted nodes. */
-    const lootScroll = document.querySelector(".leaderboard-table-scroll") || leaderboardTbody;
-    if (window.WowItemTooltip && typeof window.WowItemTooltip.bindLootTooltipHandlers === "function") {
-      window.WowItemTooltip.bindLootTooltipHandlers(lootScroll, (id) =>
-        leaderboardLootItemMetaMap.get(Number(id))
-      );
-    }
-  } catch {
-    /* keep the placeholder; user can close + reopen to retry */
-  }
 }
 
 function cssEscape(value) {
@@ -757,9 +648,8 @@ function wireSortHeaders() {
  * Single-call leaderboard build: hits the SQLite-backed
  * `/api/leaderboard` bundle endpoint and synthesises the same row shape
  * the renderer used to receive from the active-roster / death-leaderboard
- * / loot-received fan-out. Loot items are intentionally **not** preloaded
- * — `_lootCount` carries the hint and items are fetched lazily on row
- * expand by `ensureLootForRow()`.
+ * fan-out. Badge catalog loads once per session from `/api/badge-tooltips`;
+ * per-player `earnedBadgeIds` ships in the bundle for expand panels.
  *
  * @param {number} gid
  * @param {{ skipCache?: boolean }} [opts] when true, bypass `plbSessionApiCache`
@@ -809,90 +699,11 @@ async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
           : p.rhPastEventCount || 0
       ),
       _sortName: plb.eventsRosterCharacterLabel(p).toLowerCase(),
-      /* Loot is fetched lazily on row expand. `_lootItems` is hydrated
-         from cache by `ensureLootForRow()` before the panel renders, so
-         it stays empty until the user actually opens that row. */
-      _lootItems: [],
-      _lootCount: Number(p.lootCount || 0),
-      _lootHydrated: false,
+      earnedBadgeIds: Array.isArray(p.earnedBadgeIds) ? p.earnedBadgeIds : [],
     };
   });
 
-  return { rows, lootMap: leaderboardLootItemMetaMap };
-}
-
-/**
- * Lazily fetch one player's loot + item metadata. Cached for the tab
- * lifetime so repeated row toggles don't re-fetch.
- *
- * @returns {Promise<{ items: object[] }>}
- */
-async function ensureLootForRow(player) {
-  const dbUserId = Number(player?.dbUserId);
-  if (!Number.isInteger(dbUserId) || dbUserId <= 0) {
-    return { items: [] };
-  }
-  if (lootByDbUserId.has(dbUserId)) return lootByDbUserId.get(dbUserId);
-  const inflight = lootInflightByDbUserId.get(dbUserId);
-  if (inflight) return inflight;
-
-  const promise = (async () => {
-    let awards = [];
-    try {
-      const payload = await lbApiGetJson(`/api/leaderboard/player/${dbUserId}/loot`);
-      awards = Array.isArray(payload?.awards) ? payload.awards : [];
-    } catch {
-      awards = [];
-    }
-    /* Map materialised `loot_awards` rows onto the same shape the legacy
-       `lootPanelHtml` consumes (recipient, reportStartTime, itemId, source). */
-    const items = awards
-      .map((a) => ({
-        itemId: Number(a?.itemId || 0),
-        itemName: a?.itemName || null,
-        recipient: a?.characterName || null,
-        reportStartTime: Number(a?.awardedAt || 0),
-        reportCode: a?.reportCode || null,
-        source: a?.source || "WCL",
-      }))
-      .sort((a, b) => Number(b?.reportStartTime || 0) - Number(a?.reportStartTime || 0));
-
-    /* Fetch item metadata for icons + tooltips, chunked at 80 ids per
-       request (matches the existing `/api/wow-classic/items` cap). New
-       metadata is merged into the shared map so other rows can reuse it. */
-    const itemIds = [
-      ...new Set(items.map((x) => Number(x?.itemId || 0)).filter((n) => Number.isInteger(n) && n > 0)),
-    ];
-    const missingIds = itemIds.filter((id) => !leaderboardLootItemMetaMap.has(id));
-    const chunkSize = 80;
-    const chunks = [];
-    for (let i = 0; i < missingIds.length; i += chunkSize) {
-      chunks.push(missingIds.slice(i, i + chunkSize));
-    }
-    await Promise.all(
-      chunks.map(async (chunk) => {
-        try {
-          const metaPayload = await lbApiGetJson(
-            `/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`
-          );
-          if (!Array.isArray(metaPayload?.items)) return;
-          for (const row of metaPayload.items) {
-            if (Number(row?.itemId) > 0) leaderboardLootItemMetaMap.set(Number(row.itemId), row);
-          }
-        } catch {
-          /* icons/tooltips best-effort */
-        }
-      })
-    );
-
-    const result = { items };
-    lootByDbUserId.set(dbUserId, result);
-    return result;
-  })().finally(() => {
-    lootInflightByDbUserId.delete(dbUserId);
-  });
-  lootInflightByDbUserId.set(dbUserId, promise);
-  return promise;
+  return { rows };
 }
 
 async function refreshLeaderboardFromNetwork(gid) {
@@ -901,10 +712,9 @@ async function refreshLeaderboardFromNetwork(gid) {
     // plbSessionApiCache so we hit the origin and get fresh bundle rows.
     // Without skipCache, the cache layer just replays the same stale body
     // we already rendered, defeating the refresh.
-    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, { skipCache: true });
+    const { rows } = await fetchAndBuildLeaderboardRows(gid, { skipCache: true });
     leaderboardRows = rows;
-    leaderboardLootItemMetaMap = lootMap;
-    writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
+    writeLeaderboardSessionCache(gid, leaderboardRows);
     if (!leaderboardRows.length) {
       leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       return;
@@ -935,10 +745,11 @@ async function loadGuildLeaderboard() {
         : Promise.resolve(null),
     ]);
 
+    await ensureBadgeCatalogLoaded();
+
     const cached = readLeaderboardSessionCache(gid);
     if (cached) {
       leaderboardRows = cached.rows;
-      leaderboardLootItemMetaMap = new Map(cached.lootEntries);
       if (!leaderboardRows.length) {
         leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       } else {
@@ -970,16 +781,15 @@ async function loadGuildLeaderboard() {
     /* Cold path: render the bundle as soon as it lands; do not block on
        `prep`. The bundle already contains every field the table needs
        for first paint, including pre-resolved achievement flags. */
-    const { rows, lootMap } = await fetchAndBuildLeaderboardRows(gid, { skipCache: true });
+    const { rows } = await fetchAndBuildLeaderboardRows(gid, { skipCache: true });
     leaderboardRows = rows;
-    leaderboardLootItemMetaMap = lootMap;
 
     if (!leaderboardRows.length) {
       leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
       return;
     }
 
-    writeLeaderboardSessionCache(gid, leaderboardRows, leaderboardLootItemMetaMap);
+    writeLeaderboardSessionCache(gid, leaderboardRows);
     renderLeaderboardTable();
 
     /* Resolve spec icons + legacy badge name-sets in the background and
