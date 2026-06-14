@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260612-plb-guild-badge-icon-fix-v1";
+const API_BUILD_ID = "20260612-plb-tk-event-mgmt-zone-fix-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -18019,6 +18019,13 @@ function resolvedTrackedRaidForFight(fight, report) {
   return resolveTrackedRaidZoneName(report?.zone?.name);
 }
 
+/** Boss fight belonging to a tracked raid tier (handles WCL aliases like "Tempest Keep: The Eye"). */
+function fightIsTrackedRaidBoss(fight, report) {
+  if (Number(fight?.encounterID || 0) <= 0) return false;
+  const raidName = resolvedTrackedRaidForFight(fight, report);
+  return Boolean(raidName && Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, raidName));
+}
+
 /** First encounter zone in the report that maps to a tracked raid (for UI headers). */
 function primaryTrackedRaidNameFromReport(report) {
   for (const fight of report?.fights || []) {
@@ -23301,10 +23308,7 @@ async function fetchGuildLootReceived(guildId, reportLimit, fetchOptions = {}) {
     .map((report) => {
       const raidName = primaryTrackedRaidNameFromReport(report);
       const fightIds = (report.fights || [])
-        .filter((fight) => {
-          const zoneName = fight?.gameZone?.name || "";
-          return Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) && Number(fight?.encounterID || 0) > 0;
-        })
+        .filter((fight) => fightIsTrackedRaidBoss(fight, report))
         .map((fight) => Number(fight.id))
         .filter((id) => Number.isInteger(id) && id > 0);
       const queryFightIds = [0, ...fightIds];
@@ -23951,6 +23955,15 @@ app.get("/api/loot-history", async (req, res) => {
           maxStaleMs: lootHistoryMaxStaleMs(),
           loader,
         });
+    if (forceRefresh) {
+      const merged = await buildRaidLeadEventReportsPayload({ forceRefresh: true });
+      return res.json({
+        ...payload,
+        allRaids: merged.allRaids,
+        selectedReportCodes: merged.selectedReportCodes,
+        source: "merged",
+      });
+    }
     return res.json({ ...payload, source: "live" });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Unknown server error" });
