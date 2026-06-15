@@ -9306,16 +9306,24 @@ function renderAdminDatabaseSync(payload) {
       const status = String(t.status || "idle");
       const tone = status === "failed" ? "color:#c44" : status === "running" ? "color:#3a82c4" : "";
       const taskId = String(t.id || t.taskId || "").trim();
+      const desc = String(t.description || "").trim();
+      const manual = t.autoSchedule === false;
+      const runLabel = manual ? "Run manually" : "Run now";
       return `<tr>
-        <td><code>${esc(taskId)}</code></td>
+        <td>
+          <code>${esc(taskId)}</code>
+          ${manual ? `<div class="subtle" style="margin-top:2px">Manual only</div>` : ""}
+          ${desc ? `<div class="subtle" style="margin-top:2px">${esc(desc)}</div>` : ""}
+        </td>
         <td style="${tone}">${esc(status)}</td>
         <td>${esc(fmtTs(t.lastCompletedAt))}</td>
         <td>${esc(fmtDuration(t.lastDurationMs))}</td>
         <td>${esc(t.lastError || "")}</td>
         <td>
           <button type="button" class="event-signup-btn event-signup-btn--softres"
-            data-admin-database-sync-trigger="${esc(taskId)}">
-            Run now
+            data-admin-database-sync-trigger="${esc(taskId)}"
+            ${taskId === "classic-armory-gear-rescan" ? 'data-admin-gearscore-rescan="1"' : ""}>
+            ${esc(runLabel)}
           </button>
         </td>
       </tr>`;
@@ -9327,8 +9335,12 @@ function renderAdminDatabaseSync(payload) {
       <button type="button" class="event-signup-btn" data-admin-database-sync-all="1">
         Run all syncs now
       </button>
+      <button type="button" class="event-signup-btn event-signup-btn--softres"
+        data-admin-gearscore-rescan="1" data-admin-database-sync-trigger="classic-armory-gear-rescan">
+        Rescan all GearScores
+      </button>
       <span class="subtle">
-        Runs every task in order (identity → attendance → loot → parses → badges → …).
+        Scheduled syncs run on their own cadence. Rescan re-fetches Classic Armory GS for every identity character (batch-capped per run).
       </span>
     </div>
     <table class="admin-table">
@@ -11075,6 +11087,16 @@ document.addEventListener("click", async (event) => {
     event.preventDefault();
     const taskId = String(syncBtn.getAttribute("data-admin-database-sync-trigger") || "").trim();
     if (!taskId) return;
+    const isGearRescan =
+      syncBtn.hasAttribute("data-admin-gearscore-rescan") || taskId === "classic-armory-gear-rescan";
+    if (
+      isGearRescan &&
+      !window.confirm(
+        "Re-fetch Classic Armory GearScore for every identity character?\n\nThis is throttled and batch-capped — run again to continue if you have many characters."
+      )
+    ) {
+      return;
+    }
     syncBtn.disabled = true;
     const orig = syncBtn.textContent;
     syncBtn.textContent = "Running…";

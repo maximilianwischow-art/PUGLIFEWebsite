@@ -13933,7 +13933,7 @@ app.post("/api/admin/sync-all", async (req, res) => {
   const session = requireAdminSession(req, res);
   if (!session) return;
   const force = String(req.query?.force || "").trim() === "1";
-  const tasks = listSyncTasks();
+  const tasks = listSyncTasks({ includeManualOnly: false });
   const results = [];
   const startedAt = Date.now();
   for (const task of tasks) {
@@ -25591,19 +25591,19 @@ registerSyncTask({
 });
 
 /**
- * POST Classic Armory `/api/v1/character` once per `user_characters` row with
- * no `gear_score` (dedup-friendly with character-specs: that task no longer
- * queues gear-only gaps).
+ * POST Classic Armory `/api/v1/character` for identity characters and persist
+ * `gear_score`. Default mode only queues rows with no stored GS; `forceRescan`
+ * re-fetches every character (manual admin task).
  */
-async function runSyncClassicArmoryGearScores() {
+async function syncClassicArmoryGearScores({ forceRescan = false } = {}) {
+  const logTag = forceRescan ? "sync:classic-armory-gear-rescan" : "sync:classic-armory-gear";
+  const sourceTag = forceRescan ? "sync:classic-armory-gear-rescan" : "sync:classic-armory-gear";
   if (String(process.env.CHARACTER_SPECS_ARMORY_GEARSCORE || "").trim() === "0") {
     return { rowsChanged: 0 };
   }
   const realmDefault = defaultWowRealmForRoster();
   if (!realmDefault) {
-    console.warn(
-      "[sync:classic-armory-gear] WOW_GUILD_REALM/WOW_DEFAULT_REALM not set; skipping (no realm to query)."
-    );
+    console.warn(`[${logTag}] WOW_GUILD_REALM/WOW_DEFAULT_REALM not set; skipping (no realm to query).`);
     return { rowsChanged: 0 };
   }
 
@@ -25616,9 +25616,9 @@ async function runSyncClassicArmoryGearScores() {
 
   let rows;
   try {
-    rows = identityCharactersListAll({ missingGearScoreOnly: true });
+    rows = identityCharactersListAll(forceRescan ? {} : { missingGearScoreOnly: true });
   } catch (error) {
-    console.warn("[sync:classic-armory-gear] charactersListAll failed:", error?.message || error);
+    console.warn(`[${logTag}] charactersListAll failed:`, error?.message || error);
     return { rowsChanged: 0 };
   }
 
@@ -25662,7 +25662,7 @@ async function runSyncClassicArmoryGearScores() {
               characterName: row.characterName,
               gearScore: Math.round(gearScore),
               gearScoreSource: "classic-armory",
-              source: "sync:classic-armory-gear",
+              source: sourceTag,
             });
             filled += 1;
             rowsChanged += 1;
@@ -25670,10 +25670,7 @@ async function runSyncClassicArmoryGearScores() {
             skipped += 1;
           }
         } catch (error) {
-          console.warn(
-            `[sync:classic-armory-gear] fetch failed for ${row.characterName}:`,
-            error?.message || error
-          );
+          console.warn(`[${logTag}] fetch failed for ${row.characterName}:`, error?.message || error);
           failed += 1;
         }
       }
@@ -25684,9 +25681,17 @@ async function runSyncClassicArmoryGearScores() {
   }
 
   console.log(
-    `[sync:classic-armory-gear] scanned=${scanned} filled=${filled} skipped=${skipped} failed=${failed} (queue ${queue.length}/${rows.length})`
+    `[${logTag}] scanned=${scanned} filled=${filled} skipped=${skipped} failed=${failed} (queue ${queue.length}/${rows.length})`
   );
   return { rowsChanged };
+}
+
+async function runSyncClassicArmoryGearScores() {
+  return syncClassicArmoryGearScores({ forceRescan: false });
+}
+
+async function runSyncClassicArmoryGearScoresRescan() {
+  return syncClassicArmoryGearScores({ forceRescan: true });
 }
 
 const classicArmoryGearSyncIntervalMs = (() => {
@@ -25701,6 +25706,15 @@ registerSyncTask({
   description:
     "Fetch Classic Armory GearScore for user_characters rows where gear_score is null (POST /api/v1/character).",
   run: runSyncClassicArmoryGearScores,
+});
+
+registerSyncTask({
+  id: "classic-armory-gear-rescan",
+  intervalMs: 24 * 60 * 60_000,
+  autoSchedule: false,
+  description:
+    "Manual: re-fetch Classic Armory GearScore for every identity character (batch-capped per run).",
+  run: runSyncClassicArmoryGearScoresRescan,
 });
 
 startSyncRunner();
