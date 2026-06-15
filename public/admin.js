@@ -9289,6 +9289,49 @@ function renderAdminDatabaseReadiness(payload) {
   `;
 }
 
+const ADMIN_GEARSCORE_RESCAN_TASK = "classic-armory-gear-rescan";
+
+async function runAdminGearScoreRescan({ confirmPrompt = true, triggerEl = null } = {}) {
+  if (
+    confirmPrompt &&
+    !window.confirm(
+      "Re-fetch Classic Armory GearScore for every identity character?\n\nThis updates stored GS used by Core Raid Roster. The run is throttled and batch-capped — click again to continue if you have many characters.\n\nNote: the classic-armory-gear worker only fills missing GS; this rescan refreshes existing values too."
+    )
+  ) {
+    return null;
+  }
+  const btn = triggerEl instanceof HTMLElement ? triggerEl : null;
+  const origLabel = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Rescanning…";
+  }
+  try {
+    const payload = await getJson(`/api/admin/sync/${encodeURIComponent(ADMIN_GEARSCORE_RESCAN_TASK)}`, {
+      method: "POST",
+    });
+    const rows = Number(payload?.rowsChanged);
+    const rowsMsg = Number.isFinite(rows) ? ` Updated ${rows} character row(s).` : "";
+    status(`GearScore rescan finished.${rowsMsg} Reload roster views to see changes.`);
+    if (document.getElementById("admin-panel-sync-center")?.classList.contains("is-admin-panel-active")) {
+      await loadAdminDatabasePanel({ silent: true }).catch(() => {});
+    }
+    if (document.getElementById("admin-panel-core-roster")?.classList.contains("is-admin-panel-active")) {
+      adminCoreRosterLoaded = false;
+      await loadAdminCoreRosterPanel({ silent: true }).catch(() => {});
+    }
+    return payload;
+  } catch (error) {
+    status(`GearScore rescan failed: ${error?.message || "Unknown error"}`);
+    throw error;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origLabel || "Rescan all GearScores";
+    }
+  }
+}
+
 function renderAdminDatabaseSync(payload) {
   const host = document.getElementById("adminDatabaseSync");
   if (!host) return;
@@ -9335,12 +9378,8 @@ function renderAdminDatabaseSync(payload) {
       <button type="button" class="event-signup-btn" data-admin-database-sync-all="1">
         Run all syncs now
       </button>
-      <button type="button" class="event-signup-btn event-signup-btn--softres"
-        data-admin-gearscore-rescan="1" data-admin-database-sync-trigger="classic-armory-gear-rescan">
-        Rescan all GearScores
-      </button>
       <span class="subtle">
-        Scheduled syncs run on their own cadence. Rescan re-fetches Classic Armory GS for every identity character (batch-capped per run).
+        Scheduled syncs only — excludes manual GearScore rescan. Use the rescan card above for stale GS.
       </span>
     </div>
     <table class="admin-table">
@@ -11088,13 +11127,16 @@ document.addEventListener("click", async (event) => {
     const taskId = String(syncBtn.getAttribute("data-admin-database-sync-trigger") || "").trim();
     if (!taskId) return;
     const isGearRescan =
-      syncBtn.hasAttribute("data-admin-gearscore-rescan") || taskId === "classic-armory-gear-rescan";
-    if (
-      isGearRescan &&
-      !window.confirm(
-        "Re-fetch Classic Armory GearScore for every identity character?\n\nThis is throttled and batch-capped — run again to continue if you have many characters."
-      )
-    ) {
+      syncBtn.hasAttribute("data-admin-gearscore-rescan") || taskId === ADMIN_GEARSCORE_RESCAN_TASK;
+    if (isGearRescan) {
+      syncBtn.disabled = true;
+      try {
+        await runAdminGearScoreRescan({ confirmPrompt: true, triggerEl: syncBtn });
+      } catch {
+        /* status set in helper */
+      } finally {
+        syncBtn.disabled = false;
+      }
       return;
     }
     syncBtn.disabled = true;

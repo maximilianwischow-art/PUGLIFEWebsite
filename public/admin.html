@@ -255,6 +255,24 @@
               </nav>
 
               <div class="admin-sync-tab" data-sync-tab-panel="workers">
+                <div class="admin-gearscore-rescan-card admin-grid-note" style="margin-bottom:12px">
+                  <h4 class="section-title" style="margin-top:0">GearScore rescan</h4>
+                  <p class="subtle">
+                    <strong>classic-armory-gear</strong> only fills characters with no stored GS.
+                    Use <strong>Rescan all GearScores</strong> to refresh everyone (including Core Raid Roster).
+                  </p>
+                  <div class="admin-actions admin-actions--tight">
+                    <button
+                      type="button"
+                      class="event-signup-btn"
+                      id="adminGearScoreRescanBtn"
+                      data-admin-gearscore-rescan="1"
+                      data-admin-database-sync-trigger="classic-armory-gear-rescan"
+                    >
+                      Rescan all GearScores
+                    </button>
+                  </div>
+                </div>
                 <div id="adminDatabaseSync" class="admin-grid-note">Loading sync workers…</div>
               </div>
 
@@ -580,6 +598,15 @@
                 <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminCoreRosterReloadBtn">
                   Reload
                 </button>
+                <button
+                  type="button"
+                  class="event-signup-btn"
+                  id="adminCoreRosterRescanGsBtn"
+                  data-admin-gearscore-rescan="1"
+                  data-admin-database-sync-trigger="classic-armory-gear-rescan"
+                >
+                  Rescan GearScores
+                </button>
               </div>
               <div id="adminCoreRosterOverviewHost" class="admin-core-roster-overview-host"></div>
               <h4 class="section-title admin-core-roster-template-title">25-player raid template</h4>
@@ -714,7 +741,7 @@
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/events-roster-ui.js?v=20260611plb-ssc-0611-badge-v1"></script>
-    <script defer src="/admin.js?v=20260607-gearscore-rescan-v1"></script>
+    <script defer src="/admin.js?v=20260607-gearscore-rescan-v2"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
