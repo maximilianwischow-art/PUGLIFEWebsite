@@ -7633,6 +7633,72 @@ tr.plb-gear-row--miss th {
   margin-top: 0.25rem;
 }
 
+.admin-core-roster-panel .admin-core-roster-toolbar {
+  margin-top: 0.35rem;
+}
+
+.admin-core-roster-overview-host {
+  margin-top: 0.5rem;
+}
+
+.admin-core-roster-overview-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.admin-core-roster-class-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-core-roster-class-column-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-core-roster-class-column-cards > .role-alert-composer-detailed-wrap {
+  width: 100%;
+}
+
+.admin-core-roster-class-group .roster-role-title,
+.admin-core-roster-class-group .admin-core-roster-class-title {
+  margin-bottom: 0.5rem;
+}
+
+.admin-core-roster-template-title {
+  margin: 1.35rem 0 0.35rem;
+}
+
+.admin-core-roster-template-note {
+  margin: 0 0 0.5rem;
+}
+
+.admin-core-roster-composer-host {
+  margin-top: 0.25rem;
+}
+
+.admin-core-roster-composer-toolbar {
+  margin-bottom: 0.65rem;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-core-roster-composer-pools {
+  margin-top: 12px;
+}
+
+.admin-core-roster-composer-pools .role-alert-composer-pool-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
 .admin-char-kpi-grid {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   align-items: start;

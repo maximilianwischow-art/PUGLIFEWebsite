@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Admin</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-lb-row-badge-tooltips-v3" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft">
@@ -65,6 +65,7 @@
               <div class="admin-sidebar-group" data-admin-group="comms">
                 <div class="admin-sidebar-group-label">Comms</div>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="role-alerts">Raid Roster Management</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="core-roster">Core Raid Roster</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="custom-dm">Custom Discord Messages</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="discord-role-sync">Discord Role Sync</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="discord-news-queue">News Queue</button>
@@ -559,6 +560,35 @@
               <div id="roleAlertsHost" class="admin-grid-note">Choose a raid event above to load the roster.</div>
             </section>
 
+            <section class="card admin-panel admin-core-roster-panel" data-admin-panel="core-roster" id="admin-panel-core-roster">
+              <h3 class="section-title">Core Raid Roster</h3>
+              <p class="subtle">
+                Every guild member with a <strong>Core</strong> or officer / lead role (PUG Lead, Raid Lead, Heal Lead, DPS Lead)
+                from Account Assignment — one card per member (main character). The overview lists members in <strong>class columns</strong>;
+                below that, build a saved <strong>25-player template</strong> (5×5 groups) with the same drag-and-drop comp editor as Raid Roster Management.
+              </p>
+              <p id="adminCoreRosterMeta" class="subtle">Loading core roster…</p>
+              <div class="admin-actions admin-actions--tight admin-core-roster-toolbar">
+                <input
+                  id="adminCoreRosterSearch"
+                  class="admin-input"
+                  type="search"
+                  placeholder="Search character, class, spec, role…"
+                  autocomplete="off"
+                  aria-label="Search core roster"
+                />
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminCoreRosterReloadBtn">
+                  Reload
+                </button>
+              </div>
+              <div id="adminCoreRosterOverviewHost" class="admin-core-roster-overview-host"></div>
+              <h4 class="section-title admin-core-roster-template-title">25-player raid template</h4>
+              <p class="subtle admin-core-roster-template-note">
+                Five groups of five — drag core members from the pool into your template comp. Layout is saved in this browser.
+              </p>
+              <div id="adminCoreRosterComposerHost" class="admin-core-roster-composer-host"></div>
+            </section>
+
             <section class="card admin-panel" data-admin-panel="custom-dm" id="admin-panel-custom-dm">
               <h3 class="section-title">Custom Discord Messages</h3>
               <p class="subtle">Send a custom Discord bot DM by raid role and/or selected individual players.</p>
@@ -684,7 +714,7 @@
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/events-roster-ui.js?v=20260611plb-ssc-0611-badge-v1"></script>
-    <script defer src="/admin.js?v=20260608plb-hof-player-quote-v1"></script>
+    <script defer src="/admin.js?v=20260612plb-core-roster-template-v1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

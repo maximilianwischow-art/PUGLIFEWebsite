@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260612-plb-tk-event-mgmt-zone-fix-v1";
+const API_BUILD_ID = "20260612-plb-core-roster-template-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -9737,6 +9737,20 @@ app.get("/api/admin/character-kpi-overview", async (req, res) => {
   }
 });
 
+app.get("/api/admin/core-roster-overview", async (req, res) => {
+  try {
+    const session = requireAdminSession(req, res);
+    if (!session) return;
+    const payload = await buildAdminCoreRosterOverview();
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to load core roster overview",
+    });
+  }
+});
+
 app.post("/api/admin/wcl-phase-avgs/refresh", async (req, res) => {
   try {
     const session = requireAdminSession(req, res);
@@ -17847,6 +17861,78 @@ async function buildAdminCharacterKpiOverview() {
     wclEventScope: rosterPayload?.wclEventScope || null,
     players,
     filters: { classes, specsByClass: specsByClassOut },
+    checkedAt: Date.now(),
+  };
+}
+
+const ADMIN_CORE_ROSTER_GUILD_ROLE_ORDER = Object.freeze([
+  "Puglead",
+  "Raidlead",
+  "Heallead",
+  "Dpslead",
+  "Core",
+]);
+
+function adminCoreRosterGuildRoleRank(guildRoleRaw) {
+  const role = normalizeRhWclGuildRole(guildRoleRaw);
+  const idx = ADMIN_CORE_ROSTER_GUILD_ROLE_ORDER.indexOf(role);
+  return idx >= 0 ? idx : 99;
+}
+
+/** One main character per Core+ identity user with full WCL KPI merge (Raid Roster Management detail level). */
+async function buildAdminCoreRosterOverview() {
+  const base = await buildAdminCharacterKpiOverview();
+  const byUserId = new Map();
+  for (const player of base.players || []) {
+    if (!isCoreParseEligibleGuildRole(player?.guildRole)) continue;
+    const userId = Number(player?.dbUserId);
+    if (!Number.isFinite(userId) || userId <= 0) continue;
+    const prev = byUserId.get(userId);
+    if (!prev) {
+      byUserId.set(userId, player);
+      continue;
+    }
+    if (player.isMain && !prev.isMain) {
+      byUserId.set(userId, player);
+      continue;
+    }
+    if (Boolean(player.isMain) === Boolean(prev.isMain)) {
+      const cmp = String(player.characterName || "").localeCompare(String(prev.characterName || ""), undefined, {
+        sensitivity: "base",
+      });
+      if (cmp < 0) byUserId.set(userId, player);
+    }
+  }
+
+  const players = [...byUserId.values()].sort((a, b) => {
+    const ra = adminCoreRosterGuildRoleRank(a.guildRole);
+    const rb = adminCoreRosterGuildRoleRank(b.guildRole);
+    if (ra !== rb) return ra - rb;
+    return String(a.characterName || "").localeCompare(String(b.characterName || ""), undefined, {
+      sensitivity: "base",
+    });
+  });
+
+  let withPhaseAvgs = 0;
+  let withRosterMatch = 0;
+  for (const player of players) {
+    const pa = player?.phaseAvgs;
+    if (pa && (pa.kara != null || pa.gruulMag != null || pa.sscTk != null)) withPhaseAvgs += 1;
+    if (player?.wclEventCount != null || player?.raidsAttended != null) withRosterMatch += 1;
+  }
+
+  return {
+    ok: true,
+    guildId: base.guildId,
+    totalMembers: players.length,
+    withPhaseAvgs,
+    withRosterMatch,
+    phaseAvgsUpdatedAt: base.phaseAvgsUpdatedAt,
+    attendanceScope: base.attendanceScope || null,
+    parseScope: base.parseScope || null,
+    wclEventScope: base.wclEventScope || null,
+    roleOrder: [...ADMIN_CORE_ROSTER_GUILD_ROLE_ORDER],
+    players,
     checkedAt: Date.now(),
   };
 }
