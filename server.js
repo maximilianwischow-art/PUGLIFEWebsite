@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260607-gearscore-rescan-v2";
+const API_BUILD_ID = "20260615-grandmadeath-warrior-tank-icon-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -2587,7 +2587,8 @@ async function buildActiveRosterPlayersForGuild(guildId, { reportLimit = 40, top
   }
   enriched = enriched.map((row) => {
     const inferred = inferActiveRosterRoleNameFromSpec(row);
-    return inferred ? { ...row, roleName: inferred } : row;
+    const withRole = inferred ? { ...row, roleName: inferred } : row;
+    return applyWarriorTankSpecDisplayCorrection(withRole);
   });
   enriched = await Promise.all(enriched.map((row) => attachClassicSpecSpellIconIfNeeded(row)));
   enriched = await enrichConfirmedRosterWithWclSpecIcons(enriched);
@@ -17842,7 +17843,7 @@ function buildAdminIdentityMainCharacterPlayer(user, char, indexes, phaseMeta) {
     player.specName = String(charAlignedMatch.specName).trim();
   }
 
-  return player;
+  return applyWarriorTankSpecDisplayCorrection(player);
 }
 
 function phaseAvgsForIdentityCharacter(characterName, byRhKey) {
@@ -20169,7 +20170,57 @@ function wclDamageDoneIconAgreesWithRoster(iconUrl, row, wclTypeRaw = "") {
   if (!wclCombatSpecTypeAgreesWithRoster(row, wclTypeRaw)) return false;
   if (cls === "warrior" && wclIconTextureLooksShaman(iconUrl)) return false;
   if (cls === "shaman" && wclIconTextureLooksWarriorFuryOrArms(iconUrl)) return false;
+  if (warriorRowLooksTankPrimary(row)) {
+    const wclSpec = slugifyLocaleText(wclTypeRaw);
+    if (wclSpec === "fury" || wclSpec === "arms") return false;
+    if (wclIconTextureLooksWarriorFuryOrArms(iconUrl)) return false;
+  }
   return true;
+}
+
+/** Which WCL parse bracket (tank/heal/dps) is highest for this row — used for tank-warrior display correction. */
+function primaryWclParseBracket(parseSummaries) {
+  const ps = parseSummaries && typeof parseSummaries === "object" ? parseSummaries : null;
+  if (!ps) return null;
+  const tank = Number(ps.bestTank);
+  const heal = Number(ps.bestHeal);
+  const dps = Number(ps.bestDps);
+  const buckets = [
+    ["tank", tank],
+    ["heal", heal],
+    ["dps", dps],
+  ].filter(([, v]) => Number.isFinite(v) && v > 0);
+  if (!buckets.length) return null;
+  buckets.sort((a, b) => b[1] - a[1]);
+  return buckets[0][0];
+}
+
+function warriorRowLooksTankPrimary(row) {
+  const cls = englishCanonicalClassSlugForEventsIcons(row);
+  if (cls !== "warrior") return false;
+  const spec = slugifyLocaleText(
+    normalizeProtectionSpecLabel(String(row?.specName || row?.raiderIoSpecName || row?.blizzardSpecName || ""))
+  );
+  if (spec.includes("protection") || /^protection\d*$/.test(spec)) return true;
+  return primaryWclParseBracket(row?.parseSummaries) === "tank";
+}
+
+/** Rio/WCL often label prot warriors as Fury; when tank is the top parse bracket, show Protection + tank badge. */
+function applyWarriorTankSpecDisplayCorrection(row) {
+  if (!row || !warriorRowLooksTankPrimary(row)) return row;
+  const spec = slugifyLocaleText(normalizeProtectionSpecLabel(String(row?.specName || "")));
+  const next = {
+    ...row,
+    specName: "Protection",
+    roleName: "Tanks",
+  };
+  if (spec.includes("protection") || /^protection\d*$/.test(spec)) return next;
+  if (String(row?.raidHelperSpecName || "").trim()) next.raidHelperSpecName = "Protection";
+  if (String(row?.raiderIoSpecName || "").trim()) next.raiderIoSpecName = "Protection";
+  if (String(row?.blizzardSpecName || "").trim()) next.blizzardSpecName = "Protection";
+  next.wclSpecIconUrl = "";
+  next.wclCombatSpecType = "";
+  return next;
 }
 
 /** Always set Raid-Helper rows to the canonical texture so API matches events UI (overwrites wrong RH icons). */
