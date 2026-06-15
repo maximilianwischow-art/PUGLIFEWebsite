@@ -432,7 +432,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260612-plb-core-roster-template-v1";
+const API_BUILD_ID = "20260612-plb-core-roster-main-char-fix-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -17725,12 +17725,124 @@ function buildActiveRosterPlayerIndexes(players) {
   return { byNameKey, byUserId };
 }
 
-function matchActiveRosterForIdentityChar(char, indexes) {
+function matchActiveRosterForIdentityChar(char, indexes, { allowUserFallback = true } = {}) {
   const nameKey = normalizeRaidHelperDisplayKey(String(char?.characterName || ""));
   if (nameKey && indexes.byNameKey.has(nameKey)) return indexes.byNameKey.get(nameKey);
+  if (!allowUserFallback) return null;
   const uid = Number(char?.userId);
   if (Number.isInteger(uid) && uid > 0 && indexes.byUserId.has(uid)) return indexes.byUserId.get(uid);
   return null;
+}
+
+function activeRosterRowMatchesIdentityCharacter(matched, char) {
+  if (!matched || !char) return false;
+  const want = normalizeRaidHelperDisplayKey(String(char?.characterName || ""));
+  if (!want) return false;
+  const keys = new Set(
+    [matched?.characterName, matched?.name, ...(Array.isArray(matched?.wclCharacters) ? matched.wclCharacters : [])]
+      .map((n) => normalizeRaidHelperDisplayKey(String(n || "")))
+      .filter(Boolean)
+  );
+  return keys.has(want);
+}
+
+/** Pick the account's main character (mainCharacterId → isMain → first). */
+function resolveIdentityMainCharacterForUser(user, characters) {
+  const list = Array.isArray(characters) ? characters : [];
+  const mainId = Number(user?.mainCharacterId);
+  if (Number.isInteger(mainId) && mainId > 0) {
+    const byId = list.find((c) => Number(c?.id) === mainId);
+    if (byId) return byId;
+  }
+  const flagged = list.find((c) => c?.isMain);
+  if (flagged) return flagged;
+  return list[0] || null;
+}
+
+function roleNameFromIdentityCharacter(char) {
+  const className = englishWowClassDisplayFromRaidHelper(String(char?.wowClass || "").trim());
+  const specName = normalizeProtectionSpecLabel(String(char?.wowSpec || "").trim());
+  const specRow = { className, specName, roleName: "Ranged" };
+  return (
+    inferActiveRosterRoleNameFromSpec(specRow) ||
+    inferRoleFromClassSpecName(className, specName, char?.characterName) ||
+    "Melee"
+  );
+}
+
+/** Build one admin roster player row from identity; WCL KPIs are account-level, class/spec stay on the main char. */
+function buildAdminIdentityMainCharacterPlayer(user, char, indexes, phaseMeta) {
+  const strictMatch = matchActiveRosterForIdentityChar(char, indexes, { allowUserFallback: false });
+  const accountMatch = matchActiveRosterForIdentityChar(char, indexes, { allowUserFallback: true });
+  const charAlignedMatch =
+    strictMatch || (accountMatch && activeRosterRowMatchesIdentityCharacter(accountMatch, char) ? accountMatch : null);
+
+  const classSlug = englishCanonicalClassSlugFromLocalizedDisplay(char.wowClass) || "unknown";
+  const identityClass = String(char.wowClass || "").trim();
+  const identitySpec = String(char.wowSpec || "").trim();
+  const phaseAvgs =
+    phaseAvgsForIdentityCharacter(char.characterName, phaseMeta.byRhKey) || {
+      kara: null,
+      gruulMag: null,
+      sscTk: null,
+    };
+  const gs = char.gearScore;
+  const player = {
+    name: String(user?.raidHelperName || char.characterName).trim() || char.characterName,
+    characterName: char.characterName,
+    className: identityClass,
+    raiderIoClassName: identityClass,
+    specName: identitySpec,
+    guildRole: normalizeRhWclGuildRole(user?.guildRole || "Peon"),
+    gearScore: Number.isFinite(gs) ? gs : charAlignedMatch?.gearScore,
+    discordUserId: user?.discordUserId || accountMatch?.discordUserId || null,
+    dbUserId: char.userId,
+    identityCharacterId: char.id,
+    isMain: true,
+    phaseAvgs,
+    _filterClassSlug: classSlug,
+    _filterSpec: identitySpec || "—",
+    roleName: roleNameFromIdentityCharacter(char),
+  };
+
+  if (accountMatch) {
+    Object.assign(player, {
+      raidsAttended: accountMatch.raidsAttended,
+      attendanceRate: accountMatch.attendanceRate,
+      wclCharacters: accountMatch.wclCharacters,
+      parseSummaries: accountMatch.parseSummaries,
+      attendanceHistory: accountMatch.attendanceHistory,
+      wclEventCount: accountMatch.wclEventCount,
+      rhPastEventCount: accountMatch.rhPastEventCount,
+      specificEventBadges: accountMatch.specificEventBadges,
+    });
+    if (charAlignedMatch) {
+      Object.assign(player, {
+        wclSpecIconUrl: charAlignedMatch.wclSpecIconUrl,
+        wclCombatSpecType: charAlignedMatch.wclCombatSpecType,
+        race: charAlignedMatch.race,
+        gender: charAlignedMatch.gender,
+        blizzardClassName: charAlignedMatch.blizzardClassName,
+        raidHelperClassName: charAlignedMatch.raidHelperClassName,
+        raidHelperSpecName: charAlignedMatch.raidHelperSpecName,
+        raiderIoSpecName: charAlignedMatch.raiderIoSpecName,
+        roleName: charAlignedMatch.roleName || player.roleName,
+      });
+      if (!Number.isFinite(player.gearScore) && charAlignedMatch.gearScore != null) {
+        player.gearScore = charAlignedMatch.gearScore;
+      }
+    }
+  }
+
+  if (!player.className && charAlignedMatch?.className) {
+    player.className = String(charAlignedMatch.className).trim();
+    player.raiderIoClassName = player.className;
+  }
+  if (!player.specName && charAlignedMatch?.specName) {
+    player.specName = String(charAlignedMatch.specName).trim();
+  }
+
+  return player;
 }
 
 function phaseAvgsForIdentityCharacter(characterName, byRhKey) {
@@ -17881,30 +17993,27 @@ function adminCoreRosterGuildRoleRank(guildRoleRaw) {
 
 /** One main character per Core+ identity user with full WCL KPI merge (Raid Roster Management detail level). */
 async function buildAdminCoreRosterOverview() {
-  const base = await buildAdminCharacterKpiOverview();
-  const byUserId = new Map();
-  for (const player of base.players || []) {
-    if (!isCoreParseEligibleGuildRole(player?.guildRole)) continue;
-    const userId = Number(player?.dbUserId);
-    if (!Number.isFinite(userId) || userId <= 0) continue;
-    const prev = byUserId.get(userId);
-    if (!prev) {
-      byUserId.set(userId, player);
-      continue;
-    }
-    if (player.isMain && !prev.isMain) {
-      byUserId.set(userId, player);
-      continue;
-    }
-    if (Boolean(player.isMain) === Boolean(prev.isMain)) {
-      const cmp = String(player.characterName || "").localeCompare(String(prev.characterName || ""), undefined, {
-        sensitivity: "base",
-      });
-      if (cmp < 0) byUserId.set(userId, player);
-    }
+  const guildId = votingGuildId;
+  const [rosterPayload, phaseMeta] = await Promise.all([
+    buildActiveRosterPlayersForGuild(guildId, { reportLimit: 40, top: 250, maxRhPastEvents: 0 }),
+    buildWclPhaseAvgsByRhKeyForRoleAlerts(),
+  ]);
+  const rosterPlayers = Array.isArray(rosterPayload?.players) ? rosterPayload.players : [];
+  const indexes = buildActiveRosterPlayerIndexes(rosterPlayers);
+  const users = identityUserListAll().filter((user) => isCoreParseEligibleGuildRole(user?.guildRole));
+  const charactersByUserId = identityRowsByUserId(
+    identityCharactersListAll({}).map(identityCharacterAdminPublic).filter(Boolean)
+  );
+
+  const players = [];
+  for (const user of users) {
+    const charRows = charactersByUserId.get(Number(user.id)) || [];
+    const mainRow = resolveIdentityMainCharacterForUser(user, charRows);
+    if (!mainRow?.characterName) continue;
+    players.push(buildAdminIdentityMainCharacterPlayer(user, mainRow, indexes, phaseMeta));
   }
 
-  const players = [...byUserId.values()].sort((a, b) => {
+  players.sort((a, b) => {
     const ra = adminCoreRosterGuildRoleRank(a.guildRole);
     const rb = adminCoreRosterGuildRoleRank(b.guildRole);
     if (ra !== rb) return ra - rb;
@@ -17923,14 +18032,14 @@ async function buildAdminCoreRosterOverview() {
 
   return {
     ok: true,
-    guildId: base.guildId,
+    guildId,
     totalMembers: players.length,
     withPhaseAvgs,
     withRosterMatch,
-    phaseAvgsUpdatedAt: base.phaseAvgsUpdatedAt,
-    attendanceScope: base.attendanceScope || null,
-    parseScope: base.parseScope || null,
-    wclEventScope: base.wclEventScope || null,
+    phaseAvgsUpdatedAt: phaseMeta.updatedAt,
+    attendanceScope: rosterPayload?.attendanceScope || null,
+    parseScope: rosterPayload?.parseScope || null,
+    wclEventScope: rosterPayload?.wclEventScope || null,
     roleOrder: [...ADMIN_CORE_ROSTER_GUILD_ROLE_ORDER],
     players,
     checkedAt: Date.now(),
