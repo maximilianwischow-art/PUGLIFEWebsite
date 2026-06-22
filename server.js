@@ -7729,7 +7729,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_identityActivityCutoff", cutoff);
   }
   if (path === "/api/leaderboard") {
-    params.set("_leaderboardBundleVersion", "v3-recent-badges-fix");
+    params.set("_leaderboardBundleVersion", "v4-double-trouble-pulse");
   }
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
@@ -24609,7 +24609,7 @@ async function runSyncBadges() {
       ...(dtStartMs
         ? {
             startMs: dtStartMs,
-            endMs: dtStartMs + 12 * 60 * 60 * 1000,
+            endMs: dtStartMs + 24 * 60 * 60 * 1000,
           }
         : {}),
     });
