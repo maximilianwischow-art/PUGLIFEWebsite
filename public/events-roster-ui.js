@@ -1501,6 +1501,23 @@ function comboBadgeIdsFromCatalog() {
   );
 }
 
+function comboPartTooltipMeta(combo, part, catalogEntry, partIsRecent) {
+  const badgeId = String(part?.badgeId || "").trim();
+  const comboName = String(combo?.name || "Combo").trim();
+  const partLabel = String(part?.partLabel || catalogEntry?.comboPartLabel || "").trim();
+  const displayName = partLabel ? `${comboName} — ${partLabel}` : comboName;
+  const meta = badgeTooltipMeta(
+    badgeId,
+    displayName,
+    String(catalogEntry?.description || combo?.description || "").trim(),
+    String(combo?.rarity || catalogEntry?.rarity || "legendary").trim() || "legendary"
+  );
+  meta.wclUrl = String(combo?.wclUrl || catalogEntry?.wclUrl || "").trim();
+  meta.isRecent = !!partIsRecent;
+  meta.glowColor = badgeTooltipGlowColor(badgeId, meta.rarity);
+  return meta;
+}
+
 function renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet) {
   const recent = recentSet instanceof Set ? recentSet : new Set();
   const parts = (Array.isArray(combo?.parts) ? combo.parts : []).filter((p) =>
@@ -1529,16 +1546,18 @@ function renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet) {
       const icon = badgeIconSrcFromCatalogPath(entry?.icon || part.icon, badgeId);
       const partLabel = String(part.partLabel || entry?.comboPartLabel || badgeId).trim();
       const partIsRecent = recent.has(badgeId);
+      const partMeta = comboPartTooltipMeta(combo, part, entry, partIsRecent);
       const link =
         idx < parts.length - 1
-          ? `<span class="achievement-badge-combo-link" aria-hidden="true" title="Double Trouble combo"></span>`
+          ? `<span class="achievement-badge-combo-link" aria-hidden="true"></span>`
           : "";
-      return `<span class="achievement-badge-combo-part" data-badge-id="${escapeHtml(badgeId)}" title="${escapeHtml(partLabel)}">
-        <span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container achievement-badge-combo-part-slot", partIsRecent)} data-badge-id="${escapeHtml(badgeId)}" aria-label="${escapeHtml(`${comboName} — ${partLabel}`)}">
-          <span ${achievementBadgeFrameAttrs(meta)}>
+      return `<span class="achievement-badge-combo-part" data-badge-id="${escapeHtml(badgeId)}">
+        <span ${achievementBadgeSlotAttrs(partMeta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container achievement-badge-combo-part-slot", partIsRecent)} data-badge-id="${escapeHtml(badgeId)}" aria-label="${escapeHtml(`${partMeta.name}${partMeta.description ? ` — ${partMeta.description}` : ""}`)}">
+          <span ${achievementBadgeFrameAttrs(partMeta)}>
             <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
             <span class="achievement-badge-glow" aria-hidden="true"></span>
           </span>
+          ${achievementTooltipHtml(partMeta)}
         </span>
       </span>${link}`;
     })

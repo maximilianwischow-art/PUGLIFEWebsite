@@ -668,8 +668,19 @@ function positionLbRowBadgeTooltip(anchor, host) {
   host.style.left = `${Math.round(left)}px`;
 }
 
+function findLbRowBadgeTooltipSource(anchor) {
+  if (!anchor) return null;
+  if (anchor.classList.contains("achievement-badge-combo-wrap")) {
+    return anchor.querySelector(".achievement-badge-combo > .achievement-tooltip");
+  }
+  if (anchor.classList.contains("achievement-badge-combo")) {
+    return anchor.querySelector(":scope > .achievement-tooltip");
+  }
+  return anchor.querySelector(":scope > .achievement-tooltip") || anchor.querySelector(".achievement-tooltip");
+}
+
 function showLbRowBadgeTooltip(anchor) {
-  const source = anchor.querySelector(".achievement-tooltip");
+  const source = findLbRowBadgeTooltipSource(anchor);
   if (!source) return;
   const host = ensureLbRowBadgeTooltipHost();
   host.innerHTML = source.innerHTML;
@@ -686,7 +697,10 @@ function wireLeaderboardRowBadgeTooltips() {
   lbBadgeTooltipWireAbort = new AbortController();
   const { signal } = lbBadgeTooltipWireAbort;
   const selector =
-    ".leaderboard-badge-strip-icons .achievement-badge-container, .leaderboard-badge-strip-icons .guild-role-token";
+    ".leaderboard-badge-strip-icons .achievement-badge-container, " +
+    ".leaderboard-badge-strip-icons .guild-role-token, " +
+    ".leaderboard-badge-strip-icons .achievement-badge-combo, " +
+    ".leaderboard-badge-strip-icons .achievement-badge-combo-wrap";
 
   leaderboardTbody.querySelectorAll(selector).forEach((badge) => {
     if (!badge.hasAttribute("tabindex")) badge.setAttribute("tabindex", "0");

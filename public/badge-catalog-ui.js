@@ -56,17 +56,25 @@
       ? String(badge.rarity)
       : "epic";
     const status = earned ? "Earned" : "Not yet earned";
+    const partLabel = String(badge?.comboPartLabel || "").trim();
+    const baseName = String(badge?.name || "").trim();
+    const displayName = partLabel && !baseName.includes("—") ? `${baseName} — ${partLabel}` : baseName;
     const description = String(badge?.description || badge?.defaultDescription || "").trim();
     const isRecent = isRecentOverride ?? !!badge?.isRecent;
+    const wclUrl = String(badge?.wclUrl || "").trim();
     const glowColor = badgeTooltipGlowColor(badge?.id, rarity);
     const style = `--achievement-glow-color:${glowColor};--achievement-rarity-color:${badgeTooltipRarityColor(rarity)};`;
     const recentHint = isRecent ? `<span class="achievement-tooltip-recent-hint">Earned last raid</span>` : "";
+    const wclHint = wclUrl
+      ? `<span class="achievement-tooltip-wcl-hint">View log on Warcraft Logs</span>`
+      : "";
     return `
       <span class="achievement-tooltip" aria-hidden="true">
         <span class="achievement-tooltip-box rarity-${escapeHtml(rarity)}" style="${escapeHtml(style)}">
-          <span class="achievement-name">${escapeHtml(badge?.name || "")}</span>
+          <span class="achievement-name">${escapeHtml(displayName)}</span>
           ${description ? `<span class="achievement-description">${escapeHtml(description)}</span>` : ""}
           ${recentHint}
+          ${wclHint}
           <span class="achievement-rarity">
             <span class="achievement-rarity-text">${escapeHtml(status)} · ${escapeHtml(rarity)}</span>
           </span>
