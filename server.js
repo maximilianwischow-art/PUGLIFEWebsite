@@ -175,6 +175,7 @@ import {
   raidAppearancesUserIdsInDateRange,
   raidAppearancesListReports,
   raidAppearancesRecent,
+  raidAppearancesReportStartedAtMs,
   parseSummaryReplaceAll,
   parseSummaryGetByUserId,
   parseSummaryGetByMainCharacterIds,
@@ -7728,7 +7729,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_identityActivityCutoff", cutoff);
   }
   if (path === "/api/leaderboard") {
-    params.set("_leaderboardBundleVersion", "v2-recent-badges");
+    params.set("_leaderboardBundleVersion", "v3-recent-badges-fix");
   }
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
@@ -24598,12 +24599,19 @@ async function runSyncBadges() {
     ])
   );
   for (const badgeId of ["double-trouble-ssc", "double-trouble-tk"]) {
+    const dtStartMs = raidAppearancesReportStartedAtMs(DOUBLE_TROUBLE_REPORT_CODE);
     specificRaidAttendanceEvidence.set(badgeId, {
       type: "double-trouble",
       source: "raid_appearances",
       reportCode: DOUBLE_TROUBLE_REPORT_CODE,
       wclUrl: DOUBLE_TROUBLE_WCL_URL,
       label: "Double Trouble",
+      ...(dtStartMs
+        ? {
+            startMs: dtStartMs,
+            endMs: dtStartMs + 12 * 60 * 60 * 1000,
+          }
+        : {}),
     });
   }
 
