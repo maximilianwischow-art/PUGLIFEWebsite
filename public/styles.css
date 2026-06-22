@@ -8647,7 +8647,7 @@ tr.plb-gear-row--miss th {
   gap: 8px;
   min-width: 0;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(167, 139, 250, 0.45) transparent;
 }
@@ -8697,6 +8697,11 @@ tr.plb-gear-row--miss th {
 .leaderboard-badge-strip .achievement-badge-container {
   position: relative;
   overflow: visible;
+}
+
+.leaderboard-badge-strip .achievement-badge-container--recent {
+  overflow: hidden;
+  contain: paint;
 }
 
 .leaderboard-badge-strip .achievement-badge-container:hover,
@@ -8756,6 +8761,252 @@ tr.plb-gear-row--miss th {
 
 .leaderboard-badge-strip .achievement-badge-container:hover .achievement-badge-frame,
 .leaderboard-badge-strip .achievement-badge-container:focus-visible .achievement-badge-frame,
+.leaderboard-badge-strip .achievement-badge-combo:hover .achievement-badge-frame,
+.leaderboard-badge-strip .achievement-badge-combo:focus-visible .achievement-badge-frame {
+  transform: scale(1.06);
+}
+
+.achievement-badge-combo {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.12) 0%, rgba(168, 85, 247, 0.14) 100%);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.15);
+  position: relative;
+}
+
+.achievement-badge-combo--complete {
+  border-color: rgba(255, 128, 0, 0.55);
+  box-shadow: 0 0 16px rgba(255, 128, 0, 0.22);
+}
+
+.achievement-badge-combo-part {
+  display: inline-flex;
+  align-items: center;
+}
+
+.achievement-badge-combo-link {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  margin: 0 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #14b8a6 0%, #a855f7 100%);
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.45);
+  flex: 0 0 auto;
+}
+
+.achievement-badge-combo-wrap {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.achievement-badge-combo-wrap:hover,
+.achievement-badge-combo-wrap:focus-visible {
+  filter: brightness(1.08);
+}
+
+.achievement-tooltip-wcl-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: rgba(125, 211, 252, 0.92);
+  letter-spacing: 0.02em;
+}
+
+.achievement-tooltip-recent-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: rgba(159, 255, 98, 0.95);
+  letter-spacing: 0.02em;
+}
+
+@keyframes badgeFlameBorderPulse {
+  0%,
+  100% {
+    opacity: 0.78;
+    padding: 2px;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 1;
+    padding: 2.75px;
+    filter: brightness(1.1);
+  }
+}
+
+@keyframes badgeFlameGlowPulse {
+  0%,
+  100% {
+    opacity: 0.34;
+  }
+  50% {
+    opacity: 0.48;
+  }
+}
+
+@keyframes badgeFlameFramePulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(249, 115, 22, 0.58),
+      inset 0 0 10px rgba(159, 255, 98, 0.22),
+      0 4px 8px rgba(0, 0, 0, 0.5);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1.5px rgba(249, 115, 22, 0.82),
+      inset 0 0 14px rgba(159, 255, 98, 0.34),
+      0 4px 8px rgba(0, 0, 0, 0.5);
+  }
+}
+
+@keyframes badgeFlameComboPulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.35);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1.5px rgba(249, 115, 22, 0.58);
+  }
+}
+
+.achievement-badge-container--recent,
+.profile-badge-tile.is-earned.is-recent {
+  position: relative;
+  overflow: hidden;
+  contain: paint;
+}
+
+.achievement-badge-container--recent::before,
+.profile-badge-tile.is-earned.is-recent::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 2px;
+  background: linear-gradient(135deg, #9fff62 0%, #4cff78 28%, #f97316 62%, #fdba74 100%);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  transform: none;
+  animation: badgeFlameBorderPulse 2.6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.achievement-badge-container--recent .achievement-badge-frame,
+.profile-badge-tile.is-earned.is-recent .achievement-badge-frame {
+  animation: badgeFlameFramePulse 2.6s ease-in-out infinite;
+}
+
+.achievement-badge-container--recent .achievement-badge-glow,
+.profile-badge-tile.is-earned.is-recent .achievement-badge-glow {
+  animation: badgeFlameGlowPulse 2.6s ease-in-out infinite;
+  box-shadow:
+    inset 0 0 14px rgba(159, 255, 98, 0.4),
+    inset 0 0 22px rgba(249, 115, 22, 0.22);
+}
+
+.achievement-badge-combo--recent {
+  border-color: rgba(249, 115, 22, 0.55);
+  animation: badgeFlameComboPulse 2.6s ease-in-out infinite;
+}
+
+.profile-badge-combo--recent {
+  border-color: rgba(249, 115, 22, 0.55);
+  animation: badgeFlameComboPulse 2.6s ease-in-out infinite;
+}
+
+.profile-badge-combo-wcl {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: rgba(125, 211, 252, 0.95);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.profile-badge-combo-wcl:hover,
+.profile-badge-combo-wcl:focus-visible {
+  color: #bae6fd;
+  text-decoration: underline;
+}
+
+.profile-badge-combo {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(168, 85, 247, 0.32);
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.08) 0%, rgba(168, 85, 247, 0.1) 55%, rgba(15, 23, 42, 0.85) 100%);
+}
+
+.profile-badge-combo--complete {
+  border-color: rgba(255, 128, 0, 0.45);
+}
+
+.profile-badge-combo-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.profile-badge-combo-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+}
+
+.profile-badge-combo-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 128, 0, 0.45);
+  color: #fdba74;
+  background: rgba(255, 128, 0, 0.12);
+}
+
+.profile-badge-combo-tag--partial {
+  border-color: rgba(148, 163, 184, 0.35);
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.profile-badge-combo-parts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 4px 2px;
+}
+
+.profile-badge-combo-part .profile-badge-name {
+  font-size: 10px;
+}
+
+.profile-badge-combo-link {
+  align-self: center;
+  margin-bottom: 18px;
+}
 .leaderboard-badge-strip .guild-role-token:hover .guild-role-token-frame,
 .leaderboard-badge-strip .guild-role-token:focus-visible .guild-role-token-frame {
   transform: none;

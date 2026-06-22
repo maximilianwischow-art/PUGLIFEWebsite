@@ -111,6 +111,7 @@ async function ensureBadgeCatalogLoaded() {
     try {
       const payload = await lbApiGetJson("/api/badge-tooltips");
       const categories = Array.isArray(payload?.categories) ? payload.categories : [];
+      window.plbAchievementBadgeCombos = Array.isArray(payload?.combos) ? payload.combos : [];
       const ui = window.plbBadgeCatalogUi;
       leaderboardBadgeCatalogFull = categories.filter((cat) => (cat.badges || []).length > 0);
       leaderboardBadgeCatalog = ui
@@ -128,6 +129,11 @@ async function ensureBadgeCatalogLoaded() {
     return leaderboardBadgeCatalog;
   })();
   return leaderboardBadgeCatalogPromise;
+}
+
+function recentBadgeIdsForPlayer(p) {
+  if (Array.isArray(p?.recentBadgeIds)) return p.recentBadgeIds;
+  return [];
 }
 
 function earnedBadgeIdsForPlayer(p) {
@@ -157,13 +163,14 @@ function leaderboardBadgesColumnHtml(p, isOpen) {
   const roleBadges = `${roleBadge}${attendanceCompanion}${crafterRoleBadges}`;
   const ui = window.plbBadgeCatalogUi;
   const earnedIds = earnedBadgeIdsForPlayer(p);
+  const recentBadgeIds = recentBadgeIdsForPlayer(p);
   const earned = ui
     ? ui.countEarnedAchievementBadges(leaderboardBadgeCatalog, earnedIds)
     : earnedIds.length;
   const total = leaderboardAchievementBadgeTotal || 0;
   const rowBadges =
     typeof plb.leaderboardRowBadgesHtml === "function"
-      ? plb.leaderboardRowBadgesHtml(p, { catalog: leaderboardBadgeCatalog, earnedIds })
+      ? plb.leaderboardRowBadgesHtml(p, { catalog: leaderboardBadgeCatalog, earnedIds, recentBadgeIds })
       : "";
   const summaryChip =
     typeof plb.leaderboardBadgeSummaryChipHtml === "function"
@@ -189,6 +196,7 @@ function leaderboardBadgePanelHtml(p) {
     includeMeta: true,
     panelClass: "leaderboard-badge-panel",
     title: "Badge collection",
+    recentBadgeIds: recentBadgeIdsForPlayer(p),
   });
 }
 
@@ -823,6 +831,7 @@ async function fetchAndBuildLeaderboardRows(gid, opts = {}) {
       ),
       _sortName: plb.eventsRosterCharacterLabel(p).toLowerCase(),
       earnedBadgeIds: Array.isArray(p.earnedBadgeIds) ? p.earnedBadgeIds : [],
+      recentBadgeIds: Array.isArray(p.recentBadgeIds) ? p.recentBadgeIds : [],
     };
   });
 

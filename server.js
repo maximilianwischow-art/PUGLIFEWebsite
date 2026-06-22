@@ -28,6 +28,20 @@ import {
 } from "./lib/sync/runner.mjs";
 import { firstClearParticipantsByRaidFromReports as computeFirstClearParticipantsByRaid } from "./lib/compute/first-clears.mjs";
 import {
+  resolveLatestRaidContext,
+  recentBadgeIdsArrayForUser,
+  recentBadgeIdsForUser,
+} from "./lib/badge-recent.mjs";
+import {
+  ACHIEVEMENT_BADGE_COMBOS,
+  COMBO_BADGE_IDS,
+  DOUBLE_TROUBLE_REPORT_CODE,
+  DOUBLE_TROUBLE_TEST_USER_IDS,
+  DOUBLE_TROUBLE_WCL_URL,
+  badgeCatalogEntriesFromCombos,
+  doubleTroublePinnedEvening,
+} from "./lib/badge-combos.mjs";
+import {
   createCharacterSpecResolver,
   classicArmoryCharacterPageUrl,
   realmSlugForLookup,
@@ -7713,6 +7727,9 @@ function publicSnapshotKeyFromRequest(req) {
   ) {
     params.set("_identityActivityCutoff", cutoff);
   }
+  if (path === "/api/leaderboard") {
+    params.set("_leaderboardBundleVersion", "v2-recent-badges");
+  }
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
   return query ? `${path}?${query}` : path;
@@ -14329,6 +14346,55 @@ async function userIdsForSscFirstEventBadge() {
   }
 }
 
+let doubleTroubleEveningCache = { at: 0, evening: null };
+const DOUBLE_TROUBLE_EVENING_CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function resolveFirstDoubleTroubleEvening() {
+  const age = Date.now() - doubleTroubleEveningCache.at;
+  if (age < DOUBLE_TROUBLE_EVENING_CACHE_TTL_MS && doubleTroubleEveningCache.evening !== undefined) {
+    return doubleTroubleEveningCache.evening;
+  }
+  const evening = doubleTroublePinnedEvening();
+  doubleTroubleEveningCache = { at: Date.now(), evening };
+  return evening;
+}
+
+async function userIdsForDoubleTroublePart(_part) {
+  try {
+    return raidAppearancesUserIdsInDateRange({ reportCodes: [DOUBLE_TROUBLE_REPORT_CODE] });
+  } catch (error) {
+    console.warn("[badges] raid_appearances lookup failed for double-trouble:", error?.message || error);
+    return new Set();
+  }
+}
+
+function eventManagementSelectedReportCodes() {
+  return Array.from(
+    new Set(
+      (gargulLootState?.selectedReportCodes || [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function resolveLatestRaidForBadges() {
+  try {
+    await ensureGargulLootHistoryStore();
+  } catch {
+    /* gargul selection is optional */
+  }
+  return resolveLatestRaidContext({ reportCodes: eventManagementSelectedReportCodes() });
+}
+
+function lastRaidApiPayload(lastRaid) {
+  if (!lastRaid?.reportCode) return null;
+  return {
+    reportCode: String(lastRaid.reportCode),
+    startMs: Number(lastRaid.startMs || 0) || null,
+  };
+}
+
 async function raidHelperPrimarySignupUserIdsForEvent(eventId) {
   /** @type {Set<number>} */
   const out = new Set();
@@ -14405,6 +14471,18 @@ async function refreshSpecificRaidAttendanceAwardsCache() {
     }
     out.set(cfg.badgeId, userIds);
   }
+  try {
+    out.set("double-trouble-ssc", await userIdsForDoubleTroublePart("ssc"));
+    out.set("double-trouble-tk", await userIdsForDoubleTroublePart("tk"));
+    for (const uid of DOUBLE_TROUBLE_TEST_USER_IDS) {
+      out.get("double-trouble-ssc").add(uid);
+      out.get("double-trouble-tk").add(uid);
+    }
+  } catch (error) {
+    console.warn("[badges] Double Trouble award resolution failed:", error?.message || error);
+    out.set("double-trouble-ssc", new Set());
+    out.set("double-trouble-tk", new Set());
+  }
   specificRaidAttendanceAwardsCache = { at: Date.now(), awards: out };
   return out;
 }
@@ -14422,10 +14500,11 @@ async function getSpecificRaidAttendanceAwards() {
   return specificRaidAttendanceAwardsRefreshPromise;
 }
 
-/** Set of every `badgeId` covered by `SPECIFIC_RAID_ATTENDANCE_BADGES`. */
-const SPECIFIC_RAID_ATTENDANCE_BADGE_IDS = new Set(
-  SPECIFIC_RAID_ATTENDANCE_BADGES.map((b) => b.badgeId)
-);
+/** Set of every `badgeId` covered by `SPECIFIC_RAID_ATTENDANCE_BADGES` and combo parts. */
+const SPECIFIC_RAID_ATTENDANCE_BADGE_IDS = new Set([
+  ...SPECIFIC_RAID_ATTENDANCE_BADGES.map((b) => b.badgeId),
+  ...COMBO_BADGE_IDS,
+]);
 
 /**
  * Resolve every specific-raid-attendance badge against the canonical user
@@ -14521,13 +14600,16 @@ const BADGE_CATALOG = [
     label: "Phase 2 — Tier 5",
     phase: "P2",
     description: "Serpentshrine Cavern and Tempest Keep event awards.",
-    badges: SPECIFIC_RAID_ATTENDANCE_BADGES.filter((cfg) => !PHASE_1_EVENT_BADGE_IDS.has(cfg.badgeId)).map((cfg) => ({
-      id: cfg.badgeId,
-      name: cfg.label,
-      icon: cfg.icon,
-      phase: "P2",
-      description: cfg.description,
-    })),
+    badges: [
+      ...SPECIFIC_RAID_ATTENDANCE_BADGES.filter((cfg) => !PHASE_1_EVENT_BADGE_IDS.has(cfg.badgeId)).map((cfg) => ({
+        id: cfg.badgeId,
+        name: cfg.label,
+        icon: cfg.icon,
+        phase: "P2",
+        description: cfg.description,
+      })),
+      ...badgeCatalogEntriesFromCombos(),
+    ],
   },
   {
     id: "performance",
@@ -14575,6 +14657,7 @@ const GUILD_ROLE_BADGE_IDS = new Set([
 
 function badgeCatalogRarityForCategory(categoryId, badge) {
   const cat = String(categoryId || "");
+  if (COMBO_BADGE_IDS.has(String(badge?.id || ""))) return "legendary";
   if (cat === "phase-2-t5" || cat === "event-awards") return "legendary";
   if (
     cat === "raid-loyalty" ||
@@ -14698,7 +14781,16 @@ function profileAchievementBadgeCatalogCategories() {
 app.get("/api/badge-tooltips", async (_req, res) => {
   try {
     await ensureBadgeTooltipsStore();
-    return res.json({ ok: true, categories: mergedBadgeCatalogCategories(), rows: flatMergedBadgeCatalogRows() });
+    const evening = await resolveFirstDoubleTroubleEvening();
+    const lastRaidContext = await resolveLatestRaidForBadges();
+    return res.json({
+      ok: true,
+      categories: mergedBadgeCatalogCategories(),
+      rows: flatMergedBadgeCatalogRows(),
+      combos: ACHIEVEMENT_BADGE_COMBOS,
+      doubleTroubleEvening: evening,
+      lastRaid: lastRaidApiPayload(lastRaidContext),
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load badge tooltips" });
   }
@@ -15234,6 +15326,8 @@ app.get("/api/profile/me/badges", async (req, res) => {
     await ensureBadgeTooltipsStore();
     const badgeCatalog = profileAchievementBadgeCatalogCategories();
     const linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
+    const lastRaidContext = await resolveLatestRaidForBadges();
+    const lastRaid = lastRaidApiPayload(lastRaidContext);
 
     // Phase 4 cutover: prefer materialised badge_state. Falls back to live
     // computation when the SQLite row is missing (cold boot before first
@@ -15247,6 +15341,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
             const stateById = new Map(states.map((s) => [s.badgeId, s]));
             const milestoneInferredCount = inferRaidMilestoneEventCountFromBadgeStates(stateById);
             const materializedAchievements = profileMaterializedAchievementResolution(canonical, linkedCharacters);
+            const recentSet = recentBadgeIdsForUser(canonical.id, lastRaidContext);
             const categories = badgeCatalog.map((cat) => ({
               ...cat,
               badges: cat.badges.map((b) => {
@@ -15263,6 +15358,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
                   ...b,
                   earned,
                   firstEarnedAt: st?.firstEarnedAt || null,
+                  isRecent: earned && recentSet.has(b.id),
                 };
               }),
             }));
@@ -15272,6 +15368,8 @@ app.get("/api/profile/me/badges", async (req, res) => {
               categories,
               linkedCharacters,
               lazyBadges: materializedAchievements.lazyBadges,
+              lastRaid,
+              recentBadgeIds: [...recentSet],
             };
             return res.json(payload);
           }
@@ -15408,26 +15506,35 @@ app.get("/api/profile/me/badges", async (req, res) => {
 
     const categories = badgeCatalog.map((cat) => ({
       ...cat,
-      badges: cat.badges.map((b) => ({ ...b, earned: earned.has(b.id) })),
+      badges: cat.badges.map((b) => ({ ...b, earned: earned.has(b.id), isRecent: false })),
     }));
+    let recentBadgeIds = [];
+    try {
+      const canonical = identityUserGetByDiscordId(userId);
+      if (canonical?.id) {
+        recentBadgeIds = recentBadgeIdsArrayForUser(canonical.id, lastRaidContext);
+        for (const cat of categories) {
+          for (const b of cat.badges || []) {
+            if (b.earned && recentBadgeIds.includes(b.id)) b.isRecent = true;
+          }
+        }
+      }
+    } catch {
+      /* optional */
+    }
     const payload = {
       ok: true,
       categories,
       // Names the badge UI should match against when running the leaderboard's
-      // client-side badge resolvers (iron attendance, parsing ceiling, most
-      // deaths last 6, best-time participant). Includes the profile's explicit
-      // main character + every linked WCL/Account-Assignment name.
       linkedCharacters,
-      // Badge ids the client should resolve on top of the static catalog by
-      // re-running `playerEarnedXxxBadge` against the active-roster + WCL
-      // payloads the leaderboard already loads. Server cannot resolve these
-      // cheaply because the source data is large + stale-while-revalidate.
       lazyBadges: [
         "iron-attendance",
         "parsing-ceiling",
         "most-deaths-last-6-raids",
         "best-time-participant",
       ],
+      lastRaid,
+      recentBadgeIds,
     };
     return res.json(payload);
   } catch (error) {
@@ -23939,7 +24046,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadge
  * (no sync has ever run on this DB) so the caller can surface a
  * "data warming up" hint instead of an empty grid.
  */
-function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = null) {
+function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = null, lastRaidContext = null) {
   const base = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
   if (!base || !Array.isArray(base.leaderboard) || !base.leaderboard.length) return null;
 
@@ -24110,6 +24217,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       rhPastEventCount: row.wclEventCount,
       specificEventBadges,
     }, preResolvedBadges, linkedCharacters);
+    const recentBadgeIds = recentBadgeIdsArrayForUser(u.id, lastRaidContext);
 
     players.push({
       ...row,
@@ -24132,6 +24240,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       specificEventBadges,
       preResolvedBadges,
       earnedBadgeIds,
+      recentBadgeIds,
     });
   }
 
@@ -24147,6 +24256,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
     parseCeilingMax: base.parseCeilingMax,
     materializedAt: Date.now(),
     source: "leaderboard-bundle-v1",
+    lastRaid: lastRaidApiPayload(lastRaidContext),
     players,
   };
 }
@@ -24164,7 +24274,8 @@ app.get("/api/leaderboard", async (req, res) => {
   try {
     await ensureIdentityPublicSettingsStore();
     const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
-    const payload = buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards);
+    const lastRaidContext = await resolveLatestRaidForBadges();
+    const payload = buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards, lastRaidContext);
     if (!payload) {
       return res.json({
         ok: true,
@@ -24486,6 +24597,15 @@ async function runSyncBadges() {
       },
     ])
   );
+  for (const badgeId of ["double-trouble-ssc", "double-trouble-tk"]) {
+    specificRaidAttendanceEvidence.set(badgeId, {
+      type: "double-trouble",
+      source: "raid_appearances",
+      reportCode: DOUBLE_TROUBLE_REPORT_CODE,
+      wclUrl: DOUBLE_TROUBLE_WCL_URL,
+      label: "Double Trouble",
+    });
+  }
 
   let rowsChanged = 0;
   const now = Date.now();

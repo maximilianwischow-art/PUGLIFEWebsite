@@ -109,6 +109,8 @@ const WOW_CLASS_COLORS = {
 
 const badgeTooltipById = new Map();
 let badgeTooltipCatalogPromise = null;
+/** @type {Array<object>} */
+let achievementBadgeCombos = [];
 
 function escapeHtml(s) {
   return String(s ?? "")
@@ -147,6 +149,8 @@ function loadBadgeTooltipsOnce() {
           rarity: String(row?.rarity || "epic").trim() || "epic",
         });
       }
+      achievementBadgeCombos = Array.isArray(payload?.combos) ? payload.combos : [];
+      window.plbAchievementBadgeCombos = achievementBadgeCombos;
       return badgeTooltipById;
     })
     .catch(() => badgeTooltipById);
@@ -178,6 +182,8 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "ssc-first-clear": "#14b8a6",
     "tk-first-kael-kill": "#22c55e",
     "ssc-0611-2026": "#a855f7",
+    "double-trouble-ssc": "#14b8a6",
+    "double-trouble-tk": "#a855f7",
   };
   if (byId[id]) return byId[id];
   if (id.includes("first-time-clear")) return "#22c55e";
@@ -198,12 +204,20 @@ function badgeTooltipRarityColor(rarity) {
 function achievementTooltipHtml(meta) {
   const rarity = ["common", "rare", "epic", "legendary"].includes(meta.rarity) ? meta.rarity : "epic";
   const description = String(meta.description || "").trim();
+  const wclHint = String(meta.wclUrl || "").trim()
+    ? `<span class="achievement-tooltip-wcl-hint">Click to open Warcraft Logs</span>`
+    : "";
+  const recentHint = meta.isRecent
+    ? `<span class="achievement-tooltip-recent-hint">Earned last raid</span>`
+    : "";
   const style = `--achievement-glow-color:${meta.glowColor};--achievement-rarity-color:${badgeTooltipRarityColor(rarity)};`;
   return `
     <span class="achievement-tooltip" aria-hidden="true">
       <span class="achievement-tooltip-box rarity-${escapeHtml(rarity)}" style="${escapeHtml(style)}">
         <span class="achievement-name">${escapeHtml(meta.name)}</span>
         ${description ? `<span class="achievement-description">${escapeHtml(description)}</span>` : ""}
+        ${recentHint}
+        ${wclHint}
         <span class="achievement-rarity"><span class="achievement-rarity-text">${escapeHtml(rarity)}</span></span>
       </span>
     </span>`;
@@ -215,9 +229,10 @@ function achievementBadgeFrameAttrs(meta, extraClass = "") {
   return `class="${escapeHtml(classes)}"`;
 }
 
-function achievementBadgeSlotAttrs(meta, baseClass) {
+function achievementBadgeSlotAttrs(meta, baseClass, isRecent = false) {
   const rarity = ["common", "rare", "epic", "legendary"].includes(meta?.rarity) ? meta.rarity : "epic";
-  return `class="${escapeHtml(`${baseClass} achievement-badge-slot--${rarity}`)}"`;
+  const recentClass = isRecent ? " achievement-badge-container--recent" : "";
+  return `class="${escapeHtml(`${baseClass} achievement-badge-slot--${rarity}${recentClass}`)}"`;
 }
 
 /**
@@ -1437,12 +1452,16 @@ const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
 
 /** Newest event-night badges first — prepend future dated IDs here. */
 const LEADERBOARD_ROW_EVENT_BADGE_RECENCY = [
+  "double-trouble-ssc",
+  "double-trouble-tk",
   "ssc-0611-2026",
   "tk-first-kael-kill",
   "ssc-first-clear",
   "ssc-first-event",
   "aoe-cleave",
 ];
+
+const LEADERBOARD_COMBO_BADGE_IDS = new Set(["double-trouble-ssc", "double-trouble-tk"]);
 
 function leaderboardBadgeCatalogEntry(catalog, badgeId) {
   const id = String(badgeId || "").trim();
@@ -1469,9 +1488,69 @@ function leaderboardRowBadgeDisplayOrder(earnedSet) {
     if (String(id).startsWith("raids-with-guild-")) continue;
     if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
     if (LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS.includes(id)) continue;
+    if (LEADERBOARD_COMBO_BADGE_IDS.has(id)) continue;
     if (!out.includes(id)) out.push(id);
   }
   return out;
+}
+
+function comboBadgeIdsFromCatalog() {
+  const combos = Array.isArray(achievementBadgeCombos) ? achievementBadgeCombos : window.plbAchievementBadgeCombos || [];
+  return new Set(
+    combos.flatMap((combo) => (combo.parts || []).map((p) => String(p.badgeId || "").trim())).filter(Boolean)
+  );
+}
+
+function renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet) {
+  const recent = recentSet instanceof Set ? recentSet : new Set();
+  const parts = (Array.isArray(combo?.parts) ? combo.parts : []).filter((p) =>
+    earnedSet.has(String(p.badgeId || "").trim())
+  );
+  if (!parts.length) return "";
+  const comboName = String(combo.name || "Combo").trim();
+  const comboDesc = String(combo.description || "").trim();
+  const wclUrl = String(combo.wclUrl || "").trim();
+  const rarity = String(combo.rarity || "legendary").trim() || "legendary";
+  const isComplete = parts.length === (combo.parts || []).length;
+  const comboHasRecent = parts.some((part) => recent.has(String(part.badgeId || "").trim()));
+  const meta = {
+    id: String(combo.id || ""),
+    name: comboName,
+    description: comboDesc,
+    rarity,
+    wclUrl,
+    isRecent: comboHasRecent,
+    glowColor: badgeTooltipGlowColor(parts[0]?.badgeId, rarity),
+  };
+  const partHtml = parts
+    .map((part, idx) => {
+      const badgeId = String(part.badgeId || "").trim();
+      const entry = leaderboardBadgeCatalogEntry(catalog, badgeId);
+      const icon = badgeIconSrcFromCatalogPath(entry?.icon || part.icon, badgeId);
+      const partLabel = String(part.partLabel || entry?.comboPartLabel || badgeId).trim();
+      const partIsRecent = recent.has(badgeId);
+      const link =
+        idx < parts.length - 1
+          ? `<span class="achievement-badge-combo-link" aria-hidden="true" title="Double Trouble combo"></span>`
+          : "";
+      return `<span class="achievement-badge-combo-part" data-badge-id="${escapeHtml(badgeId)}" title="${escapeHtml(partLabel)}">
+        <span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container achievement-badge-combo-part-slot", partIsRecent)} data-badge-id="${escapeHtml(badgeId)}" aria-label="${escapeHtml(`${comboName} — ${partLabel}`)}">
+          <span ${achievementBadgeFrameAttrs(meta)}>
+            <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
+            <span class="achievement-badge-glow" aria-hidden="true"></span>
+          </span>
+        </span>
+      </span>${link}`;
+    })
+    .join("");
+  const tip = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}${isComplete ? "" : " (partial)"}`;
+  const comboRecentClass = comboHasRecent ? " achievement-badge-combo--recent" : "";
+  const comboHtml = `<span class="achievement-badge-combo${isComplete ? " achievement-badge-combo--complete" : " achievement-badge-combo--partial"}${comboRecentClass}" data-combo-id="${escapeHtml(String(combo.id || ""))}" aria-label="${escapeHtml(tip)}">
+    ${partHtml}
+    ${achievementTooltipHtml(meta)}
+  </span>`;
+  if (!wclUrl) return comboHtml;
+  return `<a class="achievement-badge-combo-wrap" href="${escapeHtml(wclUrl)}" target="_blank" rel="noopener noreferrer" title="View Double Trouble on Warcraft Logs">${comboHtml}</a>`;
 }
 
 function achievementPngFileFromIconUrl(iconUrl, badgeId) {
@@ -1520,16 +1599,17 @@ function badgeIconSrcFromCatalogPath(iconPath, badgeId) {
   return achievementBadgeIconUrlWithFallback(achievementPngFileFromIconUrl(raw, badgeId));
 }
 
-function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry) {
+function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry, isRecent = false) {
   const id = String(badgeId || "").trim();
   if (!id) return "";
   const name = String(catalogEntry?.name || id).trim();
   const description = String(catalogEntry?.description || catalogEntry?.defaultDescription || "").trim();
   const rarity = String(catalogEntry?.rarity || catalogEntry?.defaultRarity || "epic").trim() || "epic";
   const meta = badgeTooltipMeta(id, name, description, rarity);
+  meta.isRecent = !!isRecent;
   const icon = badgeIconSrcFromCatalogPath(catalogEntry?.icon, id);
-  const tip = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}`;
-  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container")} data-badge-id="${escapeHtml(id)}" aria-label="${escapeHtml(tip)}">
+  const tip = `${meta.name}${meta.description ? ` — ${meta.description}` : ""}${isRecent ? " — Earned last raid" : ""}`;
+  return `<span ${achievementBadgeSlotAttrs(meta, "raider-badge-slot raider-badge-slot--achievement-earned achievement-badge-container", isRecent)} data-badge-id="${escapeHtml(id)}" aria-label="${escapeHtml(tip)}">
     <span ${achievementBadgeFrameAttrs(meta)}>
       <img class="raider-badge-achievement-img achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" width="44" height="44" loading="lazy" decoding="async"${icon.onerror} />
       <span class="achievement-badge-glow" aria-hidden="true"></span>
@@ -1546,13 +1626,30 @@ function leaderboardRowBadgesHtml(player, opts = {}) {
     : Array.isArray(player?.earnedBadgeIds)
       ? player.earnedBadgeIds
       : [];
+  const recentRaw = Array.isArray(opts.recentBadgeIds)
+    ? opts.recentBadgeIds
+    : Array.isArray(player?.recentBadgeIds)
+      ? player.recentBadgeIds
+      : [];
   const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
-  const ordered = leaderboardRowBadgeDisplayOrder(earnedSet).filter(
-    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)
-  );
-  return ordered
-    .map((id) => renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id)))
+  const recentSet = new Set(recentRaw.map((id) => String(id || "").trim()).filter(Boolean));
+  const comboIds = comboBadgeIdsFromCatalog();
+  const combos = Array.isArray(achievementBadgeCombos) ? achievementBadgeCombos : window.plbAchievementBadgeCombos || [];
+  const comboHtml = combos
+    .map((combo) => renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet))
     .join("");
+  const ordered = leaderboardRowBadgeDisplayOrder(earnedSet).filter(
+    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id) && !comboIds.has(id)
+  );
+  return `${comboHtml}${ordered
+    .map((id) =>
+      renderLeaderboardAchievementBadgeIcon(
+        id,
+        leaderboardBadgeCatalogEntry(catalog, id),
+        recentSet.has(id)
+      )
+    )
+    .join("")}`;
 }
 
 /** Earned/total summary chip with chevron for leaderboard expand affordance. */

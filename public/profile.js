@@ -47,6 +47,8 @@
   let lastProfile = null;
   /** Full badge catalog (incl. guild-rank) for the phased overview panel. */
   let profileBadgePanelCategories = [];
+  /** Badge ids earned during the latest curated raid night (from API). */
+  let profileRecentBadgeIds = [];
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -473,12 +475,20 @@
       }
       const payload = await badgeRes.json();
       if (!payload?.ok) throw new Error(payload?.error || "Failed to load badges");
+      window.plbAchievementBadgeCombos = Array.isArray(payload?.combos) ? payload.combos : [];
       const achievementCategories = Array.isArray(payload.categories) ? payload.categories : [];
       const tooltipPayload = tooltipRes.ok ? await tooltipRes.json() : { categories: [] };
       const fullCategories = Array.isArray(tooltipPayload?.categories)
         ? tooltipPayload.categories.filter((cat) => (cat.badges || []).length > 0)
         : achievementCategories;
       profileBadgePanelCategories = fullCategories.length ? fullCategories : achievementCategories;
+      profileRecentBadgeIds = Array.isArray(payload.recentBadgeIds) ? payload.recentBadgeIds : [];
+      for (const cat of achievementCategories) {
+        for (const b of cat.badges || []) {
+          if (b?.earned && b?.isRecent && b?.id) profileRecentBadgeIds.push(b.id);
+        }
+      }
+      profileRecentBadgeIds = [...new Set(profileRecentBadgeIds.map((id) => String(id || "").trim()).filter(Boolean))];
       if (!profileBadgePanelCategories.length) {
         els.badgesHost.innerHTML = '<p class="subtle">No badges defined yet.</p>';
         return;
@@ -511,6 +521,7 @@
           panelClass: "profile-badges-phased",
           title: "Badge collection",
           lazyBadgeIds,
+          recentBadgeIds: profileRecentBadgeIds,
         });
         ui.wirePhaseTabs(els.badgesHost);
       } else {

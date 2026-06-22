@@ -32,6 +32,8 @@
       "ssc-first-clear": "#14b8a6",
       "tk-first-kael-kill": "#22c55e",
       "ssc-0611-2026": "#a855f7",
+      "double-trouble-ssc": "#14b8a6",
+      "double-trouble-tk": "#a855f7",
     };
     if (byId[id]) return byId[id];
     if (id.includes("first-time-clear")) return "#22c55e";
@@ -49,19 +51,22 @@
     return "rgba(163, 53, 238, 0.7)";
   }
 
-  function badgeTooltipHtml(badge, earned) {
+  function badgeTooltipHtml(badge, earned, isRecentOverride) {
     const rarity = ["common", "rare", "epic", "legendary"].includes(String(badge?.rarity || ""))
       ? String(badge.rarity)
       : "epic";
     const status = earned ? "Earned" : "Not yet earned";
     const description = String(badge?.description || badge?.defaultDescription || "").trim();
+    const isRecent = isRecentOverride ?? !!badge?.isRecent;
     const glowColor = badgeTooltipGlowColor(badge?.id, rarity);
     const style = `--achievement-glow-color:${glowColor};--achievement-rarity-color:${badgeTooltipRarityColor(rarity)};`;
+    const recentHint = isRecent ? `<span class="achievement-tooltip-recent-hint">Earned last raid</span>` : "";
     return `
       <span class="achievement-tooltip" aria-hidden="true">
         <span class="achievement-tooltip-box rarity-${escapeHtml(rarity)}" style="${escapeHtml(style)}">
           <span class="achievement-name">${escapeHtml(badge?.name || "")}</span>
           ${description ? `<span class="achievement-description">${escapeHtml(description)}</span>` : ""}
+          ${recentHint}
           <span class="achievement-rarity">
             <span class="achievement-rarity-text">${escapeHtml(status)} · ${escapeHtml(rarity)}</span>
           </span>
@@ -78,42 +83,138 @@
 
   function parseEarnedLazyInput(cat, earnedSetOrLazyIds) {
     if (earnedSetOrLazyIds && typeof earnedSetOrLazyIds === "object" && earnedSetOrLazyIds.earnedSet) {
+      const recentRaw = earnedSetOrLazyIds.recentBadgeIds ?? earnedSetOrLazyIds.recentSet;
       return {
         earnedSet: earnedSetOrLazyIds.earnedSet instanceof Set ? earnedSetOrLazyIds.earnedSet : new Set(),
         lazySet: new Set(Array.isArray(earnedSetOrLazyIds.lazyBadgeIds) ? earnedSetOrLazyIds.lazyBadgeIds : []),
+        recentSet:
+          recentRaw instanceof Set ? recentRaw : new Set(Array.isArray(recentRaw) ? recentRaw : []),
       };
     }
     if (earnedSetOrLazyIds instanceof Set) {
-      return { earnedSet: earnedSetOrLazyIds, lazySet: new Set() };
+      return { earnedSet: earnedSetOrLazyIds, lazySet: new Set(), recentSet: new Set() };
     }
     if (Array.isArray(earnedSetOrLazyIds)) {
       return {
         earnedSet: new Set((cat.badges || []).filter((b) => b.earned).map((b) => b.id)),
         lazySet: new Set(earnedSetOrLazyIds),
+        recentSet: new Set(),
       };
     }
     return {
       earnedSet: new Set((cat.badges || []).filter((b) => b.earned).map((b) => b.id)),
       lazySet: new Set(),
+      recentSet: new Set(),
     };
   }
 
+  function comboBadgeIdsFromPayload() {
+    const combos = window.plbAchievementBadgeCombos || [];
+    return new Set(
+      combos.flatMap((combo) => (combo.parts || []).map((p) => String(p.badgeId || "").trim())).filter(Boolean)
+    );
+  }
+
+  function renderComboBadgeTileHtml(combo, badges, earnedSet, recentSet) {
+    const recent = recentSet instanceof Set ? recentSet : new Set();
+    const parts = (combo.parts || [])
+      .map((part) => {
+        const badge = badges.find((b) => b.id === part.badgeId);
+        return badge ? { badge, part } : null;
+      })
+      .filter(Boolean);
+    if (!parts.length) return "";
+    const earnedCount = parts.filter(({ badge }) => earnedSet.has(badge.id) || badge.earned).length;
+    const isComplete = earnedCount === parts.length;
+    const comboHasRecent = parts.some(({ badge }) => recent.has(badge.id) || badge.isRecent);
+    const comboBadge = {
+      id: combo.id,
+      name: combo.name,
+      description: combo.description,
+      rarity: combo.rarity || "legendary",
+      wclUrl: combo.wclUrl || null,
+      isRecent: comboHasRecent,
+    };
+    const wclUrl = String(combo.wclUrl || "").trim();
+    const partTiles = parts
+      .map(({ badge, part }, idx) => {
+        const isEarned = earnedSet.has(badge.id) || badge.earned;
+        const isRecent = isEarned && (recent.has(badge.id) || badge.isRecent);
+        const cls = [
+          isEarned
+            ? "profile-badge-tile achievement-badge-container is-earned"
+            : "profile-badge-tile achievement-badge-container is-locked",
+          isRecent ? "is-recent" : "",
+          "profile-badge-combo-part",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const plb = window.plbEventsRoster;
+        const icon =
+          plb && typeof plb.badgeIconSrcFromCatalogPath === "function"
+            ? plb.badgeIconSrcFromCatalogPath(badge.icon, badge.id)
+            : { src: String(badge.icon || ""), onerror: "" };
+        const link =
+          idx < parts.length - 1
+            ? `<span class="achievement-badge-combo-link profile-badge-combo-link" aria-hidden="true"></span>`
+            : "";
+        return `
+          <div class="${cls}" data-badge-id="${escapeHtml(badge.id)}" aria-label="${escapeHtml(`${combo.name} — ${part.partLabel || badge.name}`)}">
+            <div ${badgeFrameAttrs(badge)} aria-hidden="true">
+              <img class="achievement-badge-img" src="${escapeHtml(icon.src)}" alt="" loading="lazy" decoding="async"${icon.onerror} />
+              <span class="achievement-badge-glow" aria-hidden="true"></span>
+            </div>
+            <span class="profile-badge-name profile-badge-combo-part-name">${escapeHtml(part.partLabel || badge.comboPartLabel || badge.name)}</span>
+            ${badgeTooltipHtml(badge, isEarned, isRecent)}
+          </div>${link}`;
+      })
+      .join("");
+    const wclLink = wclUrl
+      ? `<a class="profile-badge-combo-wcl" href="${escapeHtml(wclUrl)}" target="_blank" rel="noopener noreferrer">View log</a>`
+      : "";
+    const comboRecentClass = comboHasRecent ? " profile-badge-combo--recent" : "";
+    return `
+      <div class="profile-badge-combo${isComplete ? " profile-badge-combo--complete" : earnedCount ? " profile-badge-combo--partial" : ""}${comboRecentClass}" data-combo-id="${escapeHtml(combo.id)}">
+        <div class="profile-badge-combo-head">
+          <span class="profile-badge-combo-title">${escapeHtml(combo.name)}</span>
+          ${isComplete ? `<span class="profile-badge-combo-tag">Combo</span>` : earnedCount ? `<span class="profile-badge-combo-tag profile-badge-combo-tag--partial">${earnedCount}/${parts.length}</span>` : `<span class="profile-badge-combo-tag profile-badge-combo-tag--partial">0/${parts.length}</span>`}
+          ${wclLink}
+        </div>
+        <div class="profile-badge-combo-parts">${partTiles}</div>
+        ${badgeTooltipHtml(comboBadge, isComplete)}
+      </div>`;
+  }
+
   function renderBadgeCategoryHtml(cat, earnedSetOrLazyIds) {
-    const { earnedSet, lazySet } = parseEarnedLazyInput(cat, earnedSetOrLazyIds);
+    const { earnedSet, lazySet, recentSet } = parseEarnedLazyInput(cat, earnedSetOrLazyIds);
     const hasLazy = (cat.badges || []).some((b) => lazySet.has(b.id));
     const earnedCount = (cat.badges || []).filter((b) => earnedSet.has(b.id) || b.earned).length;
     const total = (cat.badges || []).length;
     const catId = String(cat.id || "");
     const isGuildCategory = catId === "guild-rank" || catId === "raid-loyalty";
+    const combos = window.plbAchievementBadgeCombos || [];
+    const comboPartIds = comboBadgeIdsFromPayload();
+    const renderedComboIds = new Set();
+    const comboItems = combos
+      .map((combo) => {
+        if (renderedComboIds.has(combo.id)) return "";
+        renderedComboIds.add(combo.id);
+        return renderComboBadgeTileHtml(combo, cat.badges || [], earnedSet, recentSet);
+      })
+      .filter(Boolean)
+      .join("");
     const items = (cat.badges || [])
+      .filter((b) => !comboPartIds.has(b.id))
       .map((b) => {
         const isEarned = earnedSet.has(b.id) || !!b.earned;
+        const isRecent = isEarned && (recentSet.has(b.id) || !!b.isRecent);
         const isGuildRole =
           isGuildCategory || String(b.icon || "").includes("/guild-roles/");
         const cls = [
           isEarned
             ? "profile-badge-tile achievement-badge-container is-earned"
             : "profile-badge-tile achievement-badge-container is-locked",
+          isRecent ? "is-recent" : "",
           isGuildRole ? "profile-badge-tile--guild-role" : "",
         ]
           .filter(Boolean)
@@ -131,7 +232,7 @@
               <span class="achievement-badge-glow" aria-hidden="true"></span>
             </div>
             <span class="profile-badge-name">${escapeHtml(b.name)}</span>
-            ${badgeTooltipHtml(b, isEarned)}
+            ${badgeTooltipHtml(b, isEarned, isRecent)}
           </div>`;
       })
       .join("");
@@ -144,7 +245,7 @@
           <h4 class="profile-badge-category-title">${escapeHtml(cat.label)}</h4>
           <span class="profile-badge-category-meter" data-meter-total="${total}">${meterHtml}</span>
         </header>
-        <div class="profile-badge-grid">${items}</div>
+        <div class="profile-badge-grid">${comboItems}${items}</div>
       </section>`;
   }
 
@@ -170,7 +271,8 @@
     const opts = options || {};
     const earnedSet = earnedBadgeIds instanceof Set ? earnedBadgeIds : new Set(earnedBadgeIds || []);
     const lazyBadgeIds = Array.isArray(opts.lazyBadgeIds) ? opts.lazyBadgeIds : [];
-    const earnedInput = { earnedSet, lazyBadgeIds };
+    const recentBadgeIds = Array.isArray(opts.recentBadgeIds) ? opts.recentBadgeIds : [];
+    const earnedInput = { earnedSet, lazyBadgeIds, recentBadgeIds };
     const cats = Array.isArray(categories) ? categories : [];
     const includeMeta = opts.includeMeta !== false;
     const panelClass = String(opts.panelClass || "leaderboard-badge-panel").trim();
