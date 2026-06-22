@@ -447,7 +447,7 @@ const DEFAULT_TBC_ZONES = [
   "Zul'Aman",
 ];
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260615-grandmadeath-warrior-tank-icon-v1";
+const API_BUILD_ID = "20260622plb-double-trouble-tooltip-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
