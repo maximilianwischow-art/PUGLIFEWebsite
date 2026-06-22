@@ -8574,8 +8574,10 @@ tr.plb-gear-row--miss th {
 .leaderboard-td-badges {
   width: auto;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
   vertical-align: middle;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 /* Raid rank: gold pill — matches Leaderboard reference (border + caps label). */
@@ -8626,18 +8628,20 @@ tr.plb-gear-row--miss th {
   background: rgba(0, 0, 0, 0.28);
 }
 
-/* One row: guild role + achievements + chips — uniform 44px slots. */
+/* One row: guild role + achievements + chips — uniform badge slots with pulse headroom. */
 .leaderboard-badge-strip {
-  /* ~68% of 92px portrait — visually lines up with the spec icon column. */
-  --lb-row-badge-size: 62px;
+  --lb-row-badge-size: 66px;
+  --lb-row-badge-pulse-room: 6px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   width: 100%;
   min-width: 0;
-  min-height: var(--lb-row-badge-size);
+  min-height: calc(var(--lb-row-badge-size) + var(--lb-row-badge-pulse-room) * 2);
+  padding-block: var(--lb-row-badge-pulse-room);
   overflow: visible;
+  box-sizing: border-box;
 }
 
 .leaderboard-badge-strip-icons {
@@ -8646,6 +8650,7 @@ tr.plb-gear-row--miss th {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: var(--lb-row-badge-size);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -8668,7 +8673,7 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-table tbody td.leaderboard-td-badges {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .leaderboard-badge-strip .guild-role-token,
@@ -8699,9 +8704,10 @@ tr.plb-gear-row--miss th {
   overflow: visible;
 }
 
-.leaderboard-badge-strip .achievement-badge-container--recent {
-  overflow: hidden;
-  contain: paint;
+.leaderboard-badge-strip .achievement-badge-combo,
+.leaderboard-badge-strip .achievement-badge-combo-wrap {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .leaderboard-badge-strip .achievement-badge-container:hover,
@@ -8832,13 +8838,13 @@ tr.plb-gear-row--miss th {
 @keyframes badgeFlameBorderPulse {
   0%,
   100% {
-    opacity: 0.78;
-    padding: 2px;
+    opacity: 0.8;
+    transform: scale(1);
     filter: brightness(1);
   }
   50% {
     opacity: 1;
-    padding: 2.75px;
+    transform: scale(1.04);
     filter: brightness(1.1);
   }
 }
@@ -8846,10 +8852,10 @@ tr.plb-gear-row--miss th {
 @keyframes badgeFlameGlowPulse {
   0%,
   100% {
-    opacity: 0.34;
+    opacity: 0.38;
   }
   50% {
-    opacity: 0.48;
+    opacity: 0.52;
   }
 }
 
@@ -8857,14 +8863,15 @@ tr.plb-gear-row--miss th {
   0%,
   100% {
     box-shadow:
-      inset 0 0 0 1px rgba(249, 115, 22, 0.58),
-      inset 0 0 10px rgba(159, 255, 98, 0.22),
+      0 0 0 1px rgba(249, 115, 22, 0.58),
+      0 0 10px rgba(159, 255, 98, 0.34),
       0 4px 8px rgba(0, 0, 0, 0.5);
   }
   50% {
     box-shadow:
-      inset 0 0 0 1.5px rgba(249, 115, 22, 0.82),
-      inset 0 0 14px rgba(159, 255, 98, 0.34),
+      0 0 0 1.5px rgba(249, 115, 22, 0.82),
+      0 0 16px rgba(159, 255, 98, 0.52),
+      0 0 22px rgba(249, 115, 22, 0.28),
       0 4px 8px rgba(0, 0, 0, 0.5);
   }
 }
@@ -8872,25 +8879,28 @@ tr.plb-gear-row--miss th {
 @keyframes badgeFlameComboPulse {
   0%,
   100% {
-    box-shadow: inset 0 0 0 1px rgba(249, 115, 22, 0.35);
+    box-shadow:
+      0 0 12px rgba(249, 115, 22, 0.28),
+      0 0 8px rgba(159, 255, 98, 0.22);
   }
   50% {
-    box-shadow: inset 0 0 0 1.5px rgba(249, 115, 22, 0.58);
+    box-shadow:
+      0 0 18px rgba(249, 115, 22, 0.42),
+      0 0 14px rgba(159, 255, 98, 0.34);
   }
 }
 
 .achievement-badge-container--recent,
 .profile-badge-tile.is-earned.is-recent {
   position: relative;
-  overflow: hidden;
-  contain: paint;
+  overflow: visible;
 }
 
 .achievement-badge-container--recent::before,
 .profile-badge-tile.is-earned.is-recent::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -2px;
   border-radius: 8px;
   padding: 2px;
   background: linear-gradient(135deg, #9fff62 0%, #4cff78 28%, #f97316 62%, #fdba74 100%);
@@ -8902,7 +8912,7 @@ tr.plb-gear-row--miss th {
     linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
-  transform: none;
+  transform-origin: center center;
   animation: badgeFlameBorderPulse 2.6s ease-in-out infinite;
   pointer-events: none;
   z-index: 3;
@@ -8917,8 +8927,9 @@ tr.plb-gear-row--miss th {
 .profile-badge-tile.is-earned.is-recent .achievement-badge-glow {
   animation: badgeFlameGlowPulse 2.6s ease-in-out infinite;
   box-shadow:
-    inset 0 0 14px rgba(159, 255, 98, 0.4),
-    inset 0 0 22px rgba(249, 115, 22, 0.22);
+    0 0 18px rgba(159, 255, 98, 0.55),
+    0 0 28px rgba(249, 115, 22, 0.35),
+    inset 0 0 16px rgba(76, 255, 120, 0.25);
 }
 
 .achievement-badge-combo--recent {
