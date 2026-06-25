@@ -12979,6 +12979,10 @@ tr.plb-gear-row--miss th {
 .p2-demand-table col.col-time   { width: 124px; }
 .p2-demand-table col.col-remove { width: 72px; }
 
+.admin-p2-demand-table {
+  min-width: 800px;
+}
+
 .admin-p2-demand-table .cell-check {
   text-align: center;
   vertical-align: middle;
@@ -13236,12 +13240,13 @@ tr.plb-gear-row--miss th {
 }
 @media (max-width: 720px) {
   .p2-demand-table { min-width: 560px; font-size: 0.88rem; }
+  .admin-p2-demand-table { min-width: 800px; }
   .p2-demand-table col.col-time { width: 0; }
-  .p2-demand-table col.col-remove { width: 0; }
+  .p2-demand-table:not(.admin-p2-demand-table) col.col-remove { width: 0; }
   .p2-demand-table .col-time-th,
-  .p2-demand-table .cell-time,
-  .p2-demand-table .col-remove-th,
-  .p2-demand-table .cell-remove { display: none; }
+  .p2-demand-table .cell-time { display: none; }
+  .p2-demand-table:not(.admin-p2-demand-table) .col-remove-th,
+  .p2-demand-table:not(.admin-p2-demand-table) .cell-remove { display: none; }
   .p2-demand-table thead th,
   .p2-demand-table tbody td,
   .p2-demand-table tfoot td { padding: 0.7rem 0.8rem; }
