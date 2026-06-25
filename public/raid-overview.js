@@ -1,5 +1,5 @@
 const PHASE2_OVERVIEW_GUILD_ID = 817080;
-const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v7";
+const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v8";
 const PHASE2_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
 
 function esc(v) {
@@ -103,14 +103,22 @@ function renderRaidCard(raid) {
       : "";
   const parseTitle = raidCoreParseStatTitle(raid);
   const img = esc(raid.headerImageUrl || raid.imageUrl || "");
+  const imgSecondary = esc(raid.headerImageUrlSecondary || "");
   const sizeLabel = raid.size === 10 ? "10-Man" : "25-Man";
+  const isOneNight = raid.kind === "one-night" || raid.id === "t5-one-night";
+  const bestTimeLabel = isOneNight ? "Best total" : "Best time";
+  const heroInner = isOneNight && imgSecondary
+    ? `<img class="plb-ro-card-bg plb-ro-card-bg--left" src="${img}" alt="" loading="lazy" decoding="async" />
+      <img class="plb-ro-card-bg plb-ro-card-bg--right" src="${imgSecondary}" alt="" loading="lazy" decoding="async" />
+      <div class="plb-ro-card-hero-split" aria-hidden="true"></div>`
+    : `<img class="plb-ro-card-bg" src="${img}" alt="" loading="lazy" decoding="async" />`;
 
-  return `<article class="plb-ro-card plb-ro-card--tone-${esc(raid.progressionTone || "none")}" style="--plb-ro-color:${color}" role="article" aria-label="${esc(raid.name)} raid card">
+  return `<article class="plb-ro-card plb-ro-card--tone-${esc(raid.progressionTone || "none")}${isOneNight ? " plb-ro-card--one-night" : ""}" style="--plb-ro-color:${color}" role="article" aria-label="${esc(raid.name)} raid card">
     <div class="plb-ro-card-hero">
-      <img class="plb-ro-card-bg" src="${img}" alt="" loading="lazy" decoding="async" />
+      ${heroInner}
       <div class="plb-ro-card-hero-overlay" aria-hidden="true"></div>
       <span class="plb-ro-badge plb-ro-badge--size">${ICON_USERS}<span>${esc(sizeLabel)}</span></span>
-      <span class="plb-ro-badge plb-ro-badge--tier">${esc(raid.tier)}</span>
+      <span class="plb-ro-badge plb-ro-badge--tier">${esc(isOneNight ? "T5·1N" : raid.tier)}</span>
       <div class="plb-ro-card-titles">
         <h3 class="plb-ro-card-name">${esc(raid.name)}</h3>
         <p class="plb-ro-card-short">${esc(raid.shortName)}</p>
@@ -125,7 +133,7 @@ function renderRaidCard(raid) {
         <span class="plb-ro-progress-fill plb-ro-progress-fill--${esc(raid.progressionTone || "none")}" style="width:${Math.min(100, Math.max(0, prog))}%"></span>
       </div>
       <div class="plb-ro-quick-stats">
-        ${statCell(ICON_CLOCK, "Best time", raid.bestTime || "—")}
+        ${statCell(ICON_CLOCK, bestTimeLabel, raid.bestTime || "—")}
         ${statCell(ICON_TROPHY, "Clears", String(raid.totalClears ?? 0))}
         ${statCell(ICON_TREND, "Core avg parse", parseText, "plb-ro-stat-value--parse", parseStyle, parseTitle)}
         ${statCell(ICON_CAL, "Last kill", raid.lastClear || "—")}
@@ -151,7 +159,22 @@ function coreParseStatTitle(s) {
 
 function raidCoreParseStatTitle(raid) {
   const name = String(raid?.name || raid?.shortName || "this raid").trim();
+  if (raid?.kind === "one-night" || raid?.id === "t5-one-night") {
+    return "Average of Core roster peak parse on SSC and TK reports (combined one-night metric).";
+  }
   return `Average peak boss parse for Core roster members on ${name} reports only. Same metric family as Leaderboard peak parse.`;
+}
+
+const T5_RAID_ORDER = ["ssc", "tk", "t5-one-night"];
+
+function sortTierRaids(raids) {
+  return [...raids].sort((a, b) => {
+    const ai = T5_RAID_ORDER.indexOf(a.id);
+    const bi = T5_RAID_ORDER.indexOf(b.id);
+    const aRank = ai >= 0 ? ai : 99;
+    const bRank = bi >= 0 ? bi : 99;
+    return aRank - bRank;
+  });
 }
 
 function renderTierDivider(label, tone) {
@@ -165,7 +188,7 @@ function renderTierDivider(label, tone) {
 function renderOverview(payload) {
   const s = payload?.summary || {};
   const raids = Array.isArray(payload?.raids) ? payload.raids : [];
-  const t5 = raids.filter((r) => r.tier === "T5");
+  const t5 = sortTierRaids(raids.filter((r) => r.tier === "T5"));
   const t4 = raids.filter((r) => r.tier === "T4");
   const overall = Number(s.overallProgression) || 0;
 
@@ -213,6 +236,40 @@ function renderOverview(payload) {
   </div>`;
 }
 
+function buildOneNightSessionsTableHtml(raid) {
+  const sessions = Array.isArray(raid.oneNightSessions) ? [...raid.oneNightSessions] : [];
+  if (!sessions.length) {
+    return `<p class="subtle">No qualifying one-night clears yet — need a full SSC clear and a full TK clear on the same evening (TK after SSC).</p>`;
+  }
+  sessions.sort((a, b) => Number(a.totalClearMs || 0) - Number(b.totalClearMs || 0));
+  const bestMs = Number(sessions[0]?.totalClearMs || 0);
+  const rows = sessions
+    .map((session) => {
+      const totalMs = Number(session.totalClearMs || 0);
+      const isBest = totalMs > 0 && totalMs === bestMs;
+      const sscLink = session.ssc?.wclUrl
+        ? `<a href="${esc(session.ssc.wclUrl)}" target="_blank" rel="noopener noreferrer">SSC</a>`
+        : "—";
+      const tkLink = session.tk?.wclUrl
+        ? `<a href="${esc(session.tk.wclUrl)}" target="_blank" rel="noopener noreferrer">TK</a>`
+        : "—";
+      return `<tr${isBest ? ' class="plb-ro-one-night-row--best"' : ""}>
+        <td>${esc(fmtDate(session.startTime))}</td>
+        <td>${esc(fmtDurationMs(session.ssc?.clearDurationMs))}</td>
+        <td>${esc(fmtDurationMs(session.tk?.clearDurationMs))}</td>
+        <td><strong>${esc(fmtDurationMs(totalMs))}</strong>${isBest ? ' <span class="plb-ro-one-night-best-tag">PB</span>' : ""}</td>
+        <td>${sscLink}</td>
+        <td>${tkLink}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<p class="subtle plb-ro-one-night-intro">Combined full-clear time per evening (SSC clear + TK clear, TK log after SSC). Sorted fastest first.</p>
+  <table class="times-table times-table--pb plb-ro-boss-table plb-ro-one-night-table">
+    <thead><tr><th>Evening</th><th>SSC</th><th>TK</th><th>Total</th><th>SSC log</th><th>TK log</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 function buildBossTableHtml(raid) {
   const rows = (raid.bossRows || [])
     .map((boss) => {
@@ -243,11 +300,13 @@ function openRaidDetailModal(raidId) {
   const body = document.getElementById("plbRoDetailBody");
   if (!raid || !dialog || !title || !body) return;
   title.textContent = raid.name;
-  const wcl =
-    raid.wclUrl
+  const isOneNight = raid.kind === "one-night" || raid.id === "t5-one-night";
+  const wcl = isOneNight
+    ? ""
+    : raid.wclUrl
       ? `<p class="plb-ro-modal-wcl"><a href="${esc(raid.wclUrl)}" target="_blank" rel="noopener noreferrer">Open fastest full clear on Warcraft Logs</a></p>`
       : "";
-  body.innerHTML = `${wcl}${buildBossTableHtml(raid)}`;
+  body.innerHTML = `${wcl}${isOneNight ? buildOneNightSessionsTableHtml(raid) : buildBossTableHtml(raid)}`;
   if (typeof dialog.showModal === "function") dialog.showModal();
 }
 

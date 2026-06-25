@@ -179,8 +179,8 @@ function leaderboardBadgesColumnHtml(p, isOpen) {
   return `
     <div class="leaderboard-badge-strip">
       <div class="leaderboard-badge-strip-icons">
-        ${roleBadges}
-        ${rowBadges}
+        <div class="leaderboard-badge-strip-role">${roleBadges}</div>
+        <div class="leaderboard-badge-strip-achievements">${rowBadges}</div>
       </div>
       ${summaryChip}
     </div>`;
@@ -710,7 +710,7 @@ function wireLeaderboardRowBadgeTooltips() {
     badge.addEventListener("blur", hideLbRowBadgeTooltip, { signal });
   });
 
-  leaderboardTbody.querySelectorAll(".leaderboard-badge-strip-icons").forEach((scroller) => {
+  leaderboardTbody.querySelectorAll(".leaderboard-badge-strip-icons, .leaderboard-badge-strip-achievements").forEach((scroller) => {
     scroller.addEventListener("scroll", hideLbRowBadgeTooltip, { passive: true, signal });
   });
 

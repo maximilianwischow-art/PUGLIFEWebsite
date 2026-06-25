@@ -1827,9 +1827,14 @@ function adminP2DemandCheckCellHtml(userId, itemId, checked) {
   </label>`;
 }
 
+function adminP2DemandRemoveCellHtml(userId, itemId, itemName, raiderName) {
+  return `<button type="button" class="event-signup-btn event-signup-btn--softres" data-p2-demand-delete="1" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}" data-item-name="${esc(String(itemName || ""))}" data-raider-name="${esc(String(raiderName || ""))}">Remove</button>`;
+}
+
 function adminP2DemandRowsHtmlForRaider(row) {
   const items = Array.isArray(row.items) && row.items.length ? row.items : [];
   const userId = String(row.userId || "");
+  const raiderLabel = String(row.characterName || row.displayName || "this raider").trim();
   const totalNv = adminP2DemandRowNvTotal(row);
   const updatedIso = row.updatedAt ? new Date(Number(row.updatedAt)).toISOString() : "";
   const updatedLabel = adminP2DemandFmtUpdated(row.updatedAt);
@@ -1846,6 +1851,7 @@ function adminP2DemandRowsHtmlForRaider(row) {
         <td colspan="2"><span class="subtle">No items selected.</span></td>
         <td class="cell-num">0</td>
         <td class="cell-time">${timeMarkup}</td>
+        <td class="cell-remove"></td>
       </tr>
     `;
   }
@@ -1866,6 +1872,9 @@ function adminP2DemandRowsHtmlForRaider(row) {
       }
       cells.push(`<td class="cell-item">${adminP2DemandItemCellHtml(itemId, it.itemName)}</td>`);
       cells.push(`<td class="cell-prof">${it.profession ? esc(it.profession) : "—"}</td>`);
+      cells.push(
+        `<td class="cell-remove">${adminP2DemandRemoveCellHtml(userId, itemId, it.itemName, raiderLabel)}</td>`
+      );
       if (isFirst) {
         cells.push(`<td class="cell-num"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`);
         cells.push(`<td class="cell-time"${span > 1 ? ` rowspan="${span}"` : ""}>${timeMarkup}</td>`);
@@ -1925,6 +1934,7 @@ function refreshAdminP2DemandTable() {
         <col class="col-prof" />
         <col class="col-num" />
         <col class="col-time" />
+        <col class="col-remove" />
       </colgroup>
       <thead>
         <tr>
@@ -1934,6 +1944,7 @@ function refreshAdminP2DemandTable() {
           <th scope="col">Profession</th>
           <th scope="col" class="is-num">NV</th>
           <th scope="col" class="col-time-th">Updated</th>
+          <th scope="col" class="col-remove-th">Remove</th>
         </tr>
       </thead>
       <tbody>${rows.map((row) => adminP2DemandRowsHtmlForRaider(row)).join("")}</tbody>
@@ -1942,6 +1953,7 @@ function refreshAdminP2DemandTable() {
           <td colspan="4">${rows.length} ${rows.length === 1 ? "raider" : "raiders"}</td>
           <td class="cell-num">${grandTotal}</td>
           <td class="cell-time"></td>
+          <td class="cell-remove"></td>
         </tr>
       </tfoot>
     </table>
@@ -8826,6 +8838,35 @@ document.addEventListener("change", async (event) => {
     status(error?.message || "Failed to save check");
   } finally {
     cb.disabled = false;
+  }
+});
+
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("[data-p2-demand-delete]");
+  if (!btn || !(btn instanceof HTMLButtonElement)) return;
+  const userId = String(btn.getAttribute("data-user-id") || "").trim();
+  const itemID = Math.max(0, Math.floor(Number(btn.getAttribute("data-item-id") || 0)));
+  const itemName = String(btn.getAttribute("data-item-name") || "this item").trim();
+  const raiderName = String(btn.getAttribute("data-raider-name") || "this raider").trim();
+  if (!userId || !itemID) return;
+  if (
+    !window.confirm(`Remove ${itemName || "this item"} from ${raiderName}'s demand?`)
+  ) {
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await getJson("/api/admin/p2-demand/item", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ userId, itemID }),
+    });
+    status(`Removed ${itemName || "item"} from ${raiderName}.`);
+    await loadAdminP2DemandPanel();
+  } catch (error) {
+    status(error?.message || "Failed to remove demand item");
+  } finally {
+    btn.disabled = false;
   }
 });
 

@@ -993,7 +993,62 @@ body.framework-bg-vivid {
 }
 
 .plb-ro-grid--t5 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.plb-ro-card--one-night .plb-ro-card-hero {
+  background: #0a0a12;
+}
+
+.plb-ro-card-bg--left,
+.plb-ro-card-bg--right {
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.plb-ro-card-bg--left {
+  left: 0;
+}
+
+.plb-ro-card-bg--right {
+  right: 0;
+}
+
+.plb-ro-card-hero-split {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    105deg,
+    transparent 46%,
+    rgba(0, 0, 0, 0.55) 50%,
+    transparent 54%
+  );
+  pointer-events: none;
+}
+
+.plb-ro-one-night-intro {
+  margin: 0 0 10px;
+}
+
+.plb-ro-one-night-row--best td {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.plb-ro-one-night-best-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.18);
 }
 
 .plb-ro-grid--t4 {
@@ -8631,6 +8686,13 @@ tr.plb-gear-row--miss th {
 /* One row: guild role + achievements + chips — uniform badge slots with pulse headroom. */
 .leaderboard-badge-strip {
   --lb-row-badge-size: 66px;
+  --lb-row-badge-gap: 8px;
+  /* Primary rank + attendance companion + every master-crafter honour slot. */
+  --lb-row-role-badge-max: 6;
+  --lb-row-role-track-width: calc(
+    var(--lb-row-role-badge-max) * var(--lb-row-badge-size) +
+      (var(--lb-row-role-badge-max) - 1) * var(--lb-row-badge-gap)
+  );
   --lb-row-badge-pulse-room: 6px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -8645,10 +8707,29 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-badge-strip-icons {
+  display: grid;
+  grid-template-columns: var(--lb-row-role-track-width) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--lb-row-badge-gap);
+  min-width: 0;
+  min-height: var(--lb-row-badge-size);
+  overflow: visible;
+}
+
+.leaderboard-badge-strip-role {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--lb-row-badge-gap);
+  width: var(--lb-row-role-track-width);
+  flex-shrink: 0;
+}
+
+.leaderboard-badge-strip-achievements {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--lb-row-badge-gap);
   min-width: 0;
   min-height: var(--lb-row-badge-size);
   overflow-x: auto;
@@ -8657,11 +8738,11 @@ tr.plb-gear-row--miss th {
   scrollbar-color: rgba(167, 139, 250, 0.45) transparent;
 }
 
-.leaderboard-badge-strip-icons::-webkit-scrollbar {
+.leaderboard-badge-strip-achievements::-webkit-scrollbar {
   height: 4px;
 }
 
-.leaderboard-badge-strip-icons::-webkit-scrollbar-thumb {
+.leaderboard-badge-strip-achievements::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(167, 139, 250, 0.45);
 }
@@ -12896,11 +12977,23 @@ tr.plb-gear-row--miss th {
 .p2-demand-table col.col-prof   { width: 16%; }
 .p2-demand-table col.col-num    { width: 72px; }
 .p2-demand-table col.col-time   { width: 124px; }
+.p2-demand-table col.col-remove { width: 72px; }
 
 .admin-p2-demand-table .cell-check {
   text-align: center;
   vertical-align: middle;
   width: 44px;
+}
+
+.admin-p2-demand-table .cell-remove {
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.admin-p2-demand-table .cell-remove .event-signup-btn {
+  padding: 0.28rem 0.5rem;
+  font-size: 0.72rem;
 }
 
 .p2-demand-admin-check {
@@ -13144,8 +13237,11 @@ tr.plb-gear-row--miss th {
 @media (max-width: 720px) {
   .p2-demand-table { min-width: 560px; font-size: 0.88rem; }
   .p2-demand-table col.col-time { width: 0; }
+  .p2-demand-table col.col-remove { width: 0; }
   .p2-demand-table .col-time-th,
-  .p2-demand-table .cell-time { display: none; }
+  .p2-demand-table .cell-time,
+  .p2-demand-table .col-remove-th,
+  .p2-demand-table .cell-remove { display: none; }
   .p2-demand-table thead th,
   .p2-demand-table tbody td,
   .p2-demand-table tfoot td { padding: 0.7rem 0.8rem; }

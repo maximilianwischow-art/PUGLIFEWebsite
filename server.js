@@ -99,14 +99,20 @@ import {
 } from "./lib/classic-armory/equipment-audit.mjs";
 import {
   PHASE2_RAID_CATALOG,
+  PHASE2_T5_ONE_NIGHT_META,
   formatPhase2Duration,
   formatPhase2ShortDate,
   phase2ProgressionTone,
 } from "./lib/phase2-raid-overview.mjs";
+import {
+  t5OneNightOverviewFromSessions,
+  t5OneNightSessionsFromCalendarEntries,
+} from "./lib/compute/t5-one-night-sessions.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
   nvUpsertCurrent,
+  nvDeleteCurrent,
   nvGetAllCurrent,
   nvGetHistory,
   profileGetByUserId,
@@ -7559,6 +7565,86 @@ function p2DemandAdminItemCheckKey(userId, itemId) {
   return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
 }
 
+async function adminDeleteP2DemandItem(userId, itemID) {
+  const uid = String(userId || "").trim();
+  const targetItemId = Math.max(0, Math.floor(Number(itemID) || 0));
+  if (!uid || !targetItemId) {
+    const err = new Error("userId and itemID are required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await ensureNetherVortexStore();
+  const prev = netherVortexState.entries || [];
+  const idx = prev.findIndex((row) => String(row?.userId || "") === uid);
+  if (idx < 0) {
+    const err = new Error("No demand found for this raider");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const entry = prev[idx];
+  const currentItems = sanitizeNetherVortexItems(entry.items);
+  const hasItem = currentItems.some(
+    (it) => Math.max(0, Math.floor(Number(it.itemID || 0))) === targetItemId
+  );
+  if (!hasItem) {
+    const err = new Error("Item not found on this raider's demand");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  let remainingItems = currentItems.filter(
+    (it) => Math.max(0, Math.floor(Number(it.itemID || 0))) !== targetItemId
+  );
+  try {
+    const catalogMaps = await getNetherVortexCraftableCatalogMaps();
+    remainingItems = enrichSanitizedNetherVortexItems(remainingItems, catalogMaps);
+  } catch {
+    /* catalog optional */
+  }
+
+  const displayName = String(entry.displayName || "Unknown");
+  const neededCount = Number(entry.neededCount) || 0;
+  const updatedAt = Date.now();
+
+  try {
+    if (!remainingItems.length) {
+      nvDeleteCurrent({ userId: uid, displayName, updatedAt });
+    } else {
+      nvUpsertCurrent({ userId: uid, displayName, items: remainingItems, neededCount, updatedAt });
+    }
+  } catch (error) {
+    console.warn("[item-needs-db] adminDeleteP2DemandItem failed:", error?.message || error);
+  }
+
+  netherVortexWriteChain = netherVortexWriteChain.catch(() => {}).then(async () => {
+    const next = [...(netherVortexState.entries || [])];
+    const rowIdx = next.findIndex((row) => String(row?.userId || "") === uid);
+    if (!remainingItems.length) {
+      if (rowIdx >= 0) next.splice(rowIdx, 1);
+    } else if (rowIdx >= 0) {
+      next[rowIdx] = { userId: uid, displayName, neededCount, items: remainingItems, updatedAt };
+    }
+    netherVortexState.entries = next;
+    await persistNetherVortexStore();
+  });
+  await netherVortexWriteChain;
+
+  await ensureP2DemandAdminChecksStore();
+  const checkKey = p2DemandAdminItemCheckKey(uid, targetItemId);
+  const set = new Set(p2DemandAdminChecksState.checkedKeys || []);
+  if (set.delete(checkKey)) {
+    p2DemandAdminChecksState = { checkedKeys: [...set], updatedAt: Date.now() };
+    p2DemandAdminChecksWriteChain = p2DemandAdminChecksWriteChain.catch(() => {}).then(async () => {
+      await persistP2DemandAdminChecksStore();
+    });
+    await p2DemandAdminChecksWriteChain;
+  }
+
+  return { userId: uid, itemID: targetItemId, remainingItemCount: remainingItems.length };
+}
+
 function netherVortexCheckedNvFromEntries(entries, checkedKeys) {
   const set = new Set(Array.isArray(checkedKeys) ? checkedKeys : []);
   let sum = 0;
@@ -12143,6 +12229,19 @@ app.patch("/api/admin/p2-demand/check", async (req, res) => {
     return res.json({ ok: true, key, checked, checkedKeys: [...set] });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to update demand check" });
+  }
+});
+
+app.delete("/api/admin/p2-demand/item", async (req, res) => {
+  try {
+    if (!requireAdminSession(req, res)) return;
+    const userId = String(req.body?.userId || "").trim();
+    const itemID = Math.max(0, Math.floor(Number(req.body?.itemID ?? req.body?.itemId ?? 0)));
+    const result = await adminDeleteP2DemandItem(userId, itemID);
+    return res.json({ ok: true, deleted: true, ...result });
+  } catch (error) {
+    const status = Number(error?.statusCode) || 500;
+    return res.status(status).json({ ok: false, error: error?.message || "Failed to delete demand item" });
   }
 });
 
@@ -22166,9 +22265,50 @@ function buildPhase2RaidOverviewPayload({
     };
   });
 
-  const totalBosses = raids.reduce((sum, r) => sum + (r.bosses?.total || 0), 0);
-  const totalKilled = raids.reduce((sum, r) => sum + (r.bosses?.cleared || 0), 0);
-  const totalClears = raids.reduce((sum, r) => sum + (r.totalClears || 0), 0);
+  const oneNightSessions = t5OneNightSessionsFromCalendarEntries(calendarEntries);
+  const oneNightStats = t5OneNightOverviewFromSessions(oneNightSessions);
+  const sscCard = raids.find((r) => r.id === "ssc");
+  const tkCard = raids.find((r) => r.id === "tk");
+  let oneNightCoreParse = null;
+  if (sscCard?.coreAverageParse != null && tkCard?.coreAverageParse != null) {
+    oneNightCoreParse =
+      Math.round(((Number(sscCard.coreAverageParse) + Number(tkCard.coreAverageParse)) / 2) * 10) / 10;
+  }
+  const oneMeta = PHASE2_T5_ONE_NIGHT_META;
+  raids.push({
+    id: oneMeta.id,
+    kind: oneMeta.kind,
+    name: oneMeta.name,
+    shortName: oneMeta.shortName,
+    size: oneMeta.size,
+    tier: oneMeta.tier,
+    color: oneMeta.color,
+    imageUrl: oneMeta.imageUrl,
+    headerImageUrl: oneMeta.headerImageUrl,
+    headerImageUrlSecondary: oneMeta.headerImageUrlSecondary,
+    bosses: {
+      total: oneMeta.bossesTotal,
+      cleared: oneNightStats ? oneMeta.bossesTotal : 0,
+    },
+    progression: oneNightStats ? 100 : 0,
+    progressionTone: phase2ProgressionTone(oneNightStats ? 100 : 0),
+    bestTime: oneNightStats ? formatPhase2Duration(oneNightStats.bestTimeMs) : "—",
+    bestTimeMs: oneNightStats?.bestTimeMs || null,
+    lastClear: oneNightStats ? formatPhase2ShortDate(oneNightStats.lastClearMs) : "—",
+    lastClearMs: oneNightStats?.lastClearMs || null,
+    totalClears: oneNightStats?.totalClears || 0,
+    coreAverageParse: oneNightCoreParse,
+    coreAverageParseTone: phase2ProgressionTone(oneNightCoreParse),
+    wclUrl: oneNightStats?.bestSession?.ssc?.wclUrl || null,
+    wclUrlSecondary: oneNightStats?.bestSession?.tk?.wclUrl || null,
+    oneNightSessions: oneNightSessions,
+    bossRows: [],
+  });
+
+  const raidsForSummary = raids.filter((r) => r.kind !== "one-night");
+  const totalBosses = raidsForSummary.reduce((sum, r) => sum + (r.bosses?.total || 0), 0);
+  const totalKilled = raidsForSummary.reduce((sum, r) => sum + (r.bosses?.cleared || 0), 0);
+  const totalClears = raidsForSummary.reduce((sum, r) => sum + (r.totalClears || 0), 0);
   const coreAverageParse =
     coreParseMetrics?.value != null && Number.isFinite(Number(coreParseMetrics.value))
       ? Number(coreParseMetrics.value)
