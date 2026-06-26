@@ -12973,8 +12973,9 @@ tr.plb-gear-row--miss th {
   color: rgba(232, 222, 255, 0.95);
 }
 .p2-demand-table col.col-check  { width: 44px; }
-.p2-demand-table col.col-raider { width: 22%; }
-.p2-demand-table col.col-prof   { width: 16%; }
+.p2-demand-table col.col-raider { width: 20%; }
+.p2-demand-table col.col-raids  { width: 56px; }
+.p2-demand-table col.col-prof   { width: 14%; }
 .p2-demand-table col.col-num    { width: 72px; }
 .p2-demand-table col.col-time   { width: 124px; }
 .p2-demand-table col.col-remove { width: 72px; }

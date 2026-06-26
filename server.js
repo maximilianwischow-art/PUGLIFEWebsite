@@ -278,7 +278,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260626plb-deploy-fix-v1";
+const API_BUILD_ID = "20260626plb-p2-demand-raids-v1";
 
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
@@ -7706,12 +7706,14 @@ async function ensureP2DemandAdminChecksStore() {
 async function buildNetherVortexGuildNeedRows() {
   await ensureNetherVortexStore();
   await ensureRhWclLinksStore();
+  await ensureGargulLootHistoryStore();
   let catalogMaps = { byId: new Map(), byNameLower: new Map() };
   try {
     catalogMaps = await getNetherVortexCraftableCatalogMaps();
   } catch {
     /* catalog optional */
   }
+  const wclCtx = roleAlertsWclEventsContext();
   const rawEntries = [...(netherVortexState.entries || [])];
   const rhNamesByUserId = new Map(
     await Promise.all(
@@ -7734,12 +7736,19 @@ async function buildNetherVortexGuildNeedRows() {
         resolveLinkedWowCharacterFromRhWcl(discordName);
       const characterName = String(linked || rhSignupName || discordName).trim() || discordName;
       const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
+      const canon = identityUserGetByDiscordId(userId);
+      const canonicalUserId = canon?.id != null ? Number(canon.id) : null;
+      let wclEventCount = null;
+      if (wclCtx.active && canonicalUserId != null) {
+        wclEventCount = wclCtx.wclEventByUserId.get(canonicalUserId) ?? 0;
+      }
       return {
         userId,
         displayName: discordName,
         raidHelperName: rhSignupName || null,
         characterName,
         characterProfileUrl,
+        wclEventCount,
         neededCount: 0,
         items: enrichSanitizedNetherVortexItems(sanitizeNetherVortexItems(row.items), catalogMaps),
         updatedAt: Number(row.updatedAt || 0),

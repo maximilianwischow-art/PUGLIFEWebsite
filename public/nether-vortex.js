@@ -267,6 +267,23 @@ function demandRowMatchesFilter(row, q) {
   return false;
 }
 
+function fmtDemandRaidsAttended(row) {
+  const n = row?.wclEventCount;
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  return String(Math.max(0, Math.floor(Number(n))));
+}
+
+function buildDemandRaidsCell(row, span = 1) {
+  const label = fmtDemandRaidsAttended(row);
+  const n = row?.wclEventCount;
+  const tip =
+    n == null
+      ? "Raid attendance unavailable — link this Discord account in Admin → Identity."
+      : "Distinct guild raid logs this character appeared in (Event Management scope, same as leaderboard Events).";
+  const spanAttr = span > 1 ? ` rowspan="${span}"` : "";
+  return `<td class="cell-num cell-raids"${spanAttr} title="${esc(tip)}">${esc(label)}</td>`;
+}
+
 /**
  * Renders the "Raider" cell. Always shows the WoW character name from the
  * Account Assignment table (`rh-wcl-character-links.json`). When a row has
@@ -324,6 +341,7 @@ function buildDemandRowsForRaider(row) {
     return `
       <tr class="is-group-end">
         <td class="cell-raider">${raiderCell}</td>
+        ${buildDemandRaidsCell(row)}
         <td colspan="2"><span class="subtle">No items selected.</span></td>
         <td class="cell-num">0</td>
         <td class="cell-time">${timeMarkup}</td>
@@ -350,6 +368,7 @@ function buildDemandRowsForRaider(row) {
         cells.push(
           `<td class="cell-raider"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`
         );
+        cells.push(buildDemandRaidsCell(row, span));
       }
       const itemHtml = renderDemandItemCell(canonicalItemId(it.itemName, itemId), it.itemName, checked);
       const statusHtml = checked ? p2DemandDoneStatusHtml() : "";
@@ -441,7 +460,7 @@ function refreshDemandTable() {
     tfoot.hidden = false;
     tfoot.innerHTML = `
       <tr>
-        <td colspan="3">${rows.length} ${rows.length === 1 ? "raider" : "raiders"}${
+        <td colspan="4">${rows.length} ${rows.length === 1 ? "raider" : "raiders"}${
       rows.length !== all.length ? ` (of ${all.length})` : ""
     }</td>
         <td class="cell-num">${grandTotal}</td>
