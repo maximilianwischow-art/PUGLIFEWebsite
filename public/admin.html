@@ -152,6 +152,14 @@
             <section class="card admin-panel" data-admin-panel="wcl-events" id="admin-panel-wcl-events">
               <h3 class="section-title">Event Management</h3>
               <p class="subtle">Select which raid events feed guild loot data (Leaderboard expand / APIs) for all users.</p>
+              <div class="admin-actions admin-actions--tight" style="margin: 0 0 10px">
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="eventRefreshRecentBtn">
+                  Refresh last 7 days
+                </button>
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="eventRefreshAllBtn">
+                  Refresh all from WCL
+                </button>
+              </div>
               <div class="admin-event-import">
                 <label class="subtle" for="eventImportUrl">Add report by Warcraft Logs link</label>
                 <div class="admin-actions admin-actions--tight admin-event-import-row">
@@ -741,7 +749,7 @@
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/events-roster-ui.js?v=20260622plb-double-trouble-tooltip-v1"></script>
-    <script defer src="/admin.js?v=20260522plb-admin-p2-demand-delete-v2"></script>
+    <script defer src="/admin.js?v=20260522plb-event-mgmt-fast-v1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

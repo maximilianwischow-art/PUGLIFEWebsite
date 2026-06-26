@@ -277,6 +277,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
+/** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
+const API_BUILD_ID = "20260625plb-p2-demand-remove-v1";
+
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
 // Badge workflow helper: any PNG dropped into `public/images/achievements` gets a same-name SVG generated.
@@ -353,7 +356,7 @@ app.use(
  * Must be registered before `express.static`: otherwise `/admin.html` is served from disk with auth bypass + long cache,
  * and deploys can leave browsers on stale markup (missing newer admin sections).
  */
-app.get("/admin.html", (req, res) => {
+app.get("/admin.html", async (req, res) => {
   const session = getSessionFromRequest(req);
   if (!session?.user?.id) {
     return res.redirect("/auth/discord/login?next=%2Fadmin.html");
@@ -361,8 +364,18 @@ app.get("/admin.html", (req, res) => {
   if (!isP2Editor(session)) {
     return res.status(403).send("Admin access required.");
   }
-  res.setHeader("Cache-Control", "no-store, max-age=0");
-  return res.sendFile(path.join(publicDir, "admin.html"));
+  try {
+    const raw = await readFile(path.join(publicDir, "admin.html"), "utf8");
+    const html = raw.replace(
+      /(\/(?:admin\.js|styles\.min\.css))\?v=[^"']+/g,
+      `$1?v=${encodeURIComponent(API_BUILD_ID)}`
+    );
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.type("html").send(html);
+  } catch (error) {
+    console.error("Failed to serve admin.html:", error?.message || error);
+    return res.status(500).send("Failed to load admin page.");
+  }
 });
 
 /** Browsers may still send `If-None-Match` after a prior ETag; Express then returns 304 with an empty body and the
@@ -452,8 +465,6 @@ const DEFAULT_TBC_ZONES = [
   "Sunwell Plateau",
   "Zul'Aman",
 ];
-/** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-admin-p2-demand-delete-v1";
 
 const TRACKED_RAIDS = {
   Karazhan: [
@@ -11361,7 +11372,75 @@ function mergeAllRaidsByReportCode(...lists) {
   );
 }
 
-async function buildRaidLeadEventReportsPayload({ forceRefresh = false } = {}) {
+const EVENT_MGMT_RECENT_DAYS_DEFAULT = 7;
+
+function parseLootHistoryRefreshMode(refreshRaw, recentDaysRaw) {
+  const refresh = String(refreshRaw || "").trim().toLowerCase();
+  if (refresh === "1" || refresh === "all" || refresh === "true") {
+    return { forceRefresh: true, recentDays: 0 };
+  }
+  if (refresh === "recent" || refresh === "7d") {
+    return { forceRefresh: false, recentDays: EVENT_MGMT_RECENT_DAYS_DEFAULT };
+  }
+  const recentDays = Math.max(0, Math.min(30, Math.floor(Number(recentDaysRaw) || 0)));
+  return { forceRefresh: false, recentDays };
+}
+
+/** Lightweight guild report list for Event Management — no per-report loot pagination. */
+async function fetchGuildReportRowsFromWcl(guildId, fetchOptions = {}) {
+  const reportLimit = Math.min(40, Math.max(5, Number(fetchOptions.reportLimit) || 40));
+  const recentDays = Math.max(0, Math.floor(Number(fetchOptions.recentDays) || 0));
+  const cutoffMs = recentDays > 0 ? Date.now() - recentDays * 24 * 60 * 60 * 1000 : 0;
+
+  const reportsQuery = `
+    query GuildReports($guildId: Int!, $limit: Int!) {
+      reportData {
+        reports(guildID: $guildId, limit: $limit) {
+          data {
+            code
+            title
+            startTime
+            rankedCharacters {
+              name
+            }
+            fights {
+              id
+              encounterID
+              gameZone { name }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const reportData = await queryWcl(reportsQuery, { guildId, limit: reportLimit });
+  let reports = filterGuildRaidReports(reportData?.reportData?.reports?.data || [], fetchOptions);
+  if (cutoffMs > 0) {
+    reports = reports.filter((report) => reportStartTimeMs(Number(report?.startTime || 0)) >= cutoffMs);
+  }
+
+  return reports
+    .map((report) => {
+      const fightIds = (report.fights || [])
+        .filter((fight) => fightIsTrackedRaidBoss(fight, report))
+        .map((fight) => Number(fight.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (!fightIds.length) return null;
+      const raidName = primaryTrackedRaidNameFromReport(report);
+      return {
+        reportCode: report.code,
+        reportTitle: report.title,
+        reportRaidName: raidName || null,
+        reportStartTime: reportStartTimeMs(Number(report.startTime || 0)),
+        reportUploader: report?.owner?.name ? String(report.owner.name) : null,
+      };
+    })
+    .filter(Boolean)
+    .filter((raid) => !isTenPlayerTbcLootRow(raid));
+}
+
+async function buildRaidLeadEventReportsPayload({ forceRefresh = false, recentDays = 0 } = {}) {
   await ensureGargulLootHistoryStore();
   const selectedReportCodes = Array.from(
     new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
@@ -11374,6 +11453,42 @@ async function buildRaidLeadEventReportsPayload({ forceRefresh = false } = {}) {
   }
 
   const reportLimit = 40;
+  const recentWindow = Math.max(0, Math.floor(Number(recentDays) || 0));
+
+  if (!forceRefresh && recentWindow > 0) {
+    let liveRaids = [];
+    let broadRaids = [];
+    try {
+      liveRaids = await fetchGuildReportRowsFromWcl(votingGuildId, {
+        reportLimit,
+        recentDays: recentWindow,
+      });
+    } catch (error) {
+      console.warn("[raid-lead/event-reports] recent live WCL list failed:", error?.message || error);
+    }
+    try {
+      broadRaids = await fetchGuildReportRowsFromWcl(votingGuildId, {
+        reportLimit,
+        recentDays: recentWindow,
+        skipRaidNightSchedule: true,
+      });
+    } catch (error) {
+      console.warn("[raid-lead/event-reports] recent broad WCL list failed:", error?.message || error);
+    }
+    const allRaids = mergeAllRaidsByReportCode(materialisedRaids, liveRaids, broadRaids);
+    return { ok: true, allRaids, selectedReportCodes, source: "recent", recentDays: recentWindow };
+  }
+
+  if (!forceRefresh) {
+    const allRaids = mergeAllRaidsByReportCode(materialisedRaids);
+    return {
+      ok: true,
+      allRaids,
+      selectedReportCodes,
+      source: materialisedRaids.length ? "materialised" : "static",
+    };
+  }
+
   const key = lootHistoryCacheKey(votingGuildId, reportLimit);
   const standardLoader = () => fetchGuildLootReceived(votingGuildId, reportLimit);
   const broadLoader = () =>
@@ -11381,13 +11496,7 @@ async function buildRaidLeadEventReportsPayload({ forceRefresh = false } = {}) {
   let liveRaids = [];
   let broadRaids = [];
   try {
-    const livePayload = forceRefresh
-      ? await forceRefreshCachedPayload(key, standardLoader)
-      : await getOrRefreshCachedPayload(key, {
-          ttlMs: lootHistoryCacheTtlMs(),
-          maxStaleMs: lootHistoryMaxStaleMs(),
-          loader: standardLoader,
-        });
+    const livePayload = await forceRefreshCachedPayload(key, standardLoader);
     liveRaids = Array.isArray(livePayload?.allRaids)
       ? livePayload.allRaids
       : Array.isArray(livePayload?.raids)
@@ -11398,13 +11507,7 @@ async function buildRaidLeadEventReportsPayload({ forceRefresh = false } = {}) {
   }
   try {
     const broadKey = `loot-history-raid-lead-broad-v1-${Number(votingGuildId)}-${reportLimit}`;
-    const broadPayload = forceRefresh
-      ? await forceRefreshCachedPayload(broadKey, broadLoader)
-      : await getOrRefreshCachedPayload(broadKey, {
-          ttlMs: lootHistoryCacheTtlMs(),
-          maxStaleMs: lootHistoryMaxStaleMs(),
-          loader: broadLoader,
-        });
+    const broadPayload = await forceRefreshCachedPayload(broadKey, broadLoader);
     broadRaids = Array.isArray(broadPayload?.allRaids)
       ? broadPayload.allRaids
       : Array.isArray(broadPayload?.raids)
@@ -11415,7 +11518,7 @@ async function buildRaidLeadEventReportsPayload({ forceRefresh = false } = {}) {
   }
 
   const allRaids = mergeAllRaidsByReportCode(materialisedRaids, liveRaids, broadRaids);
-  return { ok: true, allRaids, selectedReportCodes };
+  return { ok: true, allRaids, selectedReportCodes, source: "full-refresh" };
 }
 
 async function warmDebuffTrendSnapshotsForCodes(codes, raidByCode, { maxReports = 3, maxMs = 25000, concurrency = 2 } = {}) {
@@ -24438,8 +24541,21 @@ app.get("/api/leaderboard", async (req, res) => {
 
 app.get("/api/loot-history", async (req, res) => {
   const reportLimit = Math.min(40, Math.max(5, Number(req.query.limit || 15)));
-  const forceRefresh = String(req.query.refresh || "") === "1";
+  const { forceRefresh, recentDays } = parseLootHistoryRefreshMode(req.query.refresh, req.query.recentDays);
   try {
+    if (recentDays > 0 && !forceRefresh) {
+      const merged = await buildRaidLeadEventReportsPayload({ recentDays });
+      const base =
+        materializeLootEnabled() ? buildLootHistoryFromMaterialised(votingGuildId) : null;
+      return res.json({
+        guildId: votingGuildId,
+        ...(base || { raids: [], items: [], reportsChecked: 0 }),
+        allRaids: merged.allRaids,
+        selectedReportCodes: merged.selectedReportCodes,
+        source: merged.source || "recent",
+        recentDays,
+      });
+    }
     if (!forceRefresh && materializeLootEnabled()) {
       const fast = buildLootHistoryFromMaterialised(votingGuildId);
       if (fast) return res.json(fast);
@@ -24459,7 +24575,7 @@ app.get("/api/loot-history", async (req, res) => {
         ...payload,
         allRaids: merged.allRaids,
         selectedReportCodes: merged.selectedReportCodes,
-        source: "merged",
+        source: merged.source || "full-refresh",
       });
     }
     return res.json({ ...payload, source: "live" });

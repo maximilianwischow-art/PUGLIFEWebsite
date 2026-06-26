@@ -373,6 +373,11 @@ function showAdminPanel(panelId, opts = {}) {
   closeAdminSidebarDrawer();
   if (panelId === "sync-center") showSyncCenterSubTab(opts.subTab || SYNC_CENTER_DEFAULT_TAB, { replaceHash });
   if (panelId === "discord-role-sync" && !discordRoleSyncState) loadDiscordRoleSyncPreview().catch(() => {});
+  if (panelId === "wcl-events") {
+    loadEventManagementRaids({ refresh: "recent" }).catch((error) => {
+      status(error?.message || "Failed to refresh recent WCL events.");
+    });
+  }
   if (replaceHash) {
     const sub = panelId === "sync-center" && opts.subTab ? `:${opts.subTab}` : "";
     const next = `#admin-${panelId}${sub}`;
@@ -623,6 +628,41 @@ function mergeRaidIntoAllRaidsState(raid) {
     allRaidsState.sort((a, b) => Number(b.reportStartTime || 0) - Number(a.reportStartTime || 0));
   }
   return true;
+}
+
+function applyEventManagementLootPayload(loot) {
+  allRaidsState = Array.isArray(loot?.allRaids)
+    ? loot.allRaids
+    : Array.isArray(loot?.raids)
+      ? loot.raids
+      : [];
+  renderEventSelection();
+  renderTargetReportSelect();
+}
+
+async function loadEventManagementRaids({ refresh = "" } = {}) {
+  const host = document.getElementById("eventSelectionList");
+  const refreshMode = String(refresh || "").trim().toLowerCase();
+  const qs =
+    refreshMode === "all"
+      ? "limit=40&refresh=all"
+      : refreshMode === "recent"
+        ? "limit=40&refresh=recent"
+        : "limit=40";
+  if (refreshMode) host?.setAttribute("aria-busy", "true");
+  try {
+    const loot = await getJson(`/api/loot-history?${qs}`);
+    applyEventManagementLootPayload(loot);
+    const count = allRaidsState.length;
+    if (refreshMode === "recent") {
+      status(`Event list updated from WCL (last 7 days). ${count} report(s) total.`);
+    } else if (refreshMode === "all") {
+      status(`Full WCL refresh complete. ${count} report(s) in list.`);
+    }
+    return loot;
+  } finally {
+    if (refreshMode) host?.removeAttribute("aria-busy");
+  }
 }
 
 function renderEventSelection() {
@@ -7433,10 +7473,8 @@ async function refreshWclPhaseAvgsAll(btn) {
 
 async function loadAdminSecondaryData() {
   const gargul = await getJson("/api/loot-history/gargul");
-  // Live WCL guild reports for Event Management — materialised `/api/loot-history`
-  // only knows reports already in `loot_awards` / `raid_appearances` after sync, so
-  // new uploads would be missing from the checkbox list until `refresh=1`.
-  const loot = await getJson("/api/loot-history?limit=40&refresh=1");
+  // Static materialised list first — avoids slow full WCL loot pagination on every admin load.
+  const loot = await getJson("/api/loot-history?limit=40");
   const p2 = await getJson("/api/p2-preparation/materials");
   const joinNeeds = await getJson("/api/admin/join/current-needs");
   const roleAlertEvents = await getJson("/api/admin/role-alerts/events");
@@ -7608,6 +7646,43 @@ document.getElementById("gargulSaveBtn")?.addEventListener("click", async () => 
     status(`Saved ${entries.length} loot entries.`);
   } catch (error) {
     status(error?.message || "Save failed");
+  }
+});
+
+document.getElementById("eventRefreshRecentBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("eventRefreshRecentBtn");
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Refresh last 7 days", loading: "Checking WCL…", success: "Updated", failure: "Failed" },
+      async () => {
+        await loadEventManagementRaids({ refresh: "recent" });
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Recent WCL refresh failed");
+  }
+});
+
+document.getElementById("eventRefreshAllBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("eventRefreshAllBtn");
+  if (
+    !window.confirm(
+      "Fetch all recent guild reports from Warcraft Logs? This can take a minute and uses many API calls."
+    )
+  ) {
+    return;
+  }
+  try {
+    await runWithButtonFeedback(
+      btn,
+      { idle: "Refresh all from WCL", loading: "Refreshing…", success: "Done", failure: "Failed" },
+      async () => {
+        await loadEventManagementRaids({ refresh: "all" });
+      }
+    );
+  } catch (error) {
+    status(error?.message || "Full WCL refresh failed");
   }
 });
 
@@ -11478,6 +11553,11 @@ loadAdminData().catch((error) => {
   if (id === "core-roster" && !adminCoreRosterLoaded) {
     loadAdminCoreRosterPanel().catch((error) => {
       status(error?.message || "Failed to load core roster.");
+    });
+  }
+  if (id === "wcl-events") {
+    loadEventManagementRaids({ refresh: "recent" }).catch((error) => {
+      status(error?.message || "Failed to refresh recent WCL events.");
     });
   }
 })();
