@@ -278,7 +278,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260625plb-p2-demand-remove-v1";
+const API_BUILD_ID = "20260626plb-deploy-fix-v1";
 
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
