@@ -1,5 +1,5 @@
 const PHASE2_OVERVIEW_GUILD_ID = 817080;
-const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v8";
+const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v9";
 const PHASE2_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
 
 function esc(v) {

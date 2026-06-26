@@ -108,6 +108,10 @@ import {
   t5OneNightOverviewFromSessions,
   t5OneNightSessionsFromCalendarEntries,
 } from "./lib/compute/t5-one-night-sessions.mjs";
+import {
+  buildMergedRaidCalendarEntries,
+  resolvedTrackedRaidForFight,
+} from "./lib/compute/raid-calendar-entries.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -278,7 +282,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260626plb-p2-demand-raids-v1";
+const API_BUILD_ID = "20260626plb-ssc-tk-calendar-v1";
 
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
@@ -18513,27 +18517,6 @@ function reportStartTimeMs(raw) {
   return n;
 }
 
-/** Map a WCL zone label to a TRACKED_RAIDS key, or null if not tracked. */
-function resolveTrackedRaidZoneName(zoneRaw) {
-  const z = normalizeWclLabel(zoneRaw).replace(/\s+/g, " ").trim();
-  if (!z) return null;
-  for (const key of Object.keys(TRACKED_RAIDS)) {
-    if (normalizeWclLabel(key) === z) return key;
-  }
-  if (z.includes("karazhan") || /\bkara\b/.test(z)) return "Karazhan";
-  if (z.includes("gruul") && z.includes("lair")) return "Gruul's Lair";
-  if (z.includes("magtheridon")) return "Magtheridon's Lair";
-  if (z.includes("serpentshrine") || /\bssc\b/.test(z)) return "Serpentshrine Cavern";
-  if (z.includes("tempest") || z.includes("the eye") || z === "tk") return "Tempest Keep";
-  return null;
-}
-
-function resolvedTrackedRaidForFight(fight, report) {
-  const fromFight = resolveTrackedRaidZoneName(fight?.gameZone?.name);
-  if (fromFight) return fromFight;
-  return resolveTrackedRaidZoneName(report?.zone?.name);
-}
-
 /** Boss fight belonging to a tracked raid tier (handles WCL aliases like "Tempest Keep: The Eye"). */
 function fightIsTrackedRaidBoss(fight, report) {
   if (Number(fight?.encounterID || 0) <= 0) return false;
@@ -20856,102 +20839,18 @@ function raidCalendarDayKey(startTimeMs) {
   }
 }
 
-function choosePreferredRaidCalendarEntry(a, b, priorityList, selectedRankByCode = null) {
-  const rankOf = (entry) => {
-    if (!selectedRankByCode) return Number.POSITIVE_INFINITY;
-    const code = String(entry?.reportCode || "").trim();
-    const hit = selectedRankByCode.get(code);
-    return Number.isFinite(Number(hit)) ? Number(hit) : Number.POSITIVE_INFINITY;
-  };
-  const fullA = !!a?.isFullClear;
-  const fullB = !!b?.isFullClear;
-  if (fullA !== fullB) return fullA ? a : b;
-  const killedA = Number(a?.bossesKilled || 0);
-  const killedB = Number(b?.bossesKilled || 0);
-  if (killedA !== killedB) return killedB > killedA ? b : a;
-  const ra = rankOf(a);
-  const rb = rankOf(b);
-  if (ra !== rb) return ra < rb ? a : b;
-  const score = (entry) => {
-    const n = normalizeText(entry.uploadedBy || "");
-    const idx = priorityList.findIndex((p) => p === n);
-    return idx === -1 ? priorityList.length : idx;
-  };
-  const sa = score(a);
-  const sb = score(b);
-  if (sa !== sb) return sa < sb ? a : b;
-  return (Number(b.startTime) || 0) >= (Number(a.startTime) || 0) ? b : a;
-}
-
-function dedupeRaidCalendarEntries(entries, options = {}) {
+function buildRecentRaidCalendarEntries(reports, options = {}) {
   const selectedRankByCode =
     options?.selectedRankByCode instanceof Map ? options.selectedRankByCode : null;
-  const priorityList = wclPriorityUploaders();
-  const groups = new Map();
-  for (const entry of entries) {
-    const dayKey = raidCalendarDayKey(entry.startTime);
-    if (!dayKey) continue;
-    const k = `${dayKey}::${entry.raidName}`;
-    const prev = groups.get(k);
-    if (!prev) {
-      groups.set(k, entry);
-      continue;
-    }
-    groups.set(k, choosePreferredRaidCalendarEntry(prev, entry, priorityList, selectedRankByCode));
-  }
-  return [...groups.values()].sort((a, b) => b.startTime - a.startTime);
-}
-
-function buildRecentRaidCalendarEntries(reports, options = {}) {
-  const entries = [];
-  for (const report of reports) {
-    const zoneBuckets = new Map();
-    for (const fight of report.fights || []) {
-      if (Number(fight?.encounterID || 0) <= 0) continue;
-      const raidName = resolvedTrackedRaidForFight(fight, report);
-      if (!raidName || !TRACKED_RAIDS[raidName]) continue;
-      if (!zoneBuckets.has(raidName)) zoneBuckets.set(raidName, []);
-      zoneBuckets.get(raidName).push(fight);
-    }
-
-    for (const [raidName, zoneFights] of zoneBuckets) {
-      const bosses = TRACKED_RAIDS[raidName];
-      const kills = zoneFights.filter((fight) => fight?.kill && bossListMatchesFightName(bosses, fight.name));
-      const uniqueKilled = new Set(kills.map((fight) => resolveBossCanonicalName(bosses, fight.name)));
-      const bossesKilled = uniqueKilled.size;
-      const bossesTotal = bosses.length;
-
-      let clearDurationMs = null;
-      let isFullClear = false;
-      if (bossesKilled === bossesTotal && kills.length) {
-        const clearStart = Math.min(...kills.map((fight) => Number(fight.startTime || 0)));
-        const clearEnd = Math.max(...kills.map((fight) => Number(fight.endTime || 0)));
-        const clearMs = clearEnd - clearStart;
-        if (Number.isFinite(clearMs) && clearMs > 0) {
-          clearDurationMs = clearMs;
-          isFullClear = true;
-        }
-      }
-
-      entries.push({
-        reportCode: report.code,
-        title: report.title || report.code,
-        startTime: reportStartTimeMs(report.startTime),
-        uploadedBy: report.owner?.name || null,
-        raidName,
-        clearDurationMs,
-        isFullClear,
-        bossesKilled,
-        bossesTotal,
-        wclUrl: `https://fresh.warcraftlogs.com/reports/${report.code}`,
-        image: raidImageFromRaidName(raidName),
-      });
-    }
-  }
-  const dedupedEntries = dedupeRaidCalendarEntries(entries, options);
-  for (const entry of dedupedEntries) {
-    entry.calendarDay = raidCalendarDayKey(entry.startTime);
-  }
+  const dedupedEntries = buildMergedRaidCalendarEntries(reports, {
+    trackedRaids: TRACKED_RAIDS,
+    reportStartTimeMs,
+    dayKeyFn: raidCalendarDayKey,
+    priorityUploaders: wclPriorityUploaders(),
+    selectedRankByCode,
+    wclUrlForCode: (code) => `https://fresh.warcraftlogs.com/reports/${code}`,
+    imageForRaid: raidImageFromRaidName,
+  });
 
   const durationsByRaid = new Map();
   for (const entry of dedupedEntries) {
