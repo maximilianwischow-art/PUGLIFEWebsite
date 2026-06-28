@@ -92,8 +92,12 @@ import {
 } from "./lib/wcl/consumables-at-pull.mjs";
 import {
   fetchConsumablesUsageForReport,
+  mergeConsumablesUsageResults,
+  applyLeaderboardUsageFilter,
   usageConsumableCatalogForApi,
+  leaderboardUsageConsumableCatalogForApi,
 } from "./lib/wcl/consumables-usage.mjs";
+import { leaderboardReportRowsFromEventPayload } from "./lib/wcl/leaderboard-report-codes.mjs";
 import { fetchEventReportMetaFromWcl } from "./lib/wcl/import-event-report.mjs";
 import {
   fetchClassicArmoryEquipment,
@@ -286,7 +290,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260626plb-consumables-usage-v1";
+const API_BUILD_ID = "20260628plb-debuff-subtab-leaderboard-v1";
 
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
@@ -11053,6 +11057,81 @@ async function buildWclConsumablesUsagePayload({ reportCode }) {
   };
 }
 
+function twentyFiveManReportCodesFromEventPayload(eventPayload) {
+  return leaderboardReportRowsFromEventPayload(eventPayload, {
+    isTenPlayerRow: (row) => (row ? isTenPlayerTbcLootRow(row) : false),
+  });
+}
+
+async function buildWclConsumablesUsageLeaderboardPayload() {
+  await ensureGargulLootHistoryStore();
+  const eventPayload = await buildRaidLeadEventReportsPayload();
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+  const reportRows = twentyFiveManReportCodesFromEventPayload(eventPayload);
+  const reportCodes = reportRows.map((row) => row.reportCode);
+
+  if (!reportCodes.length) {
+    return {
+      ok: true,
+      mode: "usage-leaderboard",
+      selectedReportCodes,
+      reportCodes: [],
+      reportsScanned: 0,
+      catalog: leaderboardUsageConsumableCatalogForApi(),
+      players: [],
+      rosterCount: 0,
+      fightsScanned: 0,
+      totalEvents: 0,
+    };
+  }
+
+  const usageParts = [];
+  const failedReports = [];
+  const batchSize = 2;
+  for (let i = 0; i < reportCodes.length; i += batchSize) {
+    const batch = reportCodes.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(async (code) => {
+        try {
+          const payload = await getOrRefreshCachedPayload(`wcl-consumables-usage-v1-${code}`, {
+            ttlMs: 60 * 60 * 1000,
+            maxStaleMs: 24 * 60 * 60 * 1000,
+            loader: () => buildWclConsumablesUsagePayload({ reportCode: code }),
+          });
+          if (!payload?.ok) {
+            failedReports.push({ reportCode: code, error: payload?.error || "Usage load failed" });
+            return null;
+          }
+          return payload;
+        } catch (error) {
+          failedReports.push({ reportCode: code, error: error?.message || "Usage load failed" });
+          return null;
+        }
+      })
+    );
+    for (const row of batchResults) {
+      if (row) usageParts.push(row);
+    }
+  }
+
+  const merged = applyLeaderboardUsageFilter(mergeConsumablesUsageResults(usageParts));
+  return {
+    ok: true,
+    mode: "usage-leaderboard",
+    selectedReportCodes,
+    reportCodes: usageParts.map((row) => row.reportCode).filter(Boolean),
+    reportsScanned: merged.reportsScanned,
+    catalog: merged.catalog,
+    players: merged.players,
+    rosterCount: merged.rosterCount,
+    fightsScanned: merged.fightsScanned,
+    totalEvents: merged.totalEvents,
+    failedReports: failedReports.length ? failedReports : undefined,
+  };
+}
+
 async function buildWclConsumablesPayload({ reportCode, encounterId, overview }) {
   const code = String(reportCode || "").trim();
   if (!code) {
@@ -12023,6 +12102,29 @@ app.get("/api/raid-lead/wcl-consumables-usage", async (req, res) => {
     if (!session) return;
 
     const reportCode = String(req.query?.reportCode || "").trim();
+    const leaderboard =
+      String(req.query?.leaderboard || "").trim() === "1" ||
+      String(req.query?.leaderboard || "").trim().toLowerCase() === "true";
+    const refresh =
+      String(req.query?.refresh || "").trim() === "1" ||
+      String(req.query?.refresh || "").trim().toLowerCase() === "true";
+
+    if (leaderboard) {
+      const eventPayload = await buildRaidLeadEventReportsPayload();
+      const reportRows = twentyFiveManReportCodesFromEventPayload(eventPayload);
+      const fingerprint = reportRows.map((row) => row.reportCode).sort().join(",");
+      const cacheKey = `wcl-consumables-usage-leaderboard-v3-${fingerprint || "empty"}`;
+      const loader = () => buildWclConsumablesUsageLeaderboardPayload();
+      const payload = refresh
+        ? await forceRefreshCachedPayload(cacheKey, loader)
+        : await getOrRefreshCachedPayload(cacheKey, {
+            ttlMs: 60 * 60 * 1000,
+            maxStaleMs: 24 * 60 * 60 * 1000,
+            loader,
+          });
+      return res.json(payload);
+    }
+
     if (!reportCode) {
       return res.json({
         ok: true,
@@ -12031,11 +12133,14 @@ app.get("/api/raid-lead/wcl-consumables-usage", async (req, res) => {
     }
 
     const cacheKey = `wcl-consumables-usage-v1-${reportCode}`;
-    const payload = await getOrRefreshCachedPayload(cacheKey, {
-      ttlMs: 60 * 60 * 1000,
-      maxStaleMs: 24 * 60 * 60 * 1000,
-      loader: () => buildWclConsumablesUsagePayload({ reportCode }),
-    });
+    const loader = () => buildWclConsumablesUsagePayload({ reportCode });
+    const payload = refresh
+      ? await forceRefreshCachedPayload(cacheKey, loader)
+      : await getOrRefreshCachedPayload(cacheKey, {
+          ttlMs: 60 * 60 * 1000,
+          maxStaleMs: 24 * 60 * 60 * 1000,
+          loader,
+        });
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "WCL consumables usage failed" });

@@ -52,6 +52,7 @@ const WCL_DEBUFF_TRENDS_API = "/api/raid-lead/wcl-debuff-trends";
 const WCL_CORE_PARSE_API = "/api/raid-lead/core-parse-development";
 const WCL_CONSUMABLES_API = "/api/raid-lead/wcl-consumables";
 const WCL_CONSUMABLES_USAGE_API = "/api/raid-lead/wcl-consumables-usage";
+const WCL_CONSUMABLES_USAGE_LEADERBOARD_API = `${WCL_CONSUMABLES_USAGE_API}?leaderboard=1`;
 const WCL_GEAR_AUDIT_API = "/api/raid-lead/armory-gear-audit";
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
@@ -60,6 +61,7 @@ let wclConsumablesOverviewCache = null;
 let wclConsumablesOverviewReportCode = "";
 let wclConsumablesUsageCache = null;
 let wclConsumablesUsageReportCode = "";
+let wclConsumablesLeaderboardCache = null;
 let wclGearAuditOverviewCache = null;
 let wclGearAuditOverviewReportCode = "";
 let wclGearEnchantSpellMetaById = new Map();
@@ -812,8 +814,8 @@ function wclDebuffCatalogByCategory(catalog, categories) {
   return ordered;
 }
 
-function renderWclDebuffOverview(payload) {
-  const host = document.getElementById("wclDebuffResultsHost");
+function renderWclDebuffUptimePanel(payload) {
+  const host = document.getElementById("wclDebuffUptimeHost");
   if (!host) return;
   if (!payload?.ok) {
     host.innerHTML = `<p class="subtle">${esc(payload?.error || "Overview failed.")}</p>`;
@@ -887,6 +889,10 @@ function renderWclDebuffOverview(payload) {
     </div>
   `;
   wclDebuffBindSpellTooltips(host);
+}
+
+function renderWclDebuffOverview(payload) {
+  renderWclDebuffUptimePanel(payload);
 }
 
 function renderWclDebuffDetailInto(host, payload) {
@@ -999,8 +1005,8 @@ async function loadWclDebuffOverview(reportCode, { silent = false, btn = null, r
   if (!code) {
     wclDebuffOverviewCache = null;
     wclDebuffOverviewReportCode = "";
-    const host = document.getElementById("wclDebuffResultsHost");
-    if (host) host.innerHTML = "";
+    const uptimeHost = document.getElementById("wclDebuffUptimeHost");
+    if (uptimeHost) uptimeHost.innerHTML = "";
     setWclDebuffStatusLine("Select a raid event to load the boss overview.");
     if (reloadBtn) reloadBtn.disabled = true;
     return null;
@@ -1010,12 +1016,12 @@ async function loadWclDebuffOverview(reportCode, { silent = false, btn = null, r
     if (btn) setButtonFeedback(btn, "Loading…", "loading");
     if (!silent) {
       setWclDebuffStatusLine("Loading debuff overview from WCL (first load may take a minute)…");
-      const host = document.getElementById("wclDebuffResultsHost");
-      if (host) host.innerHTML = `<p class="subtle">Querying WCL for each boss…</p>`;
+      const uptimeHost = document.getElementById("wclDebuffUptimeHost");
+      if (uptimeHost) uptimeHost.innerHTML = `<p class="subtle">Querying WCL for each boss…</p>`;
     }
-    const payload = await getJson(
-      `${WCL_DEBUFF_API}?reportCode=${encodeURIComponent(code)}&overview=1`
-    );
+    const [payload] = await Promise.all([
+      getJson(`${WCL_DEBUFF_API}?reportCode=${encodeURIComponent(code)}&overview=1${refresh ? "&refresh=1" : ""}`),
+    ]);
     if (!payload?.ok) throw new Error(payload?.error || "Overview failed");
     wclDebuffOverviewCache = payload;
     wclDebuffOverviewReportCode = code;
@@ -1033,8 +1039,9 @@ async function loadWclDebuffOverview(reportCode, { silent = false, btn = null, r
     );
     return payload;
   } catch (error) {
-    const host = document.getElementById("wclDebuffResultsHost");
-    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Overview failed")}</p>`;
+    const uptimeHost = document.getElementById("wclDebuffUptimeHost");
+    const errHtml = `<p class="subtle">${esc(error?.message || "Overview failed")}</p>`;
+    if (uptimeHost) uptimeHost.innerHTML = errHtml;
     setWclDebuffStatusLine(error?.message || "Overview failed");
     if (/rate limit|429|points/i.test(String(error?.message || ""))) {
     } else {
@@ -1846,7 +1853,9 @@ function wclSetActivePanelTab(tab) {
           ? "progress"
           : tab === "core-parse"
             ? "core-parse"
-            : "debuffs";
+            : tab === "leaderboard"
+              ? "leaderboard"
+              : "debuffs";
   wclActivePanelTab = next;
   document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
     const on = btn.getAttribute("data-wcl-panel-tab") === next;
@@ -1854,31 +1863,39 @@ function wclSetActivePanelTab(tab) {
     btn.setAttribute("aria-selected", on ? "true" : "false");
   });
   const debuffHost = document.getElementById("wclDebuffResultsHost");
+  const leaderboardHost = document.getElementById("wclLeaderboardResultsHost");
   const consumeHost = document.getElementById("wclConsumablesResultsHost");
   const gearHost = document.getElementById("wclGearAuditResultsHost");
   const progressHost = document.getElementById("wclProgressResultsHost");
   const coreParseHost = document.getElementById("wclCoreParseHost");
   const debuffLegend = document.getElementById("wclDebuffLegend");
+  const consumeLeaderboardLegend = document.getElementById("wclConsumeLeaderboardLegend");
   const progressLegend = document.getElementById("wclProgressLegend");
   const coreParseLegend = document.getElementById("wclCoreParseLegend");
   const consumeLegend = document.getElementById("wclConsumablesLegend");
   const gearLegend = document.getElementById("wclGearLegend");
   const reportToolbar = document.getElementById("wclDebuffReportToolbar");
+  const leaderboardToolbar = document.getElementById("wclLeaderboardToolbar");
   const progressToolbar = document.getElementById("wclProgressToolbar");
   const coreParseToolbar = document.getElementById("wclCoreParseToolbar");
   if (debuffHost) debuffHost.hidden = next !== "debuffs";
+  if (leaderboardHost) leaderboardHost.hidden = next !== "leaderboard";
   if (consumeHost) consumeHost.hidden = next !== "consumables";
   if (gearHost) gearHost.hidden = next !== "gear";
   if (progressHost) progressHost.hidden = next !== "progress";
   if (coreParseHost) coreParseHost.hidden = next !== "core-parse";
-  if (debuffLegend) debuffLegend.hidden = next !== "debuffs";
   if (progressLegend) progressLegend.hidden = next !== "progress";
   if (coreParseLegend) coreParseLegend.hidden = next !== "core-parse";
   if (consumeLegend) consumeLegend.hidden = next !== "consumables";
   if (gearLegend) gearLegend.hidden = next !== "gear";
-  if (reportToolbar) reportToolbar.hidden = next === "progress" || next === "core-parse";
+  if (reportToolbar) {
+    reportToolbar.hidden = next === "progress" || next === "core-parse" || next === "leaderboard";
+  }
+  if (leaderboardToolbar) leaderboardToolbar.hidden = next !== "leaderboard";
   if (progressToolbar) progressToolbar.hidden = next !== "progress";
   if (coreParseToolbar) coreParseToolbar.hidden = next !== "core-parse";
+  if (debuffLegend) debuffLegend.hidden = next !== "debuffs";
+  if (consumeLeaderboardLegend) consumeLeaderboardLegend.hidden = next !== "leaderboard";
 }
 
 function wclConsumeChip(slot, label) {
@@ -1921,6 +1938,129 @@ const WCL_USAGE_COL_SHORT = {
   "demonic-rune": "Demonic",
   "flame-cap": "Flame",
 };
+
+async function loadWclConsumablesUsage(reportCode, { refresh = false } = {}) {
+  const code = String(reportCode || "").trim();
+  if (!code) {
+    wclConsumablesUsageCache = null;
+    wclConsumablesUsageReportCode = "";
+    return null;
+  }
+  if (!refresh && wclConsumablesUsageReportCode === code && wclConsumablesUsageCache?.ok) {
+    return wclConsumablesUsageCache;
+  }
+  const usagePayload = await getJson(
+    `${WCL_CONSUMABLES_USAGE_API}?reportCode=${encodeURIComponent(code)}${refresh ? "&refresh=1" : ""}`
+  ).catch(() => ({ ok: false, error: "Usage load failed" }));
+  wclConsumablesUsageCache = usagePayload;
+  wclConsumablesUsageReportCode = code;
+  return usagePayload;
+}
+
+async function loadWclConsumablesUsageLeaderboard({ silent = false, btn = null, refresh = false } = {}) {
+  const host = document.getElementById("wclLeaderboardResultsHost");
+  try {
+    if (btn) setButtonFeedback(btn, "Loading…", "loading");
+    if (!silent && !refresh) {
+      setWclDebuffStatusLine("Building consumables leaderboard across logged 25-man raids…");
+    } else if (!silent) {
+      setWclDebuffStatusLine("Refreshing consumables leaderboard from WCL…");
+    }
+    if (!silent && host) {
+      host.innerHTML = `<p class="subtle">Scanning Warcraft Logs reports (first load may take several minutes)…</p>`;
+    }
+    const usagePayload = await getJson(`${WCL_CONSUMABLES_USAGE_LEADERBOARD_API}${refresh ? "&refresh=1" : ""}`);
+    wclConsumablesLeaderboardCache = usagePayload;
+    if (host) host.innerHTML = renderWclConsumablesUsageLeaderboard(usagePayload);
+    const reports = Number(usagePayload.reportsScanned || 0);
+    const fights = Number(usagePayload.fightsScanned || 0);
+    const top = (usagePayload.players || []).find((p) => Number(p.totalUses || 0) > 0);
+    setWclDebuffStatusLine(
+      `Consumables leaderboard · ${reports} logged 25-man raid(s) · ${fights} boss kill(s) scanned${
+        top ? ` · top ${top.name} (${top.totalUses})` : ""
+      }.`
+    );
+    return usagePayload;
+  } catch (error) {
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Leaderboard failed")}</p>`;
+    setWclDebuffStatusLine(error?.message || "Leaderboard failed");
+    throw error;
+  } finally {
+    if (btn) resetButtonFeedback(btn, "Refresh leaderboard");
+  }
+}
+
+function topConsumableLabelsForPlayer(counts, catalog, limit = 4) {
+  return (Array.isArray(catalog) ? catalog : [])
+    .map((c) => ({
+      key: c.key,
+      label: WCL_USAGE_COL_SHORT[c.key] || c.name,
+      n: Number(counts?.[c.key] || 0),
+    }))
+    .filter((row) => row.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .slice(0, Math.max(1, limit));
+}
+
+function renderWclConsumablesUsageLeaderboard(usagePayload, { limit = 20 } = {}) {
+  if (!usagePayload?.ok) {
+    return `<section class="plb-consume-leaderboard" aria-label="Consumables leaderboard">
+      <p class="subtle">${esc(usagePayload?.error || "Consumables usage unavailable for this log.")}</p>
+    </section>`;
+  }
+  const catalog = Array.isArray(usagePayload.catalog) ? usagePayload.catalog : [];
+  const ranked = (Array.isArray(usagePayload.players) ? usagePayload.players : [])
+    .filter((p) => Number(p.totalUses || 0) > 0)
+    .slice(0, Math.max(1, limit));
+  const fights = Number(usagePayload.fightsScanned || 0);
+  const reports = Number(usagePayload.reportsScanned || 0);
+  const aggregate = usagePayload.mode === "usage-leaderboard" || reports > 0;
+  const scopeHint =
+    reports === 0 && aggregate
+      ? "no logged 25-man raids in Event Management"
+      : aggregate
+        ? `${reports} logged 25-man raid(s) · ${fights} boss kill(s)`
+        : `${fights} boss kill(s) for this log`;
+  if (!ranked.length) {
+    return `<section class="plb-consume-leaderboard" aria-label="Consumables leaderboard">
+      <header class="plb-consume-leaderboard-head">
+        <h3 class="plb-consume-leaderboard-title">Consumables leaderboard</h3>
+        <p class="subtle plb-consume-leaderboard-hint">No tracked consumable uses across ${scopeHint}.</p>
+      </header>
+    </section>`;
+  }
+  const maxTotal = Math.max(...ranked.map((p) => Number(p.totalUses || 0)), 1);
+  const rows = ranked
+    .map((p, idx) => {
+      const rank = idx + 1;
+      const total = Number(p.totalUses || 0);
+      const rankClass =
+        rank === 1 ? " plb-consume-leaderboard-row--gold" : rank === 2 ? " plb-consume-leaderboard-row--silver" : rank === 3 ? " plb-consume-leaderboard-row--bronze" : "";
+      const barPct = Math.round((total / maxTotal) * 100);
+      const topItems = topConsumableLabelsForPlayer(p.counts, catalog, 5)
+        .map((row) => `<span class="plb-consume-leaderboard-chip">${esc(row.label)} <strong>${row.n}</strong></span>`)
+        .join("");
+      return `<li class="plb-consume-leaderboard-row${rankClass}">
+        <span class="plb-consume-leaderboard-rank" aria-label="Rank ${rank}">${rank}</span>
+        <div class="plb-consume-leaderboard-main">
+          <div class="plb-consume-leaderboard-name-row">
+            <span class="plb-consume-leaderboard-name">${esc(p.name || "?")}</span>
+            <span class="plb-consume-leaderboard-total" title="Total tracked consumable uses">${total}</span>
+          </div>
+          <div class="plb-consume-leaderboard-bar" aria-hidden="true"><span style="width:${barPct}%"></span></div>
+          <div class="plb-consume-leaderboard-chips">${topItems}</div>
+        </div>
+      </li>`;
+    })
+    .join("");
+  return `<section class="plb-consume-leaderboard" aria-label="Consumables leaderboard">
+    <header class="plb-consume-leaderboard-head">
+      <h3 class="plb-consume-leaderboard-title">Consumables leaderboard</h3>
+      <p class="subtle plb-consume-leaderboard-hint">Raiders ranked by total uses (haste/destruction/fel mana potions, scrolls, dark &amp; demonic runes, flame cap) across ${scopeHint}.</p>
+    </header>
+    <ol class="plb-consume-leaderboard-list">${rows}</ol>
+  </section>`;
+}
 
 function renderWclConsumablesUsageSection(usagePayload) {
   if (!usagePayload?.ok) {
@@ -2470,21 +2610,11 @@ async function loadWclConsumablesOverview(reportCode, { silent = false, btn = nu
     }
     const [payload, usagePayload] = await Promise.all([
       getJson(`${WCL_CONSUMABLES_API}?reportCode=${encodeURIComponent(code)}&overview=1`),
-      getJson(`${WCL_CONSUMABLES_USAGE_API}?reportCode=${encodeURIComponent(code)}`).catch(() => ({
-        ok: false,
-        error: "Usage load failed",
-      })),
+      loadWclConsumablesUsage(code),
     ]);
     if (!payload?.ok) throw new Error(payload?.error || "Overview failed");
     wclConsumablesOverviewCache = payload;
     wclConsumablesOverviewReportCode = code;
-    if (usagePayload?.ok) {
-      wclConsumablesUsageCache = usagePayload;
-      wclConsumablesUsageReportCode = code;
-    } else {
-      wclConsumablesUsageCache = usagePayload;
-      wclConsumablesUsageReportCode = code;
-    }
     renderWclConsumablesOverview(payload, usagePayload);
     if (wclActivePanelTab === "consumables") {
       const killBosses = (payload.bossRows || []).filter((b) => !b.noKills).length;
@@ -2557,6 +2687,10 @@ async function initWclDebuffUptimePanel() {
 
 async function loadWclActiveOverview(reportCode, opts = {}) {
   const code = String(reportCode || "").trim();
+  if (wclActivePanelTab === "leaderboard") {
+    await loadWclConsumablesUsageLeaderboard({ ...opts, refresh: Boolean(opts.refresh) });
+    return;
+  }
   if (!code) return;
   if (wclActivePanelTab === "consumables") {
     await loadWclConsumablesOverview(code, opts);
@@ -2595,6 +2729,23 @@ document.querySelectorAll("[data-wcl-panel-tab]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tab = btn.getAttribute("data-wcl-panel-tab") || "debuffs";
     wclSetActivePanelTab(tab);
+    if (tab === "leaderboard") {
+      if (wclConsumablesLeaderboardCache?.ok) {
+        const host = document.getElementById("wclLeaderboardResultsHost");
+        if (host) host.innerHTML = renderWclConsumablesUsageLeaderboard(wclConsumablesLeaderboardCache);
+        const reports = Number(wclConsumablesLeaderboardCache.reportsScanned || 0);
+        const fights = Number(wclConsumablesLeaderboardCache.fightsScanned || 0);
+        const top = (wclConsumablesLeaderboardCache.players || []).find((p) => Number(p.totalUses || 0) > 0);
+        setWclDebuffStatusLine(
+          `Consumables leaderboard · ${reports} logged 25-man raid(s) · ${fights} boss kill(s) scanned${
+            top ? ` · top ${top.name} (${top.totalUses})` : ""
+          }.`
+        );
+      } else {
+        loadWclConsumablesUsageLeaderboard().catch(() => {});
+      }
+      return;
+    }
     if (tab === "core-parse") {
       loadWclCoreParse({ raid: wclCoreParseRaidFilter }).catch(() => {});
       return;
@@ -2647,6 +2798,10 @@ document.getElementById("wclDebuffReportSelect")?.addEventListener("change", asy
   } catch {
     /* status set in loader */
   }
+});
+
+document.getElementById("wclLeaderboardRefreshBtn")?.addEventListener("click", (event) => {
+  loadWclConsumablesUsageLeaderboard({ btn: event.currentTarget, refresh: true }).catch(() => {});
 });
 
 document.getElementById("wclDebuffReloadBtn")?.addEventListener("click", (event) => {

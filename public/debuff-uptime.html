@@ -6,7 +6,7 @@
     <title>PUG LIFE BALANCE · Debuff Uptime</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
-    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260628plb-consumables-leaderboard-tab-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
   </head>
   <body class="framework-bg-soft debuff-uptime-page">
@@ -91,6 +91,24 @@
                 </button>
                 <button
                   type="button"
+                  class="plb-wcl-mode plb-wcl-mode--leaderboard plb-debuff-tab"
+                  role="tab"
+                  aria-selected="false"
+                  data-wcl-panel-tab="leaderboard"
+                  id="wclTabLeaderboard"
+                >
+                  <span class="plb-wcl-mode-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <path d="M8 21V10M12 21V3M16 21v-6" stroke-linecap="round" />
+                    </svg>
+                  </span>
+                  <span class="plb-wcl-mode-copy">
+                    <span class="plb-wcl-mode-title">Leaderboard</span>
+                    <span class="plb-wcl-mode-desc">Consumables across 25-man raids</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
                   class="plb-wcl-mode plb-wcl-mode--progress plb-debuff-tab"
                   role="tab"
                   aria-selected="false"
@@ -157,6 +175,14 @@
               </div>
               <button type="button" class="event-signup-btn plb-debuff-reload-btn" id="wclDebuffReloadBtn" disabled>
                 Reload overview
+              </button>
+            </div>
+            <div class="plb-debuff-toolbar plb-leaderboard-toolbar surface-elevated" id="wclLeaderboardToolbar" hidden>
+              <p class="subtle plb-leaderboard-toolbar-note">
+                Totals across all logged 25-man raids in Event Management (Karazhan &amp; Zul&apos;Aman excluded).
+              </p>
+              <button type="button" class="event-signup-btn plb-debuff-reload-btn" id="wclLeaderboardRefreshBtn">
+                Refresh leaderboard
               </button>
             </div>
             <div class="plb-debuff-toolbar plb-core-parse-toolbar surface-elevated" id="wclCoreParseToolbar" hidden>
@@ -242,6 +268,11 @@
                   ><span class="plb-debuff-legend-dot" aria-hidden="true"></span>&lt;50%</span
                 >
               </div>
+              <div class="plb-debuff-legend plb-debuff-legend--consume-leaderboard" id="wclConsumeLeaderboardLegend" role="group" aria-label="Consumables usage" hidden>
+                <span class="plb-debuff-legend-label">Usage</span>
+                <span class="plb-consume-legend-pill plb-consume-legend-pill--ok">Tracked use</span>
+                <span class="subtle plb-consume-flask-note">Potions, scrolls, runes &amp; flame cap per raider.</span>
+              </div>
               <div class="plb-debuff-legend plb-debuff-legend--consumables" id="wclConsumablesLegend" role="group" aria-label="Consumables at pull" hidden>
                 <span class="plb-debuff-legend-label">At boss pull</span>
                 <span class="plb-consume-legend-pill plb-consume-legend-pill--ok">Present</span>
@@ -286,7 +317,10 @@
               </p>
             </div>
           </div>
-          <div id="wclDebuffResultsHost" class="plb-debuff-results"></div>
+          <div id="wclDebuffResultsHost" class="plb-debuff-results">
+            <div id="wclDebuffUptimeHost" class="plb-debuff-subpanel"></div>
+          </div>
+          <div id="wclLeaderboardResultsHost" class="plb-debuff-results plb-leaderboard-results" hidden></div>
           <div id="wclConsumablesResultsHost" class="plb-debuff-results plb-consumables-results" hidden></div>
           <div id="wclGearAuditResultsHost" class="plb-debuff-results plb-gear-audit-results" hidden></div>
           <div id="wclProgressResultsHost" class="plb-debuff-results plb-debuff-progress-results" hidden></div>
@@ -309,6 +343,6 @@
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
-    <script defer src="/debuff-uptime.js?v=20260626plb-consumables-usage-v1"></script>
+    <script defer src="/debuff-uptime.js?v=20260628plb-consumables-leaderboard-flame-cap-v1"></script>
   </body>
 </html>
