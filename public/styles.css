@@ -6085,13 +6085,20 @@ tr.plb-gear-row--miss th {
 
 .plb-consume-leaderboard-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   gap: 12px;
-  align-items: start;
+  align-items: center;
   padding: 10px 12px;
   border-radius: var(--radius-md, 6px);
   border: 1px solid var(--plb-ds-border);
   background: color-mix(in srgb, var(--plb-ds-card) 88%, transparent);
+}
+
+.plb-consume-leaderboard-badge {
+  width: 40px;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.35));
 }
 
 .plb-consume-leaderboard-row--gold {

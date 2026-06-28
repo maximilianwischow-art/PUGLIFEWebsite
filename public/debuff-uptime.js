@@ -53,6 +53,11 @@ const WCL_CORE_PARSE_API = "/api/raid-lead/core-parse-development";
 const WCL_CONSUMABLES_API = "/api/raid-lead/wcl-consumables";
 const WCL_CONSUMABLES_USAGE_API = "/api/raid-lead/wcl-consumables-usage";
 const WCL_LEADERBOARD_LAST_RAIDS = 6;
+const CONSUMABLES_LAST6_BADGE_ICON = Object.freeze({
+  1: "/images/achievements/consumables-last6-1st.png",
+  2: "/images/achievements/consumables-last6-2nd.png",
+  3: "/images/achievements/consumables-last6-3rd.png",
+});
 const WCL_GEAR_AUDIT_API = "/api/raid-lead/armory-gear-audit";
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
@@ -2090,18 +2095,41 @@ function renderWclConsumablesUsageLeaderboard(usagePayload, { limit = 20, scope 
     </section>`;
   }
   const maxTotal = Math.max(...ranked.map((p) => Number(p.totalUses || 0)), 1);
+  let distinctRank = 0;
+  let prevTotal = null;
   const rows = ranked
+    .map((p) => {
+      const total = Number(p.totalUses || 0);
+      if (total !== prevTotal) {
+        distinctRank += 1;
+        prevTotal = total;
+      }
+      return { ...p, distinctRank };
+    })
     .map((p, idx) => {
       const rank = idx + 1;
       const total = Number(p.totalUses || 0);
       const rankClass =
-        rank === 1 ? " plb-consume-leaderboard-row--gold" : rank === 2 ? " plb-consume-leaderboard-row--silver" : rank === 3 ? " plb-consume-leaderboard-row--bronze" : "";
+        p.distinctRank === 1
+          ? " plb-consume-leaderboard-row--gold"
+          : p.distinctRank === 2
+            ? " plb-consume-leaderboard-row--silver"
+            : p.distinctRank === 3
+              ? " plb-consume-leaderboard-row--bronze"
+              : "";
+      const badgeIcon =
+        (scope === "last6" || lastRaids > 0) && p.distinctRank >= 1 && p.distinctRank <= 3
+          ? CONSUMABLES_LAST6_BADGE_ICON[p.distinctRank]
+          : "";
+      const badgeHtml = badgeIcon
+        ? `<img class="plb-consume-leaderboard-badge" src="${esc(badgeIcon)}" width="40" height="37" alt="" loading="lazy" />`
+        : `<span class="plb-consume-leaderboard-rank" aria-label="Rank ${rank}">${rank}</span>`;
       const barPct = Math.round((total / maxTotal) * 100);
       const topItems = topConsumableLabelsForPlayer(p.counts, catalog, 5)
         .map((row) => `<span class="plb-consume-leaderboard-chip">${esc(row.label)} <strong>${row.n}</strong></span>`)
         .join("");
       return `<li class="plb-consume-leaderboard-row${rankClass}">
-        <span class="plb-consume-leaderboard-rank" aria-label="Rank ${rank}">${rank}</span>
+        ${badgeHtml}
         <div class="plb-consume-leaderboard-main">
           <div class="plb-consume-leaderboard-name-row">
             <span class="plb-consume-leaderboard-name">${esc(p.name || "?")}</span>

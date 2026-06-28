@@ -120,6 +120,16 @@ import {
   buildMergedRaidCalendarEntries,
   resolvedTrackedRaidForFight,
 } from "./lib/compute/raid-calendar-entries.mjs";
+import {
+  CONSUMABLES_LAST6_BADGE_CATALOG,
+  CONSUMABLES_LAST6_LEADERBOARD_RAIDS,
+  consumablesLeaderboardBadgeIdsForLinkedKeys,
+  topThreeConsumablesRankKeys,
+} from "./lib/compute/consumables-leaderboard-badges.mjs";
+import {
+  readConsumablesLast6RanksCache,
+  writeConsumablesLast6RanksCache,
+} from "./lib/compute/consumables-leaderboard-ranks-cache.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -11127,6 +11137,11 @@ async function buildWclConsumablesUsageLeaderboardPayload({ lastRaids = 0 } = {}
   }
 
   const merged = applyLeaderboardUsageFilter(mergeConsumablesUsageResults(usageParts));
+  if (lastRaids === CONSUMABLES_LAST6_LEADERBOARD_RAIDS) {
+    await persistConsumablesLast6RankKeysFromPlayers(merged.players, merged).catch((error) => {
+      console.warn("[consumables-badges] rank cache write failed:", error?.message || error);
+    });
+  }
   return {
     ok: true,
     mode: "usage-leaderboard",
@@ -15016,6 +15031,7 @@ const BADGE_CATALOG = [
       { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "performance", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
       { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "performance", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
       { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", phase: "performance", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
+      ...CONSUMABLES_LAST6_BADGE_CATALOG,
     ],
   },
   {
@@ -15614,9 +15630,65 @@ const PROFILE_CLIENT_FALLBACK_BADGES = [
   "parsing-ceiling",
   "most-deaths-last-6-raids",
   "best-time-participant",
+  "consumables-last6-1st",
+  "consumables-last6-2nd",
+  "consumables-last6-3rd",
 ];
 
-function profileMaterializedAchievementResolution(canonicalUser, linkedCharacters) {
+let consumablesLast6RankKeysCache = null;
+let consumablesLast6RankKeysCacheAt = 0;
+
+async function getConsumablesLast6RankKeys({ refresh = false } = {}) {
+  const now = Date.now();
+  if (!refresh && consumablesLast6RankKeysCache && now - consumablesLast6RankKeysCacheAt <= 60 * 60 * 1000) {
+    return consumablesLast6RankKeysCache;
+  }
+  const disk = await readConsumablesLast6RanksCache();
+  if (disk?.rankKeys) {
+    consumablesLast6RankKeysCache = disk.rankKeys;
+    consumablesLast6RankKeysCacheAt = now;
+    return disk.rankKeys;
+  }
+  return { rank1: new Set(), rank2: new Set(), rank3: new Set() };
+}
+
+async function persistConsumablesLast6RankKeysFromPlayers(players, meta = {}) {
+  const rankKeys = topThreeConsumablesRankKeys(players, normalizeRaidHelperDisplayKey);
+  await writeConsumablesLast6RanksCache({
+    updatedAt: Date.now(),
+    reportsScanned: Number(meta.reportsScanned || 0),
+    fightsScanned: Number(meta.fightsScanned || 0),
+    topPlayers: rankKeys.topPlayers,
+    rankKeys,
+  });
+  consumablesLast6RankKeysCache = {
+    rank1: rankKeys.rank1,
+    rank2: rankKeys.rank2,
+    rank3: rankKeys.rank3,
+    topPlayers: rankKeys.topPlayers,
+  };
+  consumablesLast6RankKeysCacheAt = Date.now();
+  return rankKeys;
+}
+
+async function refreshConsumablesLast6RankKeysFromLeaderboard() {
+  try {
+    const payload = await buildWclConsumablesUsageLeaderboardPayload({
+      lastRaids: CONSUMABLES_LAST6_LEADERBOARD_RAIDS,
+    });
+    if (!payload?.ok) return null;
+    return persistConsumablesLast6RankKeysFromPlayers(payload.players, payload);
+  } catch (error) {
+    console.warn("[consumables-badges] last-6 rank refresh failed:", error?.message || error);
+    return null;
+  }
+}
+
+function consumablesLast6BadgesForLinkedKeys(linkedKeys, rankKeys) {
+  return consumablesLeaderboardBadgeIdsForLinkedKeys(linkedKeys, rankKeys || {});
+}
+
+function profileMaterializedAchievementResolution(canonicalUser, linkedCharacters, { consumablesLast6RankKeys = null } = {}) {
   const canonicalId = Number(canonicalUser?.id);
   const earnedIds = new Set();
   const lazyBadges = [];
@@ -15625,6 +15697,7 @@ function profileMaterializedAchievementResolution(canonicalUser, linkedCharacter
     parses: false,
     deaths: false,
     bestTime: false,
+    consumablesLast6: false,
   };
   if (!Number.isInteger(canonicalId) || canonicalId <= 0) {
     return { earnedIds, lazyBadges: PROFILE_CLIENT_FALLBACK_BADGES.slice(), readiness };
@@ -15702,6 +15775,29 @@ function profileMaterializedAchievementResolution(canonicalUser, linkedCharacter
   }
   if (!readiness.bestTime) lazyBadges.push("best-time-participant");
 
+  try {
+    const linkedKeys = new Set(
+      (Array.isArray(linkedCharacters) ? linkedCharacters : [])
+        .map((c) => normalizeRaidHelperDisplayKey(String(c || "")))
+        .filter(Boolean)
+    );
+    for (const ch of identityCharactersGetByUserId(canonicalId) || []) {
+      const key = normalizeRaidHelperDisplayKey(String(ch?.characterName || ""));
+      if (key) linkedKeys.add(key);
+    }
+    const rankKeys = consumablesLast6RankKeys || consumablesLast6RankKeysCache;
+    if (rankKeys && (rankKeys.rank1?.size || rankKeys.rank2?.size || rankKeys.rank3?.size)) {
+      readiness.consumablesLast6 = true;
+      for (const bid of consumablesLast6BadgesForLinkedKeys(linkedKeys, rankKeys)) earnedIds.add(bid);
+    } else {
+      readiness.consumablesLast6 = false;
+      for (const bid of CONSUMABLES_LAST6_BADGE_CATALOG) lazyBadges.push(bid.id);
+    }
+  } catch {
+    readiness.consumablesLast6 = false;
+    for (const bid of CONSUMABLES_LAST6_BADGE_CATALOG) lazyBadges.push(bid.id);
+  }
+
   return { earnedIds, lazyBadges, readiness };
 }
 
@@ -15736,7 +15832,9 @@ app.get("/api/profile/me/badges", async (req, res) => {
           if (states.length) {
             const stateById = new Map(states.map((s) => [s.badgeId, s]));
             const milestoneInferredCount = inferRaidMilestoneEventCountFromBadgeStates(stateById);
-            const materializedAchievements = profileMaterializedAchievementResolution(canonical, linkedCharacters);
+            const materializedAchievements = profileMaterializedAchievementResolution(canonical, linkedCharacters, {
+              consumablesLast6RankKeys: await getConsumablesLast6RankKeys(),
+            });
             const recentSet = recentBadgeIdsForUser(canonical.id, lastRaidContext);
             const categories = badgeCatalog.map((cat) => ({
               ...cat,
@@ -24324,7 +24422,7 @@ function lootCountByUserMapFromMaterialised() {
 }
 
 /** Merge every earned achievement badge id for a leaderboard row (no per-row API on expand). */
-function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadges, linkedCharacters) {
+function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys = null) {
   const earned = new Set();
   const uid = Number(userId);
   if (!Number.isInteger(uid) || uid <= 0) return [];
@@ -24350,13 +24448,18 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadge
   if (pr.firstClearKara) earned.add("kara-first-time-clear");
   if (pr.firstClearGruul) earned.add("gruul-first-time-clear");
   if (pr.firstClearMag) earned.add("magtheridon-first-time-clear");
+  if (pr.consumablesLast6First) earned.add("consumables-last6-1st");
+  if (pr.consumablesLast6Second) earned.add("consumables-last6-2nd");
+  if (pr.consumablesLast6Third) earned.add("consumables-last6-3rd");
   if (pr.hallOfFameMvp) earned.add("hall-of-fame");
 
   const milestoneCount = Math.max(0, Math.floor(Number(row?.wclEventCount ?? row?.rhPastEventCount ?? 0) || 0));
   for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) earned.add(bid);
 
   try {
-    const mat = profileMaterializedAchievementResolution({ id: uid }, linkedCharacters);
+    const mat = profileMaterializedAchievementResolution({ id: uid }, linkedCharacters, {
+      consumablesLast6RankKeys,
+    });
     for (const id of mat.earnedIds || []) earned.add(id);
   } catch {
     /* materialized achievements optional */
@@ -24378,7 +24481,12 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadge
  * (no sync has ever run on this DB) so the caller can surface a
  * "data warming up" hint instead of an empty grid.
  */
-function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = null, lastRaidContext = null) {
+function buildLeaderboardBundlePayload(
+  guildId,
+  specificRaidAttendanceAwards = null,
+  lastRaidContext = null,
+  consumablesLast6RankKeys = null
+) {
   const base = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
   if (!base || !Array.isArray(base.leaderboard) || !base.leaderboard.length) return null;
 
@@ -24534,12 +24642,18 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
     const earnedFirstKara = [...nameKeys].some((k) => firstClearKaraNames.has(k));
     const earnedFirstGruul = [...nameKeys].some((k) => firstClearGruulNames.has(k));
     const earnedFirstMag = [...nameKeys].some((k) => firstClearMagNames.has(k));
+    const earnedConsumablesFirst = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank1?.has(k));
+    const earnedConsumablesSecond = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank2?.has(k));
+    const earnedConsumablesThird = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank3?.has(k));
     const preResolvedBadges = {
       bestTimeParticipant: !!earnedBestTime,
       mostDeathsLastSix: !!earnedMostDeaths,
       firstClearKara: !!earnedFirstKara,
       firstClearGruul: !!earnedFirstGruul,
       firstClearMag: !!earnedFirstMag,
+      consumablesLast6First: !!earnedConsumablesFirst,
+      consumablesLast6Second: !!earnedConsumablesSecond,
+      consumablesLast6Third: !!earnedConsumablesThird,
       hallOfFameMvp: mvpAwardCount > 0,
     };
     const linkedCharacters = [...new Set([mainCharacterName, ...chars.map((c) => c?.characterName)].filter(Boolean))];
@@ -24548,7 +24662,7 @@ function buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards = n
       wclEventCount: row.wclEventCount,
       rhPastEventCount: row.wclEventCount,
       specificEventBadges,
-    }, preResolvedBadges, linkedCharacters);
+    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys);
     const recentBadgeIds = recentBadgeIdsArrayForUser(u.id, lastRaidContext);
 
     players.push({
@@ -24607,7 +24721,13 @@ app.get("/api/leaderboard", async (req, res) => {
     await ensureIdentityPublicSettingsStore();
     const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
     const lastRaidContext = await resolveLatestRaidForBadges();
-    const payload = buildLeaderboardBundlePayload(guildId, specificRaidAttendanceAwards, lastRaidContext);
+    const consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
+    const payload = buildLeaderboardBundlePayload(
+      guildId,
+      specificRaidAttendanceAwards,
+      lastRaidContext,
+      consumablesLast6RankKeys
+    );
     if (!payload) {
       return res.json({
         ok: true,
@@ -24959,6 +25079,16 @@ async function runSyncBadges() {
     });
   }
 
+  let consumablesLast6RankKeys = null;
+  try {
+    consumablesLast6RankKeys = await refreshConsumablesLast6RankKeysFromLeaderboard();
+  } catch (error) {
+    console.warn("[sync:badges] consumables last-6 refresh failed:", error?.message || error);
+  }
+  if (!consumablesLast6RankKeys) {
+    consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
+  }
+
   let rowsChanged = 0;
   const now = Date.now();
   const newBadgeCounts = new Map();
@@ -25023,6 +25153,18 @@ async function runSyncBadges() {
         earned.add(badgeId);
         const ev = specificRaidAttendanceEvidence.get(badgeId);
         if (ev) evidenceById.set(badgeId, ev);
+      }
+    }
+
+    if (consumablesLast6RankKeys) {
+      for (const badgeId of consumablesLast6BadgesForLinkedKeys(linkedKeys, consumablesLast6RankKeys)) {
+        earned.add(badgeId);
+        evidenceById.set(badgeId, {
+          type: "consumables-last6",
+          source: "wcl-consumables-usage",
+          lastRaids: CONSUMABLES_LAST6_LEADERBOARD_RAIDS,
+          topPlayers: consumablesLast6RankKeys.topPlayers || [],
+        });
       }
     }
 
