@@ -11057,25 +11057,35 @@ async function buildWclConsumablesUsagePayload({ reportCode }) {
   };
 }
 
-function twentyFiveManReportCodesFromEventPayload(eventPayload) {
+function twentyFiveManReportCodesFromEventPayload(eventPayload, { lastRaids = 0 } = {}) {
   return leaderboardReportRowsFromEventPayload(eventPayload, {
     isTenPlayerRow: (row) => (row ? isTenPlayerTbcLootRow(row) : false),
+    maxReports: lastRaids,
   });
 }
 
-async function buildWclConsumablesUsageLeaderboardPayload() {
+function parseLeaderboardLastRaidsQuery(raw) {
+  const n = Math.floor(Number(raw || 0));
+  if (n <= 0) return 0;
+  return Math.min(24, n);
+}
+
+async function buildWclConsumablesUsageLeaderboardPayload({ lastRaids = 0 } = {}) {
   await ensureGargulLootHistoryStore();
   const eventPayload = await buildRaidLeadEventReportsPayload();
   const selectedReportCodes = Array.from(
     new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
   );
-  const reportRows = twentyFiveManReportCodesFromEventPayload(eventPayload);
+  const allReportRows = twentyFiveManReportCodesFromEventPayload(eventPayload, { lastRaids: 0 });
+  const reportRows = lastRaids > 0 ? allReportRows.slice(0, lastRaids) : allReportRows;
   const reportCodes = reportRows.map((row) => row.reportCode);
 
   if (!reportCodes.length) {
     return {
       ok: true,
       mode: "usage-leaderboard",
+      lastRaids: lastRaids > 0 ? lastRaids : null,
+      reportsEligible: allReportRows.length,
       selectedReportCodes,
       reportCodes: [],
       reportsScanned: 0,
@@ -11120,6 +11130,8 @@ async function buildWclConsumablesUsageLeaderboardPayload() {
   return {
     ok: true,
     mode: "usage-leaderboard",
+    lastRaids: lastRaids > 0 ? lastRaids : null,
+    reportsEligible: allReportRows.length,
     selectedReportCodes,
     reportCodes: usageParts.map((row) => row.reportCode).filter(Boolean),
     reportsScanned: merged.reportsScanned,
@@ -12110,11 +12122,14 @@ app.get("/api/raid-lead/wcl-consumables-usage", async (req, res) => {
       String(req.query?.refresh || "").trim().toLowerCase() === "true";
 
     if (leaderboard) {
+      const lastRaids = parseLeaderboardLastRaidsQuery(req.query?.lastRaids);
       const eventPayload = await buildRaidLeadEventReportsPayload();
-      const reportRows = twentyFiveManReportCodesFromEventPayload(eventPayload);
-      const fingerprint = reportRows.map((row) => row.reportCode).sort().join(",");
-      const cacheKey = `wcl-consumables-usage-leaderboard-v3-${fingerprint || "empty"}`;
-      const loader = () => buildWclConsumablesUsageLeaderboardPayload();
+      const allReportRows = twentyFiveManReportCodesFromEventPayload(eventPayload, { lastRaids: 0 });
+      const scopedRows = lastRaids > 0 ? allReportRows.slice(0, lastRaids) : allReportRows;
+      const fingerprint = scopedRows.map((row) => row.reportCode).sort().join(",");
+      const scopeKey = lastRaids > 0 ? `last${lastRaids}` : "all";
+      const cacheKey = `wcl-consumables-usage-leaderboard-v4-${scopeKey}-${fingerprint || "empty"}`;
+      const loader = () => buildWclConsumablesUsageLeaderboardPayload({ lastRaids });
       const payload = refresh
         ? await forceRefreshCachedPayload(cacheKey, loader)
         : await getOrRefreshCachedPayload(cacheKey, {

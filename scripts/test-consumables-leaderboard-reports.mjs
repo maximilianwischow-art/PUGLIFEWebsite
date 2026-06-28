@@ -35,4 +35,21 @@ const withoutSelection = leaderboardReportRowsFromEventPayload(
 assert.equal(withoutSelection.length, 1);
 assert.equal(withoutSelection[0].reportCode, "def1234567890123");
 
+const limited = leaderboardReportRowsFromEventPayload(
+  {
+    allRaids: [
+      { reportCode: "aaa1111111111111", reportRaidName: "Serpentshrine Cavern", reportStartTime: 300 },
+      { reportCode: "bbb2222222222222", reportRaidName: "Tempest Keep", reportStartTime: 200 },
+      { reportCode: "ccc3333333333333", reportRaidName: "Gruul's Lair", reportStartTime: 100 },
+    ],
+    selectedReportCodes: [],
+  },
+  { isTenPlayerRow: isKara, maxReports: 2 }
+);
+assert.equal(limited.length, 2);
+assert.deepEqual(
+  limited.map((row) => row.reportCode),
+  ["aaa1111111111111", "bbb2222222222222"]
+);
+
 console.log("consumables leaderboard report resolution test passed");

@@ -178,7 +178,21 @@
               </button>
             </div>
             <div class="plb-debuff-toolbar plb-leaderboard-toolbar surface-elevated" id="wclLeaderboardToolbar" hidden>
-              <p class="subtle plb-leaderboard-toolbar-note">
+              <div class="plb-debuff-progress-filters" role="group" aria-label="Leaderboard scope">
+                <span class="plb-debuff-progress-filters-label">Scope</span>
+                <button
+                  type="button"
+                  class="plb-debuff-progress-chip plb-debuff-progress-chip--active"
+                  data-wcl-leaderboard-scope="all"
+                  aria-pressed="true"
+                >
+                  All raids
+                </button>
+                <button type="button" class="plb-debuff-progress-chip" data-wcl-leaderboard-scope="last6" aria-pressed="false">
+                  Last 6 raids
+                </button>
+              </div>
+              <p class="subtle plb-leaderboard-toolbar-note" id="wclLeaderboardToolbarNote">
                 Totals across all logged 25-man raids in Event Management (Karazhan &amp; Zul&apos;Aman excluded).
               </p>
               <button type="button" class="event-signup-btn plb-debuff-reload-btn" id="wclLeaderboardRefreshBtn">
@@ -343,6 +357,6 @@
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
-    <script defer src="/debuff-uptime.js?v=20260628plb-consumables-leaderboard-flame-cap-v1"></script>
+    <script defer src="/debuff-uptime.js?v=20260628plb-consumables-leaderboard-last6-v1"></script>
   </body>
 </html>
