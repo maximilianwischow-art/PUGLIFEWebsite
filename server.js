@@ -90,6 +90,10 @@ import {
   consumableCatalogForApi,
   fetchConsumablesForFight,
 } from "./lib/wcl/consumables-at-pull.mjs";
+import {
+  fetchConsumablesUsageForReport,
+  usageConsumableCatalogForApi,
+} from "./lib/wcl/consumables-usage.mjs";
 import { fetchEventReportMetaFromWcl } from "./lib/wcl/import-event-report.mjs";
 import {
   fetchClassicArmoryEquipment,
@@ -282,7 +286,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260626plb-ssc-tk-calendar-v1";
+const API_BUILD_ID = "20260626plb-consumables-usage-v1";
 
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
@@ -11018,6 +11022,37 @@ function summarizeConsumablesPull(pull) {
   };
 }
 
+async function buildWclConsumablesUsagePayload({ reportCode }) {
+  const code = String(reportCode || "").trim();
+  if (!code) {
+    return { ok: false, error: "reportCode is required" };
+  }
+  await ensureGargulLootHistoryStore();
+  const selectedReportCodes = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  const report = await loadWclReportFightsForDebuffs(code, { queryWcl });
+  if (!report) {
+    return { ok: false, error: "Report not found or WCL API unavailable" };
+  }
+
+  const usage = await fetchConsumablesUsageForReport(code, report.fights, { queryWcl });
+  return {
+    ok: true,
+    mode: "usage",
+    reportCode: code,
+    reportTitle: report.title,
+    archiveStatus: report.archiveStatus ?? null,
+    selectedReportCodes,
+    catalog: usage.catalog,
+    players: usage.players,
+    rosterCount: usage.rosterCount,
+    fightsScanned: usage.fightsScanned,
+    totalEvents: usage.totalEvents,
+  };
+}
+
 async function buildWclConsumablesPayload({ reportCode, encounterId, overview }) {
   const code = String(reportCode || "").trim();
   if (!code) {
@@ -11979,6 +12014,31 @@ app.get("/api/raid-lead/core-parse-development", async (req, res) => {
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Core parse development failed" });
+  }
+});
+
+app.get("/api/raid-lead/wcl-consumables-usage", async (req, res) => {
+  try {
+    const session = requireRaidLeadSession(req, res);
+    if (!session) return;
+
+    const reportCode = String(req.query?.reportCode || "").trim();
+    if (!reportCode) {
+      return res.json({
+        ok: true,
+        catalog: usageConsumableCatalogForApi(),
+      });
+    }
+
+    const cacheKey = `wcl-consumables-usage-v1-${reportCode}`;
+    const payload = await getOrRefreshCachedPayload(cacheKey, {
+      ttlMs: 60 * 60 * 1000,
+      maxStaleMs: 24 * 60 * 60 * 1000,
+      loader: () => buildWclConsumablesUsagePayload({ reportCode }),
+    });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "WCL consumables usage failed" });
   }
 });
 

@@ -51,12 +51,15 @@ const WCL_DEBUFF_API = "/api/raid-lead/wcl-debuff-uptime";
 const WCL_DEBUFF_TRENDS_API = "/api/raid-lead/wcl-debuff-trends";
 const WCL_CORE_PARSE_API = "/api/raid-lead/core-parse-development";
 const WCL_CONSUMABLES_API = "/api/raid-lead/wcl-consumables";
+const WCL_CONSUMABLES_USAGE_API = "/api/raid-lead/wcl-consumables-usage";
 const WCL_GEAR_AUDIT_API = "/api/raid-lead/armory-gear-audit";
 let allRaidsState = [];
 let selectedReportCodesState = new Set();
 let wclActivePanelTab = "debuffs";
 let wclConsumablesOverviewCache = null;
 let wclConsumablesOverviewReportCode = "";
+let wclConsumablesUsageCache = null;
+let wclConsumablesUsageReportCode = "";
 let wclGearAuditOverviewCache = null;
 let wclGearAuditOverviewReportCode = "";
 let wclGearEnchantSpellMetaById = new Map();
@@ -1904,7 +1907,59 @@ function wclConsumeSummaryLine(summary) {
   return `${ready}/${total} ready`;
 }
 
-function renderWclConsumablesOverview(payload) {
+const WCL_USAGE_COL_SHORT = {
+  "haste-potion": "Haste",
+  "destruction-potion": "Destr",
+  "fel-mana-potion": "Fel Mana",
+  "scroll-agility-v": "Scr Agi",
+  "scroll-strength-v": "Scr Str",
+  "scroll-spirit-v": "Scr Spi",
+  "flask-pure-death": "Pure Death",
+  "flask-relentless-assault": "Relentless",
+  "flask-blinding-light": "Blinding",
+  "dark-rune": "Dark",
+  "demonic-rune": "Demonic",
+  "flame-cap": "Flame",
+};
+
+function renderWclConsumablesUsageSection(usagePayload) {
+  if (!usagePayload?.ok) {
+    return `<section class="plb-consumables-usage"><p class="subtle">${esc(usagePayload?.error || "Usage data unavailable.")}</p></section>`;
+  }
+  const catalog = Array.isArray(usagePayload.catalog) ? usagePayload.catalog : [];
+  const players = Array.isArray(usagePayload.players) ? usagePayload.players : [];
+  if (!catalog.length) return "";
+  const head = catalog
+    .map((c) => {
+      const short = WCL_USAGE_COL_SHORT[c.key] || c.name;
+      return `<th scope="col" class="is-num" title="${esc(c.name)}">${esc(short)}</th>`;
+    })
+    .join("");
+  const rows = players
+    .map((p) => {
+      const cells = catalog
+        .map((c) => {
+          const n = Number(p.counts?.[c.key] || 0);
+          return `<td class="is-num${n > 0 ? " plb-consume-usage--used" : ""}">${n > 0 ? n : "—"}</td>`;
+        })
+        .join("");
+      return `<tr><th scope="row">${esc(p.name || "?")}</th>${cells}<td class="is-num plb-consume-usage-total">${Number(p.totalUses || 0)}</td></tr>`;
+    })
+    .join("");
+  const fights = Number(usagePayload.fightsScanned || 0);
+  return `<section class="plb-consumables-usage">
+    <h3 class="plb-consumables-usage-title">Consumable usage per raider</h3>
+    <p class="subtle plb-consumables-usage-hint">Cast counts (potions, runes, scrolls, flame cap) and flask buff applies across ${fights} boss kill(s) in this log. Data from Warcraft Logs events.</p>
+    <div class="admin-table-wrap plb-debuff-table-wrap plb-consumables-usage-wrap">
+      <table class="admin-table plb-debuff-table plb-consumables-table plb-consumables-usage-table">
+        <thead><tr><th scope="col">Raider</th>${head}<th scope="col" class="is-num">Total</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="${catalog.length + 2}" class="subtle">No raiders in damage meter.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderWclConsumablesOverview(payload, usagePayload = null) {
   const host = document.getElementById("wclConsumablesResultsHost");
   if (!host) return;
   if (!payload?.ok) {
@@ -1960,7 +2015,8 @@ function renderWclConsumablesOverview(payload) {
     .join("");
   host.innerHTML = `
     <p class="plb-debuff-hint">Auras on each player at boss pull (WCL combatant snapshot). Flask satisfies battle + guardian elixir slots in TBC.</p>
-    <div class="plb-debuff-encounters">${cards}</div>`;
+    <div class="plb-debuff-encounters">${cards}</div>
+    ${renderWclConsumablesUsageSection(usagePayload || wclConsumablesUsageCache)}`;
 }
 
 function renderWclConsumablesDetailInto(host, payload) {
@@ -2412,13 +2468,24 @@ async function loadWclConsumablesOverview(reportCode, { silent = false, btn = nu
       const host = document.getElementById("wclConsumablesResultsHost");
       if (host) host.innerHTML = `<p class="subtle">Checking flask, elixirs, and food per player…</p>`;
     }
-    const payload = await getJson(
-      `${WCL_CONSUMABLES_API}?reportCode=${encodeURIComponent(code)}&overview=1`
-    );
+    const [payload, usagePayload] = await Promise.all([
+      getJson(`${WCL_CONSUMABLES_API}?reportCode=${encodeURIComponent(code)}&overview=1`),
+      getJson(`${WCL_CONSUMABLES_USAGE_API}?reportCode=${encodeURIComponent(code)}`).catch(() => ({
+        ok: false,
+        error: "Usage load failed",
+      })),
+    ]);
     if (!payload?.ok) throw new Error(payload?.error || "Overview failed");
     wclConsumablesOverviewCache = payload;
     wclConsumablesOverviewReportCode = code;
-    renderWclConsumablesOverview(payload);
+    if (usagePayload?.ok) {
+      wclConsumablesUsageCache = usagePayload;
+      wclConsumablesUsageReportCode = code;
+    } else {
+      wclConsumablesUsageCache = usagePayload;
+      wclConsumablesUsageReportCode = code;
+    }
+    renderWclConsumablesOverview(payload, usagePayload);
     if (wclActivePanelTab === "consumables") {
       const killBosses = (payload.bossRows || []).filter((b) => !b.noKills).length;
       const archiveNote = wclDebuffArchiveNote(payload.archiveStatus);

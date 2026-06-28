@@ -5948,6 +5948,47 @@ tr.plb-gear-row--miss th {
   color: #fecaca;
 }
 
+.plb-consumables-usage {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--plb-ds-border);
+}
+
+.plb-consumables-usage-title {
+  margin: 0 0 8px;
+  font-size: var(--text-base, 16px);
+  font-weight: 700;
+}
+
+.plb-consumables-usage-hint {
+  margin: 0 0 12px;
+}
+
+.plb-consumables-usage-wrap {
+  overflow-x: auto;
+}
+
+.plb-consumables-usage-table .is-num {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plb-consumables-usage-table th.is-num {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.plb-consume-usage--used {
+  color: #bbf7d0;
+  font-weight: 600;
+}
+
+.plb-consume-usage-total {
+  font-weight: 700;
+  color: var(--plb-ds-fg);
+}
+
 .plb-debuff-toolbar {
   display: flex;
   flex-wrap: wrap;
