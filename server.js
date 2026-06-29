@@ -317,7 +317,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-best-parse-overall-raid-v1";
+const API_BUILD_ID = "20260522plb-iron-attendance-align-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -15120,7 +15120,7 @@ const BADGE_CATALOG = [
       { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", phase: "meta", sortOrder: 25, description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
       { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", phase: "meta", sortOrder: 50, description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
       { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", phase: "meta", sortOrder: 100, description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "meta", description: "100% attendance across the last tracked 25-player guild raids (Kara/ZA and 10-player logs excluded)." },
+      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "meta", description: "100% attendance in the last six tracked 25-player guild raids (same window as leaderboard attendance % and the Peon/Grunt/Veteran pill)." },
     ],
   },
   {
@@ -16253,10 +16253,113 @@ function consumablesLast6BadgesForLinkedKeys(linkedKeys, rankKeys) {
   return consumablesLeaderboardBadgeIdsForLinkedKeys(linkedKeys, rankKeys || {});
 }
 
+/**
+ * Single source for Iron Attendance — mirrors leaderboard `raidsAttended` /
+ * `consideredRaids`: curated Event Management last-N when active, else the
+ * materialised last-N 25-man `raid_attendance` window.
+ */
+function resolveIronAttendanceBadgeWindow() {
+  const recentLimit = wclAttendanceRecentRaidCount();
+  const selectedCuratedCodes = eventManagementSelectedReportCodes();
+  /** @type {Map<number, { raidsAttended: number, raidsConsidered: number }>} */
+  const byUserId = new Map();
+  let consideredRaids = 0;
+  let orderedReportCodes = [];
+  let source = "none";
+
+  if (materializeRaidAppearancesEnabled()) {
+    try {
+      if (raidAppearancesDistinctReportCount() > 0) {
+        const window = raidAppearancesAttendanceWindowByUser({
+          reportCodes: selectedCuratedCodes.length ? selectedCuratedCodes : undefined,
+          recentLimit,
+        });
+        if (window?.orderedReportCodes?.length) {
+          for (const [uid, entry] of window.perUser.entries()) {
+            byUserId.set(uid, {
+              raidsAttended: Math.max(0, Math.floor(Number(entry?.raidsAttended) || 0)),
+              raidsConsidered: Math.max(0, Math.floor(Number(entry?.raidsConsidered) || 0)),
+            });
+          }
+          consideredRaids = window.orderedReportCodes.length;
+          orderedReportCodes = window.orderedReportCodes;
+          source = selectedCuratedCodes.length ? "event_management" : "raid_appearances";
+          return { active: true, byUserId, consideredRaids, orderedReportCodes, source, recentLimit };
+        }
+      }
+    } catch {
+      /* fall through to raid_attendance */
+    }
+  }
+
+  try {
+    const fresh = raidAttendanceGetFreshestWindow();
+    if (fresh?.windowLabel) {
+      const rows = raidAttendanceGetByWindow(fresh.windowLabel);
+      for (const row of rows) {
+        const uid = Number(row?.userId);
+        if (!Number.isInteger(uid) || uid <= 0) continue;
+        byUserId.set(uid, {
+          raidsAttended: Math.max(0, Math.floor(Number(row?.raidsAttended) || 0)),
+          raidsConsidered: Math.max(0, Math.floor(Number(row?.raidsConsidered) || 0)),
+        });
+      }
+      const sample = rows[0];
+      consideredRaids = Math.max(
+        0,
+        Math.floor(Number(sample?.raidsConsidered) || 0)
+      );
+      if (!consideredRaids && sample?.attendanceHistory) {
+        try {
+          const hist = JSON.parse(String(sample.attendanceHistory));
+          if (Array.isArray(hist)) consideredRaids = hist.length;
+        } catch {
+          /* ignore */
+        }
+      }
+      source = "raid_attendance_25man";
+      return {
+        active: byUserId.size > 0 && consideredRaids > 0,
+        byUserId,
+        consideredRaids,
+        orderedReportCodes: [],
+        source,
+        recentLimit,
+      };
+    }
+  } catch {
+    /* empty */
+  }
+
+  return { active: false, byUserId, consideredRaids: 0, orderedReportCodes: [], source, recentLimit };
+}
+
+function ironAttendanceEarnedForUserId(userId, window) {
+  const uid = Number(userId);
+  if (!Number.isInteger(uid) || uid <= 0) return false;
+  const w = window?.byUserId?.get(uid);
+  const considered = Math.max(
+    0,
+    Math.floor(Number(w?.raidsConsidered ?? window?.consideredRaids) || 0)
+  );
+  if (considered <= 0) return false;
+  const attended = Math.max(0, Math.floor(Number(w?.raidsAttended) || 0));
+  return attended === considered;
+}
+
+function ironAttendanceBadgesForUserId(userId, window) {
+  return ironAttendanceEarnedForUserId(userId, window) ? ["iron-attendance"] : [];
+}
+
 function profileMaterializedAchievementResolution(
   canonicalUser,
   linkedCharacters,
-  { consumablesLast6RankKeys = null, parsingCeilingLastRaidKeys = null, bestParseLastRaidKeys = null } = {}
+  {
+    consumablesLast6RankKeys = null,
+    parsingCeilingLastRaidKeys = null,
+    bestParseLastRaidKeys = null,
+    ironAttendanceWindow = null,
+  } = {}
 ) {
   const canonicalId = Number(canonicalUser?.id);
   const earnedIds = new Set();
@@ -16273,13 +16376,10 @@ function profileMaterializedAchievementResolution(
   }
 
   try {
-    const fresh = raidAttendanceGetFreshestWindow();
-    if (fresh?.windowLabel && Number(fresh.rowCount || 0) > 0) {
-      const row = raidAttendanceGetByWindow(fresh.windowLabel).find((entry) => Number(entry?.userId) === canonicalId);
-      readiness.attendance = true;
-      const attended = Math.max(0, Math.floor(Number(row?.raidsAttended) || 0));
-      const considered = Math.max(0, Math.floor(Number(row?.raidsConsidered) || 0));
-      if (row && considered > 0 && attended === considered) earnedIds.add("iron-attendance");
+    const ironWindow = ironAttendanceWindow || resolveIronAttendanceBadgeWindow();
+    readiness.attendance = Boolean(ironWindow?.active);
+    if (readiness.attendance && ironAttendanceEarnedForUserId(canonicalId, ironWindow)) {
+      earnedIds.add("iron-attendance");
     }
   } catch {
     readiness.attendance = false;
@@ -16419,6 +16519,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
               consumablesLast6RankKeys: await getConsumablesLast6RankKeys(),
               parsingCeilingLastRaidKeys: await getParsingCeilingLastRaidKeys({ refreshIfMissing: true }),
               bestParseLastRaidKeys: await getBestParseLastRaidKeys({ refreshIfMissing: true }),
+              ironAttendanceWindow: resolveIronAttendanceBadgeWindow(),
             });
             const recentSet = recentBadgeIdsForUser(canonical.id, lastRaidContext);
             const categories = badgeCatalog.map((cat) => ({
@@ -24948,7 +25049,8 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(
   linkedCharacters,
   consumablesLast6RankKeys = null,
   parsingCeilingLastRaidKeys = null,
-  bestParseLastRaidKeys = null
+  bestParseLastRaidKeys = null,
+  ironAttendanceWindow = null
 ) {
   const earned = new Set();
   const uid = Number(userId);
@@ -24981,6 +25083,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(
   if (pr.hallOfFameMvp) earned.add("hall-of-fame");
   if (pr.parsingCeiling) earned.add("parsing-ceiling");
   if (pr.bestParseOverallRaid) earned.add("best-parse-overall-raid");
+  if (pr.ironAttendance) earned.add("iron-attendance");
 
   const milestoneCount = Math.max(0, Math.floor(Number(row?.wclEventCount ?? row?.rhPastEventCount ?? 0) || 0));
   for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) earned.add(bid);
@@ -24990,6 +25093,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(
       consumablesLast6RankKeys,
       parsingCeilingLastRaidKeys,
       bestParseLastRaidKeys,
+      ironAttendanceWindow,
     });
     for (const id of mat.earnedIds || []) earned.add(id);
   } catch {
@@ -25018,13 +25122,16 @@ function buildLeaderboardBundlePayload(
   lastRaidContext = null,
   consumablesLast6RankKeys = null,
   parsingCeilingLastRaidKeys = null,
-  bestParseLastRaidKeys = null
+  bestParseLastRaidKeys = null,
+  ironAttendanceWindow = null
 ) {
   const base = buildAttendancePayloadFromMaterialised(guildId, {
     top: 500,
     parsingCeilingLastRaidKeys,
   });
   if (!base || !Array.isArray(base.leaderboard) || !base.leaderboard.length) return null;
+
+  const ironWindow = ironAttendanceWindow || resolveIronAttendanceBadgeWindow();
 
   const users = identityUserListAll();
   if (!Array.isArray(users) || !users.length) return null;
@@ -25183,6 +25290,7 @@ function buildLeaderboardBundlePayload(
     const earnedConsumablesThird = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank3?.has(k));
     const earnedParsingCeiling = parsingCeilingEarnedForNameKeys(nameKeys, parsingCeilingLastRaidKeys?.topKeys);
     const earnedBestParseOverall = bestParseLastRaidEarnedForNameKeys(nameKeys, bestParseLastRaidKeys?.winnerKeys);
+    const earnedIronAttendance = ironAttendanceEarnedForUserId(u.id, ironWindow);
     const preResolvedBadges = {
       bestTimeParticipant: !!earnedBestTime,
       mostDeathsLastSix: !!earnedMostDeaths,
@@ -25194,6 +25302,7 @@ function buildLeaderboardBundlePayload(
       consumablesLast6Third: !!earnedConsumablesThird,
       parsingCeiling: !!earnedParsingCeiling,
       bestParseOverallRaid: !!earnedBestParseOverall,
+      ironAttendance: !!earnedIronAttendance,
       hallOfFameMvp: mvpAwardCount > 0,
     };
     const linkedCharacters = [...new Set([mainCharacterName, ...chars.map((c) => c?.characterName)].filter(Boolean))];
@@ -25202,7 +25311,7 @@ function buildLeaderboardBundlePayload(
       wclEventCount: row.wclEventCount,
       rhPastEventCount: row.wclEventCount,
       specificEventBadges,
-    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys, parsingCeilingLastRaidKeys, bestParseLastRaidKeys);
+    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys, parsingCeilingLastRaidKeys, bestParseLastRaidKeys, ironWindow);
     const recentBadgeIds = recentBadgeIdsArrayForUser(u.id, lastRaidContext);
 
     players.push({
@@ -25245,6 +25354,11 @@ function buildLeaderboardBundlePayload(
     lastRaid: lastRaidApiPayload(lastRaidContext),
     parsingCeilingMeta: parsingCeilingMetaFromKeys(parsingCeilingLastRaidKeys),
     bestParseOverallMeta: bestParseOverallMetaFromKeys(bestParseLastRaidKeys),
+    ironAttendanceMeta: {
+      consideredRaids: ironWindow.consideredRaids || 0,
+      source: ironWindow.source || null,
+      orderedReportCodes: ironWindow.orderedReportCodes || [],
+    },
     players,
   };
 }
@@ -25261,18 +25375,21 @@ app.get("/api/leaderboard", async (req, res) => {
     Number.isInteger(requestedGuildId) && requestedGuildId > 0 ? requestedGuildId : votingGuildId;
   try {
     await ensureIdentityPublicSettingsStore();
+    await ensureGargulLootHistoryStore();
     const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
     const lastRaidContext = await resolveLatestRaidForBadges();
     const consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
     const parsingCeilingLastRaidKeys = await ensureParsingCeilingLastRaidKeys();
     const bestParseLastRaidKeys = await ensureBestParseLastRaidKeys();
+    const ironAttendanceWindow = resolveIronAttendanceBadgeWindow();
     const payload = buildLeaderboardBundlePayload(
       guildId,
       specificRaidAttendanceAwards,
       lastRaidContext,
       consumablesLast6RankKeys,
       parsingCeilingLastRaidKeys,
-      bestParseLastRaidKeys
+      bestParseLastRaidKeys,
+      ironAttendanceWindow
     );
     if (!payload) {
       return res.json({
@@ -25637,6 +25754,7 @@ async function runSyncBadges() {
 
   let parsingCeilingLastRaidKeys = await ensureParsingCeilingLastRaidKeys();
   let bestParseLastRaidKeys = await ensureBestParseLastRaidKeys();
+  const ironAttendanceWindow = resolveIronAttendanceBadgeWindow();
 
   let rowsChanged = 0;
   const now = Date.now();
@@ -25735,6 +25853,18 @@ async function runSyncBadges() {
         reportCode: String(bestParseLastRaidKeys?.reportCode || "").trim() || null,
         startMs: bestParseLastRaidKeys?.startMs || null,
         bestValue: bestParseLastRaidKeys?.bestValue ?? null,
+      });
+    }
+
+    for (const badgeId of ironAttendanceBadgesForUserId(user.id, ironAttendanceWindow)) {
+      earned.add(badgeId);
+      const row = ironAttendanceWindow?.byUserId?.get(user.id);
+      evidenceById.set(badgeId, {
+        type: "iron-attendance",
+        source: ironAttendanceWindow?.source || "iron-attendance-window",
+        consideredRaids: ironAttendanceWindow?.consideredRaids || 0,
+        raidsAttended: row?.raidsAttended ?? null,
+        orderedReportCodes: ironAttendanceWindow?.orderedReportCodes || [],
       });
     }
 

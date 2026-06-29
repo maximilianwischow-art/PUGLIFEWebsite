@@ -1320,6 +1320,10 @@ function playerEarnedMostDeathsLastSixBadge(player) {
 }
 
 function playerEarnedIronAttendanceBadge(player) {
+  if (player?.preResolvedBadges?.ironAttendance === true) return true;
+  if (Array.isArray(player?.earnedBadgeIds) && player.earnedBadgeIds.includes("iron-attendance")) {
+    return true;
+  }
   const row = attendanceRowForRosterPlayerResolved(player);
   const cap = attendanceConsideredRaids;
   if (!row || !cap) return false;
@@ -1882,7 +1886,7 @@ function rosterAchievementBadgesHtml(player) {
     {
       file: "iron-attendance.png",
       title:
-        "Iron attendance — 100% attendance in the current tracked raid window (every raid counted on this card; typically all of the last six 25-player raids).",
+        "Iron attendance — 100% attendance in the last six tracked 25-player guild raids (same window as leaderboard attendance %).",
       alt: "Iron attendance",
       ok: playerEarnedIronAttendanceBadge(player),
     },
