@@ -312,7 +312,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v4";
+const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v5";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -2178,6 +2178,17 @@ const HOF_REPORT_FIGHTS_QUERY = `
 
 const HOF_PARSE_RANKINGS_QUERY = `
   query HofParseRankings($code: String!, $fightIds: [Int!]) {
+    reportData {
+      report(code: $code) {
+        dpsRankings: rankings(fightIDs: $fightIds, playerMetric: dps)
+        hpsRankings: rankings(fightIDs: $fightIds, playerMetric: hps)
+      }
+    }
+  }
+`;
+
+const WCL_ATTENDANCE_RANKINGS_QUERY = `
+  query RaidAttendance($code: String!, $fightIds: [Int!]) {
     reportData {
       report(code: $code) {
         dpsRankings: rankings(fightIDs: $fightIds, playerMetric: dps)
@@ -8819,6 +8830,41 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
   }));
 
   return { raidSnapshots, wclDisplayByLower, recentWclReports, raidRankingPayloads };
+}
+
+/** Fetch merged DPS/HPS rankings for one curated guild report (same fight filter as attendance gather). */
+async function loadRankingsPayloadForCuratedReport(reportCode) {
+  const code = String(reportCode || "").trim();
+  if (!code) return null;
+  const data = await queryWcl(HOF_REPORT_FIGHTS_QUERY, { code });
+  const report = data?.reportData?.report;
+  if (!report) return null;
+  const fightIds = (Array.isArray(report.fights) ? report.fights : [])
+    .filter((fight) => {
+      if (Number(fight?.encounterID || 0) <= 0) return false;
+      const raidKey = resolvedTrackedRaidForFight(fight, report);
+      if (!raidKey || !Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, raidKey)) return false;
+      if (WCL_ATTENDANCE_EXCLUDED_RAIDS.has(raidKey)) return false;
+      return true;
+    })
+    .map((fight) => Number(fight.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!fightIds.length) return null;
+
+  const dpsParts = [];
+  const hpsParts = [];
+  for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
+    const chunkData = await queryWcl(WCL_ATTENDANCE_RANKINGS_QUERY, { code, fightIds: chunk });
+    const reportFrag = chunkData?.reportData?.report || {};
+    dpsParts.push(reportFrag.dpsRankings);
+    hpsParts.push(reportFrag.hpsRankings);
+  }
+  return {
+    reportCode: code,
+    startTime: reportStartTimeMs(report.startTime),
+    mergedDps: mergeWclRankingsPayloads(dpsParts),
+    mergedHps: mergeWclRankingsPayloads(hpsParts),
+  };
 }
 
 /** Sum vortex units from craft rows (each item defaults to at least 1). */
@@ -15840,11 +15886,11 @@ async function resolveRankingPayloadForParsingCeiling(latestReportCode, startMs,
   let reportStartMs = startMs;
 
   if (!latestRanking && code) {
-    const loaded = await loadMergedRankingsBundleForHallOfFameUncached(code);
+    const loaded = await loadRankingsPayloadForCuratedReport(code);
     if (loaded?.mergedDps || loaded?.mergedHps) {
       latestRanking = {
         reportCode: code,
-        startTime: Number(reportStartMs || 0),
+        startTime: Number(reportStartMs || loaded.startTime || 0),
         mergedDps: loaded.mergedDps,
         mergedHps: loaded.mergedHps,
       };
@@ -15882,12 +15928,12 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
   let reportStartMs = lastRaidCtx?.startMs || null;
 
   if (light && reportCode) {
-    const loaded = await loadMergedRankingsBundleForHallOfFameUncached(reportCode);
+    const loaded = await loadRankingsPayloadForCuratedReport(reportCode);
     if (loaded?.mergedDps || loaded?.mergedHps) {
       wclDisplayByLower = seedWclDisplayFromMergedRankings(loaded.mergedDps, loaded.mergedHps, wclDisplayByLower);
       latestRanking = {
         reportCode,
-        startTime: Number(reportStartMs || 0),
+        startTime: Number(reportStartMs || loaded.startTime || 0),
         mergedDps: loaded.mergedDps,
         mergedHps: loaded.mergedHps,
       };
@@ -15908,12 +15954,12 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
   }
 
   if (!latestRanking && reportCode) {
-    const loaded = await loadMergedRankingsBundleForHallOfFameUncached(reportCode);
+    const loaded = await loadRankingsPayloadForCuratedReport(reportCode);
     if (loaded?.mergedDps || loaded?.mergedHps) {
       wclDisplayByLower = seedWclDisplayFromMergedRankings(loaded.mergedDps, loaded.mergedHps, wclDisplayByLower);
       latestRanking = {
         reportCode,
-        startTime: Number(reportStartMs || 0),
+        startTime: Number(reportStartMs || loaded.startTime || 0),
         mergedDps: loaded.mergedDps,
         mergedHps: loaded.mergedHps,
       };
@@ -15939,7 +15985,7 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
 }
 
 async function ensureParsingCeilingLastRaidKeys() {
-  let keys = await getParsingCeilingLastRaidKeys({ refreshIfMissing: true, light: true });
+  let keys = await getParsingCeilingLastRaidKeys({ refresh: true, refreshIfMissing: true, light: true });
   if (parsingCeilingTopKeysTotal(keys?.topKeys) > 0) return keys;
   try {
     keys = await refreshParsingCeilingLastRaidKeysFromGuild({ light: true });
