@@ -300,7 +300,18 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260628plb-debuff-subtab-leaderboard-v1";
+const API_BUILD_ID = "20260629plb-leaderboard-badge-columns-v1";
+
+function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
+  let out = String(html || "");
+  const version = encodeURIComponent(API_BUILD_ID);
+  for (const assetPath of assetPaths) {
+    const escaped = String(assetPath || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!escaped) continue;
+    out = out.replace(new RegExp(`(${escaped})\\?v=[^"']+`, "g"), `$1?v=${version}`);
+  }
+  return out;
+}
 
 const achievementBadgeDir = path.join(publicDir, "images", "achievements");
 
@@ -388,10 +399,7 @@ app.get("/admin.html", async (req, res) => {
   }
   try {
     const raw = await readFile(path.join(publicDir, "admin.html"), "utf8");
-    const html = raw.replace(
-      /(\/(?:admin\.js|styles\.min\.css))\?v=[^"']+/g,
-      `$1?v=${encodeURIComponent(API_BUILD_ID)}`
-    );
+    const html = htmlWithApiBuildAssetVersions(raw, ["/admin.js", "/styles.min.css"]);
     res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.type("html").send(html);
   } catch (error) {
@@ -9218,8 +9226,21 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(publicDir, "join.html"));
 });
 
-app.get(["/leaderboard", "/leaderboard/", "/leaderboard.html"], (_req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
+app.get(["/leaderboard", "/leaderboard/", "/leaderboard.html"], async (_req, res) => {
+  try {
+    const raw = await readFile(path.join(publicDir, "index.html"), "utf8");
+    const html = htmlWithApiBuildAssetVersions(raw, [
+      "/styles.min.css",
+      "/events-roster-ui.js",
+      "/badge-catalog-ui.js",
+      "/leaderboard.js",
+    ]);
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.type("html").send(html);
+  } catch (error) {
+    console.error("Failed to serve leaderboard page:", error?.message || error);
+    return res.status(500).send("Failed to load leaderboard page.");
+  }
 });
 
 app.get("/home.html", (_req, res) => {
