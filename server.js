@@ -142,6 +142,11 @@ import {
   readParsingCeilingLastRaidCache,
   writeParsingCeilingLastRaidCache,
 } from "./lib/compute/parsing-ceiling-last-raid.mjs";
+import {
+  bestParseLastRaidEarnedForNameKeys,
+  readBestParseLastRaidCache,
+  writeBestParseLastRaidCache,
+} from "./lib/compute/best-parse-last-raid.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -312,7 +317,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v5";
+const API_BUILD_ID = "20260522plb-best-parse-overall-raid-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -577,6 +582,23 @@ function isTenPlayerTbcLootRow(row) {
   if (hay.includes("zul'aman") || hay.includes("zul aman") || hay.includes("zulaman")) return true;
   return false;
 }
+
+/** WCL guild report rows that are 10-player (Kara/ZA or small ranked roster). */
+function isTenPlayerGuildReport(report) {
+  if (!report || typeof report !== "object") return false;
+  if (
+    isTenPlayerTbcLootRow({
+      reportRaidName: primaryTrackedRaidNameFromReport(report),
+      reportTitle: report?.title || "",
+    })
+  ) {
+    return true;
+  }
+  const rankedCount = normalizedPlayerNamesFromReport(report).size;
+  if (rankedCount > 0 && rankedCount < 14) return true;
+  return false;
+}
+
 const allowedTbcZones = new Set(
   (process.env.WCL_ALLOWED_GAME_ZONES || DEFAULT_TBC_ZONES.join(","))
     .split(",")
@@ -8734,7 +8756,11 @@ function chunkPositiveInts(ids, chunkSize) {
  */
 async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {}) {
   const forAttendancePercent = Boolean(options.attendancePercentMetrics);
-  const reports = await getFilteredGuildReportsForGuild(guildId, reportLimit);
+  const twentyFiveManOnly = forAttendancePercent || Boolean(options.twentyFiveManOnly);
+  let reports = await getFilteredGuildReportsForGuild(guildId, reportLimit);
+  if (twentyFiveManOnly) {
+    reports = reports.filter((report) => !isTenPlayerGuildReport(report));
+  }
   const trackedReports = reports
     .map((report) => {
       const fightIds = (report.fights || [])
@@ -8742,7 +8768,7 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
           if (Number(fight?.encounterID || 0) <= 0) return false;
           const raidKey = resolvedTrackedRaidForFight(fight, report);
           if (!raidKey || !Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, raidKey)) return false;
-          if (forAttendancePercent && WCL_ATTENDANCE_EXCLUDED_RAIDS.has(raidKey)) return false;
+          if (twentyFiveManOnly && WCL_ATTENDANCE_EXCLUDED_RAIDS.has(raidKey)) return false;
           return true;
         })
         .map((fight) => Number(fight.id))
@@ -8751,7 +8777,7 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
     })
     .filter((entry) => entry.fightIds.length > 0);
 
-  if (forAttendancePercent) {
+  if (twentyFiveManOnly) {
     trackedReports.sort(
       (a, b) => reportStartTimeMs(b.report?.startTime) - reportStartTimeMs(a.report?.startTime)
     );
@@ -8766,7 +8792,7 @@ async function gatherAttendanceRaidSnapshots(guildId, reportLimit, options = {})
         ? Math.min(100, Math.max(1, Number(reportLimit) || wclPerReportDetailCap()))
         : wclPerReportDetailCap();
   const attendanceRecentCap =
-    forAttendancePercent && !fullEventScope ? wclAttendanceRecentRaidCount() : Number.POSITIVE_INFINITY;
+    twentyFiveManOnly && !fullEventScope ? wclAttendanceRecentRaidCount() : Number.POSITIVE_INFINITY;
   const effectiveCap = Math.min(detailCap, attendanceRecentCap);
   const cappedForAttendance = trackedReports.slice(0, effectiveCap);
 
@@ -15094,7 +15120,7 @@ const BADGE_CATALOG = [
       { id: "raids-with-guild-25", name: "25 raids with the guild", icon: "/images/achievements/raids-with-guild-25.png", phase: "meta", sortOrder: 25, description: "Appeared in at least 25 distinct WCL guild raid reports flagged in admin Event Management." },
       { id: "raids-with-guild-50", name: "50 raids with the guild", icon: "/images/achievements/raids-with-guild-50.png", phase: "meta", sortOrder: 50, description: "Appeared in at least 50 distinct WCL guild raid reports flagged in admin Event Management." },
       { id: "raids-with-guild-100", name: "100 raids with the guild", icon: "/images/achievements/raids-with-guild-100.png", phase: "meta", sortOrder: 100, description: "Appeared in at least 100 distinct WCL guild raid reports flagged in admin Event Management." },
-      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "meta", description: "100% attendance in the current tracked raid window." },
+      { id: "iron-attendance", name: "Iron attendance", icon: "/images/achievements/iron-attendance.png", phase: "meta", description: "100% attendance across the last tracked 25-player guild raids (Kara/ZA and 10-player logs excluded)." },
     ],
   },
   {
@@ -15138,6 +15164,7 @@ const BADGE_CATALOG = [
     description: "Parse, speed, and death-window performance badges.",
     badges: [
       { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "performance", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
+      { id: "best-parse-overall-raid", name: "Best parse (last raid)", icon: "/images/achievements/best-parse-overall-raid.png", phase: "performance", description: "Highest overall boss parse in the latest tracked 25-player guild raid (best single-boss percentile across tank, heal, and DPS for your linked characters)." },
       { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "performance", description: "Tied for the best parse on at least one boss in the latest guild raid, among linked raiders in your role bracket." },
       { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", phase: "performance", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
       ...CONSUMABLES_LAST6_BADGE_CATALOG,
@@ -15188,6 +15215,7 @@ const BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS = new Set(
 );
 
 const BADGE_LEADERBOARD_DYNAMIC_DEFAULT_IDS = new Set([
+  "best-parse-overall-raid",
   "parsing-ceiling",
   "consumables-last6-1st",
   "consumables-last6-2nd",
@@ -15857,6 +15885,9 @@ let parsingCeilingLastRaidKeysCacheAt = 0;
 let parsingCeilingRefreshPromise = null;
 let parsingCeilingRefreshPromiseAt = 0;
 
+let bestParseLastRaidKeysCache = null;
+let bestParseLastRaidKeysCacheAt = 0;
+
 function parsingCeilingTopKeysTotal(topKeys) {
   if (!topKeys) return 0;
   return (topKeys.tank?.size || 0) + (topKeys.heal?.size || 0) + (topKeys.dps?.size || 0);
@@ -15967,10 +15998,15 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
   }
 
   let topKeys = { tank: new Set(), heal: new Set(), dps: new Set() };
+  let winnerKeys = new Set();
+  let bestParseValue = null;
   if (latestRanking) {
     let groups = buildRhWclLinkedGroups(raidSnapshots, rhWclLinksState, wclDisplayByLower);
     groups = augmentGroupsFromWclDisplay(groups, wclDisplayByLower);
     topKeys = computeEncounterTopParserSetsForRaid(groups, latestRanking, wclDisplayByLower);
+    const bestOverall = computeBestOverallParserKeysForRaid(groups, latestRanking, wclDisplayByLower);
+    winnerKeys = bestOverall.winnerKeys;
+    bestParseValue = bestOverall.bestValue;
   }
 
   const saved = await persistParsingCeilingLastRaidKeys({
@@ -15978,8 +16014,17 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
     startMs: reportStartMs || null,
     topKeys,
   });
+  await persistBestParseLastRaidKeys({
+    reportCode,
+    startMs: reportStartMs || null,
+    winnerKeys,
+    bestValue: bestParseValue,
+  });
   console.log(
     `[parsing-ceiling] refreshed light=${light ? 1 : 0} report=${reportCode || "(none)"} tops tank=${topKeys.tank.size} heal=${topKeys.heal.size} dps=${topKeys.dps.size}`
+  );
+  console.log(
+    `[best-parse-overall-raid] refreshed report=${reportCode || "(none)"} winners=${winnerKeys.size} best=${bestParseValue ?? "n/a"}`
   );
   return saved;
 }
@@ -16066,6 +16111,119 @@ async function persistParsingCeilingLastRaidKeys({ reportCode, startMs, topKeys 
   return parsingCeilingLastRaidKeysCache;
 }
 
+async function persistBestParseLastRaidKeys({ reportCode, startMs, winnerKeys, bestValue } = {}) {
+  await writeBestParseLastRaidCache({
+    reportCode,
+    startMs,
+    updatedAt: Date.now(),
+    winnerKeys,
+    bestValue,
+  });
+  bestParseLastRaidKeysCache = {
+    reportCode: String(reportCode || "").trim(),
+    startMs: startMs || null,
+    winnerKeys: winnerKeys instanceof Set ? winnerKeys : new Set(winnerKeys || []),
+    bestValue: Number.isFinite(Number(bestValue)) ? Number(bestValue) : null,
+  };
+  bestParseLastRaidKeysCacheAt = Date.now();
+  return bestParseLastRaidKeysCache;
+}
+
+function bestParseLastRaidCacheMatchesLatestRaid(cacheRow) {
+  const wantCode = String(parsingCeilingLatestRaidContext()?.reportCode || "").trim();
+  const haveCode = String(cacheRow?.reportCode || "").trim();
+  if (!wantCode) return true;
+  return wantCode === haveCode;
+}
+
+async function ensureBestParseLastRaidKeys() {
+  let keys = await getBestParseLastRaidKeys({ refreshIfMissing: true, light: true });
+  if (keys?.winnerKeys?.size > 0) return keys;
+  try {
+    keys = await refreshParsingCeilingLastRaidKeysFromGuild({ light: true });
+    const disk = await readBestParseLastRaidCache();
+    if (disk?.winnerKeys) {
+      bestParseLastRaidKeysCache = {
+        reportCode: disk.reportCode || "",
+        startMs: disk.startMs || null,
+        winnerKeys: disk.winnerKeys,
+        bestValue: disk.bestValue ?? null,
+      };
+      bestParseLastRaidKeysCacheAt = Date.now();
+      return bestParseLastRaidKeysCache;
+    }
+  } catch (error) {
+    console.warn("[best-parse-overall-raid] ensure refresh failed:", error?.message || error);
+  }
+  return { reportCode: "", startMs: null, winnerKeys: new Set(), bestValue: null };
+}
+
+async function getBestParseLastRaidKeys({ refresh = false, refreshIfMissing = true, light = true } = {}) {
+  const now = Date.now();
+  if (
+    !refresh &&
+    bestParseLastRaidKeysCache &&
+    now - bestParseLastRaidKeysCacheAt <= 60 * 60 * 1000 &&
+    bestParseLastRaidCacheMatchesLatestRaid(bestParseLastRaidKeysCache) &&
+    (!refreshIfMissing || (bestParseLastRaidKeysCache.winnerKeys?.size || 0) > 0)
+  ) {
+    return bestParseLastRaidKeysCache;
+  }
+
+  const disk = await readBestParseLastRaidCache();
+  if (
+    disk?.winnerKeys &&
+    !refresh &&
+    bestParseLastRaidCacheMatchesLatestRaid(disk) &&
+    (!refreshIfMissing || disk.winnerKeys.size > 0)
+  ) {
+    bestParseLastRaidKeysCache = {
+      reportCode: disk.reportCode || "",
+      startMs: disk.startMs || null,
+      winnerKeys: disk.winnerKeys,
+      bestValue: disk.bestValue ?? null,
+    };
+    bestParseLastRaidKeysCacheAt = now;
+    return bestParseLastRaidKeysCache;
+  }
+
+  if (refreshIfMissing || refresh) {
+    if (!parsingCeilingRefreshPromise || now - parsingCeilingRefreshPromiseAt > 120_000) {
+      parsingCeilingRefreshPromiseAt = now;
+      parsingCeilingRefreshPromise = refreshParsingCeilingLastRaidKeysFromGuild({ light }).finally(() => {
+        parsingCeilingRefreshPromise = null;
+      });
+    }
+    try {
+      await parsingCeilingRefreshPromise;
+    } catch (error) {
+      console.warn("[best-parse-overall-raid] refresh failed:", error?.message || error);
+    }
+    const refreshed = await readBestParseLastRaidCache();
+    if (refreshed?.winnerKeys) {
+      bestParseLastRaidKeysCache = {
+        reportCode: refreshed.reportCode || "",
+        startMs: refreshed.startMs || null,
+        winnerKeys: refreshed.winnerKeys,
+        bestValue: refreshed.bestValue ?? null,
+      };
+      bestParseLastRaidKeysCacheAt = Date.now();
+      return bestParseLastRaidKeysCache;
+    }
+  }
+
+  return { reportCode: "", startMs: null, winnerKeys: new Set(), bestValue: null };
+}
+
+function bestParseOverallMetaFromKeys(lastRaidKeys) {
+  return {
+    reportCode: String(lastRaidKeys?.reportCode || "").trim() || null,
+    startMs: lastRaidKeys?.startMs || null,
+    bestValue: Number.isFinite(Number(lastRaidKeys?.bestValue)) ? Number(lastRaidKeys.bestValue) : null,
+    winnerCount: lastRaidKeys?.winnerKeys?.size || 0,
+  };
+}
+
 function parsingCeilingMetaFromKeys(lastRaidKeys) {
   const tops = lastRaidKeys?.topKeys || {};
   return {
@@ -16085,6 +16243,12 @@ function parsingCeilingBadgesForLinkedKeys(linkedKeys, lastRaidKeys) {
   return parsingCeilingEarnedForNameKeys(linkedKeys, tops) ? ["parsing-ceiling"] : [];
 }
 
+function bestParseOverallBadgesForLinkedKeys(linkedKeys, lastRaidKeys) {
+  const winners = lastRaidKeys?.winnerKeys;
+  if (!winners?.size) return [];
+  return bestParseLastRaidEarnedForNameKeys(linkedKeys, winners) ? ["best-parse-overall-raid"] : [];
+}
+
 function consumablesLast6BadgesForLinkedKeys(linkedKeys, rankKeys) {
   return consumablesLeaderboardBadgeIdsForLinkedKeys(linkedKeys, rankKeys || {});
 }
@@ -16092,7 +16256,7 @@ function consumablesLast6BadgesForLinkedKeys(linkedKeys, rankKeys) {
 function profileMaterializedAchievementResolution(
   canonicalUser,
   linkedCharacters,
-  { consumablesLast6RankKeys = null, parsingCeilingLastRaidKeys = null } = {}
+  { consumablesLast6RankKeys = null, parsingCeilingLastRaidKeys = null, bestParseLastRaidKeys = null } = {}
 ) {
   const canonicalId = Number(canonicalUser?.id);
   const earnedIds = new Set();
@@ -16125,7 +16289,7 @@ function profileMaterializedAchievementResolution(
   try {
     const parseSync = syncStateGet("parses");
     readiness.parses = Number(parseSync?.lastCompletedAt || 0) > 0;
-    if (readiness.parses && parsingCeilingLastRaidKeys?.topKeys) {
+    if (readiness.parses && (parsingCeilingLastRaidKeys?.topKeys || bestParseLastRaidKeys?.winnerKeys?.size)) {
       const linkedKeys = new Set(
         (Array.isArray(linkedCharacters) ? linkedCharacters : [])
           .map((name) => normalizeRaidHelperDisplayKey(String(name || "")))
@@ -16135,14 +16299,20 @@ function profileMaterializedAchievementResolution(
         const key = normalizeRaidHelperDisplayKey(String(ch?.characterName || ""));
         if (key) linkedKeys.add(key);
       }
-      if (parsingCeilingEarnedForNameKeys(linkedKeys, parsingCeilingLastRaidKeys.topKeys)) {
+      if (parsingCeilingLastRaidKeys?.topKeys && parsingCeilingEarnedForNameKeys(linkedKeys, parsingCeilingLastRaidKeys.topKeys)) {
         earnedIds.add("parsing-ceiling");
+      }
+      if (bestParseLastRaidKeys?.winnerKeys?.size && bestParseLastRaidEarnedForNameKeys(linkedKeys, bestParseLastRaidKeys.winnerKeys)) {
+        earnedIds.add("best-parse-overall-raid");
       }
     }
   } catch {
     readiness.parses = false;
   }
-  if (!readiness.parses) lazyBadges.push("parsing-ceiling");
+  if (!readiness.parses) {
+    lazyBadges.push("parsing-ceiling");
+    lazyBadges.push("best-parse-overall-raid");
+  }
 
   try {
     const rows = deathTotalsGetByWindow("last-rolling-window") || [];
@@ -16248,6 +16418,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
             const materializedAchievements = profileMaterializedAchievementResolution(canonical, linkedCharacters, {
               consumablesLast6RankKeys: await getConsumablesLast6RankKeys(),
               parsingCeilingLastRaidKeys: await getParsingCeilingLastRaidKeys({ refreshIfMissing: true }),
+              bestParseLastRaidKeys: await getBestParseLastRaidKeys({ refreshIfMissing: true }),
             });
             const recentSet = recentBadgeIdsForUser(canonical.id, lastRaidContext);
             const categories = badgeCatalog.map((cat) => ({
@@ -16437,6 +16608,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
       linkedCharacters,
       lazyBadges: [
         "iron-attendance",
+        "best-parse-overall-raid",
         "parsing-ceiling",
         "most-deaths-last-6-raids",
         "best-time-participant",
@@ -17997,6 +18169,30 @@ function summarizeHighestParseForRaidRankingEntry(entry, names) {
   const dps = bracketParseBestEncounterOneRaidDetailed(mergedDps, mergedHps, "dps", names);
   if (dps) runs.push({ ...dps, bracket: "dps", reportCode, reportStartTime });
   return pickGlobalBestParseRun(runs);
+}
+
+/** Roster keys tied for the highest single-boss parse in one raid (any bracket). */
+function computeBestOverallParserKeysForRaid(groups, rankingEntry, wclDisplayByLower) {
+  const picks = [];
+  for (const [rk, group] of groups.entries()) {
+    const names = [];
+    for (const low of group.wclLower) {
+      const pretty = String(wclDisplayByLower?.get?.(low) || low || "").trim();
+      if (pretty) names.push(pretty);
+    }
+    const uniqueNames = [...new Set(names)];
+    const pick = summarizeHighestParseForRaidRankingEntry(rankingEntry, uniqueNames);
+    const v = finiteParseNum(pick?.value);
+    if (v == null || v <= 0) continue;
+    picks.push({ rk, v });
+  }
+  if (!picks.length) return { winnerKeys: new Set(), bestValue: null };
+  const maxVal = Math.max(...picks.map((p) => p.v));
+  const winnerKeys = new Set();
+  for (const { rk, v } of picks) {
+    if (Math.abs(v - maxVal) <= 0.02 + 1e-9) winnerKeys.add(rk);
+  }
+  return { winnerKeys, bestValue: maxVal };
 }
 
 /** WCL sometimes yields numeric strings; normalize before Math.max / comparisons. */
@@ -24751,7 +24947,8 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(
   preResolvedBadges,
   linkedCharacters,
   consumablesLast6RankKeys = null,
-  parsingCeilingLastRaidKeys = null
+  parsingCeilingLastRaidKeys = null,
+  bestParseLastRaidKeys = null
 ) {
   const earned = new Set();
   const uid = Number(userId);
@@ -24783,6 +24980,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(
   if (pr.consumablesLast6Third) earned.add("consumables-last6-3rd");
   if (pr.hallOfFameMvp) earned.add("hall-of-fame");
   if (pr.parsingCeiling) earned.add("parsing-ceiling");
+  if (pr.bestParseOverallRaid) earned.add("best-parse-overall-raid");
 
   const milestoneCount = Math.max(0, Math.floor(Number(row?.wclEventCount ?? row?.rhPastEventCount ?? 0) || 0));
   for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) earned.add(bid);
@@ -24791,6 +24989,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(
     const mat = profileMaterializedAchievementResolution({ id: uid }, linkedCharacters, {
       consumablesLast6RankKeys,
       parsingCeilingLastRaidKeys,
+      bestParseLastRaidKeys,
     });
     for (const id of mat.earnedIds || []) earned.add(id);
   } catch {
@@ -24818,7 +25017,8 @@ function buildLeaderboardBundlePayload(
   specificRaidAttendanceAwards = null,
   lastRaidContext = null,
   consumablesLast6RankKeys = null,
-  parsingCeilingLastRaidKeys = null
+  parsingCeilingLastRaidKeys = null,
+  bestParseLastRaidKeys = null
 ) {
   const base = buildAttendancePayloadFromMaterialised(guildId, {
     top: 500,
@@ -24982,6 +25182,7 @@ function buildLeaderboardBundlePayload(
     const earnedConsumablesSecond = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank2?.has(k));
     const earnedConsumablesThird = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank3?.has(k));
     const earnedParsingCeiling = parsingCeilingEarnedForNameKeys(nameKeys, parsingCeilingLastRaidKeys?.topKeys);
+    const earnedBestParseOverall = bestParseLastRaidEarnedForNameKeys(nameKeys, bestParseLastRaidKeys?.winnerKeys);
     const preResolvedBadges = {
       bestTimeParticipant: !!earnedBestTime,
       mostDeathsLastSix: !!earnedMostDeaths,
@@ -24992,6 +25193,7 @@ function buildLeaderboardBundlePayload(
       consumablesLast6Second: !!earnedConsumablesSecond,
       consumablesLast6Third: !!earnedConsumablesThird,
       parsingCeiling: !!earnedParsingCeiling,
+      bestParseOverallRaid: !!earnedBestParseOverall,
       hallOfFameMvp: mvpAwardCount > 0,
     };
     const linkedCharacters = [...new Set([mainCharacterName, ...chars.map((c) => c?.characterName)].filter(Boolean))];
@@ -25000,7 +25202,7 @@ function buildLeaderboardBundlePayload(
       wclEventCount: row.wclEventCount,
       rhPastEventCount: row.wclEventCount,
       specificEventBadges,
-    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys, parsingCeilingLastRaidKeys);
+    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys, parsingCeilingLastRaidKeys, bestParseLastRaidKeys);
     const recentBadgeIds = recentBadgeIdsArrayForUser(u.id, lastRaidContext);
 
     players.push({
@@ -25042,6 +25244,7 @@ function buildLeaderboardBundlePayload(
     source: "leaderboard-bundle-v1",
     lastRaid: lastRaidApiPayload(lastRaidContext),
     parsingCeilingMeta: parsingCeilingMetaFromKeys(parsingCeilingLastRaidKeys),
+    bestParseOverallMeta: bestParseOverallMetaFromKeys(bestParseLastRaidKeys),
     players,
   };
 }
@@ -25062,12 +25265,14 @@ app.get("/api/leaderboard", async (req, res) => {
     const lastRaidContext = await resolveLatestRaidForBadges();
     const consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
     const parsingCeilingLastRaidKeys = await ensureParsingCeilingLastRaidKeys();
+    const bestParseLastRaidKeys = await ensureBestParseLastRaidKeys();
     const payload = buildLeaderboardBundlePayload(
       guildId,
       specificRaidAttendanceAwards,
       lastRaidContext,
       consumablesLast6RankKeys,
-      parsingCeilingLastRaidKeys
+      parsingCeilingLastRaidKeys,
+      bestParseLastRaidKeys
     );
     if (!payload) {
       return res.json({
@@ -25431,6 +25636,7 @@ async function runSyncBadges() {
   }
 
   let parsingCeilingLastRaidKeys = await ensureParsingCeilingLastRaidKeys();
+  let bestParseLastRaidKeys = await ensureBestParseLastRaidKeys();
 
   let rowsChanged = 0;
   const now = Date.now();
@@ -25518,6 +25724,17 @@ async function runSyncBadges() {
         source: "wcl-rankings-last-raid",
         reportCode: String(parsingCeilingLastRaidKeys?.reportCode || "").trim() || null,
         startMs: parsingCeilingLastRaidKeys?.startMs || null,
+      });
+    }
+
+    for (const badgeId of bestParseOverallBadgesForLinkedKeys(linkedKeys, bestParseLastRaidKeys)) {
+      earned.add(badgeId);
+      evidenceById.set(badgeId, {
+        type: "best-parse-overall-raid",
+        source: "wcl-rankings-last-raid",
+        reportCode: String(bestParseLastRaidKeys?.reportCode || "").trim() || null,
+        startMs: bestParseLastRaidKeys?.startMs || null,
+        bestValue: bestParseLastRaidKeys?.bestValue ?? null,
       });
     }
 
@@ -25700,7 +25917,7 @@ async function runSyncAttendance() {
   // ---------- raid_attendance (per-user rolling window) -------------------
   try {
     const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
-      attendancePercentMetrics: false,
+      twentyFiveManOnly: true,
     });
     const totalRaids = raidSnapshots.length;
     if (totalRaids > 0) {

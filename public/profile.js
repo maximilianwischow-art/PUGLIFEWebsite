@@ -591,6 +591,7 @@
       "hall-of-fame": plb.playerEarnedHallOfFameMvpBadge,
       "most-deaths-last-6-raids": plb.playerEarnedMostDeathsLastSixBadge,
       "iron-attendance": plb.playerEarnedIronAttendanceBadge,
+      "best-parse-overall-raid": plb.playerEarnedBestParseOverallRaidBadge,
       "parsing-ceiling": plb.playerEarnedParsingCeilingBadge,
       "kara-first-time-clear": plb.playerEarnedFirstClearKaraBadge,
       "gruul-first-time-clear": plb.playerEarnedFirstClearGruulBadge,

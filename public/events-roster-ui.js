@@ -173,6 +173,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
   const id = String(badgeId || "").trim();
   const byId = {
     "iron-attendance": "#22c55e",
+    "best-parse-overall-raid": "#f59e0b",
     "parsing-ceiling": "#ef4444",
     "most-deaths-last-6-raids": "#f97316",
     "hall-of-fame": "#f97316",
@@ -1360,6 +1361,12 @@ function playerEarnedParsingCeilingBadge(player) {
   return parsePeakEqualsCeiling(value, max);
 }
 
+function playerEarnedBestParseOverallRaidBadge(player) {
+  if (player?.preResolvedBadges?.bestParseOverallRaid === true) return true;
+  const ids = Array.isArray(player?.earnedBadgeIds) ? player.earnedBadgeIds : [];
+  return ids.includes("best-parse-overall-raid");
+}
+
 function playerEarnedFirstClearKaraBadge(player) {
   if (player?.preResolvedBadges?.firstClearKara === true) return true;
   return playerMatchesAchievementNameSet(player, firstClearKaraNameKeys);
@@ -1445,6 +1452,7 @@ const LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS = [
 
 /** Rolling-window badges shown between guild roles and static achievements. */
 const LEADERBOARD_ROW_DYNAMIC_BADGE_IDS = [
+  "best-parse-overall-raid",
   "parsing-ceiling",
   "consumables-last6-1st",
   "consumables-last6-2nd",
@@ -1877,6 +1885,13 @@ function rosterAchievementBadgesHtml(player) {
         "Iron attendance — 100% attendance in the current tracked raid window (every raid counted on this card; typically all of the last six 25-player raids).",
       alt: "Iron attendance",
       ok: playerEarnedIronAttendanceBadge(player),
+    },
+    {
+      file: "best-parse-overall-raid.png",
+      title:
+        "Best parse (last raid) — Highest single-boss parse percentile in the latest tracked 25-player guild raid (best across tank, heal, and DPS on your linked characters).",
+      alt: "Best parse (last raid)",
+      ok: playerEarnedBestParseOverallRaidBadge(player),
     },
     {
       file: "parsing-ceiling.png",
@@ -2750,6 +2765,7 @@ window.plbEventsRoster = {
   playerEarnedHallOfFameMvpBadge,
   playerEarnedMostDeathsLastSixBadge,
   playerEarnedIronAttendanceBadge,
+  playerEarnedBestParseOverallRaidBadge,
   playerEarnedParsingCeilingBadge,
   playerEarnedFirstClearKaraBadge,
   playerEarnedFirstClearGruulBadge,

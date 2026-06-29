@@ -23,6 +23,7 @@
     const id = String(badgeId || "").trim();
     const byId = {
       "iron-attendance": "#22c55e",
+      "best-parse-overall-raid": "#f59e0b",
       "parsing-ceiling": "#ef4444",
       "most-deaths-last-6-raids": "#f97316",
       "hall-of-fame": "#f97316",
