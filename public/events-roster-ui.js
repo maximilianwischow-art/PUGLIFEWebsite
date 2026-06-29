@@ -1334,6 +1334,7 @@ function parsePeakEqualsCeiling(value, max) {
 }
 
 function playerEarnedParsingCeilingBadge(player) {
+  if (player?.preResolvedBadges?.parsingCeiling === true) return true;
   const row = attendanceRowForRosterPlayerResolved(player);
   if (!row || attendanceConsideredRaids <= 0) return false;
   const ps = row?.parseSummaries;
@@ -1439,12 +1440,12 @@ function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
  */
 const LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS = [
   "best-time-participant",
-  "parsing-ceiling",
   "hall-of-fame",
 ];
 
 /** Rolling-window badges shown between guild roles and static achievements. */
 const LEADERBOARD_ROW_DYNAMIC_BADGE_IDS = [
+  "parsing-ceiling",
   "consumables-last6-1st",
   "consumables-last6-2nd",
   "consumables-last6-3rd",

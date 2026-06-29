@@ -130,6 +130,16 @@ import {
   readConsumablesLast6RanksCache,
   writeConsumablesLast6RanksCache,
 } from "./lib/compute/consumables-leaderboard-ranks-cache.mjs";
+import {
+  buildRhWclLinkedGroups,
+  computeEncounterTopParserSets,
+  computeEncounterTopParserSetsForRaid,
+} from "./lib/compute/encounter-top-parsers.mjs";
+import {
+  parsingCeilingEarnedForNameKeys,
+  readParsingCeilingLastRaidCache,
+  writeParsingCeilingLastRaidCache,
+} from "./lib/compute/parsing-ceiling-last-raid.mjs";
 import { buildLatestSignupSpecMap } from "./lib/compute/raid-helper-signup-specs.mjs";
 import {
   openItemNeedsDb,
@@ -300,7 +310,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260629plb-leaderboard-badge-strip-fix-v1";
+const API_BUILD_ID = "20260522plb-parsing-ceiling-last-raid-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -15080,7 +15090,7 @@ const BADGE_CATALOG = [
     description: "Parse, speed, and death-window performance badges.",
     badges: [
       { id: "best-time-participant", name: "Best time participant", icon: "/images/achievements/best-time-participant.png", phase: "performance", description: "Your Warcraft Logs character appears in the ranked roster of at least one guild fastest full-clear log." },
-      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "performance", description: "On at least one boss in the tracked raid window, your parse tied for best among linked raiders in your role bracket." },
+      { id: "parsing-ceiling", name: "Parsing ceiling", icon: "/images/achievements/parsing-ceiling.png", phase: "performance", description: "Tied for the best parse on at least one boss in the latest guild raid, among linked raiders in your role bracket." },
       { id: "most-deaths-last-6-raids", name: "Most deaths (last 6)", icon: "/images/achievements/most-deaths-last-6-raids.png", phase: "performance", description: "Currently tied for the highest total deaths across the tracked last six raids window." },
       ...CONSUMABLES_LAST6_BADGE_CATALOG,
     ],
@@ -15130,6 +15140,7 @@ const BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS = new Set(
 );
 
 const BADGE_LEADERBOARD_DYNAMIC_DEFAULT_IDS = new Set([
+  "parsing-ceiling",
   "consumables-last6-1st",
   "consumables-last6-2nd",
   "consumables-last6-3rd",
@@ -15793,11 +15804,58 @@ async function refreshConsumablesLast6RankKeysFromLeaderboard() {
   }
 }
 
+let parsingCeilingLastRaidKeysCache = null;
+let parsingCeilingLastRaidKeysCacheAt = 0;
+
+async function getParsingCeilingLastRaidKeys({ refresh = false } = {}) {
+  const now = Date.now();
+  if (!refresh && parsingCeilingLastRaidKeysCache && now - parsingCeilingLastRaidKeysCacheAt <= 60 * 60 * 1000) {
+    return parsingCeilingLastRaidKeysCache;
+  }
+  const disk = await readParsingCeilingLastRaidCache();
+  if (disk?.topKeys) {
+    parsingCeilingLastRaidKeysCache = {
+      reportCode: disk.reportCode || "",
+      startMs: disk.startMs || null,
+      topKeys: disk.topKeys,
+    };
+    parsingCeilingLastRaidKeysCacheAt = now;
+    return parsingCeilingLastRaidKeysCache;
+  }
+  return { reportCode: "", startMs: null, topKeys: { tank: new Set(), heal: new Set(), dps: new Set() } };
+}
+
+async function persistParsingCeilingLastRaidKeys({ reportCode, startMs, topKeys } = {}) {
+  await writeParsingCeilingLastRaidCache({
+    reportCode,
+    startMs,
+    updatedAt: Date.now(),
+    topKeys,
+  });
+  parsingCeilingLastRaidKeysCache = {
+    reportCode: String(reportCode || "").trim(),
+    startMs: startMs || null,
+    topKeys,
+  };
+  parsingCeilingLastRaidKeysCacheAt = Date.now();
+  return parsingCeilingLastRaidKeysCache;
+}
+
+function parsingCeilingBadgesForLinkedKeys(linkedKeys, lastRaidKeys) {
+  const tops = lastRaidKeys?.topKeys;
+  if (!tops) return [];
+  return parsingCeilingEarnedForNameKeys(linkedKeys, tops) ? ["parsing-ceiling"] : [];
+}
+
 function consumablesLast6BadgesForLinkedKeys(linkedKeys, rankKeys) {
   return consumablesLeaderboardBadgeIdsForLinkedKeys(linkedKeys, rankKeys || {});
 }
 
-function profileMaterializedAchievementResolution(canonicalUser, linkedCharacters, { consumablesLast6RankKeys = null } = {}) {
+function profileMaterializedAchievementResolution(
+  canonicalUser,
+  linkedCharacters,
+  { consumablesLast6RankKeys = null, parsingCeilingLastRaidKeys = null } = {}
+) {
   const canonicalId = Number(canonicalUser?.id);
   const earnedIds = new Set();
   const lazyBadges = [];
@@ -15829,9 +15887,17 @@ function profileMaterializedAchievementResolution(canonicalUser, linkedCharacter
   try {
     const parseSync = syncStateGet("parses");
     readiness.parses = Number(parseSync?.lastCompletedAt || 0) > 0;
-    if (readiness.parses) {
-      const summaries = parseSummaryGetByUserId(canonicalId);
-      if (summaries.some((row) => Number(row?.encounterTopInBracket || 0) > 0)) {
+    if (readiness.parses && parsingCeilingLastRaidKeys?.topKeys) {
+      const linkedKeys = new Set(
+        (Array.isArray(linkedCharacters) ? linkedCharacters : [])
+          .map((name) => normalizeRaidHelperDisplayKey(String(name || "")))
+          .filter(Boolean)
+      );
+      for (const ch of identityCharactersGetByUserId(canonicalId) || []) {
+        const key = normalizeRaidHelperDisplayKey(String(ch?.characterName || ""));
+        if (key) linkedKeys.add(key);
+      }
+      if (parsingCeilingEarnedForNameKeys(linkedKeys, parsingCeilingLastRaidKeys.topKeys)) {
         earnedIds.add("parsing-ceiling");
       }
     }
@@ -15943,6 +16009,7 @@ app.get("/api/profile/me/badges", async (req, res) => {
             const milestoneInferredCount = inferRaidMilestoneEventCountFromBadgeStates(stateById);
             const materializedAchievements = profileMaterializedAchievementResolution(canonical, linkedCharacters, {
               consumablesLast6RankKeys: await getConsumablesLast6RankKeys(),
+              parsingCeilingLastRaidKeys: await getParsingCeilingLastRaidKeys(),
             });
             const recentSet = recentBadgeIdsForUser(canonical.id, lastRaidContext);
             const categories = badgeCatalog.map((cat) => ({
@@ -17725,79 +17792,6 @@ function computeParseCeilingMaxFromLeaderboard(leaderboard) {
 }
 
 /**
- * Map a WCL rankings name onto one roster key (same family as `normalizeRaidHelperDisplayKey` + attendance).
- * WCL often returns short names; links may store `name-realm` only — strict Set membership missed most raiders.
- */
-function resolveWclRankingsNameToRosterKey(groups, wclDisplayNameRaw, wclDisplayByLower) {
-  const raw = String(wclDisplayNameRaw || "").trim();
-  if (!raw) return null;
-  const low = raw.toLowerCase();
-  for (const g of groups.values()) {
-    if (g.wclLower.has(low)) return normalizeRaidHelperDisplayKey(g.displayName);
-  }
-  const nTarget = normalizeRaidHelperDisplayKey(raw);
-  for (const g of groups.values()) {
-    const rk = normalizeRaidHelperDisplayKey(g.displayName);
-    if (nTarget && (rk === nTarget || debugRankingsCharacterMatches(g.displayName, raw))) return rk;
-    for (const altLow of g.wclLower) {
-      const pretty = String(wclDisplayByLower?.get?.(altLow) ?? altLow ?? "").trim() || String(altLow);
-      if (debugRankingsCharacterMatches(pretty, raw) || debugRankingsCharacterMatches(altLow, raw)) {
-        return rk;
-      }
-      if (nTarget) {
-        const nPretty = normalizeRaidHelperDisplayKey(pretty);
-        const nAlt = normalizeRaidHelperDisplayKey(altLow);
-        if (nPretty === nTarget || nAlt === nTarget) return rk;
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * For one merged rankings payload and role bucket: on each boss fight, among linked guild characters
- * present in that bucket, everyone tied for max percentile is marked (same 0.02 tolerance as peak-parse UI).
- */
-function addEncounterTopKeysFromMergedMetric(mergedPayload, rolePlural, groups, wclDisplayByLower, outRosterKeySet) {
-  const parsed = parseMaybeJson(mergedPayload);
-  const fights = Array.isArray(parsed?.data) ? parsed.data : [];
-  for (const fight of fights) {
-    const chars = fightCharactersForRole(fight, rolePlural);
-    const scored = [];
-    for (const entry of chars) {
-      if (wclRankingNoiseZeroAmountRow(entry)) continue;
-      const nm = wclRankingCharacterDisplayName(entry);
-      const rk = resolveWclRankingsNameToRosterKey(groups, nm, wclDisplayByLower);
-      if (!rk) continue;
-      const pct = wclRankingEntryPercentile(entry);
-      if (pct == null || !Number.isFinite(Number(pct))) continue;
-      scored.push({ rk, pct: Number(pct) });
-    }
-    if (scored.length === 0) continue;
-    const maxPct = Math.max(...scored.map((x) => x.pct));
-    for (const row of scored) {
-      if (Math.abs(row.pct - maxPct) <= 0.02 + 1e-9) outRosterKeySet.add(row.rk);
-    }
-  }
-}
-
-/** Raid-helper roster keys that topped at least one encounter (tied allowed) in the attendance window, per bracket. */
-function computeEncounterTopParserSets(groups, raidRankingPayloads, wclDisplayByLower) {
-  const encounterTopTank = new Set();
-  const encounterTopHeal = new Set();
-  const encounterTopDps = new Set();
-  if (!Array.isArray(raidRankingPayloads)) {
-    return { encounterTopTank, encounterTopHeal, encounterTopDps };
-  }
-  for (const entry of raidRankingPayloads) {
-    addEncounterTopKeysFromMergedMetric(entry?.mergedDps, "tanks", groups, wclDisplayByLower, encounterTopTank);
-    addEncounterTopKeysFromMergedMetric(entry?.mergedDps, "dps", groups, wclDisplayByLower, encounterTopDps);
-    addEncounterTopKeysFromMergedMetric(entry?.mergedHps, "healers", groups, wclDisplayByLower, encounterTopHeal);
-  }
-  return { encounterTopTank, encounterTopHeal, encounterTopDps };
-}
-
-/**
  * Aggregate per-raid attendance across all WCL characters linked to one Raid Helper identity.
  * Reads saved roster rows from {@link rhWclLinksState} / `rh-wcl-character-links.json`.
  * Leaderboard rows use `raidHelperName` for UI; `wclCharacters` lists merged log names.
@@ -17812,44 +17806,9 @@ function buildRhWclLinkedAttendanceLeaderboard(raidSnapshots, linksState, top, w
     if (!k) continue;
     guildRoleByRhKey.set(k, normalizeRhWclGuildRole(entry?.guildRole));
   }
-  /** @type {Map<string, { displayName: string, wclLower: Set<string> }>} */
-  const groups = new Map();
+  const groups = buildRhWclLinkedGroups(raidSnapshots, linksState, wclDisplayByLower);
 
-  for (const entry of links) {
-    const displayName = String(entry?.raidHelperName || "").trim();
-    if (!displayName) continue;
-    const logicalKey = normalizeRaidHelperDisplayKey(displayName);
-    const wclLower = new Set();
-    for (const cn of Array.isArray(entry?.wclCharacterNames) ? entry.wclCharacterNames : []) {
-      const low = String(cn || "").trim().toLowerCase();
-      if (low) wclLower.add(low);
-    }
-    wclLower.add(logicalKey);
-    const prev = groups.get(logicalKey);
-    if (prev) {
-      for (const n of wclLower) prev.wclLower.add(n);
-    } else {
-      groups.set(logicalKey, { displayName, wclLower });
-    }
-  }
-
-  const allWclLower = new Set();
-  for (const raid of raidSnapshots) {
-    for (const n of raid.attendeesLower) allWclLower.add(n);
-  }
-
-  const claimedLower = new Set();
-  for (const g of groups.values()) {
-    for (const n of g.wclLower) claimedLower.add(n);
-  }
-
-  for (const low of allWclLower) {
-    if (claimedLower.has(low)) continue;
-    const pretty = wclDisplayByLower.get(low) || low;
-    groups.set(low, { displayName: pretty, wclLower: new Set([low]) });
-  }
-
-  const { encounterTopTank, encounterTopHeal, encounterTopDps } = computeEncounterTopParserSets(
+  const { tank: encounterTopTank, heal: encounterTopHeal, dps: encounterTopDps } = computeEncounterTopParserSets(
     groups,
     raidRankingPayloads,
     wclDisplayByLower
@@ -23338,7 +23297,7 @@ app.get("/api/wcl/guild/:guildId/characters", async (req, res) => {
  * `parse_summary`. Returns `null` if the materialised tables don't have
  * enough data yet so the caller can fall back to the live pipeline.
  */
-function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
+function buildAttendancePayloadFromMaterialised(guildId, { top = 200, parsingCeilingLastRaidKeys = null } = {}) {
   let attendanceWindow = [];
   try {
     const freshest = raidAttendanceGetFreshestWindow();
@@ -23469,21 +23428,38 @@ function buildAttendancePayloadFromMaterialised(guildId, { top = 200 } = {}) {
       bestTankEncounter: tank?.bestEncounter || null,
       bestTankReportCode: tank?.bestReportCode || null,
       bestTankFightId: tank?.bestFightId || null,
-      bestTankEncounterTop: !!(tank && tank.encounterTopInBracket),
       bestHeal: parseSummaryBestValue(heal),
       bestHealEncounter: heal?.bestEncounter || null,
       bestHealReportCode: heal?.bestReportCode || null,
       bestHealFightId: heal?.bestFightId || null,
-      bestHealEncounterTop: !!(heal && heal.encounterTopInBracket),
       bestDps: parseSummaryBestValue(dps),
       bestDpsEncounter: dps?.bestEncounter || null,
       bestDpsReportCode: dps?.bestReportCode || null,
       bestDpsFightId: dps?.bestFightId || null,
-      bestDpsEncounterTop: !!(dps && dps.encounterTopInBracket),
-      encounterTopTank: !!(tank && tank.encounterTopInBracket),
-      encounterTopHeal: !!(heal && heal.encounterTopInBracket),
-      encounterTopDps: !!(dps && dps.encounterTopInBracket),
     };
+    const lastRaidTops = parsingCeilingLastRaidKeys?.topKeys;
+    if (lastRaidTops) {
+      const userKeys = new Set();
+      for (const cn of wclCharacters) {
+        const k = normalizeRaidHelperDisplayKey(cn);
+        if (k) userKeys.add(k);
+      }
+      const rhKey = normalizeRaidHelperDisplayKey(u.displayName || u.raidHelperName || "");
+      if (rhKey) userKeys.add(rhKey);
+      parseSummaries.encounterTopTank = [...userKeys].some((k) => lastRaidTops.tank?.has(k));
+      parseSummaries.encounterTopHeal = [...userKeys].some((k) => lastRaidTops.heal?.has(k));
+      parseSummaries.encounterTopDps = [...userKeys].some((k) => lastRaidTops.dps?.has(k));
+      parseSummaries.bestTankEncounterTop = parseSummaries.encounterTopTank;
+      parseSummaries.bestHealEncounterTop = parseSummaries.encounterTopHeal;
+      parseSummaries.bestDpsEncounterTop = parseSummaries.encounterTopDps;
+    } else {
+      parseSummaries.bestTankEncounterTop = !!(tank && tank.encounterTopInBracket);
+      parseSummaries.bestHealEncounterTop = !!(heal && heal.encounterTopInBracket);
+      parseSummaries.bestDpsEncounterTop = !!(dps && dps.encounterTopInBracket);
+      parseSummaries.encounterTopTank = !!(tank && tank.encounterTopInBracket);
+      parseSummaries.encounterTopHeal = !!(heal && heal.encounterTopInBracket);
+      parseSummaries.encounterTopDps = !!(dps && dps.encounterTopInBracket);
+    }
     let raidsAttended = 0;
     let attendanceHistory = [];
     if (curationAttendanceActive) {
@@ -24531,7 +24507,14 @@ function lootCountByUserMapFromMaterialised() {
 }
 
 /** Merge every earned achievement badge id for a leaderboard row (no per-row API on expand). */
-function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys = null) {
+function computeEarnedBadgeIdsForLeaderboardPlayer(
+  userId,
+  row,
+  preResolvedBadges,
+  linkedCharacters,
+  consumablesLast6RankKeys = null,
+  parsingCeilingLastRaidKeys = null
+) {
   const earned = new Set();
   const uid = Number(userId);
   if (!Number.isInteger(uid) || uid <= 0) return [];
@@ -24561,6 +24544,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadge
   if (pr.consumablesLast6Second) earned.add("consumables-last6-2nd");
   if (pr.consumablesLast6Third) earned.add("consumables-last6-3rd");
   if (pr.hallOfFameMvp) earned.add("hall-of-fame");
+  if (pr.parsingCeiling) earned.add("parsing-ceiling");
 
   const milestoneCount = Math.max(0, Math.floor(Number(row?.wclEventCount ?? row?.rhPastEventCount ?? 0) || 0));
   for (const bid of raidMilestoneBadgeIdsForCount(milestoneCount)) earned.add(bid);
@@ -24568,6 +24552,7 @@ function computeEarnedBadgeIdsForLeaderboardPlayer(userId, row, preResolvedBadge
   try {
     const mat = profileMaterializedAchievementResolution({ id: uid }, linkedCharacters, {
       consumablesLast6RankKeys,
+      parsingCeilingLastRaidKeys,
     });
     for (const id of mat.earnedIds || []) earned.add(id);
   } catch {
@@ -24594,9 +24579,13 @@ function buildLeaderboardBundlePayload(
   guildId,
   specificRaidAttendanceAwards = null,
   lastRaidContext = null,
-  consumablesLast6RankKeys = null
+  consumablesLast6RankKeys = null,
+  parsingCeilingLastRaidKeys = null
 ) {
-  const base = buildAttendancePayloadFromMaterialised(guildId, { top: 500 });
+  const base = buildAttendancePayloadFromMaterialised(guildId, {
+    top: 500,
+    parsingCeilingLastRaidKeys,
+  });
   if (!base || !Array.isArray(base.leaderboard) || !base.leaderboard.length) return null;
 
   const users = identityUserListAll();
@@ -24754,6 +24743,7 @@ function buildLeaderboardBundlePayload(
     const earnedConsumablesFirst = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank1?.has(k));
     const earnedConsumablesSecond = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank2?.has(k));
     const earnedConsumablesThird = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank3?.has(k));
+    const earnedParsingCeiling = parsingCeilingEarnedForNameKeys(nameKeys, parsingCeilingLastRaidKeys?.topKeys);
     const preResolvedBadges = {
       bestTimeParticipant: !!earnedBestTime,
       mostDeathsLastSix: !!earnedMostDeaths,
@@ -24763,6 +24753,7 @@ function buildLeaderboardBundlePayload(
       consumablesLast6First: !!earnedConsumablesFirst,
       consumablesLast6Second: !!earnedConsumablesSecond,
       consumablesLast6Third: !!earnedConsumablesThird,
+      parsingCeiling: !!earnedParsingCeiling,
       hallOfFameMvp: mvpAwardCount > 0,
     };
     const linkedCharacters = [...new Set([mainCharacterName, ...chars.map((c) => c?.characterName)].filter(Boolean))];
@@ -24771,7 +24762,7 @@ function buildLeaderboardBundlePayload(
       wclEventCount: row.wclEventCount,
       rhPastEventCount: row.wclEventCount,
       specificEventBadges,
-    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys);
+    }, preResolvedBadges, linkedCharacters, consumablesLast6RankKeys, parsingCeilingLastRaidKeys);
     const recentBadgeIds = recentBadgeIdsArrayForUser(u.id, lastRaidContext);
 
     players.push({
@@ -24831,11 +24822,13 @@ app.get("/api/leaderboard", async (req, res) => {
     const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
     const lastRaidContext = await resolveLatestRaidForBadges();
     const consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
+    const parsingCeilingLastRaidKeys = await getParsingCeilingLastRaidKeys();
     const payload = buildLeaderboardBundlePayload(
       guildId,
       specificRaidAttendanceAwards,
       lastRaidContext,
-      consumablesLast6RankKeys
+      consumablesLast6RankKeys,
+      parsingCeilingLastRaidKeys
     );
     if (!payload) {
       return res.json({
@@ -25198,6 +25191,8 @@ async function runSyncBadges() {
     consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
   }
 
+  let parsingCeilingLastRaidKeys = await getParsingCeilingLastRaidKeys();
+
   let rowsChanged = 0;
   const now = Date.now();
   const newBadgeCounts = new Map();
@@ -25275,6 +25270,16 @@ async function runSyncBadges() {
           topPlayers: consumablesLast6RankKeys.topPlayers || [],
         });
       }
+    }
+
+    for (const badgeId of parsingCeilingBadgesForLinkedKeys(linkedKeys, parsingCeilingLastRaidKeys)) {
+      earned.add(badgeId);
+      evidenceById.set(badgeId, {
+        type: "parsing-ceiling",
+        source: "wcl-rankings-last-raid",
+        reportCode: String(parsingCeilingLastRaidKeys?.reportCode || "").trim() || null,
+        startMs: parsingCeilingLastRaidKeys?.startMs || null,
+      });
     }
 
     const rows = [];
@@ -26040,6 +26045,7 @@ async function runSyncParses() {
   let leaderboard = [];
   let raidSnapshots = [];
   let raidRankingPayloads = [];
+  let wclDisplayByLower = new Map();
   try {
     await ensureRhWclLinksStore();
     const bundle = await gatherAttendanceRaidSnapshots(
@@ -26049,17 +26055,42 @@ async function runSyncParses() {
     );
     raidSnapshots = Array.isArray(bundle?.raidSnapshots) ? bundle.raidSnapshots : [];
     raidRankingPayloads = Array.isArray(bundle?.raidRankingPayloads) ? bundle.raidRankingPayloads : [];
+    wclDisplayByLower = bundle?.wclDisplayByLower instanceof Map ? bundle.wclDisplayByLower : new Map();
     const linkedPayload = buildRhWclLinkedAttendanceLeaderboard(
       raidSnapshots,
       rhWclLinksState,
       Math.min(500, raidSnapshots.length ? 200 : 50),
-      bundle?.wclDisplayByLower,
+      wclDisplayByLower,
       raidRankingPayloads
     );
     leaderboard = Array.isArray(linkedPayload?.leaderboard) ? linkedPayload.leaderboard : [];
   } catch (error) {
     console.warn("[sync:parses] gather/build pipeline failed:", error?.message || error);
     return { rowsChanged: 0 };
+  }
+
+  try {
+    await ensureGargulLootHistoryStore();
+  } catch {
+    /* gargul selection optional */
+  }
+  try {
+    const lastRaidCtx = resolveLatestRaidContext({ reportCodes: eventManagementSelectedReportCodes() });
+    const latestReportCode = String(lastRaidCtx?.reportCode || "").trim();
+    const latestRanking = latestReportCode
+      ? raidRankingPayloads.find((entry) => String(entry?.reportCode || "") === latestReportCode)
+      : null;
+    if (latestRanking) {
+      const groups = buildRhWclLinkedGroups(raidSnapshots, rhWclLinksState, wclDisplayByLower);
+      const topKeys = computeEncounterTopParserSetsForRaid(groups, latestRanking, wclDisplayByLower);
+      await persistParsingCeilingLastRaidKeys({
+        reportCode: latestReportCode,
+        startMs: lastRaidCtx?.startMs || null,
+        topKeys,
+      });
+    }
+  } catch (error) {
+    console.warn("[sync:parses] parsing-ceiling last-raid cache refresh failed:", error?.message || error);
   }
 
   const entries = [];
@@ -26127,7 +26158,7 @@ async function runSyncParses() {
         bestMetric: bracket === "heal" ? "hps" : "dps",
         bestAt: null,
         raidsInBracket: 0,
-        encounterTopInBracket: ps[`${bracket}EncounterTop`] ? 1 : 0,
+        encounterTopInBracket: 0,
       });
     };
 
