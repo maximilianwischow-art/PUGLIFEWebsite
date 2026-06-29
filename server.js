@@ -317,7 +317,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-iron-attendance-align-v1";
+const API_BUILD_ID = "20260522plb-iron-attendance-align-v2";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -16337,14 +16337,19 @@ function resolveIronAttendanceBadgeWindow() {
 function ironAttendanceEarnedForUserId(userId, window) {
   const uid = Number(userId);
   if (!Number.isInteger(uid) || uid <= 0) return false;
-  const w = window?.byUserId?.get(uid);
-  const considered = Math.max(
-    0,
-    Math.floor(Number(w?.raidsConsidered ?? window?.consideredRaids) || 0)
-  );
+  const considered = Math.max(0, Math.floor(Number(window?.consideredRaids) || 0));
   if (considered <= 0) return false;
-  const attended = Math.max(0, Math.floor(Number(w?.raidsAttended) || 0));
+  const w = window?.byUserId?.get(uid);
+  if (!w) return false;
+  const attended = Math.max(0, Math.floor(Number(w.raidsAttended) || 0));
   return attended === considered;
+}
+
+/** Same rule as leaderboard attendance % — perfect on the active considered window. */
+function ironAttendanceEarnedFromCounts(raidsAttended, consideredRaids) {
+  const cap = Math.max(0, Math.floor(Number(consideredRaids) || 0));
+  if (cap <= 0) return false;
+  return Math.max(0, Math.floor(Number(raidsAttended) || 0)) === cap;
 }
 
 function ironAttendanceBadgesForUserId(userId, window) {
@@ -25290,7 +25295,7 @@ function buildLeaderboardBundlePayload(
     const earnedConsumablesThird = [...nameKeys].some((k) => consumablesLast6RankKeys?.rank3?.has(k));
     const earnedParsingCeiling = parsingCeilingEarnedForNameKeys(nameKeys, parsingCeilingLastRaidKeys?.topKeys);
     const earnedBestParseOverall = bestParseLastRaidEarnedForNameKeys(nameKeys, bestParseLastRaidKeys?.winnerKeys);
-    const earnedIronAttendance = ironAttendanceEarnedForUserId(u.id, ironWindow);
+    const earnedIronAttendance = ironAttendanceEarnedFromCounts(row.raidsAttended, base.consideredRaids);
     const preResolvedBadges = {
       bestTimeParticipant: !!earnedBestTime,
       mostDeathsLastSix: !!earnedMostDeaths,
