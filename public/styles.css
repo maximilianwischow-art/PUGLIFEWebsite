@@ -8952,7 +8952,12 @@ tr.plb-gear-row--miss th {
 }
 
 .leaderboard-table thead th.leaderboard-th-badges--dynamic {
-  width: 262px;
+  width: 270px;
+}
+
+.leaderboard-td-badges--dynamic {
+  width: 270px;
+  max-width: 270px;
 }
 
 .leaderboard-td-badges--role,
@@ -8983,6 +8988,16 @@ tr.plb-gear-row--miss th {
 .leaderboard-badge-category--dynamic {
   background: rgba(96, 165, 250, 0.08);
   border-color: rgba(96, 165, 250, 0.18);
+}
+
+.leaderboard-badge-category--dynamic .leaderboard-badge-category-icons {
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.leaderboard-badge-category--dynamic .leaderboard-badge-category-icons::-webkit-scrollbar {
+  display: none;
+  height: 0;
 }
 
 .leaderboard-badge-category--achievements {
@@ -9072,6 +9087,12 @@ tr.plb-gear-row--miss th {
 .leaderboard-badge-category .achievement-badge-container {
   position: relative;
   overflow: visible;
+}
+
+.leaderboard-badge-category--dynamic .raider-badge-slot,
+.leaderboard-badge-category--dynamic .achievement-badge-container {
+  contain: paint;
+  overflow: hidden;
 }
 
 .leaderboard-badge-category .achievement-badge-combo,
