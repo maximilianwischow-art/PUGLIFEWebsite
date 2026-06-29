@@ -51,6 +51,7 @@ async function main() {
 
   console.log("buildId:", health?.buildId || "(unknown)");
   console.log("lastRaid:", lb.lastRaid || null);
+  console.log("parsingCeilingMeta:", lb.parsingCeilingMeta || null);
   console.log("players:", (lb.players || []).length);
 
   const winners = [];

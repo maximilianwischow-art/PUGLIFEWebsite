@@ -134,6 +134,7 @@ import {
   buildRhWclLinkedGroups,
   computeEncounterTopParserSets,
   computeEncounterTopParserSetsForRaid,
+  seedWclDisplayFromMergedRankings,
 } from "./lib/compute/encounter-top-parsers.mjs";
 import {
   parsingCeilingEarnedForNameKeys,
@@ -310,7 +311,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v2";
+const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v3";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -15860,7 +15861,7 @@ async function resolveRankingPayloadForParsingCeiling(latestReportCode, startMs,
   return { latestRanking, reportCode, reportStartMs };
 }
 
-async function refreshParsingCeilingLastRaidKeysFromGuild() {
+async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}) {
   const guildId = Number(eventsWclSpecIconGuildId() || votingGuildId);
   if (!Number.isInteger(guildId) || guildId <= 0) return null;
 
@@ -15871,21 +15872,52 @@ async function refreshParsingCeilingLastRaidKeysFromGuild() {
     /* gargul selection optional */
   }
 
-  const reportLimit = Math.min(
-    wclMaxGuildReportsLimit(),
-    Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80))
-  );
-  const bundle = await gatherAttendanceRaidSnapshots(guildId, reportLimit, { attendancePercentMetrics: true });
-  const raidSnapshots = Array.isArray(bundle?.raidSnapshots) ? bundle.raidSnapshots : [];
-  const raidRankingPayloads = Array.isArray(bundle?.raidRankingPayloads) ? bundle.raidRankingPayloads : [];
-  const wclDisplayByLower = bundle?.wclDisplayByLower instanceof Map ? bundle.wclDisplayByLower : new Map();
-
   const lastRaidCtx = parsingCeilingLatestRaidContext();
-  const { latestRanking, reportCode, reportStartMs } = await resolveRankingPayloadForParsingCeiling(
-    lastRaidCtx?.reportCode,
-    lastRaidCtx?.startMs,
-    raidRankingPayloads
-  );
+  let raidSnapshots = [];
+  let raidRankingPayloads = [];
+  let wclDisplayByLower = new Map();
+  let latestRanking = null;
+  let reportCode = String(lastRaidCtx?.reportCode || "").trim();
+  let reportStartMs = lastRaidCtx?.startMs || null;
+
+  if (light && reportCode) {
+    const loaded = await loadMergedRankingsBundleForHallOfFameUncached(reportCode);
+    if (loaded?.mergedDps || loaded?.mergedHps) {
+      wclDisplayByLower = seedWclDisplayFromMergedRankings(loaded.mergedDps, loaded.mergedHps, wclDisplayByLower);
+      latestRanking = {
+        reportCode,
+        startTime: Number(reportStartMs || 0),
+        mergedDps: loaded.mergedDps,
+        mergedHps: loaded.mergedHps,
+      };
+    }
+  } else {
+    const reportLimit = Math.min(
+      wclMaxGuildReportsLimit(),
+      Math.max(80, Number(wclAttendanceRecentRaidCount?.() || 80))
+    );
+    const bundle = await gatherAttendanceRaidSnapshots(guildId, reportLimit, { attendancePercentMetrics: true });
+    raidSnapshots = Array.isArray(bundle?.raidSnapshots) ? bundle.raidSnapshots : [];
+    raidRankingPayloads = Array.isArray(bundle?.raidRankingPayloads) ? bundle.raidRankingPayloads : [];
+    wclDisplayByLower = bundle?.wclDisplayByLower instanceof Map ? bundle.wclDisplayByLower : new Map();
+    const resolved = await resolveRankingPayloadForParsingCeiling(reportCode, reportStartMs, raidRankingPayloads);
+    latestRanking = resolved.latestRanking;
+    reportCode = resolved.reportCode;
+    reportStartMs = resolved.reportStartMs;
+  }
+
+  if (!latestRanking && reportCode) {
+    const loaded = await loadMergedRankingsBundleForHallOfFameUncached(reportCode);
+    if (loaded?.mergedDps || loaded?.mergedHps) {
+      wclDisplayByLower = seedWclDisplayFromMergedRankings(loaded.mergedDps, loaded.mergedHps, wclDisplayByLower);
+      latestRanking = {
+        reportCode,
+        startTime: Number(reportStartMs || 0),
+        mergedDps: loaded.mergedDps,
+        mergedHps: loaded.mergedHps,
+      };
+    }
+  }
 
   let topKeys = { tank: new Set(), heal: new Set(), dps: new Set() };
   if (latestRanking) {
@@ -15899,12 +15931,12 @@ async function refreshParsingCeilingLastRaidKeysFromGuild() {
     topKeys,
   });
   console.log(
-    `[parsing-ceiling] refreshed report=${reportCode || "(none)"} tops tank=${topKeys.tank.size} heal=${topKeys.heal.size} dps=${topKeys.dps.size}`
+    `[parsing-ceiling] refreshed light=${light ? 1 : 0} report=${reportCode || "(none)"} tops tank=${topKeys.tank.size} heal=${topKeys.heal.size} dps=${topKeys.dps.size}`
   );
   return saved;
 }
 
-async function getParsingCeilingLastRaidKeys({ refresh = false, refreshIfMissing = true } = {}) {
+async function getParsingCeilingLastRaidKeys({ refresh = false, refreshIfMissing = true, light = true } = {}) {
   const now = Date.now();
   if (
     !refresh &&
@@ -15935,7 +15967,7 @@ async function getParsingCeilingLastRaidKeys({ refresh = false, refreshIfMissing
   if (refreshIfMissing || refresh) {
     if (!parsingCeilingRefreshPromise || now - parsingCeilingRefreshPromiseAt > 120_000) {
       parsingCeilingRefreshPromiseAt = now;
-      parsingCeilingRefreshPromise = refreshParsingCeilingLastRaidKeysFromGuild().finally(() => {
+      parsingCeilingRefreshPromise = refreshParsingCeilingLastRaidKeysFromGuild({ light }).finally(() => {
         parsingCeilingRefreshPromise = null;
       });
     }
@@ -15973,6 +16005,19 @@ async function persistParsingCeilingLastRaidKeys({ reportCode, startMs, topKeys 
   };
   parsingCeilingLastRaidKeysCacheAt = Date.now();
   return parsingCeilingLastRaidKeysCache;
+}
+
+function parsingCeilingMetaFromKeys(lastRaidKeys) {
+  const tops = lastRaidKeys?.topKeys || {};
+  return {
+    reportCode: String(lastRaidKeys?.reportCode || "").trim() || null,
+    startMs: lastRaidKeys?.startMs || null,
+    topCounts: {
+      tank: tops.tank?.size || 0,
+      heal: tops.heal?.size || 0,
+      dps: tops.dps?.size || 0,
+    },
+  };
 }
 
 function parsingCeilingBadgesForLinkedKeys(linkedKeys, lastRaidKeys) {
@@ -24937,6 +24982,7 @@ function buildLeaderboardBundlePayload(
     materializedAt: Date.now(),
     source: "leaderboard-bundle-v1",
     lastRaid: lastRaidApiPayload(lastRaidContext),
+    parsingCeilingMeta: parsingCeilingMetaFromKeys(parsingCeilingLastRaidKeys),
     players,
   };
 }
@@ -26204,7 +26250,7 @@ async function runSyncParses() {
   }
 
   try {
-    await refreshParsingCeilingLastRaidKeysFromGuild();
+    await refreshParsingCeilingLastRaidKeysFromGuild({ light: false });
   } catch (error) {
     console.warn("[sync:parses] parsing-ceiling last-raid cache refresh failed:", error?.message || error);
   }
