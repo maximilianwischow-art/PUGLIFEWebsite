@@ -9397,8 +9397,15 @@ tr.plb-gear-row--miss th {
 .profile-badge-combo-parts {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 4px 2px;
+}
+
+.profile-badge-combo-part {
+  flex: 0 0 84px;
+  width: 84px;
+  max-width: 84px;
+  box-sizing: border-box;
 }
 
 .profile-badge-combo-part .profile-badge-name {
@@ -14088,6 +14095,7 @@ html {
   .profile-badge-tile .profile-badge-tile-icon { width: 62px; height: 62px; }
   .profile-badge-tile.is-locked .profile-badge-tile-icon { width: 50px; height: 50px; margin-top: 6px; }
   .profile-badge-name { font-size: 0.68rem; }
+  .profile-badge-combo-part { flex-basis: 76px; width: 76px; max-width: 76px; }
 
   /* Phase 2 demand search box: keep the input full width above the table
      instead of crammed into the heading row. */
@@ -14100,6 +14108,7 @@ html {
 @media (max-width: 380px) {
   .profile-picture-drop { width: 120px; height: 120px; }
   .profile-badge-grid { grid-template-columns: repeat(auto-fill, minmax(70px, 70px)); }
+  .profile-badge-combo-part { flex-basis: 70px; width: 70px; max-width: 70px; }
   .profile-badge-tile .profile-badge-tile-icon { width: 56px; height: 56px; }
   .profile-badge-tile.is-locked .profile-badge-tile-icon { width: 46px; height: 46px; }
   .top-nav a { font-size: 11px; padding: 8px 6px; letter-spacing: 0.04em; }
