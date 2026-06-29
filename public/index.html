@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260622plb-badge-strip-align-v1" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260629plb-leaderboard-badge-categories-v2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
     <style>
       .leaderboard-controls {
@@ -55,6 +55,26 @@
           min-width: 0;
           width: 100%;
           padding: 6px 6px 2px;
+        }
+        .leaderboard-row-leader .leaderboard-td-badges--role::before {
+          content: "Role";
+        }
+        .leaderboard-row-leader .leaderboard-td-badges--dynamic::before {
+          content: "Dynamic";
+        }
+        .leaderboard-row-leader .leaderboard-td-badges--achievements::before {
+          content: "Achievements";
+        }
+        .leaderboard-row-leader .leaderboard-td-badges--role::before,
+        .leaderboard-row-leader .leaderboard-td-badges--dynamic::before,
+        .leaderboard-row-leader .leaderboard-td-badges--achievements::before {
+          display: block;
+          margin-bottom: 4px;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: rgba(255, 255, 255, 0.45);
         }
         .leaderboard-row-leader .leaderboard-player-row {
           flex-direction: row;
@@ -140,12 +160,14 @@
               <thead>
                 <tr>
                   <th scope="col">Raider · KPIs</th>
-                  <th scope="col">Badges</th>
+                  <th scope="col" class="leaderboard-th-badges leaderboard-th-badges--role">Role</th>
+                  <th scope="col" class="leaderboard-th-badges leaderboard-th-badges--dynamic">Dynamic</th>
+                  <th scope="col" class="leaderboard-th-badges leaderboard-th-badges--achievements">Achievements</th>
                 </tr>
               </thead>
               <tbody id="leaderboardTableBody">
                 <tr>
-                  <td colspan="2" class="subtle">Loading…</td>
+                  <td colspan="4" class="subtle">Loading…</td>
                 </tr>
               </tbody>
             </table>
@@ -168,9 +190,9 @@
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
     <script defer src="/gear-audit-display.js?v=20260519plb-gear-compact-v1"></script>
-    <script defer src="/events-roster-ui.js?v=20260622plb-double-trouble-tooltip-v1"></script>
+    <script defer src="/events-roster-ui.js?v=20260629plb-leaderboard-badge-categories-v2"></script>
     <script defer src="/badge-catalog-ui.js?v=20260622plb-double-trouble-tooltip-v1"></script>
-    <script defer src="/leaderboard.js?v=20260622plb-badge-strip-align-v1"></script>
+    <script defer src="/leaderboard.js?v=20260629plb-leaderboard-badge-categories-v2"></script>
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>

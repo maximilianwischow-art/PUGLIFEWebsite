@@ -8811,7 +8811,7 @@ tr.plb-gear-row--miss th {
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 13px;
-  min-width: 920px;
+  min-width: 1120px;
 }
 
 .leaderboard-table thead th {
@@ -8940,52 +8940,94 @@ tr.plb-gear-row--miss th {
   background: rgba(0, 0, 0, 0.28);
 }
 
-/* One row: guild role + achievements + chips — uniform badge slots with pulse headroom. */
-.leaderboard-badge-strip {
+/* Badge columns: Role | Dynamic (last-6 window) | Achievements */
+.leaderboard-table thead th.leaderboard-th-badges {
+  padding: 8px 10px;
+  text-align: center;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.leaderboard-table thead th.leaderboard-th-badges--role {
+  width: 200px;
+}
+
+.leaderboard-table thead th.leaderboard-th-badges--dynamic {
+  width: 240px;
+}
+
+.leaderboard-td-badges--role,
+.leaderboard-td-badges--dynamic,
+.leaderboard-td-badges--achievements {
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: middle;
+  padding: 4px 8px;
+}
+
+.leaderboard-badge-category {
   --lb-row-badge-size: 66px;
   --lb-row-badge-gap: 8px;
-  /* Primary rank + attendance companion + every master-crafter honour slot. */
-  --lb-row-role-badge-max: 6;
-  --lb-row-role-track-width: calc(
-    var(--lb-row-role-badge-max) * var(--lb-row-badge-size) +
-      (var(--lb-row-role-badge-max) - 1) * var(--lb-row-badge-gap)
-  );
   --lb-row-badge-pulse-room: 6px;
+  min-height: calc(var(--lb-row-badge-size) + var(--lb-row-badge-pulse-room) * 2);
+  padding: 4px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.16);
+  box-sizing: border-box;
+}
+
+.leaderboard-badge-category--role {
+  background: rgba(212, 175, 55, 0.07);
+  border-color: rgba(212, 175, 55, 0.16);
+}
+
+.leaderboard-badge-category--dynamic {
+  background: rgba(96, 165, 250, 0.08);
+  border-color: rgba(96, 165, 250, 0.18);
+}
+
+.leaderboard-badge-category--achievements {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  min-width: 0;
-  min-height: calc(var(--lb-row-badge-size) + var(--lb-row-badge-pulse-room) * 2);
-  padding-block: var(--lb-row-badge-pulse-room);
-  overflow: visible;
-  box-sizing: border-box;
+  background: rgba(167, 139, 250, 0.07);
+  border-color: rgba(167, 139, 250, 0.16);
 }
 
-.leaderboard-badge-strip-icons {
-  display: grid;
-  grid-template-columns: var(--lb-row-role-track-width) minmax(0, 1fr);
-  align-items: center;
-  gap: var(--lb-row-badge-gap);
-  min-width: 0;
-  min-height: var(--lb-row-badge-size);
-  overflow: visible;
-}
-
-.leaderboard-badge-strip-role {
+.leaderboard-badge-category-icons {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--lb-row-badge-gap);
-  width: var(--lb-row-role-track-width);
-  flex-shrink: 0;
+  min-height: var(--lb-row-badge-size);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(167, 139, 250, 0.45) transparent;
+}
+
+.leaderboard-badge-category--role .leaderboard-badge-category-icons,
+.leaderboard-badge-category--dynamic .leaderboard-badge-category-icons {
+  justify-content: center;
+}
+
+.leaderboard-badge-category-icons::-webkit-scrollbar,
+.leaderboard-badge-strip-achievements::-webkit-scrollbar {
+  height: 4px;
+}
+
+.leaderboard-badge-category-icons::-webkit-scrollbar-thumb,
+.leaderboard-badge-strip-achievements::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.45);
 }
 
 .leaderboard-badge-strip-achievements {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--lb-row-badge-gap);
   min-width: 0;
   min-height: var(--lb-row-badge-size);
@@ -8995,18 +9037,8 @@ tr.plb-gear-row--miss th {
   scrollbar-color: rgba(167, 139, 250, 0.45) transparent;
 }
 
-.leaderboard-badge-strip-achievements::-webkit-scrollbar {
-  height: 4px;
-}
-
-.leaderboard-badge-strip-achievements::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(167, 139, 250, 0.45);
-}
-
-.leaderboard-badge-strip .leaderboard-badge-chip--summary {
+.leaderboard-badge-category--achievements .leaderboard-badge-chip--summary {
   flex-shrink: 0;
-  justify-self: end;
   white-space: nowrap;
 }
 
@@ -9014,8 +9046,8 @@ tr.plb-gear-row--miss th {
   overflow: hidden;
 }
 
-.leaderboard-badge-strip .guild-role-token,
-.leaderboard-badge-strip .raider-badge-slot {
+.leaderboard-badge-category .guild-role-token,
+.leaderboard-badge-category .raider-badge-slot {
   width: var(--lb-row-badge-size);
   height: var(--lb-row-badge-size);
   flex: 0 0 var(--lb-row-badge-size);
@@ -9027,41 +9059,41 @@ tr.plb-gear-row--miss th {
   line-height: 0;
 }
 
-.leaderboard-badge-strip .guild-role-token-frame,
-.leaderboard-badge-strip .achievement-badge-frame {
+.leaderboard-badge-category .guild-role-token-frame,
+.leaderboard-badge-category .achievement-badge-frame {
   width: 100%;
   height: 100%;
   border-radius: 8px;
   overflow: hidden;
 }
 
-.leaderboard-badge-strip .guild-role-token,
-.leaderboard-badge-strip .raider-badge-slot,
-.leaderboard-badge-strip .achievement-badge-container {
+.leaderboard-badge-category .guild-role-token,
+.leaderboard-badge-category .raider-badge-slot,
+.leaderboard-badge-category .achievement-badge-container {
   position: relative;
   overflow: visible;
 }
 
-.leaderboard-badge-strip .achievement-badge-combo,
-.leaderboard-badge-strip .achievement-badge-combo-wrap {
+.leaderboard-badge-category .achievement-badge-combo,
+.leaderboard-badge-category .achievement-badge-combo-wrap {
   flex: 0 0 auto;
   overflow: visible;
 }
 
-.leaderboard-badge-strip .achievement-badge-container:hover,
-.leaderboard-badge-strip .achievement-badge-container:focus-within,
-.leaderboard-badge-strip .guild-role-token:hover,
-.leaderboard-badge-strip .guild-role-token:focus-within {
+.leaderboard-badge-category .achievement-badge-container:hover,
+.leaderboard-badge-category .achievement-badge-container:focus-within,
+.leaderboard-badge-category .guild-role-token:hover,
+.leaderboard-badge-category .guild-role-token:focus-within {
   z-index: 120;
 }
 
-.leaderboard-badge-strip .raider-badge-slot--achievement-earned {
+.leaderboard-badge-category .raider-badge-slot--achievement-earned {
   background: #000;
   border-radius: 8px;
   box-shadow: inset 0 0 0 1px var(--achievement-rarity-color, rgba(244, 208, 122, 0.2));
 }
 
-.leaderboard-badge-strip .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
+.leaderboard-badge-category .raider-badge-slot--achievement-earned .raider-badge-achievement-img {
   --achievement-badge-zoom: 1.72;
   display: block;
   object-fit: cover;
@@ -9070,19 +9102,19 @@ tr.plb-gear-row--miss th {
   transform-origin: center center;
 }
 
-.leaderboard-badge-strip .guild-role-token-img,
-.leaderboard-badge-strip .raider-badge-achievement-img,
-.leaderboard-badge-strip .raider-badge-role-img {
+.leaderboard-badge-category .guild-role-token-img,
+.leaderboard-badge-category .raider-badge-achievement-img,
+.leaderboard-badge-category .raider-badge-role-img {
   width: 100%;
   height: 100%;
 }
 
-.leaderboard-badge-strip .guild-role-token-img {
+.leaderboard-badge-category .guild-role-token-img {
   transform: scale(1.72);
   transform-origin: center center;
 }
 
-.leaderboard-badge-strip .achievement-tooltip {
+.leaderboard-badge-category .achievement-tooltip {
   display: none !important;
 }
 
@@ -9103,10 +9135,10 @@ tr.plb-gear-row--miss th {
   width: 100%;
 }
 
-.leaderboard-badge-strip .achievement-badge-container:hover .achievement-badge-frame,
-.leaderboard-badge-strip .achievement-badge-container:focus-visible .achievement-badge-frame,
-.leaderboard-badge-strip .achievement-badge-combo:hover .achievement-badge-frame,
-.leaderboard-badge-strip .achievement-badge-combo:focus-visible .achievement-badge-frame {
+.leaderboard-badge-category .achievement-badge-container:hover .achievement-badge-frame,
+.leaderboard-badge-category .achievement-badge-container:focus-visible .achievement-badge-frame,
+.leaderboard-badge-category .achievement-badge-combo:hover .achievement-badge-frame,
+.leaderboard-badge-category .achievement-badge-combo:focus-visible .achievement-badge-frame {
   transform: scale(1.06);
 }
 
@@ -9356,12 +9388,12 @@ tr.plb-gear-row--miss th {
   align-self: center;
   margin-bottom: 18px;
 }
-.leaderboard-badge-strip .guild-role-token:hover .guild-role-token-frame,
-.leaderboard-badge-strip .guild-role-token:focus-visible .guild-role-token-frame {
+.leaderboard-badge-category .guild-role-token:hover .guild-role-token-frame,
+.leaderboard-badge-category .guild-role-token:focus-visible .guild-role-token-frame {
   transform: none;
 }
 
-.leaderboard-badge-strip .leaderboard-badge-chip {
+.leaderboard-badge-category .leaderboard-badge-chip {
   height: var(--lb-row-badge-size);
   padding: 0 10px;
   align-self: center;

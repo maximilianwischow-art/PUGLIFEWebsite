@@ -1440,9 +1440,18 @@ function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
 const LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS = [
   "best-time-participant",
   "parsing-ceiling",
-  "most-deaths-last-6-raids",
   "hall-of-fame",
 ];
+
+/** Rolling-window badges shown between guild roles and static achievements. */
+const LEADERBOARD_ROW_DYNAMIC_BADGE_IDS = [
+  "consumables-last6-1st",
+  "consumables-last6-2nd",
+  "consumables-last6-3rd",
+  "most-deaths-last-6-raids",
+];
+
+const LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET = new Set(LEADERBOARD_ROW_DYNAMIC_BADGE_IDS);
 
 const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
   "kara-first-time-clear",
@@ -1488,6 +1497,7 @@ function leaderboardRowBadgeDisplayOrder(earnedSet) {
     if (String(id).startsWith("raids-with-guild-")) continue;
     if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
     if (LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS.includes(id)) continue;
+    if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id)) continue;
     if (LEADERBOARD_COMBO_BADGE_IDS.has(id)) continue;
     if (!out.includes(id)) out.push(id);
   }
@@ -1637,6 +1647,28 @@ function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry, isRecent =
   </span>`;
 }
 
+/** Rolling last-6 window badges — middle cluster between guild roles and achievements. */
+function leaderboardRowDynamicBadgesHtml(player, opts = {}) {
+  const catalog = Array.isArray(opts.catalog) ? opts.catalog : [];
+  const earnedRaw = Array.isArray(opts.earnedIds)
+    ? opts.earnedIds
+    : Array.isArray(player?.earnedBadgeIds)
+      ? player.earnedBadgeIds
+      : [];
+  const recentRaw = Array.isArray(opts.recentBadgeIds)
+    ? opts.recentBadgeIds
+    : Array.isArray(player?.recentBadgeIds)
+      ? player.recentBadgeIds
+      : [];
+  const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
+  const recentSet = new Set(recentRaw.map((id) => String(id || "").trim()).filter(Boolean));
+  return LEADERBOARD_ROW_DYNAMIC_BADGE_IDS.filter((id) => earnedSet.has(id))
+    .map((id) =>
+      renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id), recentSet.has(id))
+    )
+    .join("");
+}
+
 /** Compact earned achievement icons for leaderboard collapsed rows (all earned, one line). */
 function leaderboardRowBadgesHtml(player, opts = {}) {
   const catalog = Array.isArray(opts.catalog) ? opts.catalog : [];
@@ -1658,7 +1690,10 @@ function leaderboardRowBadgesHtml(player, opts = {}) {
     .map((combo) => renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet))
     .join("");
   const ordered = leaderboardRowBadgeDisplayOrder(earnedSet).filter(
-    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id) && !comboIds.has(id)
+    (id) =>
+      !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id) &&
+      !LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id) &&
+      !comboIds.has(id)
   );
   return `${comboHtml}${ordered
     .map((id) =>
@@ -2622,6 +2657,7 @@ window.plbEventsRoster = {
   rosterPugMasterCrafterBadgesHtml,
   playerEarnedPugMasterCrafterBadge,
   rosterAchievementBadgeRowHtml,
+  leaderboardRowDynamicBadgesHtml,
   leaderboardRowBadgesHtml,
   leaderboardBadgeSummaryChipHtml,
   earnedGuildBadgeIdsForPlayer,

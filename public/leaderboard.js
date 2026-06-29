@@ -148,8 +148,7 @@ function earnedBadgeIdsForPanel(p) {
   return [...new Set([...base, ...guild])];
 }
 
-function leaderboardBadgesColumnHtml(p, isOpen) {
-  const escapeHtml = plb.escapeHtml;
+function leaderboardBadgeCellsHtml(p, isOpen) {
   const roleBadge = plb.rosterRoleIconHtml
     ? plb.rosterRoleIconHtml(p, { hideLabel: true, className: "role-badge-group-token leaderboard-role-badge-token" })
     : "";
@@ -172,18 +171,24 @@ function leaderboardBadgesColumnHtml(p, isOpen) {
     typeof plb.leaderboardRowBadgesHtml === "function"
       ? plb.leaderboardRowBadgesHtml(p, { catalog: leaderboardBadgeCatalog, earnedIds, recentBadgeIds })
       : "";
+  const dynamicBadges =
+    typeof plb.leaderboardRowDynamicBadgesHtml === "function"
+      ? plb.leaderboardRowDynamicBadgesHtml(p, { catalog: leaderboardBadgeCatalog, earnedIds, recentBadgeIds })
+      : "";
   const summaryChip =
     typeof plb.leaderboardBadgeSummaryChipHtml === "function"
       ? plb.leaderboardBadgeSummaryChipHtml(earned, total, isOpen)
       : `<span class="leaderboard-badge-chip leaderboard-badge-chip--summary">${earned}/${total} earned</span>`;
-  return `
-    <div class="leaderboard-badge-strip">
-      <div class="leaderboard-badge-strip-icons">
-        <div class="leaderboard-badge-strip-role">${roleBadges}</div>
-        <div class="leaderboard-badge-strip-achievements">${rowBadges}</div>
-      </div>
+  const categoryIcons = (kind, html) =>
+    `<div class="leaderboard-badge-category leaderboard-badge-category--${kind}"><div class="leaderboard-badge-category-icons">${html}</div></div>`;
+  return {
+    role: categoryIcons("role", roleBadges),
+    dynamic: categoryIcons("dynamic", dynamicBadges),
+    achievements: `<div class="leaderboard-badge-category leaderboard-badge-category--achievements">
+      <div class="leaderboard-badge-strip-achievements">${rowBadges}</div>
       ${summaryChip}
-    </div>`;
+    </div>`,
+  };
 }
 
 function leaderboardBadgePanelHtml(p) {
@@ -587,7 +592,7 @@ function renderLeaderboardTable() {
       const keyAttr = escapeHtml(rowKey);
       const isOpen = expandedPlayerKey && expandedPlayerKey === rowKey;
       const playerCell = raiderCellHtml(p, recentCap, considered);
-      const badgesCell = leaderboardBadgesColumnHtml(p, isOpen);
+      const badgeCells = leaderboardBadgeCellsHtml(p, isOpen);
       const rowLabel = plb.eventsRosterCharacterLabel ? plb.eventsRosterCharacterLabel(p) : String(p?.name || "Raider");
       const panelId = `lb-badges-${idx}`;
 
@@ -602,10 +607,12 @@ function renderLeaderboardTable() {
           aria-label="${escapeHtml(`${rowLabel} — expand badge collection`)}"
         >
           <td class="leaderboard-td-player">${playerCell}</td>
-          <td class="leaderboard-td-badges">${badgesCell}</td>
+          <td class="leaderboard-td-badges leaderboard-td-badges--role">${badgeCells.role}</td>
+          <td class="leaderboard-td-badges leaderboard-td-badges--dynamic">${badgeCells.dynamic}</td>
+          <td class="leaderboard-td-badges leaderboard-td-badges--achievements">${badgeCells.achievements}</td>
         </tr>
         <tr class="leaderboard-row-badges" data-lb-key="${keyAttr}" data-lb-badges-wrap="1" ${isOpen ? "" : "hidden"}>
-          <td colspan="2" class="leaderboard-td-badges-panel">
+          <td colspan="4" class="leaderboard-td-badges-panel">
             <div id="${panelId}" role="region" aria-label="Badge collection">${leaderboardBadgePanelHtml(p)}</div>
           </td>
         </tr>`;
@@ -697,10 +704,10 @@ function wireLeaderboardRowBadgeTooltips() {
   lbBadgeTooltipWireAbort = new AbortController();
   const { signal } = lbBadgeTooltipWireAbort;
   const selector =
-    ".leaderboard-badge-strip-icons .achievement-badge-container, " +
-    ".leaderboard-badge-strip-icons .guild-role-token, " +
-    ".leaderboard-badge-strip-icons .achievement-badge-combo, " +
-    ".leaderboard-badge-strip-icons .achievement-badge-combo-wrap";
+    ".leaderboard-badge-category-icons .achievement-badge-container, " +
+    ".leaderboard-badge-category-icons .guild-role-token, " +
+    ".leaderboard-badge-category-icons .achievement-badge-combo, " +
+    ".leaderboard-badge-category-icons .achievement-badge-combo-wrap";
 
   leaderboardTbody.querySelectorAll(selector).forEach((badge) => {
     if (!badge.hasAttribute("tabindex")) badge.setAttribute("tabindex", "0");
@@ -710,7 +717,7 @@ function wireLeaderboardRowBadgeTooltips() {
     badge.addEventListener("blur", hideLbRowBadgeTooltip, { signal });
   });
 
-  leaderboardTbody.querySelectorAll(".leaderboard-badge-strip-icons, .leaderboard-badge-strip-achievements").forEach((scroller) => {
+  leaderboardTbody.querySelectorAll(".leaderboard-badge-category-icons, .leaderboard-badge-strip-achievements").forEach((scroller) => {
     scroller.addEventListener("scroll", hideLbRowBadgeTooltip, { passive: true, signal });
   });
 
@@ -752,7 +759,7 @@ function wireLeaderboardRowExpand() {
     if (ev.target.closest("a, button")) return;
     if (
       ev.target.closest(
-        ".leaderboard-badge-strip-icons .achievement-badge-container, .leaderboard-badge-strip-icons .guild-role-token"
+        ".leaderboard-badge-category-icons .achievement-badge-container, .leaderboard-badge-category-icons .guild-role-token"
       )
     ) {
       return;
@@ -862,7 +869,7 @@ async function refreshLeaderboardFromNetwork(gid) {
     leaderboardRows = rows;
     writeLeaderboardSessionCache(gid, leaderboardRows);
     if (!leaderboardRows.length) {
-      leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
+      leaderboardTbody.innerHTML = `<tr><td colspan="4" class="subtle">No players in the active roster yet.</td></tr>`;
       return;
     }
     renderLeaderboardTable();
@@ -897,7 +904,7 @@ async function loadGuildLeaderboard() {
     if (cached) {
       leaderboardRows = cached.rows;
       if (!leaderboardRows.length) {
-        leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
+        leaderboardTbody.innerHTML = `<tr><td colspan="4" class="subtle">No players in the active roster yet.</td></tr>`;
       } else {
         renderLeaderboardTable();
         // Lazily fetch profile pictures for the cached rows; re-render once
@@ -922,7 +929,7 @@ async function loadGuildLeaderboard() {
       return;
     }
 
-    leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">Loading roster…</td></tr>`;
+    leaderboardTbody.innerHTML = `<tr><td colspan="4" class="subtle">Loading roster…</td></tr>`;
 
     /* Cold path: render the bundle as soon as it lands; do not block on
        `prep`. The bundle already contains every field the table needs
@@ -931,7 +938,7 @@ async function loadGuildLeaderboard() {
     leaderboardRows = rows;
 
     if (!leaderboardRows.length) {
-      leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">No players in the active roster yet.</td></tr>`;
+      leaderboardTbody.innerHTML = `<tr><td colspan="4" class="subtle">No players in the active roster yet.</td></tr>`;
       return;
     }
 
@@ -944,7 +951,7 @@ async function loadGuildLeaderboard() {
       .then(() => renderLeaderboardTable())
       .catch(() => {});
   } catch (e) {
-    leaderboardTbody.innerHTML = `<tr><td colspan="2" class="subtle">${plb.escapeHtml(
+    leaderboardTbody.innerHTML = `<tr><td colspan="4" class="subtle">${plb.escapeHtml(
       e?.message || "Failed to load leaderboard."
     )}</td></tr>`;
   }
