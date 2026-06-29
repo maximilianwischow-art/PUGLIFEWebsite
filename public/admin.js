@@ -140,6 +140,7 @@ let roleAlertsCandidateFilterState = {
   dmSent: "",
 };
 let badgeTooltipsRowsState = [];
+let badgeTooltipsCategoriesState = [];
 
 const ROLE_ALERT_ROLES = ["Tanks", "Healers", "Melee", "Ranged"];
 const ROLE_ALERT_DEFAULT_TARGETS = { Tanks: 3, Healers: 5, Melee: 8, Ranged: 9 };
@@ -6478,19 +6479,42 @@ function renderBadgeTooltipsTable(payload) {
     return;
   }
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  badgeTooltipsRowsState = rows.map((row) => ({
-    badgeId: String(row.badgeId || ""),
-    categoryLabel: String(row.categoryLabel || ""),
-    name: String(row.name || ""),
-    icon: String(row.icon || ""),
-    rarity: String(row.rarity || ""),
-    defaultRarity: String(row.defaultRarity || row.rarity || ""),
-    description: String(row.description || ""),
-    defaultDescription: String(row.defaultDescription || ""),
-    hasOverride: Boolean(row.hasOverride),
-    updatedAt: Number(row.updatedAt || 0),
-    updatedBy: String(row.updatedBy || ""),
-  }));
+  badgeTooltipsCategoriesState = (Array.isArray(payload.leaderboardCategories) ? payload.leaderboardCategories : [])
+    .map((cat) => ({
+      id: String(cat.id || ""),
+      label: String(cat.label || cat.id || ""),
+    }))
+    .filter((cat) => cat.id);
+  const categoryOrder = new Map(badgeTooltipsCategoriesState.map((cat, idx) => [cat.id, idx]));
+  badgeTooltipsRowsState = rows
+    .map((row) => ({
+      badgeId: String(row.badgeId || ""),
+      leaderboardCategory: String(row.leaderboardCategory || row.defaultLeaderboardCategory || "achievements"),
+      defaultLeaderboardCategory: String(row.defaultLeaderboardCategory || row.leaderboardCategory || "achievements"),
+      defaultLeaderboardCategoryLabel: String(
+        row.defaultLeaderboardCategoryLabel || row.leaderboardCategoryLabel || ""
+      ),
+      profileCategoryLabel: String(row.categoryLabel || ""),
+      name: String(row.name || ""),
+      icon: String(row.icon || ""),
+      rarity: String(row.rarity || ""),
+      defaultRarity: String(row.defaultRarity || row.rarity || ""),
+      description: String(row.description || ""),
+      defaultDescription: String(row.defaultDescription || ""),
+      hasOverride: Boolean(row.hasOverride),
+      updatedAt: Number(row.updatedAt || 0),
+      updatedBy: String(row.updatedBy || ""),
+    }))
+    .sort((a, b) => {
+      const ao = categoryOrder.has(a.leaderboardCategory)
+        ? categoryOrder.get(a.leaderboardCategory)
+        : 99;
+      const bo = categoryOrder.has(b.leaderboardCategory)
+        ? categoryOrder.get(b.leaderboardCategory)
+        : 99;
+      if (ao !== bo) return ao - bo;
+      return String(a.name || a.badgeId).localeCompare(String(b.name || b.badgeId));
+    });
   if (!badgeTooltipsRowsState.length) {
     host.innerHTML = `<p class="subtle">No badges found in the catalog.</p>`;
     return;
@@ -6499,13 +6523,16 @@ function renderBadgeTooltipsTable(payload) {
     <div class="admin-table-wrap role-alert-candidates-wrap">
       <table class="admin-table role-alert-candidates-table admin-badge-tooltips-table">
         <thead>
-          <tr><th>Category</th><th>Badge</th><th>Rarity</th><th>Tooltip description</th><th>Updated</th><th>Reset</th></tr>
+          <tr><th>Leaderboard column</th><th>Badge</th><th>Profile group</th><th>Rarity</th><th>Tooltip description</th><th>Updated</th><th>Reset</th></tr>
         </thead>
         <tbody>
           ${badgeTooltipsRowsState
             .map(
               (row) => `<tr data-badge-tooltip-row="${esc(row.badgeId)}">
-                <td>${esc(row.categoryLabel || "-")}</td>
+                <td>
+                  ${badgeCategorySelectHtml(row.leaderboardCategory, row.defaultLeaderboardCategory)}
+                  <div class="subtle admin-badge-tooltip-default">Default: ${esc(row.defaultLeaderboardCategoryLabel || row.defaultLeaderboardCategory || "-")}</div>
+                </td>
                 <td>
                   <div class="admin-badge-tooltip-badge">
                     ${row.icon ? `<img src="${esc(row.icon)}" alt="" loading="lazy" decoding="async" />` : ""}
@@ -6515,6 +6542,7 @@ function renderBadgeTooltipsTable(payload) {
                     </div>
                   </div>
                 </td>
+                <td class="subtle">${esc(row.profileCategoryLabel || "-")}</td>
                 <td>
                   ${badgeRaritySelectHtml(row.rarity)}
                   <div class="subtle admin-badge-tooltip-default">Default: ${esc(row.defaultRarity || "-")}</div>
@@ -6542,6 +6570,23 @@ function renderBadgeTooltipsTable(payload) {
   `;
 }
 
+function badgeCategorySelectHtml(current, defaultId) {
+  const selected = String(current || defaultId || "achievements").trim();
+  const categories = badgeTooltipsCategoriesState.length
+    ? badgeTooltipsCategoriesState
+    : [
+        { id: "role", label: "Role" },
+        { id: "dynamic", label: "Dynamic" },
+        { id: "achievements", label: "Achievements" },
+      ];
+  return `<select class="admin-input admin-badge-category-select" data-badge-tooltip-leaderboard-category aria-label="Leaderboard column">${categories
+    .map(
+      (cat) =>
+        `<option value="${esc(cat.id)}"${cat.id === selected ? " selected" : ""}>${esc(cat.label || cat.id)}</option>`
+    )
+    .join("")}</select>`;
+}
+
 function badgeRaritySelectHtml(current) {
   const selected = BADGE_RARITIES.includes(String(current || "").trim()) ? String(current).trim() : "epic";
   return `<select class="admin-input admin-badge-rarity-select" data-badge-tooltip-rarity aria-label="Badge rarity">${BADGE_RARITIES.map(
@@ -6561,7 +6606,8 @@ function readBadgeTooltipsFromTable() {
     if (!badgeId) return;
     const description = String(tr.querySelector("[data-badge-tooltip-description]")?.value || "").trim();
     const rarity = String(tr.querySelector("[data-badge-tooltip-rarity]")?.value || "").trim();
-    rows.push({ badgeId, description, rarity });
+    const categoryId = String(tr.querySelector("[data-badge-tooltip-leaderboard-category]")?.value || "").trim();
+    rows.push({ badgeId, description, rarity, leaderboardCategory: categoryId });
   });
   return rows;
 }
@@ -9291,8 +9337,10 @@ document.addEventListener("click", (event) => {
   const tr = resetBtn.closest("[data-badge-tooltip-row]");
   const textarea = tr?.querySelector("[data-badge-tooltip-description]");
   const select = tr?.querySelector("[data-badge-tooltip-rarity]");
+  const categorySelect = tr?.querySelector("[data-badge-tooltip-leaderboard-category]");
   if (textarea) textarea.value = row?.defaultDescription || "";
   if (select) select.value = row?.defaultRarity || "epic";
+  if (categorySelect) categorySelect.value = row?.defaultLeaderboardCategory || "achievements";
   status("Badge reset in the editor. Click Save badge changes to persist it.");
 });
 

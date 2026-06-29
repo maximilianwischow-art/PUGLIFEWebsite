@@ -12318,7 +12318,12 @@ app.get("/api/admin/badge-tooltips", async (req, res) => {
     const session = requireAdminSession(req, res);
     if (!session) return;
     await ensureBadgeTooltipsStore();
-    return res.json({ ok: true, categories: mergedBadgeCatalogCategories(), rows: flatMergedBadgeCatalogRows() });
+    return res.json({
+      ok: true,
+      categories: mergedBadgeCatalogCategories(),
+      leaderboardCategories: BADGE_LEADERBOARD_DISPLAY_CATEGORIES,
+      rows: flatMergedBadgeCatalogRows(),
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load badge tooltips" });
   }
@@ -12337,7 +12342,11 @@ app.put("/api/admin/badge-tooltips", async (req, res) => {
     const defaultById = new Map(
       catalogRows.map((row) => [
         row.badgeId,
-        { description: row.defaultDescription || "", rarity: row.defaultRarity || "epic" },
+        {
+          description: row.defaultDescription || "",
+          rarity: row.defaultRarity || "epic",
+          leaderboardCategory: row.defaultLeaderboardCategory || row.leaderboardCategory || "achievements",
+        },
       ])
     );
     const actor =
@@ -12349,13 +12358,23 @@ app.put("/api/admin/badge-tooltips", async (req, res) => {
       if (!badgeId || !defaultById.has(badgeId)) continue;
       const description = String(row?.description || "").trim().slice(0, 600);
       const rarity = sanitizeBadgeTooltipRarity(row?.rarity);
-      const defaults = defaultById.get(badgeId) || { description: "", rarity: "epic" };
+      const leaderboardCategoryRaw = String(row?.leaderboardCategory || row?.categoryId || "").trim();
+      const defaults = defaultById.get(badgeId) || {
+        description: "",
+        rarity: "epic",
+        leaderboardCategory: "achievements",
+      };
+      const leaderboardCategory = BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS.has(leaderboardCategoryRaw)
+        ? leaderboardCategoryRaw
+        : String(defaults.leaderboardCategory || "achievements");
       updates.push({
         badgeId,
         description,
         rarity: rarity || defaults.rarity,
+        leaderboardCategory,
         defaultDescription: defaults.description,
         defaultRarity: defaults.rarity,
+        defaultLeaderboardCategory: defaults.leaderboardCategory,
       });
     }
     if (!updates.length) {
@@ -12366,12 +12385,17 @@ app.put("/api/admin/badge-tooltips", async (req, res) => {
       for (const update of updates) {
         const descriptionChanged = Boolean(update.description) && update.description !== update.defaultDescription;
         const rarityChanged = update.rarity !== update.defaultRarity;
-        if (!descriptionChanged && !rarityChanged) {
+        const leaderboardCategoryChanged =
+          Boolean(update.leaderboardCategory) &&
+          Boolean(update.defaultLeaderboardCategory) &&
+          update.leaderboardCategory !== update.defaultLeaderboardCategory;
+        if (!descriptionChanged && !rarityChanged && !leaderboardCategoryChanged) {
           delete badgeTooltipsState.byBadgeId[update.badgeId];
         } else {
           badgeTooltipsState.byBadgeId[update.badgeId] = {
             ...(descriptionChanged ? { description: update.description } : {}),
             ...(rarityChanged ? { rarity: update.rarity } : {}),
+            ...(leaderboardCategoryChanged ? { leaderboardCategory: update.leaderboardCategory } : {}),
             updatedAt: Date.now(),
             updatedBy: actor,
           };
@@ -12380,7 +12404,13 @@ app.put("/api/admin/badge-tooltips", async (req, res) => {
       await persistBadgeTooltipsStore();
     });
     await badgeTooltipsWriteChain;
-    return res.json({ ok: true, saved: updates.length, categories: mergedBadgeCatalogCategories(), rows: flatMergedBadgeCatalogRows() });
+    return res.json({
+      ok: true,
+      saved: updates.length,
+      categories: mergedBadgeCatalogCategories(),
+      leaderboardCategories: BADGE_LEADERBOARD_DISPLAY_CATEGORIES,
+      rows: flatMergedBadgeCatalogRows(),
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save badge tooltips" });
   }
@@ -15067,6 +15097,44 @@ const GUILD_ROLE_BADGE_IDS = new Set([
   "portal",
 ]);
 
+/** Leaderboard collapsed-row columns (admin Badge Management + main leaderboard strip). */
+const BADGE_LEADERBOARD_DISPLAY_CATEGORIES = [
+  { id: "role", label: "Role" },
+  { id: "dynamic", label: "Dynamic" },
+  { id: "achievements", label: "Achievements" },
+];
+
+const BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS = new Set(
+  BADGE_LEADERBOARD_DISPLAY_CATEGORIES.map((cat) => cat.id)
+);
+
+const BADGE_LEADERBOARD_DYNAMIC_DEFAULT_IDS = new Set([
+  "consumables-last6-1st",
+  "consumables-last6-2nd",
+  "consumables-last6-3rd",
+  "most-deaths-last-6-raids",
+]);
+
+function badgeLeaderboardCategoryLabel(categoryId) {
+  const id = String(categoryId || "").trim();
+  return BADGE_LEADERBOARD_DISPLAY_CATEGORIES.find((cat) => cat.id === id)?.label || id;
+}
+
+function defaultBadgeLeaderboardCategory(badgeId) {
+  const id = String(badgeId || "").trim();
+  if (GUILD_ROLE_BADGE_IDS.has(id)) return "role";
+  if (BADGE_LEADERBOARD_DYNAMIC_DEFAULT_IDS.has(id)) return "dynamic";
+  return "achievements";
+}
+
+function effectiveBadgeLeaderboardCategory(badgeId, overrideRow) {
+  const raw = String(overrideRow?.leaderboardCategory || "").trim();
+  if (BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS.has(raw)) return raw;
+  const legacy = String(overrideRow?.categoryId || "").trim();
+  if (BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS.has(legacy)) return legacy;
+  return defaultBadgeLeaderboardCategory(badgeId);
+}
+
 function badgeCatalogRarityForCategory(categoryId, badge) {
   const cat = String(categoryId || "");
   if (COMBO_BADGE_IDS.has(String(badge?.id || ""))) return "legendary";
@@ -15101,10 +15169,18 @@ function sanitizeBadgeTooltipsState(raw) {
     const row = rowRaw && typeof rowRaw === "object" ? rowRaw : {};
     const description = String(row.description || "").trim().slice(0, 600);
     const rarity = sanitizeBadgeTooltipRarity(row.rarity);
-    if (!description && !rarity) continue;
+    const leaderboardCategory = effectiveBadgeLeaderboardCategory(badgeId, row);
+    const defaultLeaderboardCategory = defaultBadgeLeaderboardCategory(badgeId);
+    const hasExplicitLeaderboardCategory =
+      BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS.has(String(row.leaderboardCategory || "").trim()) ||
+      BADGE_LEADERBOARD_DISPLAY_CATEGORY_IDS.has(String(row.categoryId || "").trim());
+    const hasLeaderboardCategoryOverride =
+      hasExplicitLeaderboardCategory && leaderboardCategory !== defaultLeaderboardCategory;
+    if (!description && !rarity && !hasLeaderboardCategoryOverride) continue;
     byBadgeId[badgeId] = {
       ...(description ? { description } : {}),
       ...(rarity ? { rarity } : {}),
+      ...(hasLeaderboardCategoryOverride ? { leaderboardCategory } : {}),
       updatedAt: Number.isFinite(Number(row.updatedAt)) ? Number(row.updatedAt) : Date.now(),
       updatedBy: String(row.updatedBy || "").trim().slice(0, 128),
     };
@@ -15138,21 +15214,29 @@ function mergedBadgeCatalogCategories() {
     ...cat,
     phase: cat.phase || "P1",
     badges: (cat.badges || []).map((badge) => {
+      const badgeId = String(badge.id || "").trim();
       const defaultDescription = String(badge.description || cat.description || "").trim();
       const defaultRarity = badgeCatalogRarityForCategory(cat.id, badge);
-      const override = overrides[badge.id] || null;
+      const override = overrides[badgeId] || null;
+      const defaultLeaderboardCategory = defaultBadgeLeaderboardCategory(badgeId);
+      const leaderboardCategory = effectiveBadgeLeaderboardCategory(badgeId, override);
       const description = String(override?.description || defaultDescription).trim();
       const rarity = sanitizeBadgeTooltipRarity(override?.rarity) || defaultRarity;
+      const leaderboardCategoryChanged = leaderboardCategory !== defaultLeaderboardCategory;
       return {
         ...badge,
         phase: badge.phase || cat.phase || "P1",
         categoryId: cat.id,
         categoryLabel: cat.label,
+        leaderboardCategory,
+        defaultLeaderboardCategory,
+        leaderboardCategoryLabel: badgeLeaderboardCategoryLabel(leaderboardCategory),
+        defaultLeaderboardCategoryLabel: badgeLeaderboardCategoryLabel(defaultLeaderboardCategory),
         defaultDescription,
         defaultRarity,
         description,
         rarity,
-        hasOverride: Boolean(override?.description || override?.rarity),
+        hasOverride: Boolean(override?.description || override?.rarity || leaderboardCategoryChanged),
         updatedAt: Number(override?.updatedAt || 0),
         updatedBy: String(override?.updatedBy || ""),
       };
@@ -15169,6 +15253,10 @@ function flatMergedBadgeCatalogRows() {
     (cat.badges || []).map((badge) => ({
       categoryId: cat.id,
       categoryLabel: cat.label,
+      leaderboardCategory: badge.leaderboardCategory,
+      defaultLeaderboardCategory: badge.defaultLeaderboardCategory,
+      leaderboardCategoryLabel: badge.leaderboardCategoryLabel,
+      defaultLeaderboardCategoryLabel: badge.defaultLeaderboardCategoryLabel,
       badgeId: badge.id,
       name: badge.name,
       icon: badge.icon,

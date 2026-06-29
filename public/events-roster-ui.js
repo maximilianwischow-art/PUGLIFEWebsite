@@ -1453,6 +1453,26 @@ const LEADERBOARD_ROW_DYNAMIC_BADGE_IDS = [
 
 const LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET = new Set(LEADERBOARD_ROW_DYNAMIC_BADGE_IDS);
 
+const LEADERBOARD_DISPLAY_CATEGORY_ORDER = ["role", "dynamic", "achievements"];
+
+function badgeLeaderboardCategoryFromCatalog(catalog, badgeId) {
+  const id = String(badgeId || "").trim();
+  if (!id) return "achievements";
+  const entry = leaderboardBadgeCatalogEntry(catalog, id);
+  const raw = String(entry?.leaderboardCategory || "").trim();
+  if (LEADERBOARD_DISPLAY_CATEGORY_ORDER.includes(raw)) return raw;
+  if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) return "role";
+  if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id)) return "dynamic";
+  return "achievements";
+}
+
+function earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, category) {
+  const target = String(category || "").trim();
+  return leaderboardRowBadgeDisplayOrder(earnedSet).filter(
+    (id) => badgeLeaderboardCategoryFromCatalog(catalog, id) === target
+  );
+}
+
 const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
   "kara-first-time-clear",
   "gruul-first-time-clear",
@@ -1647,7 +1667,30 @@ function renderLeaderboardAchievementBadgeIcon(badgeId, catalogEntry, isRecent =
   </span>`;
 }
 
-/** Rolling last-6 window badges — middle cluster between guild roles and achievements. */
+/** Role-column earned badges (admin category Role, excluding guild tokens rendered separately). */
+function leaderboardRowRoleBadgesHtml(player, opts = {}) {
+  const catalog = Array.isArray(opts.catalog) ? opts.catalog : [];
+  const earnedRaw = Array.isArray(opts.earnedIds)
+    ? opts.earnedIds
+    : Array.isArray(player?.earnedBadgeIds)
+      ? player.earnedBadgeIds
+      : [];
+  const recentRaw = Array.isArray(opts.recentBadgeIds)
+    ? opts.recentBadgeIds
+    : Array.isArray(player?.recentBadgeIds)
+      ? player.recentBadgeIds
+      : [];
+  const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
+  const recentSet = new Set(recentRaw.map((id) => String(id || "").trim()).filter(Boolean));
+  return earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "role")
+    .filter((id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id))
+    .map((id) =>
+      renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id), recentSet.has(id))
+    )
+    .join("");
+}
+
+/** Rolling-window badges — middle cluster between guild roles and achievements. */
 function leaderboardRowDynamicBadgesHtml(player, opts = {}) {
   const catalog = Array.isArray(opts.catalog) ? opts.catalog : [];
   const earnedRaw = Array.isArray(opts.earnedIds)
@@ -1662,7 +1705,7 @@ function leaderboardRowDynamicBadgesHtml(player, opts = {}) {
       : [];
   const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
   const recentSet = new Set(recentRaw.map((id) => String(id || "").trim()).filter(Boolean));
-  return LEADERBOARD_ROW_DYNAMIC_BADGE_IDS.filter((id) => earnedSet.has(id))
+  return earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "dynamic")
     .map((id) =>
       renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id), recentSet.has(id))
     )
@@ -1689,11 +1732,8 @@ function leaderboardRowBadgesHtml(player, opts = {}) {
   const comboHtml = combos
     .map((combo) => renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet))
     .join("");
-  const ordered = leaderboardRowBadgeDisplayOrder(earnedSet).filter(
-    (id) =>
-      !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id) &&
-      !LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id) &&
-      !comboIds.has(id)
+  const ordered = earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "achievements").filter(
+    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id) && !comboIds.has(id)
   );
   return `${comboHtml}${ordered
     .map((id) =>
@@ -2657,6 +2697,7 @@ window.plbEventsRoster = {
   rosterPugMasterCrafterBadgesHtml,
   playerEarnedPugMasterCrafterBadge,
   rosterAchievementBadgeRowHtml,
+  leaderboardRowRoleBadgesHtml,
   leaderboardRowDynamicBadgesHtml,
   leaderboardRowBadgesHtml,
   leaderboardBadgeSummaryChipHtml,
