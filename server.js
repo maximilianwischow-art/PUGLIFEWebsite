@@ -135,6 +135,7 @@ import {
   computeEncounterTopParserSets,
   computeEncounterTopParserSetsForRaid,
   seedWclDisplayFromMergedRankings,
+  augmentGroupsFromWclDisplay,
 } from "./lib/compute/encounter-top-parsers.mjs";
 import {
   parsingCeilingEarnedForNameKeys,
@@ -311,7 +312,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v3";
+const API_BUILD_ID = "20260522plb-parsing-ceiling-refresh-v4";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -15921,7 +15922,8 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
 
   let topKeys = { tank: new Set(), heal: new Set(), dps: new Set() };
   if (latestRanking) {
-    const groups = buildRhWclLinkedGroups(raidSnapshots, rhWclLinksState, wclDisplayByLower);
+    let groups = buildRhWclLinkedGroups(raidSnapshots, rhWclLinksState, wclDisplayByLower);
+    groups = augmentGroupsFromWclDisplay(groups, wclDisplayByLower);
     topKeys = computeEncounterTopParserSetsForRaid(groups, latestRanking, wclDisplayByLower);
   }
 
@@ -15934,6 +15936,17 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
     `[parsing-ceiling] refreshed light=${light ? 1 : 0} report=${reportCode || "(none)"} tops tank=${topKeys.tank.size} heal=${topKeys.heal.size} dps=${topKeys.dps.size}`
   );
   return saved;
+}
+
+async function ensureParsingCeilingLastRaidKeys() {
+  let keys = await getParsingCeilingLastRaidKeys({ refreshIfMissing: true, light: true });
+  if (parsingCeilingTopKeysTotal(keys?.topKeys) > 0) return keys;
+  try {
+    keys = await refreshParsingCeilingLastRaidKeysFromGuild({ light: true });
+  } catch (error) {
+    console.warn("[parsing-ceiling] ensure refresh failed:", error?.message || error);
+  }
+  return keys || { reportCode: "", startMs: null, topKeys: { tank: new Set(), heal: new Set(), dps: new Set() } };
 }
 
 async function getParsingCeilingLastRaidKeys({ refresh = false, refreshIfMissing = true, light = true } = {}) {
@@ -25002,7 +25015,7 @@ app.get("/api/leaderboard", async (req, res) => {
     const specificRaidAttendanceAwards = await getSpecificRaidAttendanceAwards();
     const lastRaidContext = await resolveLatestRaidForBadges();
     const consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
-    const parsingCeilingLastRaidKeys = await getParsingCeilingLastRaidKeys({ refreshIfMissing: true });
+    const parsingCeilingLastRaidKeys = await ensureParsingCeilingLastRaidKeys();
     const payload = buildLeaderboardBundlePayload(
       guildId,
       specificRaidAttendanceAwards,
@@ -25371,7 +25384,7 @@ async function runSyncBadges() {
     consumablesLast6RankKeys = await getConsumablesLast6RankKeys();
   }
 
-  let parsingCeilingLastRaidKeys = await getParsingCeilingLastRaidKeys({ refreshIfMissing: true });
+  let parsingCeilingLastRaidKeys = await ensureParsingCeilingLastRaidKeys();
 
   let rowsChanged = 0;
   const now = Date.now();
