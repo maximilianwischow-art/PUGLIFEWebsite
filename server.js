@@ -15985,7 +15985,7 @@ async function refreshParsingCeilingLastRaidKeysFromGuild({ light = false } = {}
 }
 
 async function ensureParsingCeilingLastRaidKeys() {
-  let keys = await getParsingCeilingLastRaidKeys({ refresh: true, refreshIfMissing: true, light: true });
+  let keys = await getParsingCeilingLastRaidKeys({ refreshIfMissing: true, light: true });
   if (parsingCeilingTopKeysTotal(keys?.topKeys) > 0) return keys;
   try {
     keys = await refreshParsingCeilingLastRaidKeysFromGuild({ light: true });
