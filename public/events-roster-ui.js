@@ -1468,9 +1468,24 @@ function badgeLeaderboardCategoryFromCatalog(catalog, badgeId) {
 
 function earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, category) {
   const target = String(category || "").trim();
-  return leaderboardRowBadgeDisplayOrder(earnedSet).filter(
-    (id) => badgeLeaderboardCategoryFromCatalog(catalog, id) === target
-  );
+  const set = earnedSet instanceof Set ? earnedSet : new Set(earnedSet || []);
+  const matching = [...set].filter((id) => badgeLeaderboardCategoryFromCatalog(catalog, id) === target);
+  if (!matching.length) return [];
+
+  if (target === "dynamic") {
+    const preferred = LEADERBOARD_ROW_DYNAMIC_BADGE_IDS.filter((id) => matching.includes(id));
+    const rest = matching.filter((id) => !preferred.includes(id));
+    return [...preferred, ...rest];
+  }
+
+  if (target === "role") {
+    return matching;
+  }
+
+  const ordered = leaderboardRowBadgeDisplayOrder(set);
+  const fromOrder = ordered.filter((id) => matching.includes(id));
+  const rest = matching.filter((id) => !fromOrder.includes(id));
+  return [...fromOrder, ...rest];
 }
 
 const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
@@ -1495,9 +1510,15 @@ const LEADERBOARD_COMBO_BADGE_IDS = new Set(["double-trouble-ssc", "double-troub
 function leaderboardBadgeCatalogEntry(catalog, badgeId) {
   const id = String(badgeId || "").trim();
   if (!id) return null;
-  for (const cat of catalog || []) {
-    for (const b of cat.badges || []) {
-      if (String(b.id || "") === id) return b;
+  const catalogs = [];
+  if (Array.isArray(catalog)) catalogs.push(catalog);
+  const full = window.plbLeaderboardBadgeCatalogFull;
+  if (Array.isArray(full) && full !== catalog) catalogs.push(full);
+  for (const catList of catalogs) {
+    for (const cat of catList || []) {
+      for (const b of cat.badges || []) {
+        if (String(b.id || "") === id) return b;
+      }
     }
   }
   return null;

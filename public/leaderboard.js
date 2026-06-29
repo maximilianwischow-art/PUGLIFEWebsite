@@ -114,6 +114,7 @@ async function ensureBadgeCatalogLoaded() {
       window.plbAchievementBadgeCombos = Array.isArray(payload?.combos) ? payload.combos : [];
       const ui = window.plbBadgeCatalogUi;
       leaderboardBadgeCatalogFull = categories.filter((cat) => (cat.badges || []).length > 0);
+      window.plbLeaderboardBadgeCatalogFull = leaderboardBadgeCatalogFull;
       leaderboardBadgeCatalog = ui
         ? ui.achievementCategoriesFromCatalog(categories)
         : categories.filter((cat) => cat.id !== "guild-rank" && (cat.badges || []).length > 0);

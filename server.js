@@ -300,7 +300,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260629plb-leaderboard-earnedids-fix-v1";
+const API_BUILD_ID = "20260629plb-leaderboard-badge-strip-fix-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
