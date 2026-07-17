@@ -327,7 +327,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260717plb-deaths-p2-character-v2";
+const API_BUILD_ID = "20260717plb-rankings-consumables-breakdown-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -16005,12 +16005,27 @@ async function getConsumablesLast6RankKeys({ refresh = false } = {}) {
   return { rank1: new Set(), rank2: new Set(), rank3: new Set() };
 }
 
+function buildConsumablesBreakdown(counts) {
+  const catalog = leaderboardUsageConsumableCatalogForApi();
+  const src = counts && typeof counts === "object" ? counts : {};
+  return catalog
+    .map((row) => ({
+      key: row.key,
+      label: row.name,
+      count: Math.max(0, Math.floor(Number(src[row.key]) || 0)),
+      itemId: Number(row.itemId) || null,
+    }))
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
 function buildConsumablesPublicLadder(players, limit = 50) {
   const sorted = (Array.isArray(players) ? players : [])
     .map((p) => ({
       name: String(p?.name || "").trim(),
       value: Number(p?.totalUses || 0),
       className: String(p?.className || p?.class || "").trim() || null,
+      breakdown: buildConsumablesBreakdown(p?.counts),
     }))
     .filter((p) => p.name && p.value > 0)
     .sort((a, b) => {
@@ -16038,6 +16053,7 @@ function buildConsumablesPublicLadder(players, limit = 50) {
       value: player.value,
       className: player.className,
       badgeId,
+      breakdown: player.breakdown,
     });
     if (out.length >= limit) break;
   }
@@ -25681,22 +25697,26 @@ async function buildRankingsDeathsLadder(limit = 50) {
 async function buildRankingsConsumablesLadder(limit = 50) {
   const disk = await readConsumablesLast6RanksCache();
   if (Array.isArray(disk?.ladder) && disk.ladder.length) {
-    return {
-      entries: disk.ladder.slice(0, limit).map((row) => ({
-        rank: Number(row.rank || 0),
-        name: String(row.name || "").trim(),
-        value: Number(row.value || 0),
-        className: row.className || null,
-        badgeId: row.badgeId || null,
-      })),
-      updatedAt: Number(disk.updatedAt || 0) || null,
-      source: "consumables-ranks-cache",
-      reportsScanned: Number(disk.reportsScanned || 0) || null,
-      fightsScanned: Number(disk.fightsScanned || 0) || null,
-    };
+    const hasBreakdown = disk.ladder.some((row) => Array.isArray(row?.breakdown) && row.breakdown.length);
+    if (hasBreakdown) {
+      return {
+        entries: disk.ladder.slice(0, limit).map((row) => ({
+          rank: Number(row.rank || 0),
+          name: String(row.name || "").trim(),
+          value: Number(row.value || 0),
+          className: row.className || null,
+          badgeId: row.badgeId || null,
+          breakdown: Array.isArray(row.breakdown) ? row.breakdown : [],
+        })),
+        updatedAt: Number(disk.updatedAt || 0) || null,
+        source: "consumables-ranks-cache",
+        reportsScanned: Number(disk.reportsScanned || 0) || null,
+        fightsScanned: Number(disk.fightsScanned || 0) || null,
+      };
+    }
   }
 
-  // Cold cache: reuse the same last-6 usage payload the raid-lead UI warms.
+  // Cold cache or ladder without breakdown: reuse last-6 usage payload.
   try {
     const eventPayload = await buildRaidLeadEventReportsPayload();
     const allReportRows = twentyFiveManReportCodesFromEventPayload(eventPayload, { lastRaids: 0 });
@@ -25709,6 +25729,11 @@ async function buildRankingsConsumablesLadder(limit = 50) {
       loader: () => buildWclConsumablesUsageLeaderboardPayload({ lastRaids: CONSUMABLES_LAST6_LEADERBOARD_RAIDS }),
     });
     const entries = buildConsumablesPublicLadder(payload?.players || [], limit);
+    if (payload?.ok && Array.isArray(payload.players) && payload.players.length) {
+      persistConsumablesLast6RankKeysFromPlayers(payload.players, payload).catch((error) => {
+        console.warn("[rankings] consumables ladder persist failed:", error?.message || error);
+      });
+    }
     return {
       entries,
       updatedAt: Date.now(),
