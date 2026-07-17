@@ -1840,14 +1840,22 @@ async function adminP2DemandFetchItemMeta(entries) {
 
 function adminP2DemandRaiderCellHtml(row) {
   const discordName = String(row.displayName || "").trim();
+  const requestName = String(row.requestCharacterName || "").trim();
   const linkedCharacter = String(row.characterName || "").trim();
-  const hasLink = Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
-  const display = linkedCharacter || discordName || "Unknown";
+  const display = requestName || linkedCharacter || discordName || "Unknown";
+  const hasRequest = Boolean(requestName);
+  const hasLink =
+    !hasRequest && Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
+  const role = String(row.requestCharacterRole || "").trim().toLowerCase();
+  const rolePill =
+    role === "main" || role === "alt"
+      ? `<span class="p2-character-role-pill p2-character-role-pill--${role}">${role === "main" ? "Main" : "Alt"}</span>`
+      : "";
   const hint =
-    !hasLink && discordName
+    !hasRequest && !hasLink && discordName
       ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row to show the WoW character.">unassigned</span>`
       : "";
-  return `<div class="p2-demand-raider-name">${esc(display)}${hint}</div>`;
+  return `<div class="p2-demand-raider-name">${esc(display)}${rolePill}${hint}</div>`;
 }
 
 function adminP2DemandItemCellHtml(itemId, itemName) {
@@ -1875,7 +1883,9 @@ function adminP2DemandRemoveCellHtml(userId, itemId, itemName, raiderName) {
 function adminP2DemandRowsHtmlForRaider(row) {
   const items = Array.isArray(row.items) && row.items.length ? row.items : [];
   const userId = String(row.userId || "");
-  const raiderLabel = String(row.characterName || row.displayName || "this raider").trim();
+  const raiderLabel = String(
+    row.requestCharacterName || row.characterName || row.displayName || "this raider"
+  ).trim();
   const totalNv = adminP2DemandRowNvTotal(row);
   const updatedIso = row.updatedAt ? new Date(Number(row.updatedAt)).toISOString() : "";
   const updatedLabel = adminP2DemandFmtUpdated(row.updatedAt);

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PUG LIFE BALANCE · Rankings</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      as="image"
+      href="/responsive/plb-hero-banner-960w.webp"
+      imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w"
+      imagesizes="(max-width: 960px) 100vw, 960px"
+      type="image/webp"
+      fetchpriority="high"
+    />
+    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
+    <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <link rel="stylesheet" href="/rankings.css?v=20260717plb-rankings-v1" />
+  </head>
+  <body class="framework-bg-vivid">
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE · Rankings</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            srcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+            loading="eager"
+            fetchpriority="high"
+            sizes="(max-width: 960px) 100vw, 960px"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/join.html">Join Us</a>
+          <a href="/home.html" title="Raid performance &amp; attendance">Performance</a>
+          <a href="/leaderboard">Leaderboard</a>
+          <a href="/rankings" class="nav-current" aria-current="page">Rankings</a>
+          <a href="/voting.html" title="Hall of Fame">HoF</a>
+        </nav>
+        <div class="auth-top-right" data-auth-widget></div>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container">
+        <section class="card surface-elevated rankings-page-card" aria-labelledby="rankings-page-title">
+          <div class="rankings-header">
+            <h2 id="rankings-page-title" class="section-title">Badge Rankings</h2>
+            <p class="rankings-lede muted">
+              Compete for dynamic badges. Pick a board to see who is leading — and who holds the badge right now.
+            </p>
+          </div>
+
+          <div id="rankingsBoardBar" class="rankings-board-bar" role="tablist" aria-label="Ranking boards"></div>
+
+          <div class="rankings-board-meta">
+            <div class="rankings-board-badge-wrap" aria-hidden="true">
+              <img id="rankingsBoardIcon" class="rankings-board-icon" src="" alt="" width="72" height="72" />
+            </div>
+            <div class="rankings-board-copy">
+              <h3 id="rankingsBoardTitle" class="rankings-board-title">Loading…</h3>
+              <p id="rankingsBoardDesc" class="rankings-board-desc muted"></p>
+              <p id="rankingsBoardWindow" class="rankings-board-window muted"></p>
+            </div>
+          </div>
+
+          <p id="rankingsStatus" class="rankings-status muted" role="status">Loading rankings…</p>
+
+          <ol id="rankingsList" class="rankings-list" aria-live="polite"></ol>
+        </section>
+      </main>
+    </div>
+
+    <script src="/auth-ui.js" defer></script>
+    <script src="/rankings.js" defer></script>
+  </body>
+</html>

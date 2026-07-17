@@ -1,0 +1,233 @@
+.rankings-page-card {
+  display: grid;
+  gap: 16px;
+}
+
+.rankings-header .section-title {
+  margin-bottom: 6px;
+}
+
+.rankings-lede {
+  margin: 0;
+  max-width: 68ch;
+  line-height: 1.45;
+}
+
+.rankings-board-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rankings-board-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  background: rgba(20, 14, 33, 0.88);
+  color: #f3e8ff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.rankings-board-chip:hover {
+  border-color: rgba(244, 210, 63, 0.45);
+}
+
+.rankings-board-chip--active {
+  border-color: rgba(244, 210, 63, 0.7);
+  background: linear-gradient(180deg, rgba(72, 42, 12, 0.55), rgba(28, 16, 40, 0.95));
+  color: #ffe9a8;
+  box-shadow: 0 0 0 1px rgba(244, 210, 63, 0.2);
+}
+
+.rankings-board-chip-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+}
+
+.rankings-board-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(168, 85, 247, 0.22);
+  background: linear-gradient(145deg, rgba(28, 16, 44, 0.92), rgba(12, 10, 22, 0.95));
+}
+
+.rankings-board-icon {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
+}
+
+.rankings-board-title {
+  margin: 0 0 4px;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+}
+
+.rankings-board-desc,
+.rankings-board-window {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.rankings-board-window {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rankings-status {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.rankings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rankings-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  background: rgba(18, 12, 30, 0.88);
+}
+
+.rankings-row--gold {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: color-mix(in srgb, #fbbf24 10%, rgba(18, 12, 30, 0.92));
+}
+
+.rankings-row--silver {
+  border-color: rgba(203, 213, 225, 0.4);
+  background: color-mix(in srgb, #cbd5e1 7%, rgba(18, 12, 30, 0.92));
+}
+
+.rankings-row--bronze {
+  border-color: rgba(217, 119, 6, 0.4);
+  background: color-mix(in srgb, #d97706 8%, rgba(18, 12, 30, 0.92));
+}
+
+.rankings-row-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rankings-row--gold .rankings-row-rank {
+  color: #fde68a;
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.rankings-row-main {
+  min-width: 0;
+}
+
+.rankings-row-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.rankings-row-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankings-row-badge {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.rankings-row-badge-spacer {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  opacity: 0;
+}
+
+.rankings-row-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.rankings-row-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(168, 85, 247, 0.75), rgba(244, 210, 63, 0.85));
+}
+
+.rankings-row-value {
+  font-size: 0.9rem;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.rankings-row-value strong {
+  color: #fff;
+  font-size: 1.05rem;
+}
+
+.rankings-empty {
+  padding: 18px 12px;
+  text-align: center;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+}
+
+@media (max-width: 700px) {
+  .rankings-board-meta {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .rankings-board-badge-wrap {
+    display: flex;
+    justify-content: center;
+  }
+
+  .rankings-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+  }
+
+  .rankings-row-value {
+    grid-column: 2;
+  }
+}

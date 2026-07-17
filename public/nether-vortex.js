@@ -53,6 +53,11 @@ let netherVortexIcon = "";
 /** @type {Set<string>} keys from admin P2 demand checks (`userId:itemId`) */
 let demandCheckedKeys = new Set();
 const NETHER_VORTEX_ITEM_ID = 30183;
+/** @type {string[]} */
+let linkedCharacterNames = [];
+let profileMainCharacterName = "";
+let selectedCharacterRole = "main";
+const CUSTOM_CHARACTER_VALUE = "__custom__";
 
 function demandCheckKey(userId, itemId) {
   return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
@@ -260,11 +265,118 @@ function demandRowMatchesFilter(row, q) {
   if (!s) return true;
   if (String(row.displayName || "").toLowerCase().includes(s)) return true;
   if (String(row.characterName || "").toLowerCase().includes(s)) return true;
+  if (String(row.requestCharacterName || "").toLowerCase().includes(s)) return true;
   for (const it of Array.isArray(row.items) ? row.items : []) {
     if (String(it.itemName || "").toLowerCase().includes(s)) return true;
     if (String(it.profession || "").toLowerCase().includes(s)) return true;
   }
   return false;
+}
+
+function requestCharacterRolePillHtml(role) {
+  const r = String(role || "").trim().toLowerCase();
+  if (r !== "main" && r !== "alt") return "";
+  const label = r === "main" ? "Main" : "Alt";
+  return `<span class="p2-character-role-pill p2-character-role-pill--${r}">${label}</span>`;
+}
+
+function setCharacterRole(role, { syncButtons = true } = {}) {
+  selectedCharacterRole = role === "alt" ? "alt" : "main";
+  if (!syncButtons) return;
+  document.getElementById("vortexRoleMain")?.classList.toggle("is-active", selectedCharacterRole === "main");
+  document.getElementById("vortexRoleAlt")?.classList.toggle("is-active", selectedCharacterRole === "alt");
+}
+
+function syncCustomCharacterVisibility() {
+  const select = document.getElementById("vortexCharacterSelect");
+  const custom = document.getElementById("vortexCharacterCustom");
+  if (!select || !custom) return;
+  const isCustom = select.value === CUSTOM_CHARACTER_VALUE;
+  custom.hidden = !isCustom;
+  if (isCustom) custom.focus();
+}
+
+function roleForLinkedCharacter(name) {
+  const main = String(profileMainCharacterName || "").trim().toLowerCase();
+  const n = String(name || "").trim().toLowerCase();
+  if (main && n && main === n) return "main";
+  return "alt";
+}
+
+function populateCharacterSelect(preferredName = "") {
+  const select = document.getElementById("vortexCharacterSelect");
+  if (!select) return;
+  const preferred = String(preferredName || "").trim();
+  const options = ['<option value="">Select character…</option>'];
+  for (const name of linkedCharacterNames) {
+    const role = roleForLinkedCharacter(name);
+    const label = `${name} (${role === "main" ? "Main" : "Alt"})`;
+    const selected = preferred && preferred.toLowerCase() === name.toLowerCase() ? " selected" : "";
+    options.push(`<option value="${esc(name)}"${selected}>${esc(label)}</option>`);
+  }
+  const preferredIsLinked = linkedCharacterNames.some(
+    (n) => n.toLowerCase() === preferred.toLowerCase()
+  );
+  const customSelected = preferred && !preferredIsLinked ? " selected" : "";
+  options.push(`<option value="${CUSTOM_CHARACTER_VALUE}"${customSelected}>Other name…</option>`);
+  select.innerHTML = options.join("");
+  const custom = document.getElementById("vortexCharacterCustom");
+  if (custom) {
+    if (preferred && !preferredIsLinked) {
+      custom.value = preferred;
+      custom.hidden = false;
+    } else {
+      custom.value = "";
+      custom.hidden = select.value !== CUSTOM_CHARACTER_VALUE;
+    }
+  }
+}
+
+function getSelectedRequestCharacter() {
+  const select = document.getElementById("vortexCharacterSelect");
+  const custom = document.getElementById("vortexCharacterCustom");
+  if (!select) return { name: "", role: selectedCharacterRole };
+  if (select.value === CUSTOM_CHARACTER_VALUE) {
+    return {
+      name: String(custom?.value || "").trim(),
+      role: selectedCharacterRole,
+    };
+  }
+  const name = String(select.value || "").trim();
+  return { name, role: selectedCharacterRole };
+}
+
+function applyCharacterPickerFromEntry(entry) {
+  const savedName = String(entry?.requestCharacterName || "").trim();
+  const savedRole = String(entry?.requestCharacterRole || "").trim().toLowerCase();
+  populateCharacterSelect(savedName);
+  if (savedRole === "main" || savedRole === "alt") {
+    setCharacterRole(savedRole);
+  } else if (savedName) {
+    setCharacterRole(roleForLinkedCharacter(savedName));
+  } else if (profileMainCharacterName) {
+    populateCharacterSelect(profileMainCharacterName);
+    setCharacterRole("main");
+  } else if (linkedCharacterNames[0]) {
+    populateCharacterSelect(linkedCharacterNames[0]);
+    setCharacterRole(roleForLinkedCharacter(linkedCharacterNames[0]));
+  } else {
+    setCharacterRole("alt");
+  }
+  syncCustomCharacterVisibility();
+}
+
+async function loadLinkedCharactersForPicker() {
+  linkedCharacterNames = [];
+  profileMainCharacterName = "";
+  try {
+    const payload = await getJson("/api/profile/me");
+    profileMainCharacterName = String(payload?.profile?.mainCharacterName || "").trim();
+    const linked = Array.isArray(payload?.linkedCharacters) ? payload.linkedCharacters : [];
+    linkedCharacterNames = linked.map((n) => String(n || "").trim()).filter(Boolean);
+  } catch {
+    /* not logged in or profile unavailable */
+  }
 }
 
 function fmtDemandRaidsAttended(row) {
@@ -293,17 +405,19 @@ function buildDemandRaidsCell(row, span = 1) {
  */
 function buildDemandRaiderCell(row) {
   const discordName = String(row.displayName || "").trim();
+  const requestName = String(row.requestCharacterName || "").trim();
   const linkedCharacter = String(row.characterName || "").trim();
-  const hasLink = Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
-  const display = linkedCharacter || discordName || "Unknown";
+  const display = requestName || linkedCharacter || discordName || "Unknown";
+  const hasRequest = Boolean(requestName);
+  const hasLink =
+    !hasRequest && Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
+  const rolePill = requestCharacterRolePillHtml(row.requestCharacterRole);
 
-  // When no Account Assignment exists, hint that this is a Discord username so
-  // the operator knows to add a mapping on /admin.html instead of treating it
-  // as a typo'd character. The hint is hidden the moment a link is saved.
-  const hint = !hasLink && discordName
-    ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row on /admin.html to show the WoW character.">unassigned</span>`
-    : "";
-  return `<div class="p2-demand-raider-name">${esc(display)}${hint}</div>`;
+  const hint =
+    !hasRequest && !hasLink && discordName
+      ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row on /admin.html to show the WoW character.">unassigned</span>`
+      : "";
+  return `<div class="p2-demand-raider-name">${esc(display)}${rolePill}${hint}</div>`;
 }
 
 /**
@@ -521,6 +635,14 @@ async function loadTracker() {
   }
   renderList(payload?.entries, payload?.checkedKeys);
 
+  if (canEdit) {
+    await loadLinkedCharactersForPicker();
+  } else {
+    linkedCharacterNames = [];
+    profileMainCharacterName = "";
+    populateCharacterSelect("");
+  }
+
   const my = payload?.myEntry || null;
   selectedItems = Array.isArray(my?.items)
     ? applyCraftableVortexCounts(
@@ -538,6 +660,7 @@ async function loadTracker() {
       )
     : [];
   renderSelectedItems();
+  applyCharacterPickerFromEntry(my);
 
   const canUseCraftables = craftables.length > 0;
   if (saveBtn) saveBtn.disabled = !canEdit;
@@ -545,6 +668,12 @@ async function loadTracker() {
   if (search) search.disabled = !canUseCraftables;
   if (select) select.disabled = !canUseCraftables;
   if (addBtn) addBtn.disabled = !canUseCraftables;
+  const charSelect = document.getElementById("vortexCharacterSelect");
+  const charCustom = document.getElementById("vortexCharacterCustom");
+  if (charSelect) charSelect.disabled = !canEdit;
+  if (charCustom) charCustom.disabled = !canEdit;
+  document.getElementById("vortexRoleMain")?.toggleAttribute("disabled", !canEdit);
+  document.getElementById("vortexRoleAlt")?.toggleAttribute("disabled", !canEdit);
 }
 
 document.getElementById("vortexSaveBtn")?.addEventListener("click", async () => {
@@ -552,6 +681,11 @@ document.getElementById("vortexSaveBtn")?.addEventListener("click", async () => 
   if (!btn) return;
   if (!vortexCanEdit) {
     window.alert("Login with Discord to save your need.");
+    return;
+  }
+  const { name: requestCharacterName, role: requestCharacterRole } = getSelectedRequestCharacter();
+  if (selectedItems.length && !requestCharacterName) {
+    window.alert("Choose which character these craftables are for (Main or Alt), or type a name.");
     return;
   }
   btn.disabled = true;
@@ -563,6 +697,8 @@ document.getElementById("vortexSaveBtn")?.addEventListener("click", async () => 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         neededCount: 0,
+        requestCharacterName,
+        requestCharacterRole,
         items: selectedItems.map((row) => ({
           itemID: n(row.itemID),
           itemName: String(row.itemName || ""),
@@ -583,6 +719,20 @@ document.getElementById("vortexSaveBtn")?.addEventListener("click", async () => 
     }, 1000);
   }
 });
+
+document.getElementById("vortexCharacterSelect")?.addEventListener("change", () => {
+  const select = document.getElementById("vortexCharacterSelect");
+  syncCustomCharacterVisibility();
+  if (!select) return;
+  if (select.value && select.value !== CUSTOM_CHARACTER_VALUE) {
+    setCharacterRole(roleForLinkedCharacter(select.value));
+  } else if (select.value === CUSTOM_CHARACTER_VALUE) {
+    setCharacterRole("alt");
+  }
+});
+
+document.getElementById("vortexRoleMain")?.addEventListener("click", () => setCharacterRole("main"));
+document.getElementById("vortexRoleAlt")?.addEventListener("click", () => setCharacterRole("alt"));
 
 document.getElementById("vortexAddItemBtn")?.addEventListener("click", () => {
   const select = document.getElementById("vortexCraftableSelect");

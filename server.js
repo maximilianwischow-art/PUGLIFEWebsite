@@ -153,6 +153,8 @@ import {
   nvUpsertCurrent,
   nvDeleteCurrent,
   nvGetAllCurrent,
+  sanitizeNvRequestCharacterName,
+  sanitizeNvRequestCharacterRole,
   nvGetHistory,
   profileGetByUserId,
   profileGetByUserIds,
@@ -234,6 +236,13 @@ import {
   cutoverReadinessCounts,
   syncStateGet,
 } from "./lib/item-needs-db.mjs";
+import {
+  addonTokenCreate,
+  addonTokenRevoke,
+  addonTokenStatus,
+  addonTokenResolveUserId,
+  addonTokenFromRequest,
+} from "./lib/addon-auth.mjs";
 
 /**
  * Phase 4 cutover flag. When set, `/api/profile/me/badges` reads from the
@@ -317,7 +326,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260522plb-combo-badge-tile-size-v1";
+const API_BUILD_ID = "20260717plb-rankings-p2-character-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -1514,6 +1523,31 @@ function getSessionFromRequest(req) {
     return null;
   }
   return { sessionId, ...session };
+}
+
+function resolveAuthUserFromRequest(req) {
+  const session = getSessionFromRequest(req);
+  if (session?.user?.id) {
+    return {
+      userId: String(session.user.id),
+      user: session.user,
+      session,
+      via: "session",
+    };
+  }
+  const bearer = addonTokenFromRequest(req);
+  if (bearer) {
+    const userId = addonTokenResolveUserId(dataDir, bearer);
+    if (userId) {
+      return {
+        userId,
+        user: { id: userId },
+        session: null,
+        via: "addon_token",
+      };
+    }
+  }
+  return null;
 }
 
 function pruneAuthMaps() {
@@ -7637,6 +7671,8 @@ async function ensureNetherVortexStore() {
             neededCount: Number(r.neededCount) || 0,
             items: Array.isArray(r.items) ? r.items : [],
             updatedAt: Number(r.updatedAt) || 0,
+            requestCharacterName: String(r.requestCharacterName || "").trim(),
+            requestCharacterRole: sanitizeNvRequestCharacterRole(r.requestCharacterRole),
           })),
         };
       }
@@ -7693,12 +7729,22 @@ async function adminDeleteP2DemandItem(userId, itemID) {
   const displayName = String(entry.displayName || "Unknown");
   const neededCount = Number(entry.neededCount) || 0;
   const updatedAt = Date.now();
+  const requestCharacterName = sanitizeNvRequestCharacterName(entry.requestCharacterName);
+  const requestCharacterRole = sanitizeNvRequestCharacterRole(entry.requestCharacterRole);
 
   try {
     if (!remainingItems.length) {
       nvDeleteCurrent({ userId: uid, displayName, updatedAt });
     } else {
-      nvUpsertCurrent({ userId: uid, displayName, items: remainingItems, neededCount, updatedAt });
+      nvUpsertCurrent({
+        userId: uid,
+        displayName,
+        items: remainingItems,
+        neededCount,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      });
     }
   } catch (error) {
     console.warn("[item-needs-db] adminDeleteP2DemandItem failed:", error?.message || error);
@@ -7710,7 +7756,15 @@ async function adminDeleteP2DemandItem(userId, itemID) {
     if (!remainingItems.length) {
       if (rowIdx >= 0) next.splice(rowIdx, 1);
     } else if (rowIdx >= 0) {
-      next[rowIdx] = { userId: uid, displayName, neededCount, items: remainingItems, updatedAt };
+      next[rowIdx] = {
+        userId: uid,
+        displayName,
+        neededCount,
+        items: remainingItems,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      };
     }
     netherVortexState.entries = next;
     await persistNetherVortexStore();
@@ -7809,7 +7863,12 @@ async function buildNetherVortexGuildNeedRows() {
         resolveLinkedWowCharacterByDiscordUserId(userId) ||
         (rhSignupName && resolveLinkedWowCharacterFromRhWcl(rhSignupName)) ||
         resolveLinkedWowCharacterFromRhWcl(discordName);
-      const characterName = String(linked || rhSignupName || discordName).trim() || discordName;
+      const requestCharacterName = sanitizeNvRequestCharacterName(row.requestCharacterName);
+      const requestCharacterRole = requestCharacterName
+        ? sanitizeNvRequestCharacterRole(row.requestCharacterRole)
+        : "";
+      const characterName =
+        requestCharacterName || String(linked || rhSignupName || discordName).trim() || discordName;
       const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
       const canon = identityUserGetByDiscordId(userId);
       const canonicalUserId = canon?.id != null ? Number(canon.id) : null;
@@ -7822,6 +7881,8 @@ async function buildNetherVortexGuildNeedRows() {
         displayName: discordName,
         raidHelperName: rhSignupName || null,
         characterName,
+        requestCharacterName,
+        requestCharacterRole,
         characterProfileUrl,
         wclEventCount,
         neededCount: 0,
@@ -7945,6 +8006,7 @@ function shouldUsePublicSnapshot(req) {
   if (fullPath === "/api/raid-helper/events-kpi") return true;
   if (fullPath === "/api/voting/hall-of-fame") return false;
   if (fullPath === "/api/leaderboard") return true;
+  if (fullPath === "/api/rankings") return true;
   return /^\/api\/wcl\/guild\/\d+\/(boss-times|recent-raids-calendar|latest-raid-mvp|death-leaderboard|attendance|death-encounter-heatmap|active-roster|loot-received|first-clear-participants)$/.test(
     fullPath
   );
@@ -9324,6 +9386,22 @@ app.get(["/leaderboard", "/leaderboard/", "/leaderboard.html"], async (_req, res
   } catch (error) {
     console.error("Failed to serve leaderboard page:", error?.message || error);
     return res.status(500).send("Failed to load leaderboard page.");
+  }
+});
+
+app.get(["/rankings", "/rankings/", "/rankings.html"], async (_req, res) => {
+  try {
+    const raw = await readFile(path.join(publicDir, "rankings.html"), "utf8");
+    const html = htmlWithApiBuildAssetVersions(raw, [
+      "/styles.min.css",
+      "/rankings.css",
+      "/rankings.js",
+    ]);
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.type("html").send(html);
+  } catch (error) {
+    console.error("Failed to serve rankings page:", error?.message || error);
+    return res.status(500).send("Failed to load rankings page.");
   }
 });
 
@@ -12712,6 +12790,14 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
     }
     const neededCount = 0;
     let items = sanitizeNetherVortexItems(req.body?.items);
+    const requestCharacterName = sanitizeNvRequestCharacterName(req.body?.requestCharacterName);
+    const requestCharacterRole = sanitizeNvRequestCharacterRole(req.body?.requestCharacterRole);
+    if (items.length && !requestCharacterName) {
+      return res.status(400).json({
+        ok: false,
+        error: "Choose which character these craftables are for (Main or Alt).",
+      });
+    }
     try {
       const catalogMaps = await getNetherVortexCraftableCatalogMaps();
       items = enrichSanitizedNetherVortexItems(items, catalogMaps);
@@ -12726,7 +12812,15 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
     // Source of truth: SQLite. Writes through to the legacy JSON for backup +
     // any code still reading `netherVortexState`.
     try {
-      nvUpsertCurrent({ userId, displayName, items, neededCount, updatedAt });
+      nvUpsertCurrent({
+        userId,
+        displayName,
+        items,
+        neededCount,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      });
     } catch (error) {
       console.warn("[item-needs-db] nvUpsertCurrent failed:", error?.message || error);
     }
@@ -12741,14 +12835,26 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
         await persistNetherVortexStore();
         return;
       }
-      const nextEntry = { userId, displayName, neededCount, items, updatedAt };
+      const nextEntry = {
+        userId,
+        displayName,
+        neededCount,
+        items,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      };
       if (idx >= 0) prev[idx] = nextEntry;
       else prev.push(nextEntry);
       netherVortexState.entries = prev;
       await persistNetherVortexStore();
     });
     await netherVortexWriteChain;
-    return res.json({ ok: true });
+    return res.json({
+      ok: true,
+      requestCharacterName,
+      requestCharacterRole,
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save Nether Vortex need" });
   }
@@ -15848,13 +15954,54 @@ async function getConsumablesLast6RankKeys({ refresh = false } = {}) {
   return { rank1: new Set(), rank2: new Set(), rank3: new Set() };
 }
 
+function buildConsumablesPublicLadder(players, limit = 50) {
+  const sorted = (Array.isArray(players) ? players : [])
+    .map((p) => ({
+      name: String(p?.name || "").trim(),
+      value: Number(p?.totalUses || 0),
+      className: String(p?.className || p?.class || "").trim() || null,
+    }))
+    .filter((p) => p.name && p.value > 0)
+    .sort((a, b) => {
+      if (b.value !== a.value) return b.value - a.value;
+      return a.name.localeCompare(b.name);
+    });
+
+  const out = [];
+  let distinctRank = 0;
+  let prevValue = null;
+  let seen = 0;
+  for (const player of sorted) {
+    seen += 1;
+    if (player.value !== prevValue) {
+      distinctRank = seen;
+      prevValue = player.value;
+    }
+    let badgeId = null;
+    if (distinctRank === 1) badgeId = "consumables-last6-1st";
+    else if (distinctRank === 2) badgeId = "consumables-last6-2nd";
+    else if (distinctRank === 3) badgeId = "consumables-last6-3rd";
+    out.push({
+      rank: distinctRank,
+      name: player.name,
+      value: player.value,
+      className: player.className,
+      badgeId,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 async function persistConsumablesLast6RankKeysFromPlayers(players, meta = {}) {
   const rankKeys = topThreeConsumablesRankKeys(players, normalizeRaidHelperDisplayKey);
+  const ladder = buildConsumablesPublicLadder(players, 50);
   await writeConsumablesLast6RanksCache({
     updatedAt: Date.now(),
     reportsScanned: Number(meta.reportsScanned || 0),
     fightsScanned: Number(meta.fightsScanned || 0),
     topPlayers: rankKeys.topPlayers,
+    ladder,
     rankKeys,
   });
   consumablesLast6RankKeysCache = {
@@ -15862,6 +16009,7 @@ async function persistConsumablesLast6RankKeysFromPlayers(players, meta = {}) {
     rank2: rankKeys.rank2,
     rank3: rankKeys.rank3,
     topPlayers: rankKeys.topPlayers,
+    ladder,
   };
   consumablesLast6RankKeysCacheAt = Date.now();
   return rankKeys;
@@ -17458,8 +17606,8 @@ app.get("/api/voting/hall-of-fame", async (_req, res) => {
 
 app.get("/api/voting/current", async (req, res) => {
   try {
-    const session = getSessionFromRequest(req);
-    const userId = session?.user?.id ? String(session.user.id) : "";
+    const authUser = resolveAuthUserFromRequest(req);
+    const userId = authUser?.userId || "";
     const authenticated = Boolean(userId);
 
     const voting = await getCurrentVotingRoundCached(votingGuildId);
@@ -17499,8 +17647,8 @@ app.get("/api/voting/current", async (req, res) => {
 
 app.post("/api/voting/vote", async (req, res) => {
   try {
-    const session = getSessionFromRequest(req);
-    if (!session?.user?.id) {
+    const authUser = resolveAuthUserFromRequest(req);
+    if (!authUser?.userId) {
       return res.status(401).json({ ok: false, error: "Login required" });
     }
 
@@ -17523,13 +17671,59 @@ app.post("/api/voting/vote", async (req, res) => {
       roundKey: voting.roundKey,
       raidCode: voting.raidCode,
       raidStartTime: voting.startTime,
-      userId: String(session.user.id),
+      userId: authUser.userId,
       candidateName: candidate.name,
     });
 
     return res.json({ ok: true, roundKey: voting.roundKey, candidateName: candidate.name });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to submit vote" });
+  }
+});
+
+app.get("/api/voting/addon-manifest", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+  return res.json({
+    ok: true,
+    votingUrl: "https://www.wow-pug.com/voting.html",
+    guildName: "PUG LIFE BALANCE",
+    buildId: API_BUILD_ID,
+    addonTokenSupported: true,
+  });
+});
+
+app.get("/api/profile/me/addon-token", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.status(401).json({ ok: false, error: "Login required" });
+  }
+  const status = addonTokenStatus(dataDir, String(session.user.id));
+  return res.json({ ok: true, ...status });
+});
+
+app.post("/api/profile/me/addon-token", (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.status(401).json({ ok: false, error: "Login required" });
+    }
+    const action = String(req.body?.action || "generate").trim().toLowerCase();
+    const userId = String(session.user.id);
+    if (action === "revoke") {
+      addonTokenRevoke(dataDir, userId);
+      return res.json({ ok: true, active: false, tokenHint: null, createdAt: null });
+    }
+    const created = addonTokenCreate(dataDir, userId);
+    return res.json({
+      ok: true,
+      token: created.token,
+      tokenHint: created.tokenHint,
+      createdAt: created.createdAt,
+      active: true,
+      message: "Copy this token now. It will not be shown again.",
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to manage addon token" });
   }
 });
 
@@ -25412,6 +25606,146 @@ app.get("/api/leaderboard", async (req, res) => {
     return res.json(payload);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to build leaderboard" });
+  }
+});
+
+const RANKINGS_BOARDS = Object.freeze([
+  {
+    id: "deaths",
+    label: "Raid Deaths",
+    badgeId: "most-deaths-last-6-raids",
+    badgeIcon: "/images/achievements/most-deaths-last-6-raids.png",
+    metricLabel: "Deaths",
+    windowLabel: "Last 6 raids",
+    description: "Highest death totals across the tracked last-six-raids window. Top rank earns the Most Deaths badge.",
+  },
+  {
+    id: "consumables",
+    label: "Consumables",
+    badgeId: "consumables-last6-1st",
+    badgeIcon: "/images/achievements/consumables-last6-1st.png",
+    metricLabel: "Uses",
+    windowLabel: "Last 6 raids",
+    description:
+      "Tracked consumable uses (pots, scrolls, runes, flame cap) across the last six logged 25-man raids. Top 3 earn Consumables badges.",
+  },
+]);
+
+async function buildRankingsDeathsLadder(limit = 50) {
+  const rows = deathTotalsGetByWindow("last-rolling-window");
+  const sorted = (Array.isArray(rows) ? rows : [])
+    .map((r) => ({
+      name: String(r.mainCharacterName || r.displayName || `User #${r.userId}`).trim(),
+      value: Number(r.deaths || 0),
+      userId: r.userId || null,
+      discordUserId: r.discordUserId || null,
+    }))
+    .filter((r) => r.name && r.value > 0)
+    .sort((a, b) => {
+      if (b.value !== a.value) return b.value - a.value;
+      return a.name.localeCompare(b.name);
+    });
+
+  const maxDeaths = sorted[0]?.value || 0;
+  const out = [];
+  let distinctRank = 0;
+  let prevValue = null;
+  let seen = 0;
+  for (const row of sorted) {
+    seen += 1;
+    if (row.value !== prevValue) {
+      distinctRank = seen;
+      prevValue = row.value;
+    }
+    out.push({
+      rank: distinctRank,
+      name: row.name,
+      value: row.value,
+      userId: row.userId,
+      discordUserId: row.discordUserId,
+      badgeId: maxDeaths > 0 && row.value === maxDeaths ? "most-deaths-last-6-raids" : null,
+    });
+    if (out.length >= limit) break;
+  }
+  return { entries: out, updatedAt: null, source: "death_totals" };
+}
+
+async function buildRankingsConsumablesLadder(limit = 50) {
+  const disk = await readConsumablesLast6RanksCache();
+  if (Array.isArray(disk?.ladder) && disk.ladder.length) {
+    return {
+      entries: disk.ladder.slice(0, limit).map((row) => ({
+        rank: Number(row.rank || 0),
+        name: String(row.name || "").trim(),
+        value: Number(row.value || 0),
+        className: row.className || null,
+        badgeId: row.badgeId || null,
+      })),
+      updatedAt: Number(disk.updatedAt || 0) || null,
+      source: "consumables-ranks-cache",
+      reportsScanned: Number(disk.reportsScanned || 0) || null,
+      fightsScanned: Number(disk.fightsScanned || 0) || null,
+    };
+  }
+
+  // Cold cache: reuse the same last-6 usage payload the raid-lead UI warms.
+  try {
+    const eventPayload = await buildRaidLeadEventReportsPayload();
+    const allReportRows = twentyFiveManReportCodesFromEventPayload(eventPayload, { lastRaids: 0 });
+    const scopedRows = allReportRows.slice(0, CONSUMABLES_LAST6_LEADERBOARD_RAIDS);
+    const fingerprint = scopedRows.map((row) => row.reportCode).sort().join(",");
+    const cacheKey = `wcl-consumables-usage-leaderboard-v4-last${CONSUMABLES_LAST6_LEADERBOARD_RAIDS}-${fingerprint || "empty"}`;
+    const payload = await getOrRefreshCachedPayload(cacheKey, {
+      ttlMs: 60 * 60 * 1000,
+      maxStaleMs: 24 * 60 * 60 * 1000,
+      loader: () => buildWclConsumablesUsageLeaderboardPayload({ lastRaids: CONSUMABLES_LAST6_LEADERBOARD_RAIDS }),
+    });
+    const entries = buildConsumablesPublicLadder(payload?.players || [], limit);
+    return {
+      entries,
+      updatedAt: Date.now(),
+      source: payload?.ok ? "consumables-usage-live" : "consumables-usage-empty",
+      reportsScanned: Number(payload?.reportsScanned || 0) || null,
+      fightsScanned: Number(payload?.fightsScanned || 0) || null,
+    };
+  } catch (error) {
+    return {
+      entries: [],
+      updatedAt: null,
+      source: "consumables-error",
+      error: error?.message || "Failed to load consumables rankings",
+    };
+  }
+}
+
+app.get("/api/rankings", async (req, res) => {
+  try {
+    const boardId = String(req.query.board || "deaths").trim().toLowerCase() || "deaths";
+    const limit = Math.min(100, Math.max(10, Math.floor(Number(req.query.limit) || 50)));
+    const board = RANKINGS_BOARDS.find((row) => row.id === boardId) || RANKINGS_BOARDS[0];
+
+    let ladder;
+    if (board.id === "consumables") {
+      ladder = await buildRankingsConsumablesLadder(limit);
+    } else {
+      ladder = await buildRankingsDeathsLadder(limit);
+    }
+
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return res.json({
+      ok: true,
+      guildId: votingGuildId,
+      boards: RANKINGS_BOARDS,
+      board,
+      entries: ladder.entries || [],
+      updatedAt: ladder.updatedAt || null,
+      source: ladder.source || null,
+      reportsScanned: ladder.reportsScanned ?? null,
+      fightsScanned: ladder.fightsScanned ?? null,
+      error: ladder.error || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load rankings" });
   }
 });
 

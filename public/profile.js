@@ -36,6 +36,12 @@
     keyStatsHost: document.getElementById("profileKeyStats"),
     subnavButtons: document.querySelectorAll("[data-profile-tab]"),
     tabPanels: document.querySelectorAll("[data-profile-panel]"),
+    addonStatus: document.getElementById("profileAddonStatus"),
+    addonTokenRow: document.getElementById("profileAddonTokenRow"),
+    addonTokenInput: document.getElementById("profileAddonTokenInput"),
+    addonTokenCopyBtn: document.getElementById("profileAddonTokenCopyBtn"),
+    addonGenerateBtn: document.getElementById("profileAddonGenerateBtn"),
+    addonRevokeBtn: document.getElementById("profileAddonRevokeBtn"),
   };
 
   /** Cached active-roster fetch promise so badge resolution + key stats share one network call. */
@@ -780,6 +786,86 @@
       els.mainSaveBtn.disabled = value === (savedMainCharacterName || "");
     });
     els.mainSaveBtn?.addEventListener("click", () => saveMainCharacter());
+
+    els.addonGenerateBtn?.addEventListener("click", () => generateAddonToken());
+    els.addonRevokeBtn?.addEventListener("click", () => revokeAddonToken());
+    els.addonTokenCopyBtn?.addEventListener("click", () => {
+      const value = String(els.addonTokenInput?.value || "").trim();
+      if (!value) return;
+      els.addonTokenInput?.focus();
+      els.addonTokenInput?.select();
+      setStatus(els.addonStatus, "Token selected — press Ctrl+C to copy.", "success");
+    });
+  }
+
+  function applyAddonTokenUI(status, revealedToken) {
+    const active = Boolean(status?.active);
+    if (els.addonRevokeBtn) els.addonRevokeBtn.hidden = !active;
+    if (els.addonTokenRow) els.addonTokenRow.hidden = !revealedToken;
+    if (els.addonTokenInput) els.addonTokenInput.value = revealedToken || "";
+    if (active && status?.tokenHint) {
+      setStatus(
+        els.addonStatus,
+        `Active token ending in …${status.tokenHint}. Generate a new token to rotate.`,
+        "success",
+      );
+    } else if (!revealedToken) {
+      setStatus(els.addonStatus, "No active addon token.", null);
+    }
+  }
+
+  async function loadAddonTokenStatus() {
+    try {
+      const res = await fetch("/api/profile/me/addon-token", { credentials: "include" });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.ok) {
+        setStatus(els.addonStatus, payload?.error || "Could not load addon token status.", "error");
+        return;
+      }
+      applyAddonTokenUI(payload, "");
+    } catch (error) {
+      setStatus(els.addonStatus, error?.message || "Could not load addon token status.", "error");
+    }
+  }
+
+  async function generateAddonToken() {
+    try {
+      setStatus(els.addonStatus, "Generating token…", "busy");
+      const res = await fetch("/api/profile/me/addon-token", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "generate" }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Failed to generate token");
+      }
+      applyAddonTokenUI(payload, String(payload.token || ""));
+      setStatus(els.addonStatus, payload.message || "Token generated.", "success");
+    } catch (error) {
+      setStatus(els.addonStatus, error?.message || "Failed to generate token.", "error");
+    }
+  }
+
+  async function revokeAddonToken() {
+    try {
+      setStatus(els.addonStatus, "Revoking token…", "busy");
+      const res = await fetch("/api/profile/me/addon-token", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke" }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Failed to revoke token");
+      }
+      applyAddonTokenUI(payload, "");
+      setStatus(els.addonStatus, "Addon token revoked.", "success");
+    } catch (error) {
+      setStatus(els.addonStatus, error?.message || "Failed to revoke token.", "error");
+    }
   }
 
   async function init() {
@@ -790,7 +876,7 @@
       showLockedState();
       return;
     }
-    await Promise.all([loadProfile(), loadBadges()]);
+    await Promise.all([loadProfile(), loadBadges(), loadAddonTokenStatus()]);
   }
 
   if (document.readyState === "loading") {

@@ -213,6 +213,44 @@ function votingPeakParseTierClass(value) {
   return "leaderboard-peak-parse--wcl0";
 }
 
+function votingLoginNextPath() {
+  const path = window.location.pathname || "/voting.html";
+  const search = window.location.search || "";
+  return encodeURIComponent(`${path}${search}`);
+}
+
+function votingDeepLinkCandidate() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return String(params.get("candidate") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function applyCandidateDeepLink() {
+  const candidate = votingDeepLinkCandidate();
+  if (!candidate) return;
+  const list = document.getElementById("votingList");
+  if (!list) return;
+  const target = candidate.toLowerCase();
+  const rows = list.querySelectorAll(".voting-row");
+  for (const row of rows) {
+    const nameEl = row.querySelector(".voting-player-name");
+    const name = String(nameEl?.textContent || "").trim().toLowerCase();
+    if (name && name === target) {
+      row.classList.add("is-addon-highlight");
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+      const statusEl = document.getElementById("votingStatus");
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent = `Highlighted ${candidate} from your addon link.`;
+      }
+      break;
+    }
+  }
+}
+
 function renderCandidates(payload, canVote) {
   const list = document.getElementById("votingList");
   const myVote = String(payload?.myVote || "");
@@ -282,6 +320,7 @@ function renderCandidates(payload, canVote) {
   });
   list.innerHTML = rows.map((row) => row.html).join("");
   list.hidden = false;
+  applyCandidateDeepLink();
 }
 
 function fmtParsePct(n) {
@@ -941,8 +980,7 @@ async function submitVote(candidateName) {
   });
   const payload = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    const next = encodeURIComponent(window.location.pathname || "/voting.html");
-    window.location.href = `/auth/discord/login?next=${next}`;
+    window.location.href = `/auth/discord/login?next=${votingLoginNextPath()}`;
     return;
   }
   if (!res.ok || !payload?.ok) {
@@ -990,8 +1028,7 @@ document.addEventListener("click", async (event) => {
   if (!btn) return;
   const loginRequired = String(btn.getAttribute("data-login-required") || "0") === "1";
   if (loginRequired) {
-    const next = encodeURIComponent(window.location.pathname || "/voting.html");
-    window.location.href = `/auth/discord/login?next=${next}`;
+    window.location.href = `/auth/discord/login?next=${votingLoginNextPath()}`;
     return;
   }
   const candidateName = decodeURIComponent(String(btn.dataset.candidate || ""));

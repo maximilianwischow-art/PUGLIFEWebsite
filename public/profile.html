@@ -42,6 +42,7 @@
           <a href="/join.html">Join Us</a>
           <a href="/home.html" title="Raid performance &amp; attendance">Performance</a>
           <a href="/leaderboard">Leaderboard</a>
+          <a href="/rankings">Rankings</a>
           <a href="/voting.html" title="Hall of Fame">HoF</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
@@ -179,6 +180,29 @@
               </div>
               <p class="profile-main-hint subtle" id="profileMainHint"></p>
             </section>
+
+            <section class="card profile-addon-card">
+              <h3 class="section-title">Link PUG LIFE Addon</h3>
+              <p class="subtle profile-card-lede">
+                Generate an API token for companion tools (future desktop apps). The in-game WoW addon copies a
+                voting link to your browser — it cannot use this token directly.
+              </p>
+              <p class="profile-addon-status subtle" id="profileAddonStatus" aria-live="polite"></p>
+              <div class="profile-addon-token-row" id="profileAddonTokenRow" hidden>
+                <input
+                  type="text"
+                  id="profileAddonTokenInput"
+                  class="profile-addon-token-input"
+                  readonly
+                  aria-label="Addon API token"
+                />
+                <button type="button" class="secondary-btn" id="profileAddonTokenCopyBtn">Copy token</button>
+              </div>
+              <div class="profile-addon-actions">
+                <button type="button" class="primary-btn" id="profileAddonGenerateBtn">Generate token</button>
+                <button type="button" class="secondary-btn" id="profileAddonRevokeBtn" hidden>Revoke token</button>
+              </div>
+            </section>
           </div>
         </div>
       </main>
@@ -199,7 +223,7 @@
     <script defer src="/home.js?v=20260505black1"></script>
     <script defer src="/events-roster-ui.js?v=20260622plb-double-trouble-tooltip-v1"></script>
     <script defer src="/badge-catalog-ui.js?v=20260622plb-double-trouble-tooltip-v1"></script>
-    <script defer src="/profile.js?v=20260612plb-badge-panel-guild-perf-v1"></script>
+    <script defer src="/profile.js?v=20260710plb-addon-token-v1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

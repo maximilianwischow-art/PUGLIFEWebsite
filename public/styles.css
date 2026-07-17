@@ -13526,6 +13526,28 @@ tr.plb-gear-row--miss th {
   color: rgba(170, 160, 200, 0.78);
   margin-top: 0.22rem;
 }
+.p2-character-role-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.p2-character-role-pill--main {
+  color: #fde68a;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.12);
+}
+.p2-character-role-pill--alt {
+  color: #c4b5fd;
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  background: rgba(167, 139, 250, 0.12);
+}
 .p2-demand-item {
   display: inline-flex;
   align-items: center;
@@ -13856,6 +13878,33 @@ tr.plb-gear-row--miss th {
   box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.35);
 }
 .profile-main-hint { margin: 0.6rem 0 0; }
+
+.profile-addon-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.profile-addon-token-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+.profile-addon-token-input {
+  flex: 1 1 280px;
+  min-width: 0;
+  background: rgba(20, 15, 34, 0.7);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  border-radius: 10px;
+  color: #fff;
+  font: inherit;
+  padding: 0.5rem 0.8rem;
+}
+.profile-addon-status.is-success { color: #9be7b5; }
+.profile-addon-status.is-error { color: #f0a3a3; }
+.profile-addon-status.is-busy { color: #d8cfff; }
 
 /* Badges grid */
 .profile-badges-card {

@@ -8,6 +8,50 @@
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
     <link rel="stylesheet" href="/styles.min.css?v=20260626plb-p2-demand-raids-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <style>
+      .p2-character-role {
+        display: inline-flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .p2-character-role-btn {
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(168, 85, 247, 0.28);
+        background: rgba(20, 14, 33, 0.88);
+        color: #e9d5ff;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+      }
+      .p2-character-role-btn.is-active {
+        border-color: rgba(244, 210, 63, 0.7);
+        background: linear-gradient(180deg, rgba(72, 42, 12, 0.55), rgba(28, 16, 40, 0.95));
+        color: #ffe9a8;
+      }
+      .p2-character-role-pill {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 6px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        vertical-align: middle;
+      }
+      .p2-character-role-pill--main {
+        color: #fde68a;
+        border: 1px solid rgba(251, 191, 36, 0.45);
+        background: rgba(251, 191, 36, 0.12);
+      }
+      .p2-character-role-pill--alt {
+        color: #c4b5fd;
+        border: 1px solid rgba(167, 139, 250, 0.45);
+        background: rgba(167, 139, 250, 0.12);
+      }
+    </style>
   </head>
   <body class="framework-bg-vivid">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -33,6 +77,7 @@
           <a href="/join.html">Join Us</a>
           <a href="/home.html" title="Raid performance &amp; attendance">Performance</a>
           <a href="/leaderboard">Leaderboard</a>
+          <a href="/rankings">Rankings</a>
           <a href="/voting.html" title="Hall of Fame">HoF</a>
         </nav>
         <div class="auth-top-right" data-auth-widget></div>
@@ -53,10 +98,42 @@
           <h2 id="p2-your-need-heading" class="section-title">Craftables you need</h2>
           <p class="subtle mt-2 max-w-prose">
             Pick items you want crafted; each line uses TBC recipe data for Nether Vortex cost. Totals are summed per person
-            (no separate “extra vortex” pool).
+            (no separate “extra vortex” pool). Choose which character the request is for (Main or Alt).
           </p>
 
           <div class="mt-6 grid gap-6">
+            <div class="flex flex-col gap-2 p2-character-picker">
+              <span class="text-sm font-medium text-zinc-300">For character</span>
+              <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                <select
+                  id="vortexCharacterSelect"
+                  class="admin-input p2-input-focus flex-1 min-w-0 sm:min-w-[220px] max-w-full rounded-lg border-white/10 bg-black/20"
+                  aria-label="Character for this craftables request"
+                >
+                  <option value="">Select character…</option>
+                  <option value="__custom__">Other name…</option>
+                </select>
+                <input
+                  id="vortexCharacterCustom"
+                  class="admin-input p2-input-focus flex-1 min-w-0 sm:max-w-xs rounded-lg border-white/10 bg-black/20"
+                  type="text"
+                  placeholder="Type character name"
+                  autocomplete="off"
+                  maxlength="64"
+                  hidden
+                />
+                <div class="p2-character-role" role="group" aria-label="Main or Alt">
+                  <button type="button" class="p2-character-role-btn is-active" data-role="main" id="vortexRoleMain">
+                    Main
+                  </button>
+                  <button type="button" class="p2-character-role-btn" data-role="alt" id="vortexRoleAlt">
+                    Alt
+                  </button>
+                </div>
+              </div>
+              <p class="subtle text-xs m-0">Linked characters appear in the list. Use Other name for a character that is not linked yet.</p>
+            </div>
+
             <div class="flex flex-col gap-2">
               <span class="text-sm font-medium text-zinc-300">Search &amp; add craftables</span>
               <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">

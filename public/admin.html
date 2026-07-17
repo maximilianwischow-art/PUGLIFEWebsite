@@ -8,6 +8,30 @@
     <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
     <link rel="stylesheet" href="/styles.min.css?v=20260522plb-admin-p2-demand-delete-v2" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <style>
+      .p2-character-role-pill {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 6px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        vertical-align: middle;
+      }
+      .p2-character-role-pill--main {
+        color: #fde68a;
+        border: 1px solid rgba(251, 191, 36, 0.45);
+        background: rgba(251, 191, 36, 0.12);
+      }
+      .p2-character-role-pill--alt {
+        color: #c4b5fd;
+        border: 1px solid rgba(167, 139, 250, 0.45);
+        background: rgba(167, 139, 250, 0.12);
+      }
+    </style>
   </head>
   <body class="framework-bg-soft">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -22,6 +46,7 @@
           <a href="/join.html">Join Us</a>
           <a href="/home.html" title="Raid performance &amp; attendance">Performance</a>
           <a href="/leaderboard">Leaderboard</a>
+          <a href="/rankings">Rankings</a>
           <a href="/voting.html" title="Hall of Fame">HoF</a>
           <a href="/admin.html" class="nav-current" aria-current="page">Admin</a>
         </nav>
