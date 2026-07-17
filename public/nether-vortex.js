@@ -58,9 +58,30 @@ let linkedCharacterNames = [];
 let profileMainCharacterName = "";
 let selectedCharacterRole = "main";
 const CUSTOM_CHARACTER_VALUE = "__custom__";
+/** The signed-in user's saved craftable lists, one per character. */
+let myEntries = [];
+/** @type {Map<string, object>} normalized character key → saved entry */
+let myEntriesByCharKey = new Map();
 
-function demandCheckKey(userId, itemId) {
+function charKeyOf(name) {
+  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** Per-character fulfillment key (matches server `p2DemandAdminItemCheckKey`). */
+function demandCheckKeyEntry(entryKey, itemId) {
+  return `${String(entryKey || "").trim()}::${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+/** Legacy `userId:itemId` key, still honored so pre-existing checks show through. */
+function demandLegacyCheckKey(userId, itemId) {
   return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+function isDemandItemChecked(row, itemId) {
+  return (
+    demandCheckedKeys.has(demandCheckKeyEntry(row?.entryKey, itemId)) ||
+    demandCheckedKeys.has(demandLegacyCheckKey(row?.userId, itemId))
+  );
 }
 
 const P2_DEMAND_DONE_ICON =
@@ -464,18 +485,15 @@ function buildDemandRowsForRaider(row) {
   }
 
   const span = items.length;
-  const userId = String(row.userId || "");
   const allItemsChecked =
     items.length > 0 &&
-    items.every((it) =>
-      demandCheckedKeys.has(demandCheckKey(userId, Math.max(0, Math.floor(Number(it.itemID) || 0))))
-    );
+    items.every((it) => isDemandItemChecked(row, Math.max(0, Math.floor(Number(it.itemID) || 0))));
   return items
     .map((it, idx) => {
       const isFirst = idx === 0;
       const isLast = idx === items.length - 1;
       const itemId = Math.max(0, Math.floor(Number(it.itemID) || 0));
-      const checked = demandCheckedKeys.has(demandCheckKey(userId, itemId));
+      const checked = isDemandItemChecked(row, itemId);
       const trCls = [isLast ? "is-group-end" : "", checked ? "is-demand-checked" : ""].filter(Boolean).join(" ");
       const cells = [];
       if (isFirst) {
@@ -555,10 +573,8 @@ function refreshDemandTable() {
   const grandTotal = rows.reduce((sum, row) => sum + entryNetherVortexTotal(row), 0);
   let checkedNv = 0;
   for (const row of rows) {
-    const uid = String(row.userId || "");
     for (const it of row.items || []) {
-      const key = demandCheckKey(uid, Math.max(0, Math.floor(Number(it.itemID) || 0)));
-      if (demandCheckedKeys.has(key)) {
+      if (isDemandItemChecked(row, Math.max(0, Math.floor(Number(it.itemID) || 0)))) {
         checkedNv += vortexNeeded(it?.vortexNeeded);
       }
     }
@@ -606,6 +622,36 @@ function ensureDemandFilterListeners() {
   });
 }
 
+/** Normalize a saved entry's items into the shape `selectedItems` expects. */
+function mapEntryItemsToSelected(entry) {
+  if (!Array.isArray(entry?.items)) return [];
+  return applyCraftableVortexCounts(
+    entry.items.map((row) => {
+      const id = canonicalItemId(row.itemName, row?.itemID);
+      const fromCraft = craftables.find((c) => n(c.itemID) === id);
+      return {
+        ...row,
+        itemID: id,
+        itemName: String(row.itemName || "").trim() || String(fromCraft?.itemName || ""),
+        profession: String(row.profession || "").trim() || String(fromCraft?.profession || ""),
+        vortexNeeded: vortexNeeded(row?.vortexNeeded),
+      };
+    })
+  );
+}
+
+/**
+ * Point `selectedItems` at the saved list for the character currently in the
+ * picker. A character with no saved list (e.g. switching to a fresh Alt) starts
+ * empty, so the same craftable can be added there without colliding with Main.
+ */
+function loadSelectedItemsForCurrentCharacter() {
+  const { name } = getSelectedRequestCharacter();
+  const entry = myEntriesByCharKey.get(charKeyOf(name)) || null;
+  selectedItems = mapEntryItemsToSelected(entry);
+  renderSelectedItems();
+}
+
 async function loadTracker() {
   const meta = document.getElementById("vortexMeta");
   const saveBtn = document.getElementById("vortexSaveBtn");
@@ -643,24 +689,25 @@ async function loadTracker() {
     populateCharacterSelect("");
   }
 
-  const my = payload?.myEntry || null;
-  selectedItems = Array.isArray(my?.items)
-    ? applyCraftableVortexCounts(
-        my.items.map((row) => {
-          const id = canonicalItemId(row.itemName, row?.itemID);
-          const fromCraft = craftables.find((c) => n(c.itemID) === id);
-          return {
-            ...row,
-            itemID: id,
-            itemName: String(row.itemName || "").trim() || String(fromCraft?.itemName || ""),
-            profession: String(row.profession || "").trim() || String(fromCraft?.profession || ""),
-            vortexNeeded: vortexNeeded(row?.vortexNeeded),
-          };
-        })
-      )
-    : [];
-  renderSelectedItems();
-  applyCharacterPickerFromEntry(my);
+  myEntries = Array.isArray(payload?.myEntries)
+    ? payload.myEntries
+    : payload?.myEntry
+      ? [payload.myEntry]
+      : [];
+  myEntriesByCharKey = new Map();
+  for (const entry of myEntries) {
+    myEntriesByCharKey.set(charKeyOf(entry?.requestCharacterName), entry);
+  }
+
+  // Default the picker to the Main character's list when present, else the most
+  // recent saved list, else an empty list for a fresh submission.
+  const defaultEntry =
+    myEntries.find((e) => charKeyOf(e?.requestCharacterName) === charKeyOf(profileMainCharacterName)) ||
+    myEntries.find((e) => String(e?.requestCharacterRole || "").toLowerCase() === "main") ||
+    myEntries[0] ||
+    null;
+  applyCharacterPickerFromEntry(defaultEntry);
+  loadSelectedItemsForCurrentCharacter();
 
   const canUseCraftables = craftables.length > 0;
   if (saveBtn) saveBtn.disabled = !canEdit;
@@ -728,6 +775,17 @@ document.getElementById("vortexCharacterSelect")?.addEventListener("change", () 
     setCharacterRole(roleForLinkedCharacter(select.value));
   } else if (select.value === CUSTOM_CHARACTER_VALUE) {
     setCharacterRole("alt");
+  }
+  // Switching character loads *that* character's saved craftables (or empty).
+  loadSelectedItemsForCurrentCharacter();
+});
+
+// For a typed "Other name…", only pull a saved list if one exists for that name;
+// otherwise keep whatever items are in progress (a brand-new character list).
+document.getElementById("vortexCharacterCustom")?.addEventListener("change", () => {
+  const { name } = getSelectedRequestCharacter();
+  if (myEntriesByCharKey.has(charKeyOf(name))) {
+    loadSelectedItemsForCurrentCharacter();
   }
 });
 

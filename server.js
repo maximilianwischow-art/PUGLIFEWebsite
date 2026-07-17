@@ -155,6 +155,7 @@ import {
   nvGetAllCurrent,
   sanitizeNvRequestCharacterName,
   sanitizeNvRequestCharacterRole,
+  nvEntryKey,
   nvGetHistory,
   profileGetByUserId,
   profileGetByUserIds,
@@ -326,7 +327,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260717plb-rankings-p2-character-v1";
+const API_BUILD_ID = "20260717plb-deaths-p2-character-v2";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -7665,15 +7666,19 @@ async function ensureNetherVortexStore() {
       const dbRows = nvGetAllCurrent();
       if (dbRows.length) {
         netherVortexState = {
-          entries: dbRows.map((r) => ({
-            userId: r.userId,
-            displayName: r.displayName,
-            neededCount: Number(r.neededCount) || 0,
-            items: Array.isArray(r.items) ? r.items : [],
-            updatedAt: Number(r.updatedAt) || 0,
-            requestCharacterName: String(r.requestCharacterName || "").trim(),
-            requestCharacterRole: sanitizeNvRequestCharacterRole(r.requestCharacterRole),
-          })),
+          entries: dbRows.map((r) => {
+            const requestCharacterName = String(r.requestCharacterName || "").trim();
+            return {
+              entryKey: r.entryKey || nvEntryKey(r.userId, requestCharacterName),
+              userId: r.userId,
+              displayName: r.displayName,
+              neededCount: Number(r.neededCount) || 0,
+              items: Array.isArray(r.items) ? r.items : [],
+              updatedAt: Number(r.updatedAt) || 0,
+              requestCharacterName,
+              requestCharacterRole: sanitizeNvRequestCharacterRole(r.requestCharacterRole),
+            };
+          }),
         };
       }
     } catch (error) {
@@ -7683,22 +7688,39 @@ async function ensureNetherVortexStore() {
   return netherVortexReady;
 }
 
-function p2DemandAdminItemCheckKey(userId, itemId) {
+/**
+ * Fulfillment-check key. Keyed by the per-character `entryKey` so the same item
+ * reserved on both Main and Alt can be marked done independently. A legacy
+ * `userId:itemId` key (from before per-character lists) is still honored on read
+ * via {@link p2DemandLegacyCheckKey} so existing checks are not lost.
+ */
+function p2DemandAdminItemCheckKey(entryKey, itemId) {
+  return `${String(entryKey || "").trim()}::${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+function p2DemandLegacyCheckKey(userId, itemId) {
   return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
 }
 
-async function adminDeleteP2DemandItem(userId, itemID) {
-  const uid = String(userId || "").trim();
+async function adminDeleteP2DemandItem(entryKeyOrUserId, itemID, opts = {}) {
   const targetItemId = Math.max(0, Math.floor(Number(itemID) || 0));
-  if (!uid || !targetItemId) {
-    const err = new Error("userId and itemID are required");
+  const rawEntryKey = String(opts.entryKey || "").trim();
+  const rawUserId = String(opts.userId || (rawEntryKey ? "" : entryKeyOrUserId) || "").trim();
+  const entryKey = rawEntryKey || (String(entryKeyOrUserId || "").includes("::") ? String(entryKeyOrUserId).trim() : "");
+  if ((!entryKey && !rawUserId) || !targetItemId) {
+    const err = new Error("entryKey (or userId) and itemID are required");
     err.statusCode = 400;
     throw err;
   }
 
   await ensureNetherVortexStore();
   const prev = netherVortexState.entries || [];
-  const idx = prev.findIndex((row) => String(row?.userId || "") === uid);
+  const matchEntry = (row) => {
+    const rowKey = String(row?.entryKey || nvEntryKey(row?.userId, row?.requestCharacterName));
+    if (entryKey) return rowKey === entryKey;
+    return String(row?.userId || "") === rawUserId;
+  };
+  const idx = prev.findIndex(matchEntry);
   if (idx < 0) {
     const err = new Error("No demand found for this raider");
     err.statusCode = 404;
@@ -7706,6 +7728,8 @@ async function adminDeleteP2DemandItem(userId, itemID) {
   }
 
   const entry = prev[idx];
+  const uid = String(entry.userId || "").trim();
+  const resolvedEntryKey = String(entry.entryKey || nvEntryKey(uid, entry.requestCharacterName));
   const currentItems = sanitizeNetherVortexItems(entry.items);
   const hasItem = currentItems.some(
     (it) => Math.max(0, Math.floor(Number(it.itemID || 0))) === targetItemId
@@ -7734,7 +7758,8 @@ async function adminDeleteP2DemandItem(userId, itemID) {
 
   try {
     if (!remainingItems.length) {
-      nvDeleteCurrent({ userId: uid, displayName, updatedAt });
+      // Clear only this character's list; other characters' lists are preserved.
+      nvDeleteCurrent({ userId: uid, displayName, updatedAt, requestCharacterName });
     } else {
       nvUpsertCurrent({
         userId: uid,
@@ -7752,11 +7777,14 @@ async function adminDeleteP2DemandItem(userId, itemID) {
 
   netherVortexWriteChain = netherVortexWriteChain.catch(() => {}).then(async () => {
     const next = [...(netherVortexState.entries || [])];
-    const rowIdx = next.findIndex((row) => String(row?.userId || "") === uid);
+    const rowIdx = next.findIndex(
+      (row) => String(row?.entryKey || nvEntryKey(row?.userId, row?.requestCharacterName)) === resolvedEntryKey
+    );
     if (!remainingItems.length) {
       if (rowIdx >= 0) next.splice(rowIdx, 1);
     } else if (rowIdx >= 0) {
       next[rowIdx] = {
+        entryKey: resolvedEntryKey,
         userId: uid,
         displayName,
         neededCount,
@@ -7772,9 +7800,10 @@ async function adminDeleteP2DemandItem(userId, itemID) {
   await netherVortexWriteChain;
 
   await ensureP2DemandAdminChecksStore();
-  const checkKey = p2DemandAdminItemCheckKey(uid, targetItemId);
   const set = new Set(p2DemandAdminChecksState.checkedKeys || []);
-  if (set.delete(checkKey)) {
+  const removedNew = set.delete(p2DemandAdminItemCheckKey(resolvedEntryKey, targetItemId));
+  const removedLegacy = set.delete(p2DemandLegacyCheckKey(uid, targetItemId));
+  if (removedNew || removedLegacy) {
     p2DemandAdminChecksState = { checkedKeys: [...set], updatedAt: Date.now() };
     p2DemandAdminChecksWriteChain = p2DemandAdminChecksWriteChain.catch(() => {}).then(async () => {
       await persistP2DemandAdminChecksStore();
@@ -7782,17 +7811,21 @@ async function adminDeleteP2DemandItem(userId, itemID) {
     await p2DemandAdminChecksWriteChain;
   }
 
-  return { userId: uid, itemID: targetItemId, remainingItemCount: remainingItems.length };
+  return { userId: uid, entryKey: resolvedEntryKey, itemID: targetItemId, remainingItemCount: remainingItems.length };
+}
+
+function netherVortexRowIsItemChecked(set, row, itemId) {
+  const uid = String(row.userId || "");
+  const entryKey = String(row.entryKey || nvEntryKey(uid, row.requestCharacterName));
+  return set.has(p2DemandAdminItemCheckKey(entryKey, itemId)) || set.has(p2DemandLegacyCheckKey(uid, itemId));
 }
 
 function netherVortexCheckedNvFromEntries(entries, checkedKeys) {
   const set = new Set(Array.isArray(checkedKeys) ? checkedKeys : []);
   let sum = 0;
   for (const row of entries || []) {
-    const uid = String(row.userId || "");
     for (const it of row.items || []) {
-      const key = p2DemandAdminItemCheckKey(uid, it.itemID);
-      if (!set.has(key)) continue;
+      if (!netherVortexRowIsItemChecked(set, row, it.itemID)) continue;
       const x = Number(it.vortexNeeded);
       sum += Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
     }
@@ -7877,6 +7910,7 @@ async function buildNetherVortexGuildNeedRows() {
         wclEventCount = wclCtx.wclEventByUserId.get(canonicalUserId) ?? 0;
       }
       return {
+        entryKey: String(row.entryKey || nvEntryKey(userId, requestCharacterName)),
         userId,
         displayName: discordName,
         raidHelperName: rhSignupName || null,
@@ -12690,7 +12724,10 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
     const session = getSessionFromRequest(req);
     const userId = String(session?.user?.id || "").trim();
     const rows = await buildNetherVortexGuildNeedRows();
-    const myEntry = userId ? rows.find((row) => row.userId === userId) || null : null;
+    // A user can now hold one list per character (Main/Alt), so return all of
+    // their entries; `myEntry` stays as a convenience default (most recent).
+    const myEntries = userId ? rows.filter((row) => row.userId === userId) : [];
+    const myEntry = myEntries[0] || null;
     const totalNeeded = rows.reduce((sum, row) => sum + netherVortexEntryTotal(row), 0);
     await ensureP2DemandAdminChecksStore();
     const checkedKeys = [...(p2DemandAdminChecksState.checkedKeys || [])];
@@ -12700,6 +12737,7 @@ app.get("/api/nether-vortex/needs", async (req, res) => {
       authenticated: Boolean(userId),
       entries: rows,
       myEntry,
+      myEntries,
       totalNeeded,
       checkedKeys,
       checkedNv,
@@ -12737,14 +12775,20 @@ app.patch("/api/admin/p2-demand/check", async (req, res) => {
     const userId = String(req.body?.userId || "").trim();
     const itemID = Math.max(0, Math.floor(Number(req.body?.itemID ?? req.body?.itemId ?? 0)));
     const checked = Boolean(req.body?.checked);
-    if (!userId || !itemID) {
-      return res.status(400).json({ ok: false, error: "userId and itemID are required" });
+    // Prefer the per-character entryKey; fall back to userId (single-list legacy).
+    const entryKey = String(req.body?.entryKey || "").trim() || (userId ? nvEntryKey(userId, req.body?.requestCharacterName) : "");
+    if ((!entryKey && !userId) || !itemID) {
+      return res.status(400).json({ ok: false, error: "entryKey (or userId) and itemID are required" });
     }
-    const key = p2DemandAdminItemCheckKey(userId, itemID);
+    const key = p2DemandAdminItemCheckKey(entryKey || userId, itemID);
     await ensureP2DemandAdminChecksStore();
     const set = new Set(p2DemandAdminChecksState.checkedKeys || []);
     if (checked) set.add(key);
-    else set.delete(key);
+    else {
+      set.delete(key);
+      // Also drop any legacy `userId:itemId` mark so unchecking is complete.
+      if (userId) set.delete(p2DemandLegacyCheckKey(userId, itemID));
+    }
     p2DemandAdminChecksState = { checkedKeys: [...set], updatedAt: Date.now() };
     p2DemandAdminChecksWriteChain = p2DemandAdminChecksWriteChain.catch(() => {}).then(async () => {
       await persistP2DemandAdminChecksStore();
@@ -12760,8 +12804,9 @@ app.delete("/api/admin/p2-demand/item", async (req, res) => {
   try {
     if (!requireAdminSession(req, res)) return;
     const userId = String(req.body?.userId || "").trim();
+    const entryKey = String(req.body?.entryKey || "").trim();
     const itemID = Math.max(0, Math.floor(Number(req.body?.itemID ?? req.body?.itemId ?? 0)));
-    const result = await adminDeleteP2DemandItem(userId, itemID);
+    const result = await adminDeleteP2DemandItem(entryKey || userId, itemID, { entryKey, userId });
     return res.json({ ok: true, deleted: true, ...result });
   } catch (error) {
     const status = Number(error?.statusCode) || 500;
@@ -12825,10 +12870,14 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
       console.warn("[item-needs-db] nvUpsertCurrent failed:", error?.message || error);
     }
 
+    const entryKey = nvEntryKey(userId, requestCharacterName);
     // Recover from a prior rejected persist so the queue does not stay broken forever.
     netherVortexWriteChain = netherVortexWriteChain.catch(() => {}).then(async () => {
       const prev = netherVortexState.entries || [];
-      const idx = prev.findIndex((row) => String(row?.userId || "") === userId);
+      // Match this exact (user, character) entry — other characters' lists stay put.
+      const idx = prev.findIndex(
+        (row) => String(row?.entryKey || nvEntryKey(row?.userId, row?.requestCharacterName)) === entryKey
+      );
       if (!items.length) {
         if (idx >= 0) prev.splice(idx, 1);
         netherVortexState.entries = prev;
@@ -12836,6 +12885,7 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
         return;
       }
       const nextEntry = {
+        entryKey,
         userId,
         displayName,
         neededCount,
@@ -12852,6 +12902,7 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
     await netherVortexWriteChain;
     return res.json({
       ok: true,
+      entryKey,
       requestCharacterName,
       requestCharacterRole,
     });
@@ -23937,52 +23988,8 @@ app.get("/api/wcl/guild/:guildId/death-leaderboard", async (req, res) => {
   }
 
   try {
-    const reports = await getFilteredGuildReportsForGuild(guildId, limit);
-    const totals = new Map();
-    let scannedReports = 0;
-    const detailCap = wclPerReportDetailCap();
-    let detailFetches = 0;
-
-    for (const report of reports) {
-      const fightIds = (report.fights || [])
-        .filter((fight) => {
-          const zoneName = fight?.gameZone?.name || "";
-          return (
-            Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
-            Number(fight?.encounterID || 0) > 0
-          );
-        })
-        .map((fight) => Number(fight.id))
-        .filter((id) => Number.isInteger(id) && id > 0);
-
-      if (!fightIds.length) continue;
-      if (detailFetches >= detailCap) break;
-      detailFetches += 1;
-      scannedReports += 1;
-
-      const deathQuery = `
-        query ReportDeaths($code: String!, $fightIds: [Int!]) {
-          reportData {
-            report(code: $code) {
-              deaths: table(dataType: Deaths, fightIDs: $fightIds)
-            }
-          }
-        }
-      `;
-
-      for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
-        const deathsData = await queryWcl(deathQuery, { code: report.code, fightIds: chunk });
-        const deathsTable = parseWclTable(deathsData?.reportData?.report?.deaths);
-        const entries = deathsTable?.entries || [];
-        for (const entry of entries) {
-          const playerName = String(entry?.name || "").trim();
-          if (!playerName) continue;
-          const deaths = deathCountFromEntry(entry);
-          if (deaths <= 0) continue;
-          totals.set(playerName, (totals.get(playerName) || 0) + deaths);
-        }
-      }
-    }
+    const { reports: deathReports, reportCodes } = await collectReportsForDeathTotalsWindow(guildId);
+    const { totals, scannedReports } = await accumulateDeathTotalsFromReports(deathReports);
 
     const topParam = req.query.top;
     const top =
@@ -23998,6 +24005,7 @@ app.get("/api/wcl/guild/:guildId/death-leaderboard", async (req, res) => {
     return res.json({
       guildId,
       scannedReports,
+      reportCodes: reportCodes || [],
       leaderboard,
     });
   } catch (error) {
@@ -26249,6 +26257,117 @@ registerSyncTask({
 });
 
 /**
+ * Report set for Most Deaths / death_totals — same "last N raids" window as
+ * Rankings copy + Event Management. Prefer curated `selectedReportCodes`
+ * (newest-first list order from admin), fetching by code when a curated log
+ * is missing from the guild top-N feed. Falls back to filtered 25-man guild
+ * reports when curation is empty.
+ *
+ * Important: do not derive this set solely from `raid_appearances` — that
+ * table is filled from the guild feed and can omit Event Management link
+ * imports (e.g. newest SSC/TK logs), which is exactly how death totals got
+ * out of sync with the "last 6 raids" UI.
+ */
+async function collectReportsForDeathTotalsWindow(guildId) {
+  await ensureGargulLootHistoryStore().catch(() => {});
+  const recentN = wclAttendanceRecentRaidCount();
+  const selected = Array.from(
+    new Set((gargulLootState?.selectedReportCodes || []).map((x) => String(x || "").trim()).filter(Boolean))
+  );
+
+  const targetCodes = selected.length ? selected.slice(0, recentN) : [];
+
+  const out = [];
+  const seen = new Set();
+
+  async function pushFetchedCode(code) {
+    const c = String(code || "").trim();
+    if (!c || seen.has(c) || !isFetchableWclReportCode(c)) return;
+    seen.add(c);
+    try {
+      const report = await fetchGuildDashboardReportByCode(c);
+      if (!report) return;
+      const normalized = { ...report, code: String(report.code || c).trim() };
+      // Curated codes are admin-approved — do not strip fights by weekday.
+      const filtered = filterGuildRaidReports([normalized], { skipRaidNightSchedule: true });
+      if (filtered[0]) out.push(filtered[0]);
+    } catch (error) {
+      console.warn(`[deaths] WCL report fetch failed for ${c}:`, error?.message || error);
+    }
+  }
+
+  if (targetCodes.length) {
+    for (const code of targetCodes) {
+      await pushFetchedCode(code);
+    }
+    return { reports: out, reportCodes: targetCodes, source: "event-management-last-n" };
+  }
+
+  let reports = await getFilteredGuildReportsForGuild(
+    guildId,
+    Math.max(wclMaxGuildReportsLimit(), recentN)
+  ).catch(() => []);
+  reports = (reports || []).filter((r) => !isTenPlayerGuildReport(r));
+  reports.sort(
+    (a, b) => Number(reportStartTimeMs(b?.startTime) || 0) - Number(reportStartTimeMs(a?.startTime) || 0)
+  );
+  const sliced = reports.slice(0, recentN);
+  return {
+    reports: sliced,
+    reportCodes: sliced.map((r) => String(r?.code || "")).filter(Boolean),
+    source: "guild-feed-last-n",
+  };
+}
+
+/** Sum boss-fight deaths (tracked zones, encounterID > 0) across reports. */
+async function accumulateDeathTotalsFromReports(reports) {
+  const totals = new Map();
+  let scannedReports = 0;
+  const deathQuery = `
+    query ReportDeaths($code: String!, $fightIds: [Int!]) {
+      reportData {
+        report(code: $code) {
+          deaths: table(dataType: Deaths, fightIDs: $fightIds)
+        }
+      }
+    }
+  `;
+  for (const report of reports || []) {
+    try {
+      const fightIds = (report.fights || [])
+        .filter((fight) => {
+          const zoneName = fight?.gameZone?.name || "";
+          return (
+            Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
+            Number(fight?.encounterID || 0) > 0
+          );
+        })
+        .map((fight) => Number(fight.id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (!fightIds.length) continue;
+      for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
+        const data = await queryWcl(deathQuery, { code: report.code, fightIds: chunk });
+        const table = parseWclTable(data?.reportData?.report?.deaths);
+        for (const entry of table?.entries || []) {
+          const playerName = String(entry?.name || "").trim();
+          if (!playerName) continue;
+          const deaths = deathCountFromEntry(entry);
+          if (deaths <= 0) continue;
+          totals.set(playerName, (totals.get(playerName) || 0) + deaths);
+        }
+      }
+      scannedReports += 1;
+    } catch (error) {
+      console.warn(
+        `[deaths] table fetch failed for ${report?.code || "?"}:`,
+        error?.message || error
+      );
+    }
+  }
+  return { totals, scannedReports };
+}
+
+/**
  * Walk the rolling window of guild reports and materialise attendance,
  * deaths, first-clears, and best-time roster into their respective
  * tables. The endpoints under `/api/wcl/guild/:gid/...` then read from
@@ -26334,56 +26453,8 @@ async function runSyncAttendance() {
     console.warn("[sync:attendance] best-time step failed:", error?.message || error);
   }
 
-  // ---------- death_totals (rolling window) -------------------------------
-  // Mirrors /death-leaderboard logic, but writes per-user rows so multiple
-  // alts collapse into one canonical user.
-  try {
-    const totals = new Map();
-    const detailCap = wclPerReportDetailCap();
-    let detailFetches = 0;
-    for (const report of reports) {
-      const fightIds = (report.fights || [])
-        .filter((fight) => {
-          const zoneName = fight?.gameZone?.name || "";
-          return (
-            Object.prototype.hasOwnProperty.call(TRACKED_RAIDS, zoneName) &&
-            Number(fight?.encounterID || 0) > 0
-          );
-        })
-        .map((fight) => Number(fight.id))
-        .filter((id) => Number.isInteger(id) && id > 0);
-      if (!fightIds.length) continue;
-      if (detailFetches >= detailCap) break;
-      detailFetches += 1;
-      const deathQuery = `
-        query ReportDeaths($code: String!, $fightIds: [Int!]) {
-          reportData {
-            report(code: $code) {
-              deaths: table(dataType: Deaths, fightIDs: $fightIds)
-            }
-          }
-        }
-      `;
-      for (const chunk of chunkPositiveInts(fightIds, wclMaxFightIdsPerQuery())) {
-        const data = await queryWcl(deathQuery, { code: report.code, fightIds: chunk });
-        const table = parseWclTable(data?.reportData?.report?.deaths);
-        for (const entry of table?.entries || []) {
-          const playerName = String(entry?.name || "").trim();
-          if (!playerName) continue;
-          const deaths = deathCountFromEntry(entry);
-          if (deaths <= 0) continue;
-          totals.set(playerName, (totals.get(playerName) || 0) + deaths);
-        }
-      }
-    }
-    const rowsArr = [...totals.entries()].map(([characterName, deaths]) => ({ characterName, deaths }));
-    const result = deathTotalsReplaceForWindow({ windowLabel: "last-rolling-window", rows: rowsArr });
-    totalRowsChanged += result?.rows || 0;
-  } catch (error) {
-    console.warn("[sync:attendance] death-totals step failed:", error?.message || error);
-  }
-
   // ---------- raid_attendance (per-user rolling window) -------------------
+  // Runs before death_totals so auto-adopted WCL names exist when deaths resolve.
   try {
     const { raidSnapshots, wclDisplayByLower } = await gatherAttendanceRaidSnapshots(guildId, reportLimit, {
       twentyFiveManOnly: true,
@@ -26457,6 +26528,23 @@ async function runSyncAttendance() {
     }
   } catch (error) {
     console.warn("[sync:attendance] raid_attendance step failed:", error?.message || error);
+  }
+
+  // ---------- death_totals (last-N curated / attendance window) -----------
+  // Same Event Management last-N set as attendance Rankings copy — not the
+  // broader guild detail-cap rolling scan (which undercounted players whose
+  // recent curated logs sit outside the guild top-N feed).
+  try {
+    const { reports: deathReports, reportCodes, source } = await collectReportsForDeathTotalsWindow(guildId);
+    const { totals, scannedReports } = await accumulateDeathTotalsFromReports(deathReports);
+    const rowsArr = [...totals.entries()].map(([characterName, deaths]) => ({ characterName, deaths }));
+    const result = deathTotalsReplaceForWindow({ windowLabel: "last-rolling-window", rows: rowsArr });
+    totalRowsChanged += result?.rows || 0;
+    console.info(
+      `[sync:attendance] death_totals source=${source} codes=${reportCodes.length} scanned=${scannedReports} players=${result?.rows || 0}`
+    );
+  } catch (error) {
+    console.warn("[sync:attendance] death-totals step failed:", error?.message || error);
   }
 
   return { rowsChanged: totalRowsChanged };

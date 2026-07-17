@@ -1781,8 +1781,21 @@ let adminP2DemandCheckedKeys = new Set();
 const adminP2DemandItemMeta = new Map();
 let adminP2DemandFilterBound = false;
 
-function adminP2DemandCheckKey(userId, itemId) {
+/** Per-character fulfillment key (matches server `p2DemandAdminItemCheckKey`). */
+function adminP2DemandCheckKey(entryKey, itemId) {
+  return `${String(entryKey || "").trim()}::${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+/** Legacy `userId:itemId` key, still honored so pre-existing checks show through. */
+function adminP2DemandLegacyCheckKey(userId, itemId) {
   return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+function adminIsDemandItemChecked(row, itemId) {
+  return (
+    adminP2DemandCheckedKeys.has(adminP2DemandCheckKey(row?.entryKey, itemId)) ||
+    adminP2DemandCheckedKeys.has(adminP2DemandLegacyCheckKey(row?.userId, itemId))
+  );
 }
 
 function adminP2DemandRowNvTotal(row) {
@@ -1869,20 +1882,21 @@ function adminP2DemandItemCellHtml(itemId, itemName) {
   return `<div class="loot-item-name p2-demand-item" data-loot-item-id="${id}" title="${esc(tip)}">${icon}<span class="p2-demand-item-name">${esc(itemName)}</span></div>`;
 }
 
-function adminP2DemandCheckCellHtml(userId, itemId, checked) {
+function adminP2DemandCheckCellHtml(entryKey, userId, itemId, checked) {
   return `<label class="p2-demand-admin-check" title="Mark fulfilled">
-    <input type="checkbox" class="p2-demand-admin-check-input" data-p2-demand-check="1" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}"${checked ? " checked" : ""} />
+    <input type="checkbox" class="p2-demand-admin-check-input" data-p2-demand-check="1" data-entry-key="${esc(String(entryKey || ""))}" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}"${checked ? " checked" : ""} />
     <span class="visually-hidden">Done</span>
   </label>`;
 }
 
-function adminP2DemandRemoveCellHtml(userId, itemId, itemName, raiderName) {
-  return `<button type="button" class="event-signup-btn event-signup-btn--softres" data-p2-demand-delete="1" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}" data-item-name="${esc(String(itemName || ""))}" data-raider-name="${esc(String(raiderName || ""))}">Remove</button>`;
+function adminP2DemandRemoveCellHtml(entryKey, userId, itemId, itemName, raiderName) {
+  return `<button type="button" class="event-signup-btn event-signup-btn--softres" data-p2-demand-delete="1" data-entry-key="${esc(String(entryKey || ""))}" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}" data-item-name="${esc(String(itemName || ""))}" data-raider-name="${esc(String(raiderName || ""))}">Remove</button>`;
 }
 
 function adminP2DemandRowsHtmlForRaider(row) {
   const items = Array.isArray(row.items) && row.items.length ? row.items : [];
   const userId = String(row.userId || "");
+  const entryKey = String(row.entryKey || "");
   const raiderLabel = String(
     row.requestCharacterName || row.characterName || row.displayName || "this raider"
   ).trim();
@@ -1911,20 +1925,20 @@ function adminP2DemandRowsHtmlForRaider(row) {
   return items
     .map((it, idx) => {
       const itemId = Math.max(0, Math.floor(Number(it.itemID || 0)));
-      const checked = adminP2DemandCheckedKeys.has(adminP2DemandCheckKey(userId, itemId));
+      const checked = adminIsDemandItemChecked(row, itemId);
       const trCls = [idx === items.length - 1 ? "is-group-end" : "", checked ? "is-demand-checked" : ""]
         .filter(Boolean)
         .join(" ");
       const isFirst = idx === 0;
       const cells = [];
-      cells.push(`<td class="cell-check">${adminP2DemandCheckCellHtml(userId, itemId, checked)}</td>`);
+      cells.push(`<td class="cell-check">${adminP2DemandCheckCellHtml(entryKey, userId, itemId, checked)}</td>`);
       if (isFirst) {
         cells.push(`<td class="cell-raider"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`);
       }
       cells.push(`<td class="cell-item">${adminP2DemandItemCellHtml(itemId, it.itemName)}</td>`);
       cells.push(`<td class="cell-prof">${it.profession ? esc(it.profession) : "—"}</td>`);
       cells.push(
-        `<td class="cell-remove">${adminP2DemandRemoveCellHtml(userId, itemId, it.itemName, raiderLabel)}</td>`
+        `<td class="cell-remove">${adminP2DemandRemoveCellHtml(entryKey, userId, itemId, it.itemName, raiderLabel)}</td>`
       );
       if (isFirst) {
         cells.push(`<td class="cell-num"${span > 1 ? ` rowspan="${span}"` : ""}>${totalNv}</td>`);
@@ -1961,10 +1975,8 @@ function refreshAdminP2DemandTable() {
   const grandTotal = rows.reduce((sum, row) => sum + adminP2DemandRowNvTotal(row), 0);
   let checkedNv = 0;
   for (const row of rows) {
-    const uid = String(row.userId || "");
     for (const it of row.items || []) {
-      const key = adminP2DemandCheckKey(uid, it.itemID);
-      if (adminP2DemandCheckedKeys.has(key)) {
+      if (adminIsDemandItemChecked(row, it.itemID)) {
         const x = Number(it.vortexNeeded);
         checkedNv += Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
       }
@@ -8945,20 +8957,25 @@ document.addEventListener("change", async (event) => {
   const cb = event.target.closest("[data-p2-demand-check]");
   if (!cb || !(cb instanceof HTMLInputElement)) return;
   const userId = String(cb.getAttribute("data-user-id") || "").trim();
+  const entryKey = String(cb.getAttribute("data-entry-key") || "").trim() || userId;
   const itemID = Math.max(0, Math.floor(Number(cb.getAttribute("data-item-id") || 0)));
-  if (!userId || !itemID) return;
-  const key = adminP2DemandCheckKey(userId, itemID);
+  if ((!entryKey && !userId) || !itemID) return;
+  const key = adminP2DemandCheckKey(entryKey, itemID);
+  const legacyKey = adminP2DemandLegacyCheckKey(userId, itemID);
   const checked = cb.checked;
   const tr = cb.closest("tr");
   if (checked) adminP2DemandCheckedKeys.add(key);
-  else adminP2DemandCheckedKeys.delete(key);
+  else {
+    adminP2DemandCheckedKeys.delete(key);
+    adminP2DemandCheckedKeys.delete(legacyKey);
+  }
   tr?.classList.toggle("is-demand-checked", checked);
   cb.disabled = true;
   try {
     await getJson("/api/admin/p2-demand/check", {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ userId, itemID, checked }),
+      body: JSON.stringify({ entryKey, userId, itemID, checked }),
     });
     refreshAdminP2DemandTable();
   } catch (error) {
@@ -8976,10 +8993,11 @@ document.addEventListener("click", async (event) => {
   const btn = event.target.closest("[data-p2-demand-delete]");
   if (!btn || !(btn instanceof HTMLButtonElement)) return;
   const userId = String(btn.getAttribute("data-user-id") || "").trim();
+  const entryKey = String(btn.getAttribute("data-entry-key") || "").trim() || userId;
   const itemID = Math.max(0, Math.floor(Number(btn.getAttribute("data-item-id") || 0)));
   const itemName = String(btn.getAttribute("data-item-name") || "this item").trim();
   const raiderName = String(btn.getAttribute("data-raider-name") || "this raider").trim();
-  if (!userId || !itemID) return;
+  if ((!entryKey && !userId) || !itemID) return;
   if (
     !window.confirm(`Remove ${itemName || "this item"} from ${raiderName}'s demand?`)
   ) {
@@ -8990,7 +9008,7 @@ document.addEventListener("click", async (event) => {
     await getJson("/api/admin/p2-demand/item", {
       method: "DELETE",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ userId, itemID }),
+      body: JSON.stringify({ entryKey, userId, itemID }),
     });
     status(`Removed ${itemName || "item"} from ${raiderName}.`);
     await loadAdminP2DemandPanel();
