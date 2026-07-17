@@ -84,6 +84,38 @@ function isDemandItemChecked(row, itemId) {
   );
 }
 
+/** Open (not marked done) items first; received/done last. */
+function sortDemandItemsOpenFirst(row, items) {
+  return (Array.isArray(items) ? items.slice() : []).sort((a, b) => {
+    const aId = Math.max(0, Math.floor(Number(a?.itemID) || 0));
+    const bId = Math.max(0, Math.floor(Number(b?.itemID) || 0));
+    const aDone = isDemandItemChecked(row, aId) ? 1 : 0;
+    const bDone = isDemandItemChecked(row, bId) ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return String(a?.itemName || "").localeCompare(String(b?.itemName || ""));
+  });
+}
+
+function demandRowOpenItemCount(row) {
+  const items = Array.isArray(row?.items) ? row.items : [];
+  let open = 0;
+  for (const it of items) {
+    const id = Math.max(0, Math.floor(Number(it?.itemID) || 0));
+    if (!isDemandItemChecked(row, id)) open += 1;
+  }
+  return open;
+}
+
+function compareDemandRowsOpenFirst(a, b) {
+  const aOpen = demandRowOpenItemCount(a);
+  const bOpen = demandRowOpenItemCount(b);
+  const aHasOpen = aOpen > 0 ? 1 : 0;
+  const bHasOpen = bOpen > 0 ? 1 : 0;
+  if (aHasOpen !== bHasOpen) return bHasOpen - aHasOpen;
+  if (aOpen !== bOpen) return bOpen - aOpen;
+  return entryNetherVortexTotal(b) - entryNetherVortexTotal(a);
+}
+
 const P2_DEMAND_DONE_ICON =
   '<svg class="p2-demand-status-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M6.2 11.2 3.4 8.4l1-1 2.8 2.8 5.4-5.4 1 1z"/></svg>';
 
@@ -463,7 +495,8 @@ function renderDemandItemCell(itemId, itemName, isDone) {
  * still gets a row per item without nesting a list inside a single cell.
  */
 function buildDemandRowsForRaider(row) {
-  const items = Array.isArray(row.items) && row.items.length ? row.items : [];
+  const items =
+    Array.isArray(row.items) && row.items.length ? sortDemandItemsOpenFirst(row, row.items) : [];
   const totalNv = n(entryNetherVortexTotal(row));
   const updatedIso = row.updatedAt ? new Date(Number(row.updatedAt)).toISOString() : "";
   const updatedLabel = fmtDemandUpdated(row.updatedAt);
@@ -549,7 +582,7 @@ function refreshDemandTable() {
   const q = document.getElementById("vortexDemandSearch")?.value || "";
   const rows = all
     .filter((r) => demandRowMatchesFilter(r, q))
-    .sort((a, b) => entryNetherVortexTotal(b) - entryNetherVortexTotal(a));
+    .sort(compareDemandRowsOpenFirst);
 
   if (!rows.length) {
     tbody.innerHTML = "";

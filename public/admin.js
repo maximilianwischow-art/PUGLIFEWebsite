@@ -1798,6 +1798,37 @@ function adminIsDemandItemChecked(row, itemId) {
   );
 }
 
+function adminSortDemandItemsOpenFirst(row, items) {
+  return (Array.isArray(items) ? items.slice() : []).sort((a, b) => {
+    const aId = Math.max(0, Math.floor(Number(a?.itemID) || 0));
+    const bId = Math.max(0, Math.floor(Number(b?.itemID) || 0));
+    const aDone = adminIsDemandItemChecked(row, aId) ? 1 : 0;
+    const bDone = adminIsDemandItemChecked(row, bId) ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return String(a?.itemName || "").localeCompare(String(b?.itemName || ""));
+  });
+}
+
+function adminDemandRowOpenItemCount(row) {
+  const items = Array.isArray(row?.items) ? row.items : [];
+  let open = 0;
+  for (const it of items) {
+    const id = Math.max(0, Math.floor(Number(it?.itemID) || 0));
+    if (!adminIsDemandItemChecked(row, id)) open += 1;
+  }
+  return open;
+}
+
+function adminCompareDemandRowsOpenFirst(a, b) {
+  const aOpen = adminDemandRowOpenItemCount(a);
+  const bOpen = adminDemandRowOpenItemCount(b);
+  const aHasOpen = aOpen > 0 ? 1 : 0;
+  const bHasOpen = bOpen > 0 ? 1 : 0;
+  if (aHasOpen !== bHasOpen) return bHasOpen - aHasOpen;
+  if (aOpen !== bOpen) return bOpen - aOpen;
+  return adminP2DemandRowNvTotal(b) - adminP2DemandRowNvTotal(a);
+}
+
 function adminP2DemandRowNvTotal(row) {
   const items = Array.isArray(row?.items) ? row.items : [];
   return items.reduce((sum, it) => {
@@ -1894,7 +1925,8 @@ function adminP2DemandRemoveCellHtml(entryKey, userId, itemId, itemName, raiderN
 }
 
 function adminP2DemandRowsHtmlForRaider(row) {
-  const items = Array.isArray(row.items) && row.items.length ? row.items : [];
+  const items =
+    Array.isArray(row.items) && row.items.length ? adminSortDemandItemsOpenFirst(row, row.items) : [];
   const userId = String(row.userId || "");
   const entryKey = String(row.entryKey || "");
   const raiderLabel = String(
@@ -1958,7 +1990,7 @@ function refreshAdminP2DemandTable() {
   const q = document.getElementById("adminP2DemandSearch")?.value || "";
   const rows = all
     .filter((r) => adminP2DemandRowMatchesFilter(r, q))
-    .sort((a, b) => adminP2DemandRowNvTotal(b) - adminP2DemandRowNvTotal(a));
+    .sort(adminCompareDemandRowsOpenFirst);
 
   if (!all.length) {
     host.innerHTML = `<p class="subtle p2-demand-empty">No submissions yet.</p>`;
