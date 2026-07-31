@@ -1447,8 +1447,8 @@ function highestEarnedRaidsWithGuildMilestoneThreshold(player) {
 
 /**
  * Leaderboard collapsed-row badge policy (Events KPI already shows raid count).
- * Strip order: guild role tokens (rendered first) → performance → everything else.
- * Milestone tiers (raids-with-guild-*) stay in expand panel only.
+ * Achievements strip: newest event-night awards on the left, then older clears /
+ * meta / performance. Milestone tiers (raids-with-guild-*) stay in expand panel only.
  */
 const LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS = [
   "best-time-participant",
@@ -1480,7 +1480,7 @@ function badgeLeaderboardCategoryFromCatalog(catalog, badgeId) {
   return "achievements";
 }
 
-function earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, category) {
+function earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, category, recentSet = null) {
   const target = String(category || "").trim();
   const set = earnedSet instanceof Set ? earnedSet : new Set(earnedSet || []);
   const matching = [...set].filter((id) => badgeLeaderboardCategoryFromCatalog(catalog, id) === target);
@@ -1496,7 +1496,7 @@ function earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, category) {
     return matching;
   }
 
-  const ordered = leaderboardRowBadgeDisplayOrder(set);
+  const ordered = leaderboardRowBadgeDisplayOrder(set, recentSet);
   const fromOrder = ordered.filter((id) => matching.includes(id));
   const rest = matching.filter((id) => !fromOrder.includes(id));
   return [...fromOrder, ...rest];
@@ -1539,22 +1539,38 @@ function leaderboardBadgeCatalogEntry(catalog, badgeId) {
   return null;
 }
 
-function leaderboardRowBadgeDisplayOrder(earnedSet) {
+/**
+ * Left-to-right Achievements strip order: latest-raid pulses → newest event
+ * nights → older clears / iron / performance → anything else earned.
+ */
+function leaderboardRowBadgeDisplayOrder(earnedSet, recentSet = null) {
   const set = earnedSet instanceof Set ? earnedSet : new Set(earnedSet || []);
+  const recent = recentSet instanceof Set ? recentSet : new Set(recentSet || []);
   const out = [];
   const push = (id) => {
-    if (set.has(id) && !out.includes(id)) out.push(id);
+    const key = String(id || "").trim();
+    if (key && set.has(key) && !out.includes(key)) out.push(key);
   };
-  for (const id of LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS) push(id);
-  push("iron-attendance");
-  for (const id of LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS) push(id);
+
+  // Badges earned on the latest curated raid night float leftmost.
+  const recentPreferred = LEADERBOARD_ROW_EVENT_BADGE_RECENCY.filter((id) => recent.has(id));
+  for (const id of recentPreferred) push(id);
+  for (const id of recent) {
+    if (String(id).startsWith("raids-with-guild-")) continue;
+    if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
+    if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id)) continue;
+    push(id);
+  }
+
   for (const id of LEADERBOARD_ROW_EVENT_BADGE_RECENCY) push(id);
+  for (const id of LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS) push(id);
+  push("iron-attendance");
+  for (const id of LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS) push(id);
   for (const id of set) {
     if (String(id).startsWith("raids-with-guild-")) continue;
     if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
     if (LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS.includes(id)) continue;
     if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id)) continue;
-    if (LEADERBOARD_COMBO_BADGE_IDS.has(id)) continue;
     if (!out.includes(id)) out.push(id);
   }
   return out;
@@ -1763,23 +1779,45 @@ function leaderboardRowBadgesHtml(player, opts = {}) {
       : [];
   const earnedSet = new Set(earnedRaw.map((id) => String(id || "").trim()).filter(Boolean));
   const recentSet = new Set(recentRaw.map((id) => String(id || "").trim()).filter(Boolean));
-  const comboIds = comboBadgeIdsFromCatalog();
   const combos = Array.isArray(achievementBadgeCombos) ? achievementBadgeCombos : window.plbAchievementBadgeCombos || [];
-  const comboHtml = combos
-    .map((combo) => renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet))
-    .join("");
-  const ordered = earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "achievements").filter(
-    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id) && !comboIds.has(id)
+  const comboByPartId = new Map();
+  for (const combo of combos) {
+    for (const part of combo?.parts || []) {
+      const partId = String(part?.badgeId || "").trim();
+      if (partId) comboByPartId.set(partId, combo);
+    }
+  }
+
+  const ordered = earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "achievements", recentSet).filter(
+    (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)
   );
-  return `${comboHtml}${ordered
-    .map((id) =>
-      renderLeaderboardAchievementBadgeIcon(
-        id,
-        leaderboardBadgeCatalogEntry(catalog, id),
-        recentSet.has(id)
-      )
-    )
-    .join("")}`;
+
+  const htmlParts = [];
+  const renderedComboIds = new Set();
+  for (const id of ordered) {
+    const combo = comboByPartId.get(id);
+    if (combo) {
+      const comboId = String(combo.id || "").trim() || id;
+      if (renderedComboIds.has(comboId)) continue;
+      renderedComboIds.add(comboId);
+      const comboHtml = renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet);
+      if (comboHtml) htmlParts.push(comboHtml);
+      continue;
+    }
+    htmlParts.push(
+      renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id), recentSet.has(id))
+    );
+  }
+
+  // Any combo with earned parts that never appeared in the ordered walk.
+  for (const combo of combos) {
+    const comboId = String(combo?.id || "").trim();
+    if (!comboId || renderedComboIds.has(comboId)) continue;
+    const comboHtml = renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet);
+    if (comboHtml) htmlParts.push(comboHtml);
+  }
+
+  return htmlParts.join("");
 }
 
 /** Earned/total summary chip with chevron for leaderboard expand affordance. */
