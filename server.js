@@ -327,7 +327,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260731plb-em-snapshot-invalidate-v1";
+const API_BUILD_ID = "20260731plb-tk-0730-solarian-badge-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -15001,6 +15001,17 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     endMs: Date.UTC(2026, 5, 12, 4, 0, 0),
     reportCodes: ["F6njKd7MJ3xPpqL1"],
     raidHelperEventIds: ["1511633862738972723"],
+  },
+  {
+    badgeId: "tk-0730-2026",
+    label: "Solarian Two-Phase",
+    description:
+      "Attended the Tempest Keep raid on 30 July 2026 (ssctk0730). Awarded to every canonical user with a Warcraft Logs appearance in report wD3bchXFCYL496Pt.",
+    icon: "/images/achievements/tk-0730-2026.png",
+    /* July 30 2026 00:00 CEST = July 29 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 6, 29, 22, 0, 0),
+    endMs: Date.UTC(2026, 6, 31, 4, 0, 0),
+    reportCodes: ["wD3bchXFCYL496Pt"],
   },
 ];
 

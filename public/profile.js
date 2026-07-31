@@ -627,6 +627,10 @@
         typeof plb.playerEarnedSpecificEventBadge === "function"
           ? (p) => plb.playerEarnedSpecificEventBadge(p, "ssc-0611-2026")
           : () => false,
+      "tk-0730-2026":
+        typeof plb.playerEarnedSpecificEventBadge === "function"
+          ? (p) => plb.playerEarnedSpecificEventBadge(p, "tk-0730-2026")
+          : () => false,
     };
 
     // Synthetic "player" — feeding the user's primary linked name as

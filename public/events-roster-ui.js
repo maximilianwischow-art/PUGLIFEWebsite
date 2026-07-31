@@ -182,6 +182,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "ssc-first-event": "#14b8a6",
     "ssc-first-clear": "#14b8a6",
     "tk-first-kael-kill": "#22c55e",
+    "tk-0730-2026": "#a855f7",
     "ssc-0611-2026": "#a855f7",
     "double-trouble-ssc": "#14b8a6",
     "double-trouble-tk": "#a855f7",
@@ -1509,6 +1510,7 @@ const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
 
 /** Newest event-night badges first — prepend future dated IDs here. */
 const LEADERBOARD_ROW_EVENT_BADGE_RECENCY = [
+  "tk-0730-2026",
   "double-trouble-ssc",
   "double-trouble-tk",
   "ssc-0611-2026",
@@ -1875,6 +1877,13 @@ function rosterAchievementBadgesHtml(player) {
         "TK First Kael Kill — Attended the guild's first Tempest Keep raid with a Kael'thas Sunstrider kill on 7 June 2026 (4/4, WCL report NnHhqGbLQZvMXd96).",
       alt: "TK First Kael Kill",
       ok: playerEarnedSpecificEventBadge(player, "tk-first-kael-kill"),
+    },
+    {
+      file: "tk-0730-2026.png",
+      title:
+        "Solarian Two-Phase — Attended the Tempest Keep raid on 30 July 2026 (ssctk0730, WCL report wD3bchXFCYL496Pt).",
+      alt: "Solarian Two-Phase",
+      ok: playerEarnedSpecificEventBadge(player, "tk-0730-2026"),
     },
     {
       file: "ssc-0611-2026.png",
