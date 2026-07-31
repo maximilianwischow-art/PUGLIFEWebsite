@@ -14,7 +14,7 @@ function initBackgroundStars() {
 }
 
 const DISCORD_INVITE_URL = "https://discord.gg/TBnt5f8DFc";
-const IMAGE_ASSET_VERSION = "20260607plb-badge-frame-v5";
+const IMAGE_ASSET_VERSION = "20260731plb-tk-solarian-strip-v2";
 /** Same guild as Leaderboard (/) WCL widgets — attendance tiers on roster cards. */
 const EVENTS_WCL_GUILD_ID = 817080;
 /** Slugs under `/images/guild-roles/{slug}.png` — must match server `RH_WCL_GUILD_ROLES` via `.toLowerCase()`. */
@@ -1542,38 +1542,48 @@ function leaderboardBadgeCatalogEntry(catalog, badgeId) {
 /**
  * Left-to-right Achievements strip order: latest-raid pulses → newest event
  * nights → older clears / iron / performance → anything else earned.
+ * Lower rank = further left.
  */
+function achievementStripRecencyRank(badgeId, recentSet = null) {
+  const id = String(badgeId || "").trim();
+  if (!id) return 9999;
+  const recent = recentSet instanceof Set ? recentSet : new Set(recentSet || []);
+  let rank = 500;
+  const eventIdx = LEADERBOARD_ROW_EVENT_BADGE_RECENCY.indexOf(id);
+  if (eventIdx >= 0) rank = eventIdx;
+  else {
+    const clearIdx = LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS.indexOf(id);
+    if (clearIdx >= 0) rank = 100 + clearIdx;
+    else if (id === "iron-attendance") rank = 200;
+    else {
+      const perfIdx = LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS.indexOf(id);
+      if (perfIdx >= 0) rank = 300 + perfIdx;
+      else rank = 400;
+    }
+  }
+  // Latest-raid pulses always beat historical awards of the same family.
+  if (recent.has(id)) rank -= 1000;
+  return rank;
+}
+
 function leaderboardRowBadgeDisplayOrder(earnedSet, recentSet = null) {
   const set = earnedSet instanceof Set ? earnedSet : new Set(earnedSet || []);
   const recent = recentSet instanceof Set ? recentSet : new Set(recentSet || []);
-  const out = [];
-  const push = (id) => {
-    const key = String(id || "").trim();
-    if (key && set.has(key) && !out.includes(key)) out.push(key);
-  };
-
-  // Badges earned on the latest curated raid night float leftmost.
-  const recentPreferred = LEADERBOARD_ROW_EVENT_BADGE_RECENCY.filter((id) => recent.has(id));
-  for (const id of recentPreferred) push(id);
-  for (const id of recent) {
-    if (String(id).startsWith("raids-with-guild-")) continue;
-    if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
-    if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id)) continue;
-    push(id);
-  }
-
-  for (const id of LEADERBOARD_ROW_EVENT_BADGE_RECENCY) push(id);
-  for (const id of LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS) push(id);
-  push("iron-attendance");
-  for (const id of LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS) push(id);
-  for (const id of set) {
-    if (String(id).startsWith("raids-with-guild-")) continue;
-    if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)) continue;
-    if (LEADERBOARD_ROW_PERFORMANCE_BADGE_IDS.includes(id)) continue;
-    if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(id)) continue;
-    if (!out.includes(id)) out.push(id);
-  }
-  return out;
+  return [...set]
+    .filter((id) => {
+      const key = String(id || "").trim();
+      if (!key) return false;
+      if (key.startsWith("raids-with-guild-")) return false;
+      if (LEADERBOARD_ROW_GUILD_BADGE_IDS.has(key)) return false;
+      if (LEADERBOARD_ROW_DYNAMIC_BADGE_ID_SET.has(key)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const ra = achievementStripRecencyRank(a, recent);
+      const rb = achievementStripRecencyRank(b, recent);
+      if (ra !== rb) return ra - rb;
+      return String(a).localeCompare(String(b));
+    });
 }
 
 function comboBadgeIdsFromCatalog() {
@@ -1788,36 +1798,63 @@ function leaderboardRowBadgesHtml(player, opts = {}) {
     }
   }
 
-  const ordered = earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "achievements", recentSet).filter(
+  /** @type {{ kind: "badge"|"combo", id: string, combo?: object, rank: number }[]} */
+  const items = [];
+  const usedComboIds = new Set();
+  const orderedIds = earnedLeaderboardBadgeIdsForCategory(earnedSet, catalog, "achievements", recentSet).filter(
     (id) => !LEADERBOARD_ROW_GUILD_BADGE_IDS.has(id)
   );
 
-  const htmlParts = [];
-  const renderedComboIds = new Set();
-  for (const id of ordered) {
+  for (const id of orderedIds) {
     const combo = comboByPartId.get(id);
     if (combo) {
       const comboId = String(combo.id || "").trim() || id;
-      if (renderedComboIds.has(comboId)) continue;
-      renderedComboIds.add(comboId);
-      const comboHtml = renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet);
-      if (comboHtml) htmlParts.push(comboHtml);
+      if (usedComboIds.has(comboId)) continue;
+      usedComboIds.add(comboId);
+      const partIds = (combo.parts || [])
+        .map((p) => String(p?.badgeId || "").trim())
+        .filter((partId) => earnedSet.has(partId));
+      if (!partIds.length) continue;
+      // Combo sits at the newest earned part's rank (so Solarian stays left of Double Trouble).
+      const rank = Math.min(...partIds.map((partId) => achievementStripRecencyRank(partId, recentSet)));
+      items.push({ kind: "combo", id: comboId, combo, rank });
       continue;
     }
-    htmlParts.push(
-      renderLeaderboardAchievementBadgeIcon(id, leaderboardBadgeCatalogEntry(catalog, id), recentSet.has(id))
-    );
+    items.push({ kind: "badge", id, rank: achievementStripRecencyRank(id, recentSet) });
   }
 
-  // Any combo with earned parts that never appeared in the ordered walk.
   for (const combo of combos) {
     const comboId = String(combo?.id || "").trim();
-    if (!comboId || renderedComboIds.has(comboId)) continue;
-    const comboHtml = renderLeaderboardBadgeComboHtml(combo, earnedSet, catalog, recentSet);
-    if (comboHtml) htmlParts.push(comboHtml);
+    if (!comboId || usedComboIds.has(comboId)) continue;
+    const partIds = (combo.parts || [])
+      .map((p) => String(p?.badgeId || "").trim())
+      .filter((partId) => earnedSet.has(partId));
+    if (!partIds.length) continue;
+    usedComboIds.add(comboId);
+    const rank = Math.min(...partIds.map((partId) => achievementStripRecencyRank(partId, recentSet)));
+    items.push({ kind: "combo", id: comboId, combo, rank });
   }
 
-  return htmlParts.join("");
+  items.sort((a, b) => {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    // Prefer solo event badges over combos when ranks tie.
+    if (a.kind !== b.kind) return a.kind === "badge" ? -1 : 1;
+    return String(a.id).localeCompare(String(b.id));
+  });
+
+  return items
+    .map((item) => {
+      if (item.kind === "combo") {
+        return renderLeaderboardBadgeComboHtml(item.combo, earnedSet, catalog, recentSet);
+      }
+      return renderLeaderboardAchievementBadgeIcon(
+        item.id,
+        leaderboardBadgeCatalogEntry(catalog, item.id),
+        recentSet.has(item.id)
+      );
+    })
+    .filter(Boolean)
+    .join("");
 }
 
 /** Earned/total summary chip with chevron for leaderboard expand affordance. */

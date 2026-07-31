@@ -40,7 +40,7 @@ let leaderboardAchievementBadgeTotal = 0;
  * from `/api/leaderboard` (single SQLite-only call). Previous v3 entries
  * still carry the legacy multi-fetch shape and must be discarded.
  */
-const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v7";
+const LEADERBOARD_SESSION_CACHE_KEY = "plb-lb-sess-v8-achievements-newest-left";
 const LEADERBOARD_SESSION_TTL_MS = 5 * 60 * 1000;
 /** If more than this fraction of cached rows lack className, treat the cache as poisoned. */
 const LEADERBOARD_CACHE_CLASS_MISS_THRESHOLD = 0.2;
@@ -708,11 +708,17 @@ function wireLeaderboardRowBadgeTooltips() {
   lbBadgeTooltipWireAbort?.abort();
   lbBadgeTooltipWireAbort = new AbortController();
   const { signal } = lbBadgeTooltipWireAbort;
+  // Achievements column uses `.leaderboard-badge-strip-achievements`; Role/Dynamic use
+  // `.leaderboard-badge-category-icons`. Inline CSS tooltips are `display:none` here —
+  // the fixed host below is the only tooltip path for row badges.
   const selector =
     ".leaderboard-badge-category-icons .achievement-badge-container, " +
     ".leaderboard-badge-category-icons .guild-role-token, " +
     ".leaderboard-badge-category-icons .achievement-badge-combo, " +
-    ".leaderboard-badge-category-icons .achievement-badge-combo-wrap";
+    ".leaderboard-badge-category-icons .achievement-badge-combo-wrap, " +
+    ".leaderboard-badge-strip-achievements .achievement-badge-container, " +
+    ".leaderboard-badge-strip-achievements .achievement-badge-combo, " +
+    ".leaderboard-badge-strip-achievements .achievement-badge-combo-wrap";
 
   leaderboardTbody.querySelectorAll(selector).forEach((badge) => {
     if (!badge.hasAttribute("tabindex")) badge.setAttribute("tabindex", "0");
@@ -764,7 +770,7 @@ function wireLeaderboardRowExpand() {
     if (ev.target.closest("a, button")) return;
     if (
       ev.target.closest(
-        ".leaderboard-badge-category-icons .achievement-badge-container, .leaderboard-badge-category-icons .guild-role-token"
+        ".leaderboard-badge-category-icons .achievement-badge-container, .leaderboard-badge-category-icons .guild-role-token, .leaderboard-badge-strip-achievements .achievement-badge-container, .leaderboard-badge-strip-achievements .achievement-badge-combo, .leaderboard-badge-strip-achievements .achievement-badge-combo-wrap"
       )
     ) {
       return;
