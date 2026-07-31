@@ -327,7 +327,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260717plb-rankings-consumables-breakdown-v1";
+const API_BUILD_ID = "20260731plb-em-snapshot-invalidate-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -4672,6 +4672,67 @@ async function invalidatePublicFutureEventsSnapshots() {
   await publicDataSnapshotWriteChain;
 }
 
+/**
+ * Paths whose public snapshots embed Event Management selection / last-raid
+ * badge state. Must be dropped when curation changes, otherwise `/api/leaderboard`
+ * can serve forever-stale winners (calendar often looks fresh because the home
+ * page cache-busts with `t=` / `nocache=`).
+ */
+const PUBLIC_RAID_SCOPED_SNAPSHOT_PATHS = new Set([
+  "/api/leaderboard",
+  "/api/rankings",
+]);
+
+function isPublicRaidScopedSnapshotKey(key) {
+  const keyPath = String(key || "").split("?")[0];
+  if (PUBLIC_RAID_SCOPED_SNAPSHOT_PATHS.has(keyPath)) return true;
+  return /^\/api\/wcl\/guild\/\d+\/(boss-times|recent-raids-calendar|latest-raid-mvp|death-leaderboard|attendance|death-encounter-heatmap|active-roster|loot-received|first-clear-participants)$/.test(
+    keyPath
+  );
+}
+
+async function invalidatePublicRaidScopedSnapshots() {
+  await ensurePublicDataSnapshotStore();
+  let changed = false;
+  for (const key of Object.keys(publicDataSnapshotState.byKey || {})) {
+    if (!isPublicRaidScopedSnapshotKey(key)) continue;
+    delete publicDataSnapshotState.byKey[key];
+    changed = true;
+  }
+  if (!changed) return;
+  publicDataSnapshotState.updatedAt = Date.now();
+  publicDataSnapshotWriteChain = publicDataSnapshotWriteChain
+    .then(() => persistPublicDataSnapshotStore())
+    .catch((error) => console.error("[public-snapshot] persist failed:", error?.message || error));
+  await publicDataSnapshotWriteChain;
+}
+
+/** Drop in-memory last-raid badge winners so the next leaderboard build re-resolves. */
+function bustLastRaidBadgeCaches() {
+  parsingCeilingLastRaidKeysCache = null;
+  parsingCeilingLastRaidKeysCacheAt = 0;
+  parsingCeilingRefreshPromise = null;
+  parsingCeilingRefreshPromiseAt = 0;
+  bestParseLastRaidKeysCache = null;
+  bestParseLastRaidKeysCacheAt = 0;
+}
+
+/**
+ * Event Management curation changed — public leaderboard snapshots and last-raid
+ * badge caches must not keep serving the previous "latest raid".
+ */
+async function afterEventManagementSelectionChanged() {
+  bustLastRaidBadgeCaches();
+  await invalidatePublicRaidScopedSnapshots();
+  // Warm winners for the new latest curated report (non-blocking).
+  refreshParsingCeilingLastRaidKeysFromGuild({ light: true }).catch((error) => {
+    console.warn(
+      "[event-management] last-raid badge refresh after selection change failed:",
+      error?.message || error
+    );
+  });
+}
+
 async function setDiscordDmSubscriptionForSessionUser(session, subscribed) {
   await ensureDiscordDmSubscribersStore();
   const userId = String(session?.user?.id || "").trim();
@@ -7996,6 +8057,11 @@ function publicSnapshotKeyFromRequest(req) {
   const params = new URLSearchParams(req.query || {});
   params.delete("live");
   params.delete("snapshot_refresh");
+  // Homepage calendar / boss-times append these for browser cache-busting; they must
+  // not create unique forever-snapshot keys (or the store fills with one-off misses).
+  params.delete("nocache");
+  params.delete("t");
+  params.delete("_");
   const path = snapshotOriginalPath(req);
   const cutoff = sanitizeIdentityPublicActivityCutoff(identityPublicSettingsState?.lastActivityCutoff);
   if (
@@ -10726,6 +10792,8 @@ app.post("/api/admin/public-snapshot/sync", async (req, res) => {
     const syncPaths = [
       "/api/raid-helper/future-events",
       `/api/raid-helper/events-kpi?guildId=${guildId}&maxPastEvents=80&wclLimit=40`,
+      `/api/leaderboard?guildId=${guildId}`,
+      `/api/rankings?board=deaths&limit=50`,
       `/api/wcl/guild/${guildId}/recent-raids-calendar?limit=60`,
       `/api/wcl/guild/${guildId}/boss-times?limit=50`,
       `/api/wcl/guild/${guildId}/latest-raid-mvp?limit=15`,
@@ -17022,6 +17090,7 @@ app.put("/api/loot-history/events/selection", async (req, res) => {
       gargulLootState.selectedReportCodes = [...new Set(sanitized)];
       await persistGargulLootHistory();
       await invalidateLootHistoryCacheEntries();
+      await afterEventManagementSelectionChanged();
     });
     await gargulLootWriteChain;
     return res.json({ ok: true, selected: gargulLootState.selectedReportCodes.length });
@@ -17082,10 +17151,13 @@ app.post("/api/loot-history/events/import", async (req, res) => {
         gargulLootState.selectedReportCodes = nextSelected;
         await persistGargulLootHistory();
         await invalidateLootHistoryCacheEntries();
+        await afterEventManagementSelectionChanged();
       });
       await gargulLootWriteChain;
     } else {
       await invalidateLootHistoryCacheEntries();
+      // Appearances (and possibly selection membership) changed — refresh public raid snapshots.
+      await afterEventManagementSelectionChanged();
     }
 
     return res.json({
@@ -26572,6 +26644,12 @@ async function runSyncAttendance() {
     console.warn("[sync:attendance] death-totals step failed:", error?.message || error);
   }
 
+  try {
+    await invalidatePublicRaidScopedSnapshots();
+  } catch (error) {
+    console.warn("[sync:attendance] public snapshot invalidate failed:", error?.message || error);
+  }
+
   return { rowsChanged: totalRowsChanged };
 }
 
@@ -27109,6 +27187,7 @@ async function runSyncParses() {
 
   try {
     await refreshParsingCeilingLastRaidKeysFromGuild({ light: false });
+    await invalidatePublicRaidScopedSnapshots();
   } catch (error) {
     console.warn("[sync:parses] parsing-ceiling last-raid cache refresh failed:", error?.message || error);
   }
