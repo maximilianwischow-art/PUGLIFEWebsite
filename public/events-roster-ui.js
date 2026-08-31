@@ -184,6 +184,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "tk-first-kael-kill": "#22c55e",
     "tk-0730-2026": "#a855f7",
     "ssc-0611-2026": "#a855f7",
+    "hyjal-first-clear": "#22c55e",
     "double-trouble-ssc": "#14b8a6",
     "double-trouble-tk": "#a855f7",
   };
@@ -1510,6 +1511,7 @@ const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
 
 /** Newest event-night badges first — prepend future dated IDs here. */
 const LEADERBOARD_ROW_EVENT_BADGE_RECENCY = [
+  "hyjal-first-clear",
   "tk-0730-2026",
   "double-trouble-ssc",
   "double-trouble-tk",
@@ -1952,6 +1954,13 @@ function rosterAchievementBadgesHtml(player) {
         "TK First Kael Kill — Attended the guild's first Tempest Keep raid with a Kael'thas Sunstrider kill on 7 June 2026 (4/4, WCL report NnHhqGbLQZvMXd96).",
       alt: "TK First Kael Kill",
       ok: playerEarnedSpecificEventBadge(player, "tk-first-kael-kill"),
+    },
+    {
+      file: "hyjal-first-clear.png",
+      title:
+        "Hyjal First Clear — Attended the guild's first Mount Hyjal full clear on 30 August 2026 (5/5, Archimonde kill).",
+      alt: "Hyjal First Clear",
+      ok: playerEarnedSpecificEventBadge(player, "hyjal-first-clear"),
     },
     {
       file: "tk-0730-2026.png",

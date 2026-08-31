@@ -1,6 +1,6 @@
-const PHASE2_OVERVIEW_GUILD_ID = 817080;
-const PHASE2_OVERVIEW_CACHE_KEY = "plb-phase2-raids-v9";
-const PHASE2_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
+const PHASE3_OVERVIEW_GUILD_ID = 817080;
+const PHASE3_OVERVIEW_CACHE_KEY = "plb-phase3-raids-v1";
+const PHASE3_OVERVIEW_CACHE_MS = 5 * 60 * 1000;
 
 function esc(v) {
   return String(v ?? "")
@@ -23,11 +23,11 @@ function apiGetJson(url, init) {
 
 function readOverviewCache() {
   try {
-    const raw = sessionStorage.getItem(PHASE2_OVERVIEW_CACHE_KEY);
+    const raw = sessionStorage.getItem(PHASE3_OVERVIEW_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.payload || !parsed?.savedAt) return null;
-    if (Date.now() - parsed.savedAt > PHASE2_OVERVIEW_CACHE_MS) return null;
+    if (Date.now() - parsed.savedAt > PHASE3_OVERVIEW_CACHE_MS) return null;
     return parsed.payload;
   } catch {
     return null;
@@ -37,7 +37,7 @@ function readOverviewCache() {
 function writeOverviewCache(payload) {
   try {
     sessionStorage.setItem(
-      PHASE2_OVERVIEW_CACHE_KEY,
+      PHASE3_OVERVIEW_CACHE_KEY,
       JSON.stringify({ savedAt: Date.now(), payload })
     );
   } catch {
@@ -165,12 +165,12 @@ function raidCoreParseStatTitle(raid) {
   return `Average peak boss parse for Core roster members on ${name} reports only. Same metric family as Leaderboard peak parse.`;
 }
 
-const T5_RAID_ORDER = ["ssc", "tk", "t5-one-night"];
+const T6_RAID_ORDER = ["hyjal", "black-temple"];
 
 function sortTierRaids(raids) {
   return [...raids].sort((a, b) => {
-    const ai = T5_RAID_ORDER.indexOf(a.id);
-    const bi = T5_RAID_ORDER.indexOf(b.id);
+    const ai = T6_RAID_ORDER.indexOf(a.id);
+    const bi = T6_RAID_ORDER.indexOf(b.id);
     const aRank = ai >= 0 ? ai : 99;
     const bRank = bi >= 0 ? bi : 99;
     return aRank - bRank;
@@ -188,8 +188,7 @@ function renderTierDivider(label, tone) {
 function renderOverview(payload) {
   const s = payload?.summary || {};
   const raids = Array.isArray(payload?.raids) ? payload.raids : [];
-  const t5 = sortTierRaids(raids.filter((r) => r.tier === "T5"));
-  const t4 = raids.filter((r) => r.tier === "T4");
+  const t6 = sortTierRaids(raids.filter((r) => r.tier === "T6"));
   const overall = Number(s.overallProgression) || 0;
 
   const headerStats = [
@@ -208,8 +207,7 @@ function renderOverview(payload) {
   ].join("");
 
   const headerStatsHtml = `<div class="plb-ro-header-stats">${headerStats}</div>`;
-  const t5Cards = t5.map((r) => renderRaidCard(r)).join("");
-  const t4Cards = t4.map((r) => renderRaidCard(r)).join("");
+  const t6Cards = t6.map((r) => renderRaidCard(r)).join("");
 
   return `<div class="plb-ro-inner">
     <header class="plb-ro-header card surface-elevated">
@@ -217,8 +215,8 @@ function renderOverview(payload) {
         <div class="plb-ro-header-title-wrap">
           ${ICON_SKULL}
           <div>
-            <h2 id="phase2-overview-heading" class="plb-ro-title">Phase 2 Raid Overview</h2>
-            <p class="plb-ro-sub">${raids.length} raid instances · ${s.totalBosses ?? 0} bosses total</p>
+            <h2 id="phase3-overview-heading" class="plb-ro-title">Phase 3 Raid Overview</h2>
+            <p class="plb-ro-sub">${raids.length} raid instances · ${s.totalBosses ?? 0} bosses total · ${esc(s.raidInstanceLabel || "T6")}</p>
           </div>
         </div>
         <div class="plb-ro-overall plb-ro-overall--${esc(s.overallProgressionTone || "none")}">
@@ -228,10 +226,8 @@ function renderOverview(payload) {
       </div>
       ${headerStatsHtml}
     </header>
-    ${t5.length ? renderTierDivider("Tier 5 Content", "t5") : ""}
-    ${t5.length ? `<div class="plb-ro-grid plb-ro-grid--t5">${t5Cards}</div>` : ""}
-    ${t4.length ? renderTierDivider("Tier 4 Content", "t4") : ""}
-    ${t4.length ? `<div class="plb-ro-grid plb-ro-grid--t4">${t4Cards}</div>` : ""}
+    ${t6.length ? renderTierDivider("Tier 6 Content", "t6") : ""}
+    ${t6.length ? `<div class="plb-ro-grid plb-ro-grid--t6">${t6Cards}</div>` : ""}
     <p class="plb-ro-foot subtle">Based on ${s.reportsScanned ?? 0} Warcraft Logs report(s) · Event Management selection applies to 25-man raids.</p>
   </div>`;
 }
@@ -291,10 +287,10 @@ function buildBossTableHtml(raid) {
   </table>`;
 }
 
-let phase2OverviewPayload = null;
+let phase3OverviewPayload = null;
 
 function openRaidDetailModal(raidId) {
-  const raid = (phase2OverviewPayload?.raids || []).find((r) => r.id === raidId);
+  const raid = (phase3OverviewPayload?.raids || []).find((r) => r.id === raidId);
   const dialog = document.getElementById("plbRoDetailDialog");
   const title = document.getElementById("plbRoDetailTitle");
   const body = document.getElementById("plbRoDetailBody");
@@ -320,19 +316,19 @@ function bindOverviewInteractions(host) {
 }
 
 function showLoading(host) {
-  host.innerHTML = `<div class="plb-ro-inner plb-ro-inner--loading"><p class="subtle">Loading Phase 2 raid overview…</p></div>`;
+  host.innerHTML = `<div class="plb-ro-inner plb-ro-inner--loading"><p class="subtle">Loading Phase 3 raid overview…</p></div>`;
 }
 
 function showError(host, message) {
   host.innerHTML = `<div class="plb-ro-inner plb-ro-inner--error"><p class="subtle">${esc(message || "Could not load raid overview.")}</p></div>`;
 }
 
-async function loadPhase2RaidOverview(host, { force = false } = {}) {
+async function loadPhase3RaidOverview(host, { force = false } = {}) {
   if (!host) return;
   if (!force) {
     const cached = readOverviewCache();
     if (cached?.raids?.length) {
-      phase2OverviewPayload = cached;
+      phase3OverviewPayload = cached;
       host.innerHTML = renderOverview(cached);
       bindOverviewInteractions(host);
       return;
@@ -341,17 +337,17 @@ async function loadPhase2RaidOverview(host, { force = false } = {}) {
   showLoading(host);
   try {
     const q = new URLSearchParams({
-      guildId: String(PHASE2_OVERVIEW_GUILD_ID),
+      guildId: String(PHASE3_OVERVIEW_GUILD_ID),
       limit: "50",
     });
     q.set("nocache", "1");
     q.set("t", String(Date.now()));
-    const payload = await apiGetJson(`/api/raids/phase2/overview?${q}`, {
+    const payload = await apiGetJson(`/api/raids/phase3/overview?${q}`, {
       credentials: "include",
       skipCache: true,
     });
     if (!payload?.raids?.length) throw new Error("No raid data returned.");
-    phase2OverviewPayload = payload;
+    phase3OverviewPayload = payload;
     writeOverviewCache(payload);
     host.innerHTML = renderOverview(payload);
     bindOverviewInteractions(host);
@@ -360,10 +356,10 @@ async function loadPhase2RaidOverview(host, { force = false } = {}) {
   }
 }
 
-function initPhase2RaidOverview() {
-  const host = document.getElementById("phase2RaidOverviewHost");
+function initPhase3RaidOverview() {
+  const host = document.getElementById("phase3RaidOverviewHost");
   if (!host) return;
-  loadPhase2RaidOverview(host);
+  loadPhase3RaidOverview(host);
 
   const dialog = document.getElementById("plbRoDetailDialog");
   const closeBtn = document.getElementById("plbRoDetailClose");
@@ -373,4 +369,4 @@ function initPhase2RaidOverview() {
   });
 }
 
-initPhase2RaidOverview();
+initPhase3RaidOverview();

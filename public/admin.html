@@ -85,6 +85,7 @@
                 <div class="admin-sidebar-group-label">Content</div>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="p2-materials">P2 Materials</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="p2-demand">P2 Demand</button>
+                <button type="button" class="admin-sidebar-tool" data-admin-nav="p3-demand">P3 Demand</button>
                 <button type="button" class="admin-sidebar-tool" data-admin-nav="join-needs">Current Needs</button>
               </div>
               <div class="admin-sidebar-group" data-admin-group="comms">
@@ -260,6 +261,28 @@
                 </button>
               </div>
               <div id="adminP2DemandTableHost" class="admin-grid-note p2-demand-table-wrap">Loading demand…</div>
+            </section>
+
+            <section class="card admin-panel p2-demand" data-admin-panel="p3-demand" id="admin-panel-p3-demand">
+              <h3 class="section-title">P3 Current Demand by Raider</h3>
+              <p class="subtle">
+                Mark items as done while you fulfill Heart of Darkness crafts. Use Remove to delete a mistaken row for any raider.
+              </p>
+              <p id="adminP3DemandMeta" class="subtle">Loading demand…</p>
+              <div class="admin-actions admin-actions--tight" style="margin: 0 0 10px">
+                <input
+                  id="adminP3DemandSearch"
+                  class="admin-input"
+                  type="search"
+                  placeholder="Search raider or item…"
+                  autocomplete="off"
+                  aria-label="Search P3 demand"
+                />
+                <button type="button" class="event-signup-btn event-signup-btn--softres" id="adminP3DemandReloadBtn">
+                  Reload
+                </button>
+              </div>
+              <div id="adminP3DemandTableHost" class="admin-grid-note p2-demand-table-wrap">Loading demand…</div>
             </section>
 
             <section class="card admin-panel" data-admin-panel="join-needs" id="admin-panel-join-needs">
@@ -773,8 +796,8 @@
     <script defer src="/vendor/apexcharts.min.js"></script>
     <script defer src="/wow-spell-tooltip.js?v=20260518wcl-debuff-tooltip-v2"></script>
     <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
-    <script defer src="/events-roster-ui.js?v=20260731plb-achievements-strip-fix-v2"></script>
-    <script defer src="/admin.js?v=20260717plb-p2-demand-open-first-v1"></script>
+    <script defer src="/events-roster-ui.js?v=20260831plb-hyjal-first-clear-v1"></script>
+    <script defer src="/admin.js?v=20260831plb-p3-hod-demand-v1"></script>
     <script defer src="/auth-ui.js?v=20260518plb-nav-compact-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

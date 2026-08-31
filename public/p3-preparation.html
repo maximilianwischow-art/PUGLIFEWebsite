@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PUG LIFE BALANCE · Phase 3</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" as="image" href="/responsive/plb-hero-banner-960w.webp" imagesrcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w" imagesizes="(max-width: 960px) 100vw, 960px" type="image/webp" fetchpriority="high" />
+    <link rel="stylesheet" href="/styles.min.css?v=20260831plb-p3-hod-prep-v1" />
+    <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <style>
+      .p2-character-role {
+        display: inline-flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .p2-character-role-btn {
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(168, 85, 247, 0.28);
+        background: rgba(20, 14, 33, 0.88);
+        color: #e9d5ff;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+      }
+      .p2-character-role-btn.is-active {
+        border-color: rgba(244, 210, 63, 0.7);
+        background: linear-gradient(180deg, rgba(72, 42, 12, 0.55), rgba(28, 16, 40, 0.95));
+        color: #ffe9a8;
+      }
+      .p2-character-role-pill {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 6px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        vertical-align: middle;
+      }
+      .p2-character-role-pill--main {
+        color: #fde68a;
+        border: 1px solid rgba(251, 191, 36, 0.45);
+        background: rgba(251, 191, 36, 0.12);
+      }
+      .p2-character-role-pill--alt {
+        color: #c4b5fd;
+        border: 1px solid rgba(167, 139, 250, 0.45);
+        background: rgba(167, 139, 250, 0.12);
+      }
+    </style>
+  </head>
+  <body class="framework-bg-vivid">
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
+          <img
+            class="hero-banner"
+            src="/plb-hero-banner.png"
+            srcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w"
+            alt=""
+            width="1024"
+            height="409"
+            decoding="async"
+            loading="eager"
+            fetchpriority="high"
+            sizes="(max-width: 960px) 100vw, 960px"
+          />
+        </div>
+        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/join.html">Join Us</a>
+          <a href="/home.html" title="Raid performance &amp; attendance">Performance</a>
+          <a href="/leaderboard">Leaderboard</a>
+          <a href="/rankings">Rankings</a>
+          <a href="/voting.html" title="Hall of Fame">HoF</a>
+        </nav>
+        <div class="auth-top-right" data-auth-widget></div>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container max-w-[min(100%,90rem)] mx-auto space-y-6 md:space-y-8 py-6 md:py-8 px-4 sm:px-6 lg:px-8">
+        <h1 class="visually-hidden">Phase 3 — Heart of Darkness</h1>
+
+        <section class="card tw-plb-card raidperf-shell border p3-hod-tracker" id="heart-of-darkness-tracker" aria-labelledby="p3-tracker-heading">
+          <p class="text-xs font-semibold uppercase tracking-wider text-violet-300/80 mb-1">Phase 3</p>
+          <h2 id="p3-tracker-heading" class="section-title">Heart of Darkness Tracker</h2>
+          <p id="hodMeta" class="subtle mt-2 animate-pulse opacity-80">Loading tracker…</p>
+        </section>
+
+        <section class="card tw-plb-card raidperf-shell border p2-your-need" aria-labelledby="p3-your-need-heading">
+          <p class="text-xs font-semibold uppercase tracking-wider text-violet-300/80 mb-1">Your submission</p>
+          <h2 id="p3-your-need-heading" class="section-title">Craftables you need</h2>
+          <p class="subtle mt-2 max-w-prose">
+            Pick items you want crafted; each line uses TBC recipe data for Heart of Darkness cost. Totals are summed per person.
+            Choose which character the request is for (Main or Alt).
+          </p>
+
+          <div class="mt-6 grid gap-6">
+            <div class="flex flex-col gap-2 p2-character-picker">
+              <span class="text-sm font-medium text-zinc-300">For character</span>
+              <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                <select
+                  id="hodCharacterSelect"
+                  class="admin-input p2-input-focus flex-1 min-w-0 sm:min-w-[220px] max-w-full rounded-lg border-white/10 bg-black/20"
+                  aria-label="Character for this craftables request"
+                >
+                  <option value="">Select character…</option>
+                  <option value="__custom__">Other name…</option>
+                </select>
+                <input
+                  id="hodCharacterCustom"
+                  class="admin-input p2-input-focus flex-1 min-w-0 sm:max-w-xs rounded-lg border-white/10 bg-black/20"
+                  type="text"
+                  placeholder="Type character name"
+                  autocomplete="off"
+                  maxlength="64"
+                  hidden
+                />
+                <div class="p2-character-role" role="group" aria-label="Main or Alt">
+                  <button type="button" class="p2-character-role-btn is-active" data-role="main" id="hodRoleMain">
+                    Main
+                  </button>
+                  <button type="button" class="p2-character-role-btn" data-role="alt" id="hodRoleAlt">
+                    Alt
+                  </button>
+                </div>
+              </div>
+              <p class="subtle text-xs m-0">Linked characters appear in the list. Use Other name for a character that is not linked yet.</p>
+            </div>
+
+            <div class="flex flex-col gap-2">
+              <span class="text-sm font-medium text-zinc-300">Search &amp; add craftables</span>
+              <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                <input
+                  id="hodCraftableSearch"
+                  class="admin-input p2-input-focus flex-1 min-w-0 rounded-lg border-white/10 bg-black/20 sm:max-w-md"
+                  type="text"
+                  placeholder="Search craftable item…"
+                  autocomplete="off"
+                />
+                <select
+                  id="hodCraftableSelect"
+                  class="admin-input p2-input-focus flex-1 min-w-0 sm:min-w-[260px] max-w-full rounded-lg border-white/10 bg-black/20"
+                ></select>
+                <button
+                  type="button"
+                  class="event-signup-btn event-signup-btn--softres shrink-0 w-full sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/50"
+                  id="hodAddItemBtn"
+                >
+                  Add item
+                </button>
+              </div>
+              <div id="hodSelectedItems" class="loot-item-recipients mt-3 min-h-[1.5rem]"></div>
+            </div>
+          </div>
+
+          <div class="admin-actions mt-6">
+            <button
+              type="button"
+              class="event-signup-btn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/50"
+              id="hodSaveBtn"
+            >
+              Save need
+            </button>
+          </div>
+        </section>
+
+        <section class="card tw-plb-card raidperf-shell border p2-demand" aria-labelledby="p3-demand-heading">
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div class="min-w-0">
+              <p class="text-xs font-semibold uppercase tracking-wider text-violet-300/80 mb-1">Guild demand</p>
+              <h2 id="p3-demand-heading" class="section-title">Current demand by Raider</h2>
+              <p class="subtle mt-2">Per-raider breakdown of saved Heart of Darkness needs.</p>
+              <div id="p3DemandStats" class="p2-demand-stats mt-3" hidden aria-live="polite"></div>
+            </div>
+            <div class="flex items-center gap-2">
+              <input
+                id="hodDemandSearch"
+                class="admin-input p2-input-focus rounded-lg border-white/10 bg-black/20 max-w-xs"
+                type="search"
+                placeholder="Search raider or item…"
+                autocomplete="off"
+                aria-label="Search demand"
+              />
+            </div>
+          </div>
+          <div class="mt-5 p2-demand-table-wrap" id="hodDemandWrap">
+            <table class="p2-demand-table" id="hodDemandTable" aria-describedby="p3-demand-heading">
+              <colgroup>
+                <col class="col-raider" />
+                <col class="col-raids" />
+                <col class="col-item" />
+                <col class="col-prof" />
+                <col class="col-num" />
+                <col class="col-time" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col">Raider</th>
+                  <th scope="col" class="is-num col-raids-th">Raids</th>
+                  <th scope="col">Item</th>
+                  <th scope="col">Profession</th>
+                  <th scope="col" class="is-num">HoD</th>
+                  <th scope="col" class="col-time-th">Updated</th>
+                </tr>
+              </thead>
+              <tbody id="hodDemandTbody"></tbody>
+              <tfoot id="hodDemandTfoot" hidden></tfoot>
+            </table>
+          </div>
+          <div id="hodDemandEmpty" class="p2-demand-empty mt-4" hidden>No submissions yet.</div>
+        </section>
+
+      </main>
+
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
+        <p class="footer-sub">TBC Classic · EU - Thunderstrike</p>
+        <p class="footer-legal-links">
+          <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a> ·
+          <a href="/join.html?unsubscribe_dm=1">Unsubscribe</a>
+        </p>
+      </footer>
+    </div>
+
+    <script defer src="/session-api-cache.js?v=20260831plb-p3-hod-v1"></script>
+    <script defer src="/home.js?v=20260505black1"></script>
+    <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
+    <script defer src="/auth-ui.js?v=20260831plb-p3-nav-v1"></script>
+    <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
+    <script defer src="/heart-of-darkness.js?v=20260831plb-p3-hod-prep-v3"></script>
+  </body>
+</html>

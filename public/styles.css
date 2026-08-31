@@ -983,6 +983,10 @@ body.framework-bg-vivid {
   color: #c084fc;
 }
 
+.plb-ro-tier-divider--t6 .plb-ro-tier-text {
+  color: #4ade80;
+}
+
 .plb-ro-tier-divider--t4 .plb-ro-tier-text {
   color: var(--text-muted);
 }
@@ -994,6 +998,10 @@ body.framework-bg-vivid {
 
 .plb-ro-grid--t5 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.plb-ro-grid--t6 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .plb-ro-card--one-night .plb-ro-card-hero {
@@ -1316,6 +1324,7 @@ body.framework-bg-vivid {
 
 @media (max-width: 1024px) {
   .plb-ro-grid--t5,
+  .plb-ro-grid--t6,
   .plb-ro-grid--t4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1339,6 +1348,7 @@ body.framework-bg-vivid {
   }
 
   .plb-ro-grid--t5,
+  .plb-ro-grid--t6,
   .plb-ro-grid--t4 {
     grid-template-columns: 1fr;
   }

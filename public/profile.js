@@ -631,6 +631,10 @@
         typeof plb.playerEarnedSpecificEventBadge === "function"
           ? (p) => plb.playerEarnedSpecificEventBadge(p, "tk-0730-2026")
           : () => false,
+      "hyjal-first-clear":
+        typeof plb.playerEarnedSpecificEventBadge === "function"
+          ? (p) => plb.playerEarnedSpecificEventBadge(p, "hyjal-first-clear")
+          : () => false,
     };
 
     // Synthetic "player" — feeding the user's primary linked name as

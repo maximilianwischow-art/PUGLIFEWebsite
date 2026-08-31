@@ -1,0 +1,204 @@
+{
+  "generatedAt": 1788185620433,
+  "source": "wowhead-tbc-item-32428",
+  "items": [
+    {
+      "itemID": 32574,
+      "itemName": "Bindings of Lightning Reflexes",
+      "profession": "Leatherworking",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32398,
+      "itemName": "Boots of Shackled Souls",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32586,
+      "itemName": "Bracers of Nimble Thought",
+      "profession": "Tailoring",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32582,
+      "itemName": "Bracers of Renewed Life",
+      "profession": "Leatherworking",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32399,
+      "itemName": "Bracers of Shackled Souls",
+      "profession": "Leatherworking",
+      "hodNeeded": 1
+    },
+    {
+      "itemID": 32571,
+      "itemName": "Dawnsteel Bracers",
+      "profession": "Blacksmithing",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32573,
+      "itemName": "Dawnsteel Shoulders",
+      "profession": "Blacksmithing",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32400,
+      "itemName": "Greaves of Shackled Souls",
+      "profession": "Leatherworking",
+      "hodNeeded": 3
+    },
+    {
+      "itemID": 32577,
+      "itemName": "Living Earth Bindings",
+      "profession": "Leatherworking",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32579,
+      "itemName": "Living Earth Shoulders",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32587,
+      "itemName": "Mantle of Nimble Thought",
+      "profession": "Tailoring",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32420,
+      "itemName": "Night's End",
+      "profession": "Tailoring",
+      "hodNeeded": 1
+    },
+    {
+      "itemID": 32393,
+      "itemName": "Redeemed Soul Cinch",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32396,
+      "itemName": "Redeemed Soul Legguards",
+      "profession": "Leatherworking",
+      "hodNeeded": 3
+    },
+    {
+      "itemID": 32394,
+      "itemName": "Redeemed Soul Moccasins",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32395,
+      "itemName": "Redeemed Soul Wristguards",
+      "profession": "Leatherworking",
+      "hodNeeded": 1
+    },
+    {
+      "itemID": 32403,
+      "itemName": "Shadesteel Bracers",
+      "profession": "Blacksmithing",
+      "hodNeeded": 1
+    },
+    {
+      "itemID": 32401,
+      "itemName": "Shadesteel Girdle",
+      "profession": "Blacksmithing",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32404,
+      "itemName": "Shadesteel Greaves",
+      "profession": "Blacksmithing",
+      "hodNeeded": 3
+    },
+    {
+      "itemID": 32402,
+      "itemName": "Shadesteel Sabots",
+      "profession": "Blacksmithing",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32583,
+      "itemName": "Shoulderpads of Renewed Life",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32575,
+      "itemName": "Shoulders of Lightning Reflexes",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32392,
+      "itemName": "Soulguard Bracers",
+      "profession": "Tailoring",
+      "hodNeeded": 1
+    },
+    {
+      "itemID": 32390,
+      "itemName": "Soulguard Girdle",
+      "profession": "Tailoring",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32389,
+      "itemName": "Soulguard Leggings",
+      "profession": "Tailoring",
+      "hodNeeded": 3
+    },
+    {
+      "itemID": 32391,
+      "itemName": "Soulguard Slippers",
+      "profession": "Tailoring",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32585,
+      "itemName": "Swiftheal Mantle",
+      "profession": "Tailoring",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32584,
+      "itemName": "Swiftheal Wraps",
+      "profession": "Tailoring",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32568,
+      "itemName": "Swiftsteel Bracers",
+      "profession": "Blacksmithing",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32570,
+      "itemName": "Swiftsteel Shoulders",
+      "profession": "Blacksmithing",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32580,
+      "itemName": "Swiftstrike Bracers",
+      "profession": "Leatherworking",
+      "hodNeeded": 4
+    },
+    {
+      "itemID": 32581,
+      "itemName": "Swiftstrike Shoulders",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    },
+    {
+      "itemID": 32397,
+      "itemName": "Waistguard of Shackled Souls",
+      "profession": "Leatherworking",
+      "hodNeeded": 2
+    }
+  ]
+}

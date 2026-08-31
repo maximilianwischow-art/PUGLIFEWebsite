@@ -16,16 +16,22 @@ const assets = [
   { source: "raid-images/magtheridon.png", widths: [320, 640, 960] },
   { source: "raid-images/ssc.png", widths: [320, 640, 960] },
   { source: "raid-images/tk.png", widths: [320, 640, 960] },
+  { source: "raid-images/hyjal.png", widths: [320, 640, 960] },
+  { source: "raid-images/black-temple.png", widths: [320, 640, 960] },
   { source: "raid-images/pb-header-kara.png", widths: [480, 960, 1440] },
   { source: "raid-images/pb-header-gruul.png", widths: [480, 960, 1440] },
   { source: "raid-images/pb-header-magtheridon.png", widths: [480, 960, 1440] },
   { source: "raid-images/pb-header-ssc.png", widths: [480, 960, 1440] },
   { source: "raid-images/pb-header-tk.png", widths: [480, 960, 1440] },
+  { source: "raid-images/pb-header-hyjal.png", widths: [480, 960] },
+  { source: "raid-images/pb-header-black-temple.png", widths: [480, 960] },
   { source: "raid-images/event-header-kara.png", widths: [480, 960, 1440] },
   { source: "raid-images/event-header-gruul.png", widths: [480, 960, 1440] },
   { source: "raid-images/event-header-magtheridon.png", widths: [480, 960, 1440] },
   { source: "raid-images/event-header-ssc.png", widths: [480, 960, 1440] },
   { source: "raid-images/event-header-tk.png", widths: [480, 960, 1440] },
+  { source: "raid-images/event-header-hyjal.png", widths: [480, 960] },
+  { source: "raid-images/event-header-black-temple.png", widths: [480, 960] },
 ];
 
 function outputName(source, width) {

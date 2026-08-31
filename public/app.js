@@ -92,6 +92,8 @@ const raidDayModalClose = document.querySelector("#raidDayModalClose");
 
 /** Tracked raids â†’ latest run rows shown per column (sync with server TRACKED_RAIDS). */
 const RAID_CALENDAR_RAID_ORDER = [
+  "Hyjal Summit",
+  "Black Temple",
   "Serpentshrine Cavern",
   "Tempest Keep",
   "Karazhan",
@@ -323,6 +325,8 @@ function shortRaidName(raidName) {
   if (s === "Magtheridon's Lair") return "Mag";
   if (s === "Serpentshrine Cavern") return "SSC";
   if (s === "Tempest Keep") return "TK";
+  if (s === "Hyjal Summit") return "Hyjal";
+  if (s === "Black Temple") return "BT";
   if (s === "Gruul's Lair + Magtheridon's Lair") return "Gruul + Mag";
   return s || "?";
 }
@@ -363,6 +367,8 @@ function raidBannerKindFromLabel(raidName) {
   if (n.includes("karazhan") || /\bkara\b/.test(n)) return "kara";
   if (n.includes("serpentshrine") || n.includes("ssc")) return "ssc";
   if (n.includes("tempest") || n.includes("the eye") || /\btk\b/.test(n)) return "tk";
+  if (n.includes("hyjal") || n.includes("mount hyjal")) return "hyjal";
+  if (n.includes("black temple") || /\bbt\b/.test(n)) return "black_temple";
   if (hasMag) return "mag";
   if (hasGruul) return "gruul";
   return "unknown";
@@ -376,6 +382,8 @@ function raidListingImagePath(raidName) {
   if (kind === "mag") return versionedImagePath("/raid-images/magtheridon.png");
   if (kind === "ssc") return versionedImagePath("/raid-images/ssc.png");
   if (kind === "tk") return versionedImagePath("/raid-images/tk.png");
+  if (kind === "hyjal") return versionedImagePath("/raid-images/hyjal.png");
+  if (kind === "black_temple") return versionedImagePath("/raid-images/black-temple.png");
   return versionedImagePath("/raid-images/kara.png");
 }
 
@@ -388,6 +396,8 @@ function raidPbHeaderImagePath(raidName) {
   if (kind === "mag") return versionedImagePath("/raid-images/pb-header-magtheridon.png");
   if (kind === "ssc") return versionedImagePath("/raid-images/pb-header-ssc.png");
   if (kind === "tk") return versionedImagePath("/raid-images/pb-header-tk.png");
+  if (kind === "hyjal") return versionedImagePath("/raid-images/pb-header-hyjal.png");
+  if (kind === "black_temple") return versionedImagePath("/raid-images/pb-header-black-temple.png");
   return versionedImagePath("/raid-images/pb-header-kara.png");
 }
 
@@ -866,11 +876,11 @@ async function loadDeathEncounterHeatmap() {
 
 scheduleNonCritical(initBackgroundStars, 900);
 scheduleNonCritical(initBasicAnalytics, 1200);
-const phase2RaidOverviewHost = document.getElementById("phase2RaidOverviewHost");
-if (raidPerfKpiGrid && !phase2RaidOverviewHost) {
+const phase3RaidOverviewHost = document.getElementById("phase3RaidOverviewHost");
+if (raidPerfKpiGrid && !phase3RaidOverviewHost) {
   loadRaidPerfKpi();
 }
-if (dashboardPbRow && !phase2RaidOverviewHost) {
+if (dashboardPbRow && !phase3RaidOverviewHost) {
   scheduleNonCritical(loadBossTimes, 1600);
 }
 if (potrRaidBanner && potrRaidDate) {

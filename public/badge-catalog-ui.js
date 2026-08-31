@@ -34,6 +34,7 @@
       "tk-first-kael-kill": "#22c55e",
       "tk-0730-2026": "#a855f7",
       "ssc-0611-2026": "#a855f7",
+      "hyjal-first-clear": "#22c55e",
       "double-trouble-ssc": "#14b8a6",
       "double-trouble-tk": "#a855f7",
     };

@@ -292,7 +292,7 @@ const ADMIN_GROUPS = [
     tools: ["identity", "hof-notes", "raider-blacklist", "badge-tooltips", "character-kpis"],
   },
   { id: "roster", label: "Roster & Loot", tools: ["wcl-events", "gargul-import", "loot-corrections"] },
-  { id: "content", label: "Content", tools: ["p2-materials", "p2-demand", "join-needs"] },
+  { id: "content", label: "Content", tools: ["p2-materials", "p2-demand", "p3-demand", "join-needs"] },
   { id: "comms", label: "Comms", tools: ["role-alerts", "core-roster", "custom-dm", "discord-role-sync", "discord-news-queue", "discord-news"] },
   { id: "data-ops", label: "Data & Ops", tools: ["sync-center", "wcl-phase-avgs", "analytics"] },
 ];
@@ -2088,6 +2088,321 @@ async function loadAdminP2DemandPanel() {
   }
   ensureAdminP2DemandFilterListeners();
   refreshAdminP2DemandTable();
+}
+
+
+let adminP3DemandEntries = [];
+let adminP3DemandCheckedKeys = new Set();
+const adminP3DemandItemMeta = new Map();
+let adminP3DemandFilterBound = false;
+
+/** Per-character fulfillment key (matches server `p3DemandAdminItemCheckKey`). */
+function adminP3DemandCheckKey(entryKey, itemId) {
+  return `${String(entryKey || "").trim()}::${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+/** Legacy `userId:itemId` key, still honored so pre-existing checks show through. */
+function adminP3DemandLegacyCheckKey(userId, itemId) {
+  return `${String(userId || "").trim()}:${Math.max(0, Math.floor(Number(itemId) || 0))}`;
+}
+
+function adminP3IsDemandItemChecked(row, itemId) {
+  return (
+    adminP3DemandCheckedKeys.has(adminP3DemandCheckKey(row?.entryKey, itemId)) ||
+    adminP3DemandCheckedKeys.has(adminP3DemandLegacyCheckKey(row?.userId, itemId))
+  );
+}
+
+function adminP3SortDemandItemsOpenFirst(row, items) {
+  return (Array.isArray(items) ? items.slice() : []).sort((a, b) => {
+    const aId = Math.max(0, Math.floor(Number(a?.itemID) || 0));
+    const bId = Math.max(0, Math.floor(Number(b?.itemID) || 0));
+    const aDone = adminP3IsDemandItemChecked(row, aId) ? 1 : 0;
+    const bDone = adminP3IsDemandItemChecked(row, bId) ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return String(a?.itemName || "").localeCompare(String(b?.itemName || ""));
+  });
+}
+
+function adminP3DemandRowOpenItemCount(row) {
+  const items = Array.isArray(row?.items) ? row.items : [];
+  let open = 0;
+  for (const it of items) {
+    const id = Math.max(0, Math.floor(Number(it?.itemID) || 0));
+    if (!adminP3IsDemandItemChecked(row, id)) open += 1;
+  }
+  return open;
+}
+
+function adminP3CompareDemandRowsOpenFirst(a, b) {
+  const aOpen = adminP3DemandRowOpenItemCount(a);
+  const bOpen = adminP3DemandRowOpenItemCount(b);
+  const aHasOpen = aOpen > 0 ? 1 : 0;
+  const bHasOpen = bOpen > 0 ? 1 : 0;
+  if (aHasOpen !== bHasOpen) return bHasOpen - aHasOpen;
+  if (aOpen !== bOpen) return bOpen - aOpen;
+  return adminP3DemandRowHodTotal(b) - adminP3DemandRowHodTotal(a);
+}
+
+function adminP3DemandRowHodTotal(row) {
+  const items = Array.isArray(row?.items) ? row.items : [];
+  return items.reduce((sum, it) => {
+    const x = Number(it?.hodNeeded);
+    const n = Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
+    return sum + n;
+  }, 0);
+}
+
+function adminP3DemandRowMatchesFilter(row, q) {
+  const needle = String(q || "").trim().toLowerCase();
+  if (!needle) return true;
+  const hay = [
+    row.characterName,
+    row.displayName,
+    row.raidHelperName,
+    ...(Array.isArray(row.items) ? row.items.flatMap((it) => [it.itemName, it.profession]) : []),
+  ]
+    .map((v) => String(v || "").toLowerCase())
+    .join(" ");
+  return hay.includes(needle);
+}
+
+function adminP3DemandFmtUpdated(ts) {
+  const t = Number(ts);
+  if (!Number.isFinite(t) || t <= 0) return "—";
+  try {
+    return new Date(t).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+  } catch {
+    return "—";
+  }
+}
+
+async function adminP3DemandFetchItemMeta(entries) {
+  if (!window.WowItemTooltip) return;
+  const ids = [];
+  for (const row of entries || []) {
+    for (const it of row.items || []) {
+      const id = Math.max(0, Math.floor(Number(it.itemID || 0)));
+      if (id > 0 && !adminP3DemandItemMeta.has(id)) ids.push(id);
+    }
+  }
+  const unique = [...new Set(ids)];
+  for (let i = 0; i < unique.length; i += 80) {
+    const chunk = unique.slice(i, i + 80);
+    const metaPayload = await getJson(`/api/wow-classic/items?ids=${encodeURIComponent(chunk.join(","))}`);
+    for (const row of metaPayload?.items || []) {
+      const id = Math.max(0, Math.floor(Number(row?.itemId || 0)));
+      if (id > 0) adminP3DemandItemMeta.set(id, row);
+    }
+  }
+}
+
+function adminP3DemandRaiderCellHtml(row) {
+  const discordName = String(row.displayName || "").trim();
+  const requestName = String(row.requestCharacterName || "").trim();
+  const linkedCharacter = String(row.characterName || "").trim();
+  const display = requestName || linkedCharacter || discordName || "Unknown";
+  const hasRequest = Boolean(requestName);
+  const hasLink =
+    !hasRequest && Boolean(linkedCharacter) && linkedCharacter.toLowerCase() !== discordName.toLowerCase();
+  const role = String(row.requestCharacterRole || "").trim().toLowerCase();
+  const rolePill =
+    role === "main" || role === "alt"
+      ? `<span class="p2-character-role-pill p2-character-role-pill--${role}">${role === "main" ? "Main" : "Alt"}</span>`
+      : "";
+  const hint =
+    !hasRequest && !hasLink && discordName
+      ? `<span class="p2-demand-raider-sub" title="Add an Account Assignment row to show the WoW character.">unassigned</span>`
+      : "";
+  return `<div class="p2-demand-raider-name">${esc(display)}${rolePill}${hint}</div>`;
+}
+
+function adminP3DemandItemCellHtml(itemId, itemName) {
+  const id = Math.max(0, Math.floor(Number(itemId || 0)));
+  const meta = adminP3DemandItemMeta.get(id);
+  const tip = window.WowItemTooltip?.tooltipText ? window.WowItemTooltip.tooltipText(meta) : String(itemName || "");
+  const iconRaw = String(meta?.icon || "").trim();
+  const icon = iconRaw
+    ? `<img class="p2-demand-item-icon" src="${esc(iconRaw)}" alt="" width="28" height="28" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+    : `<span class="p2-demand-item-icon"></span>`;
+  return `<div class="loot-item-name p2-demand-item" data-loot-item-id="${id}" title="${esc(tip)}">${icon}<span class="p2-demand-item-name">${esc(itemName)}</span></div>`;
+}
+
+function adminP3DemandCheckCellHtml(entryKey, userId, itemId, checked) {
+  return `<label class="p2-demand-admin-check" title="Mark fulfilled">
+    <input type="checkbox" class="p2-demand-admin-check-input" data-p3-demand-check="1" data-entry-key="${esc(String(entryKey || ""))}" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}"${checked ? " checked" : ""} />
+    <span class="visually-hidden">Done</span>
+  </label>`;
+}
+
+function adminP3DemandRemoveCellHtml(entryKey, userId, itemId, itemName, raiderName) {
+  return `<button type="button" class="event-signup-btn event-signup-btn--softres" data-p3-demand-delete="1" data-entry-key="${esc(String(entryKey || ""))}" data-user-id="${esc(userId)}" data-item-id="${esc(String(itemId))}" data-item-name="${esc(String(itemName || ""))}" data-raider-name="${esc(String(raiderName || ""))}">Remove</button>`;
+}
+
+function adminP3DemandRowsHtmlForRaider(row) {
+  const items =
+    Array.isArray(row.items) && row.items.length ? adminP3SortDemandItemsOpenFirst(row, row.items) : [];
+  const userId = String(row.userId || "");
+  const entryKey = String(row.entryKey || "");
+  const raiderLabel = String(
+    row.requestCharacterName || row.characterName || row.displayName || "this raider"
+  ).trim();
+  const totalHod = adminP3DemandRowHodTotal(row);
+  const updatedIso = row.updatedAt ? new Date(Number(row.updatedAt)).toISOString() : "";
+  const updatedLabel = adminP3DemandFmtUpdated(row.updatedAt);
+  const timeMarkup = updatedIso
+    ? `<time datetime="${esc(updatedIso)}">${esc(updatedLabel)}</time>`
+    : esc(updatedLabel);
+  const raiderCell = adminP3DemandRaiderCellHtml(row);
+
+  if (!items.length) {
+    return `
+      <tr>
+        <td class="cell-check"></td>
+        <td class="cell-raider">${raiderCell}</td>
+        <td colspan="2"><span class="subtle">No items selected.</span></td>
+        <td class="cell-num">0</td>
+        <td class="cell-time">${timeMarkup}</td>
+        <td class="cell-remove"></td>
+      </tr>
+    `;
+  }
+
+  const span = items.length;
+  return items
+    .map((it, idx) => {
+      const itemId = Math.max(0, Math.floor(Number(it.itemID || 0)));
+      const checked = adminP3IsDemandItemChecked(row, itemId);
+      const trCls = [idx === items.length - 1 ? "is-group-end" : "", checked ? "is-demand-checked" : ""]
+        .filter(Boolean)
+        .join(" ");
+      const isFirst = idx === 0;
+      const cells = [];
+      cells.push(`<td class="cell-check">${adminP3DemandCheckCellHtml(entryKey, userId, itemId, checked)}</td>`);
+      if (isFirst) {
+        cells.push(`<td class="cell-raider"${span > 1 ? ` rowspan="${span}"` : ""}>${raiderCell}</td>`);
+      }
+      cells.push(`<td class="cell-item">${adminP3DemandItemCellHtml(itemId, it.itemName)}</td>`);
+      cells.push(`<td class="cell-prof">${it.profession ? esc(it.profession) : "—"}</td>`);
+      cells.push(
+        `<td class="cell-remove">${adminP3DemandRemoveCellHtml(entryKey, userId, itemId, it.itemName, raiderLabel)}</td>`
+      );
+      if (isFirst) {
+        cells.push(`<td class="cell-num"${span > 1 ? ` rowspan="${span}"` : ""}>${totalHod}</td>`);
+        cells.push(`<td class="cell-time"${span > 1 ? ` rowspan="${span}"` : ""}>${timeMarkup}</td>`);
+      }
+      return `<tr class="${trCls}">${cells.join("")}</tr>`;
+    })
+    .join("");
+}
+
+function refreshAdminP3DemandTable() {
+  const host = document.getElementById("adminP3DemandTableHost");
+  const meta = document.getElementById("adminP3DemandMeta");
+  if (!host) return;
+
+  const all = adminP3DemandEntries;
+  const q = document.getElementById("adminP3DemandSearch")?.value || "";
+  const rows = all
+    .filter((r) => adminP3DemandRowMatchesFilter(r, q))
+    .sort(adminP3CompareDemandRowsOpenFirst);
+
+  if (!all.length) {
+    host.innerHTML = `<p class="subtle p2-demand-empty">No submissions yet.</p>`;
+    if (meta) meta.textContent = "Total guild need: 0 Heart of Darkness";
+    return;
+  }
+
+  if (!rows.length) {
+    host.innerHTML = `<p class="subtle p2-demand-empty">No raiders match your filter.</p>`;
+    if (meta) meta.textContent = `No matches (of ${all.length} raiders).`;
+    return;
+  }
+
+  const grandTotal = rows.reduce((sum, row) => sum + adminP3DemandRowHodTotal(row), 0);
+  let checkedHod = 0;
+  for (const row of rows) {
+    for (const it of row.items || []) {
+      if (adminP3IsDemandItemChecked(row, it.itemID)) {
+        const x = Number(it.hodNeeded);
+        checkedHod += Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
+      }
+    }
+  }
+  if (meta) {
+    meta.textContent = `Total guild need: ${grandTotal} HoD · Done: ${checkedHod} · Open: ${Math.max(0, grandTotal - checkedHod)}${
+      rows.length !== all.length ? ` · showing ${rows.length} of ${all.length} raiders` : ""
+    }`;
+  }
+
+  host.innerHTML = `
+    <table class="p2-demand-table admin-p3-demand-table" aria-label="P3 demand by raider">
+      <colgroup>
+        <col class="col-check" />
+        <col class="col-raider" />
+        <col class="col-item" />
+        <col class="col-prof" />
+        <col class="col-num" />
+        <col class="col-time" />
+        <col class="col-remove" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th scope="col" class="cell-check">Done</th>
+          <th scope="col">Raider</th>
+          <th scope="col">Item</th>
+          <th scope="col">Profession</th>
+          <th scope="col" class="is-num">HoD</th>
+          <th scope="col" class="col-time-th">Updated</th>
+          <th scope="col" class="col-remove-th">Remove</th>
+        </tr>
+      </thead>
+      <tbody>${rows.map((row) => adminP3DemandRowsHtmlForRaider(row)).join("")}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4">${rows.length} ${rows.length === 1 ? "raider" : "raiders"}</td>
+          <td class="cell-num">${grandTotal}</td>
+          <td class="cell-time"></td>
+          <td class="cell-remove"></td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+
+  if (window.WowItemTooltip?.bindLootTooltipHandlers) {
+    window.WowItemTooltip.bindLootTooltipHandlers(host, (id) => adminP3DemandItemMeta.get(Number(id)));
+  }
+}
+
+function ensureAdminP3DemandFilterListeners() {
+  if (adminP3DemandFilterBound) return;
+  adminP3DemandFilterBound = true;
+  let debounceTimer = null;
+  document.getElementById("adminP3DemandSearch")?.addEventListener("input", () => {
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(() => refreshAdminP3DemandTable(), 140);
+  });
+  document.getElementById("adminP3DemandReloadBtn")?.addEventListener("click", () => {
+    loadAdminP3DemandPanel().catch((error) => status(error?.message || "P3 demand reload failed"));
+  });
+}
+
+async function loadAdminP3DemandPanel() {
+  const host = document.getElementById("adminP3DemandTableHost");
+  if (!host) return;
+  host.textContent = "Loading demand…";
+  const payload = await getJson("/api/admin/p3-demand");
+  adminP3DemandEntries = Array.isArray(payload?.entries) ? payload.entries : [];
+  adminP3DemandCheckedKeys = new Set(
+    Array.isArray(payload?.checkedKeys) ? payload.checkedKeys.map((k) => String(k || "").trim()).filter(Boolean) : []
+  );
+  try {
+    await adminP3DemandFetchItemMeta(adminP3DemandEntries);
+  } catch {
+    /* icons optional */
+  }
+  ensureAdminP3DemandFilterListeners();
+  refreshAdminP3DemandTable();
 }
 
 function renderP2Table(materials) {
@@ -7592,6 +7907,13 @@ async function loadAdminSecondaryData() {
     if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Failed to load P2 demand.")}</p>`;
     status(`P2 demand load failed: ${error?.message || "Unknown error"}`);
   }
+  try {
+    await loadAdminP3DemandPanel();
+  } catch (error) {
+    const host = document.getElementById("adminP3DemandTableHost");
+    if (host) host.innerHTML = `<p class="subtle">${esc(error?.message || "Failed to load P3 demand.")}</p>`;
+    status(`P3 demand load failed: ${error?.message || "Unknown error"}`);
+  }
   renderJoinNeedsTable(Array.isArray(joinNeeds?.rows) ? joinNeeds.rows : []);
   try {
     await loadPublicSnapshotStatus();
@@ -9044,6 +9366,72 @@ document.addEventListener("click", async (event) => {
     });
     status(`Removed ${itemName || "item"} from ${raiderName}.`);
     await loadAdminP2DemandPanel();
+  } catch (error) {
+    status(error?.message || "Failed to remove demand item");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.addEventListener("change", async (event) => {
+  const cb = event.target.closest("[data-p3-demand-check]");
+  if (!cb || !(cb instanceof HTMLInputElement)) return;
+  const userId = String(cb.getAttribute("data-user-id") || "").trim();
+  const entryKey = String(cb.getAttribute("data-entry-key") || "").trim() || userId;
+  const itemID = Math.max(0, Math.floor(Number(cb.getAttribute("data-item-id") || 0)));
+  if ((!entryKey && !userId) || !itemID) return;
+  const key = adminP3DemandCheckKey(entryKey, itemID);
+  const legacyKey = adminP3DemandLegacyCheckKey(userId, itemID);
+  const checked = cb.checked;
+  const tr = cb.closest("tr");
+  if (checked) adminP3DemandCheckedKeys.add(key);
+  else {
+    adminP3DemandCheckedKeys.delete(key);
+    adminP3DemandCheckedKeys.delete(legacyKey);
+  }
+  tr?.classList.toggle("is-demand-checked", checked);
+  cb.disabled = true;
+  try {
+    await getJson("/api/admin/p3-demand/check", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ entryKey, userId, itemID, checked }),
+    });
+    refreshAdminP3DemandTable();
+  } catch (error) {
+    if (checked) adminP3DemandCheckedKeys.delete(key);
+    else adminP3DemandCheckedKeys.add(key);
+    cb.checked = !checked;
+    tr?.classList.toggle("is-demand-checked", cb.checked);
+    status(error?.message || "Failed to save check");
+  } finally {
+    cb.disabled = false;
+  }
+});
+
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest("[data-p3-demand-delete]");
+  if (!btn || !(btn instanceof HTMLButtonElement)) return;
+  const userId = String(btn.getAttribute("data-user-id") || "").trim();
+  const entryKey = String(btn.getAttribute("data-entry-key") || "").trim() || userId;
+  const itemID = Math.max(0, Math.floor(Number(btn.getAttribute("data-item-id") || 0)));
+  const itemName = String(btn.getAttribute("data-item-name") || "this item").trim();
+  const raiderName = String(btn.getAttribute("data-raider-name") || "this raider").trim();
+  if ((!entryKey && !userId) || !itemID) return;
+  if (
+    !window.confirm(`Remove ${itemName || "this item"} from ${raiderName}'s demand?`)
+  ) {
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await getJson("/api/admin/p3-demand/item", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ entryKey, userId, itemID }),
+    });
+    status(`Removed ${itemName || "item"} from ${raiderName}.`);
+    await loadAdminP3DemandPanel();
   } catch (error) {
     status(error?.message || "Failed to remove demand item");
   } finally {

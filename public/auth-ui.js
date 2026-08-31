@@ -11,6 +11,7 @@ async function mountAuthHeaderWidget() {
     return (
       nav.querySelector('a[href="/debuff-uptime.html"]') ||
       nav.querySelector('a[href="/profile.html"]') ||
+      nav.querySelector('a[href="/p3-preparation.html"]') ||
       nav.querySelector('a[href="/p2-preparation.html"]') ||
       nav.querySelector('a[href="/admin.html"]')
     );
@@ -35,6 +36,40 @@ async function mountAuthHeaderWidget() {
     if (!sep) return;
     if (show) sep.classList.remove("nav-auth-hidden");
     else sep.classList.add("nav-auth-hidden");
+  }
+
+  function ensurePhase3NavLink() {
+    if (!nav) return null;
+    let phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
+    if (!phase3Link) {
+      phase3Link = document.createElement("a");
+      phase3Link.href = "/p3-preparation.html";
+      phase3Link.textContent = "Phase 3";
+      phase3Link.classList.add("nav-auth-member");
+      const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+      const adminLink = nav.querySelector('a[href="/admin.html"]');
+      const anchor = phase2Link || adminLink;
+      if (anchor) nav.insertBefore(phase3Link, anchor);
+      else nav.appendChild(phase3Link);
+    }
+    phase3Link.classList.add("nav-auth-hidden");
+    return phase3Link;
+  }
+
+  function updatePhase3NavState(isAuthenticated) {
+    const phase3Link = ensurePhase3NavLink();
+    if (!phase3Link) return;
+    const onPhase3 =
+      currentPath === "/p3-preparation.html" || currentPath === "/heart-of-darkness.html";
+    if (onPhase3 && isAuthenticated) {
+      phase3Link.classList.add("nav-current");
+      phase3Link.setAttribute("aria-current", "page");
+    } else {
+      phase3Link.classList.remove("nav-current");
+      phase3Link.removeAttribute("aria-current");
+    }
+    if (isAuthenticated) phase3Link.classList.remove("nav-auth-hidden");
+    else phase3Link.classList.add("nav-auth-hidden");
   }
 
   function ensurePhase2NavLink() {
@@ -169,16 +204,18 @@ async function mountAuthHeaderWidget() {
   function updateMemberNavChrome({
     showProfile,
     showPhase2,
+    showPhase3,
     showDebuffs,
     showAdmin,
   }) {
     updateNavMemberSeparatorVisible(
-      Boolean(showProfile || showPhase2 || showDebuffs || showAdmin)
+      Boolean(showProfile || showPhase2 || showPhase3 || showDebuffs || showAdmin)
     );
   }
 
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
+    updatePhase3NavState(false);
     updatePhase2NavState(false);
     updateAdminNavState(false);
     updateProfileNavState(false);
@@ -186,6 +223,7 @@ async function mountAuthHeaderWidget() {
     updateMemberNavChrome({
       showProfile: false,
       showPhase2: false,
+      showPhase3: false,
       showDebuffs: false,
       showAdmin: false,
     });
@@ -230,6 +268,7 @@ async function mountAuthHeaderWidget() {
     });
     const showAdmin = Boolean(payload?.isAdmin);
     const showDebuffs = Boolean(payload?.canAccessDebuffUptime ?? payload?.isRaidLead);
+    updatePhase3NavState(true);
     updatePhase2NavState(true);
     updateAdminNavState(showAdmin);
     updateProfileNavState(true);
@@ -237,6 +276,7 @@ async function mountAuthHeaderWidget() {
     updateMemberNavChrome({
       showProfile: true,
       showPhase2: true,
+      showPhase3: true,
       showDebuffs,
       showAdmin,
     });

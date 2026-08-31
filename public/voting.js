@@ -62,6 +62,8 @@ function votingRaidImagePath(raidName) {
   if (n.includes("karazhan") || /\bkara\b/.test(n)) return `/raid-images/kara.png${bust}`;
   if (n.includes("serpentshrine") || n.includes("ssc")) return `/raid-images/ssc.png${bust}`;
   if (n.includes("tempest") || n.includes("the eye") || /\btk\b/.test(n)) return `/raid-images/tk.png${bust}`;
+  if (n.includes("hyjal") || n.includes("mount hyjal")) return `/raid-images/hyjal.png${bust}`;
+  if (n.includes("black temple") || /\bbt\b/.test(n)) return `/raid-images/black-temple.png${bust}`;
   if (hasMag && !hasGruul) return `/raid-images/magtheridon.png${bust}`;
   if (hasGruul) return `/raid-images/gruul.png${bust}`;
   return `/raid-images/kara.png${bust}`;

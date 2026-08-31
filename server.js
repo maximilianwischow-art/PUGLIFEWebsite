@@ -113,6 +113,12 @@ import {
   phase2ProgressionTone,
 } from "./lib/phase2-raid-overview.mjs";
 import {
+  PHASE3_RAID_CATALOG,
+  formatPhase3Duration,
+  formatPhase3ShortDate,
+  phase3ProgressionTone,
+} from "./lib/phase3-raid-overview.mjs";
+import {
   t5OneNightOverviewFromSessions,
   t5OneNightSessionsFromCalendarEntries,
 } from "./lib/compute/t5-one-night-sessions.mjs";
@@ -157,6 +163,11 @@ import {
   sanitizeNvRequestCharacterRole,
   nvEntryKey,
   nvGetHistory,
+  hodUpsertCurrent,
+  hodDeleteCurrent,
+  hodGetAllCurrent,
+  hodEntryKey,
+  hodGetHistory,
   profileGetByUserId,
   profileGetByUserIds,
   profileGetAllWithPicture,
@@ -327,7 +338,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260731plb-tk-0730-solarian-badge-v1";
+const API_BUILD_ID = "20260831plb-hyjal-first-clear-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -435,6 +446,24 @@ app.get("/admin.html", async (req, res) => {
   }
 });
 
+app.get("/p3-preparation.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/p3-preparation.html")}`);
+  }
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "p3-preparation.html"));
+});
+
+app.get("/heart-of-darkness.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/heart-of-darkness.html")}`);
+  }
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "p3-preparation.html"));
+});
+
 /** Browsers may still send `If-None-Match` after a prior ETag; Express then returns 304 with an empty body and the
  * client reuses whatever document it had — which breaks HTML when inline `<style>` changes but the URL does not.
  * Strip conditional headers for `.html` so static always sends a full 200 + body (Cache-Control is still no-store). */
@@ -510,6 +539,15 @@ const WOWHEAD_TBC_NETHER_VORTEX_URL = "https://www.wowhead.com/tbc/item=30183/ne
 const NETHER_VORTEX_WOW_ITEM_ID = 30183;
 const NETHER_VORTEX_CRAFTABLES_CACHE_KEY = "nether-vortex-craftables-v6";
 const netherVortexCraftablesFallbackPath = path.join(__dirname, "data", "nether-vortex-craftables-fallback.json");
+const WOWHEAD_TBC_HEART_OF_DARKNESS_URL =
+  "https://www.wowhead.com/tbc/item=32428/heart-of-darkness#reagent-for";
+const HEART_OF_DARKNESS_WOW_ITEM_ID = 32428;
+const HEART_OF_DARKNESS_CRAFTABLES_CACHE_KEY = "heart-of-darkness-craftables-v1";
+const heartOfDarknessCraftablesFallbackPath = path.join(
+  __dirname,
+  "data",
+  "heart-of-darkness-craftables-fallback.json"
+);
 const RAID_HELPER_API_URL = "https://raid-helper.xyz/api/v4";
 const DEFAULT_TBC_ZONES = [
   "Karazhan",
@@ -548,6 +586,24 @@ const TRACKED_RAIDS = {
     "Lady Vashj",
   ],
   "Tempest Keep": ["Al'ar", "Void Reaver", "High Astromancer Solarian", "Kael'thas Sunstrider"],
+  "Hyjal Summit": [
+    "Rage Winterchill",
+    "Anetheron",
+    "Kaz'rogal",
+    "Azgalor",
+    "Archimonde",
+  ],
+  "Black Temple": [
+    "High Warlord Naj'entus",
+    "Supremus",
+    "Shade of Akama",
+    "Teron Gorefiend",
+    "Gurtogg Bloodboil",
+    "Reliquary of Souls",
+    "Mother Shahraz",
+    "The Illidari Council",
+    "Illidan Stormrage",
+  ],
 };
 
 /** 10-player raids — omitted from guild attendance % (`attendancePercentMetrics` mode only). */
@@ -867,7 +923,9 @@ let hofEnrichedWriteChain = Promise.resolve();
 let hofEnrichedMemoryCache = null;
 const gargulLootHistoryPath = path.join(dataDir, "gargul-loot-history.json");
 const netherVortexNeedsPath = path.join(dataDir, "nether-vortex-needs.json");
+const heartOfDarknessNeedsPath = path.join(dataDir, "heart-of-darkness-needs.json");
 const p2DemandAdminChecksPath = path.join(dataDir, "p2-demand-admin-checks.json");
+const p3DemandAdminChecksPath = path.join(dataDir, "p3-demand-admin-checks.json");
 const publicDataSnapshotPath = path.join(dataDir, "public-data-snapshots.json");
 const analyticsStorePath = path.join(dataDir, "site-analytics.json");
 /** Throttled approximate guild member counts for admin analytics timeline (Discord `with_counts`). */
@@ -927,10 +985,17 @@ let identityPublicSettingsReady = null;
 let identityPublicSettingsWriteChain = Promise.resolve();
 let gargulLootState = { entries: [], selectedReportCodes: [] };
 let netherVortexState = { entries: [] };
+let heartOfDarknessReady = null;
+let heartOfDarknessWriteChain = Promise.resolve();
+let heartOfDarknessState = { entries: [] };
 let p2DemandAdminChecksReady = null;
 let p2DemandAdminChecksWriteChain = Promise.resolve();
 /** @type {{ checkedKeys: string[], updatedAt?: number }} */
 let p2DemandAdminChecksState = { checkedKeys: [] };
+let p3DemandAdminChecksReady = null;
+let p3DemandAdminChecksWriteChain = Promise.resolve();
+/** @type {{ checkedKeys: string[], updatedAt?: number }} */
+let p3DemandAdminChecksState = { checkedKeys: [] };
 let publicDataSnapshotState = { updatedAt: 0, byKey: {} };
 let analyticsStoreState = { events: [] };
 let identityPublicSettingsState = { lastActivityCutoff: "" };
@@ -7990,6 +8055,285 @@ async function buildNetherVortexGuildNeedRows() {
     .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
 }
 
+async function persistHeartOfDarknessStore() {
+  const tmpPath = `${heartOfDarknessNeedsPath}.tmp`;
+  const json = JSON.stringify(heartOfDarknessState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, heartOfDarknessNeedsPath);
+}
+
+async function ensureHeartOfDarknessStore() {
+  if (heartOfDarknessReady) return heartOfDarknessReady;
+  heartOfDarknessReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(heartOfDarknessNeedsPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+      heartOfDarknessState = {
+        entries: Array.isArray(list) ? list.filter((row) => row && typeof row === "object") : [],
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      heartOfDarknessState = { entries: [] };
+      await persistHeartOfDarknessStore();
+    }
+    try {
+      const dbRows = hodGetAllCurrent();
+      if (dbRows.length) {
+        heartOfDarknessState = {
+          entries: dbRows.map((r) => {
+            const requestCharacterName = String(r.requestCharacterName || "").trim();
+            return {
+              entryKey: r.entryKey || hodEntryKey(r.userId, requestCharacterName),
+              userId: r.userId,
+              displayName: r.displayName,
+              neededCount: Number(r.neededCount) || 0,
+              items: Array.isArray(r.items) ? r.items : [],
+              updatedAt: Number(r.updatedAt) || 0,
+              requestCharacterName,
+              requestCharacterRole: sanitizeNvRequestCharacterRole(r.requestCharacterRole),
+            };
+          }),
+        };
+      }
+    } catch (error) {
+      console.warn("[item-needs-db] hod hydrate failed:", error?.message || error);
+    }
+  })();
+  return heartOfDarknessReady;
+}
+
+function p3DemandAdminItemCheckKey(entryKey, itemId) {
+  return p2DemandAdminItemCheckKey(entryKey, itemId);
+}
+
+async function adminDeleteP3DemandItem(entryKeyOrUserId, itemID, opts = {}) {
+  const targetItemId = Math.max(0, Math.floor(Number(itemID) || 0));
+  const rawEntryKey = String(opts.entryKey || "").trim();
+  const rawUserId = String(opts.userId || (rawEntryKey ? "" : entryKeyOrUserId) || "").trim();
+  const entryKey = rawEntryKey || (String(entryKeyOrUserId || "").includes("::") ? String(entryKeyOrUserId).trim() : "");
+  if ((!entryKey && !rawUserId) || !targetItemId) {
+    const err = new Error("entryKey (or userId) and itemID are required");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await ensureHeartOfDarknessStore();
+  const prev = heartOfDarknessState.entries || [];
+  const matchEntry = (row) => {
+    const rowKey = String(row?.entryKey || hodEntryKey(row?.userId, row?.requestCharacterName));
+    if (entryKey) return rowKey === entryKey;
+    return String(row?.userId || "") === rawUserId;
+  };
+  const idx = prev.findIndex(matchEntry);
+  if (idx < 0) {
+    const err = new Error("No demand found for this raider");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const entry = prev[idx];
+  const uid = String(entry.userId || "").trim();
+  const resolvedEntryKey = String(entry.entryKey || hodEntryKey(uid, entry.requestCharacterName));
+  const currentItems = sanitizeHeartOfDarknessItems(entry.items);
+  const hasItem = currentItems.some(
+    (it) => Math.max(0, Math.floor(Number(it.itemID || 0))) === targetItemId
+  );
+  if (!hasItem) {
+    const err = new Error("Item not found on this raider's demand");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  let remainingItems = currentItems.filter(
+    (it) => Math.max(0, Math.floor(Number(it.itemID || 0))) !== targetItemId
+  );
+  try {
+    const catalogMaps = await getHeartOfDarknessCraftableCatalogMaps();
+    remainingItems = enrichSanitizedHeartOfDarknessItems(remainingItems, catalogMaps);
+  } catch {
+    /* catalog optional */
+  }
+
+  const displayName = String(entry.displayName || "Unknown");
+  const neededCount = Number(entry.neededCount) || 0;
+  const updatedAt = Date.now();
+  const requestCharacterName = sanitizeNvRequestCharacterName(entry.requestCharacterName);
+  const requestCharacterRole = sanitizeNvRequestCharacterRole(entry.requestCharacterRole);
+
+  try {
+    if (!remainingItems.length) {
+      hodDeleteCurrent({ userId: uid, displayName, updatedAt, requestCharacterName });
+    } else {
+      hodUpsertCurrent({
+        userId: uid,
+        displayName,
+        items: remainingItems,
+        neededCount,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      });
+    }
+  } catch (error) {
+    console.warn("[item-needs-db] adminDeleteP3DemandItem failed:", error?.message || error);
+  }
+
+  heartOfDarknessWriteChain = heartOfDarknessWriteChain.catch(() => {}).then(async () => {
+    const next = [...(heartOfDarknessState.entries || [])];
+    const rowIdx = next.findIndex(
+      (row) => String(row?.entryKey || hodEntryKey(row?.userId, row?.requestCharacterName)) === resolvedEntryKey
+    );
+    if (!remainingItems.length) {
+      if (rowIdx >= 0) next.splice(rowIdx, 1);
+    } else if (rowIdx >= 0) {
+      next[rowIdx] = {
+        entryKey: resolvedEntryKey,
+        userId: uid,
+        displayName,
+        neededCount,
+        items: remainingItems,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      };
+    }
+    heartOfDarknessState.entries = next;
+    await persistHeartOfDarknessStore();
+  });
+  await heartOfDarknessWriteChain;
+
+  await ensureP3DemandAdminChecksStore();
+  const set = new Set(p3DemandAdminChecksState.checkedKeys || []);
+  const removedNew = set.delete(p3DemandAdminItemCheckKey(resolvedEntryKey, targetItemId));
+  const removedLegacy = set.delete(p2DemandLegacyCheckKey(uid, targetItemId));
+  if (removedNew || removedLegacy) {
+    p3DemandAdminChecksState = { checkedKeys: [...set], updatedAt: Date.now() };
+    p3DemandAdminChecksWriteChain = p3DemandAdminChecksWriteChain.catch(() => {}).then(async () => {
+      await persistP3DemandAdminChecksStore();
+    });
+    await p3DemandAdminChecksWriteChain;
+  }
+
+  return { userId: uid, entryKey: resolvedEntryKey, itemID: targetItemId, remainingItemCount: remainingItems.length };
+}
+
+function heartOfDarknessRowIsItemChecked(set, row, itemId) {
+  const uid = String(row.userId || "");
+  const entryKey = String(row.entryKey || hodEntryKey(uid, row.requestCharacterName));
+  return set.has(p3DemandAdminItemCheckKey(entryKey, itemId)) || set.has(p2DemandLegacyCheckKey(uid, itemId));
+}
+
+function heartOfDarknessCheckedHodFromEntries(entries, checkedKeys) {
+  const set = new Set(Array.isArray(checkedKeys) ? checkedKeys : []);
+  let sum = 0;
+  for (const row of entries || []) {
+    for (const it of row.items || []) {
+      if (!heartOfDarknessRowIsItemChecked(set, row, it.itemID)) continue;
+      const x = Number(it.hodNeeded);
+      sum += Number.isFinite(x) ? Math.max(1, Math.min(20, Math.floor(x))) : 1;
+    }
+  }
+  return sum;
+}
+
+async function persistP3DemandAdminChecksStore() {
+  const tmpPath = `${p3DemandAdminChecksPath}.tmp`;
+  const json = JSON.stringify(p3DemandAdminChecksState, null, 2);
+  await writeFile(tmpPath, json, "utf8");
+  await rename(tmpPath, p3DemandAdminChecksPath);
+}
+
+async function ensureP3DemandAdminChecksStore() {
+  if (p3DemandAdminChecksReady) return p3DemandAdminChecksReady;
+  p3DemandAdminChecksReady = (async () => {
+    await mkdir(dataDir, { recursive: true });
+    try {
+      const raw = await readFile(p3DemandAdminChecksPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const keys = Array.isArray(parsed?.checkedKeys)
+        ? parsed.checkedKeys
+        : Array.isArray(parsed)
+          ? parsed
+          : [];
+      p3DemandAdminChecksState = {
+        checkedKeys: [...new Set(keys.map((k) => String(k || "").trim()).filter(Boolean))],
+        updatedAt: Number(parsed?.updatedAt) || 0,
+      };
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      p3DemandAdminChecksState = { checkedKeys: [], updatedAt: 0 };
+      await persistP3DemandAdminChecksStore();
+    }
+  })();
+  return p3DemandAdminChecksReady;
+}
+
+async function buildHeartOfDarknessGuildNeedRows() {
+  await ensureHeartOfDarknessStore();
+  await ensureRhWclLinksStore();
+  await ensureGargulLootHistoryStore();
+  let catalogMaps = { byId: new Map(), byNameLower: new Map() };
+  try {
+    catalogMaps = await getHeartOfDarknessCraftableCatalogMaps();
+  } catch {
+    /* catalog optional */
+  }
+  const wclCtx = roleAlertsWclEventsContext();
+  const rawEntries = [...(heartOfDarknessState.entries || [])];
+  const rhNamesByUserId = new Map(
+    await Promise.all(
+      rawEntries.map(async (row) => {
+        const id = String(row?.userId || "");
+        if (!id) return [id, ""];
+        const rhName = await resolveRaidHelperNameByDiscordUserId(id);
+        return [id, rhName];
+      })
+    )
+  );
+  return rawEntries
+    .map((row) => {
+      const discordName = String(row.displayName || "Unknown");
+      const userId = String(row.userId || "");
+      const rhSignupName = rhNamesByUserId.get(userId) || "";
+      const linked =
+        resolveLinkedWowCharacterByDiscordUserId(userId) ||
+        (rhSignupName && resolveLinkedWowCharacterFromRhWcl(rhSignupName)) ||
+        resolveLinkedWowCharacterFromRhWcl(discordName);
+      const requestCharacterName = sanitizeNvRequestCharacterName(row.requestCharacterName);
+      const requestCharacterRole = requestCharacterName
+        ? sanitizeNvRequestCharacterRole(row.requestCharacterRole)
+        : "";
+      const characterName =
+        requestCharacterName || String(linked || rhSignupName || discordName).trim() || discordName;
+      const characterProfileUrl = linked ? raiderIoCharacterProfileWebUrl(linked) : "";
+      const canon = identityUserGetByDiscordId(userId);
+      const canonicalUserId = canon?.id != null ? Number(canon.id) : null;
+      let wclEventCount = null;
+      if (wclCtx.active && canonicalUserId != null) {
+        wclEventCount = wclCtx.wclEventByUserId.get(canonicalUserId) ?? 0;
+      }
+      return {
+        entryKey: String(row.entryKey || hodEntryKey(userId, requestCharacterName)),
+        userId,
+        displayName: discordName,
+        raidHelperName: rhSignupName || null,
+        characterName,
+        requestCharacterName,
+        requestCharacterRole,
+        characterProfileUrl,
+        wclEventCount,
+        neededCount: 0,
+        items: enrichSanitizedHeartOfDarknessItems(sanitizeHeartOfDarknessItems(row.items), catalogMaps),
+        updatedAt: Number(row.updatedAt || 0),
+      };
+    })
+    .filter((row) => row.userId)
+    .filter((row) => heartOfDarknessEntryTotal(row) > 0)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
 async function persistPublicDataSnapshotStore() {
   const tmpPath = `${publicDataSnapshotPath}.tmp`;
   const json = JSON.stringify(publicDataSnapshotState, null, 2);
@@ -9140,9 +9484,18 @@ function extractWowheadListviewDataArray(html, listId) {
 }
 
 function netherVortexCountFromWowheadReagents(reagents) {
+  return wowheadReagentCount(reagents, NETHER_VORTEX_WOW_ITEM_ID);
+}
+
+function heartOfDarknessCountFromWowheadReagents(reagents) {
+  return wowheadReagentCount(reagents, HEART_OF_DARKNESS_WOW_ITEM_ID);
+}
+
+function wowheadReagentCount(reagents, reagentItemId) {
   const pairs = Array.isArray(reagents) ? reagents : [];
+  const targetId = Number(reagentItemId);
   for (const p of pairs) {
-    if (Array.isArray(p) && p.length >= 2 && Number(p[0]) === NETHER_VORTEX_WOW_ITEM_ID) {
+    if (Array.isArray(p) && p.length >= 2 && Number(p[0]) === targetId) {
       const n = Number(p[1]);
       if (Number.isFinite(n) && n > 0) return Math.max(1, Math.min(20, Math.floor(n)));
     }
@@ -9166,7 +9519,11 @@ function professionFromWowheadSpellRow(row) {
   return String(row?.reqskill || "").trim();
 }
 
-function parseWowheadReagentForItems(html) {
+function parseWowheadReagentForItems(html, opts = {}) {
+  const reagentItemId = Number(opts.reagentItemId ?? NETHER_VORTEX_WOW_ITEM_ID);
+  const reagentField =
+    opts.reagentField || (reagentItemId === HEART_OF_DARKNESS_WOW_ITEM_ID ? "hodNeeded" : "vortexNeeded");
+  const countFromReagents = (reagents) => wowheadReagentCount(reagents, reagentItemId);
   const text = String(html || "");
   const nameToId = new Map();
   const itemDictRx = /"(\d+)":\{"name_enus":"((?:\\.|[^"\\])+)"/g;
@@ -9198,9 +9555,9 @@ function parseWowheadReagentForItems(html) {
         const createdItemId = Array.isArray(creates) && creates.length ? Number(creates[0]) : 0;
         const mappedId = Number(nameToId.get(itemName) || 0);
         const itemID = mappedId > 0 ? mappedId : createdItemId > 0 ? createdItemId : 0;
-        const vortexNeeded = netherVortexCountFromWowheadReagents(row?.reagents);
+        const reagentNeeded = countFromReagents(row?.reagents);
         const profession = professionFromWowheadSpellRow(row);
-        return { itemID, itemName, profession, vortexNeeded };
+        return { itemID, itemName, profession, [reagentField]: reagentNeeded };
       })
       .filter((row) => row.itemID > 0 && row.itemName)
       .sort((a, b) => a.itemName.localeCompare(b.itemName));
@@ -9225,7 +9582,7 @@ function parseWowheadReagentForItems(html) {
     while ((m = rx.exec(candidate))) {
       const itemID = Number(m[1] || 0);
       const itemName = String(m[2] || "").replace(/\\"/g, '"').trim();
-      if (itemID > 0 && itemName) fallback.push({ itemID, itemName, profession: "", vortexNeeded: 1 });
+      if (itemID > 0 && itemName) fallback.push({ itemID, itemName, profession: "", [reagentField]: 1 });
     }
     return fallback
       .filter((row, idx, arr) => arr.findIndex((x) => x.itemID === row.itemID) === idx)
@@ -9243,7 +9600,7 @@ function parseWowheadReagentForItems(html) {
         itemID,
         itemName,
         profession: professionFromWowheadSpellRow(row) || String(row?.reqskill || "").trim(),
-        vortexNeeded: netherVortexCountFromWowheadReagents(row?.reagents),
+        [reagentField]: countFromReagents(row?.reagents),
       };
     })
     .filter((row) => row.itemID > 0 && row.itemName)
@@ -9360,6 +9717,167 @@ async function getNetherVortexCraftableCatalogMaps() {
     loader: loadNetherVortexCraftablesPayload,
   });
   return netherVortexCraftableCatalogMaps(payload.items);
+}
+
+async function normalizeHeartOfDarknessCraftableRows(parsedRows) {
+  const normalized = [];
+  for (const row of parsedRows || []) {
+    let resolvedId = Number(row?.itemID || 0);
+    try {
+      const byName = await resolveClassicItemIdByName(row?.itemName);
+      if (byName > 0) resolvedId = byName;
+    } catch {
+      /* keep Wowhead id */
+    }
+    normalized.push({
+      itemID: resolvedId > 0 ? resolvedId : Number(row?.itemID || 0),
+      itemName: String(row?.itemName || "").trim(),
+      profession: String(row?.profession || "").trim(),
+      hodNeeded: Math.max(1, Math.min(20, Math.floor(Number(row?.hodNeeded || 1)))),
+    });
+  }
+  return normalized.filter((x) => x.itemID > 0 && x.itemName);
+}
+
+async function readHeartOfDarknessCraftablesFallbackPayload() {
+  try {
+    const raw = await readFile(heartOfDarknessCraftablesFallbackPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const normalized = await normalizeHeartOfDarknessCraftableRows(items);
+    return {
+      source: "data/heart-of-darkness-craftables-fallback.json",
+      items: normalized,
+    };
+  } catch {
+    return { source: "fallback-missing", items: [] };
+  }
+}
+
+async function loadHeartOfDarknessCraftablesPayloadFromWowhead() {
+  const wowheadRes = await fetch(WOWHEAD_TBC_HEART_OF_DARKNESS_URL, {
+    headers: { "User-Agent": "fallen-tacticians-api/1.0 (+heart-of-darkness-tracker)" },
+  });
+  if (!wowheadRes.ok) {
+    throw new Error(`Failed to fetch Wowhead craftables (${wowheadRes.status})`);
+  }
+  const html = await wowheadRes.text();
+  const items = parseWowheadReagentForItems(html, {
+    reagentItemId: HEART_OF_DARKNESS_WOW_ITEM_ID,
+    reagentField: "hodNeeded",
+  });
+  if (!items.length) {
+    throw new Error("Could not parse craftable items from Wowhead reagent-for list");
+  }
+  const normalized = await normalizeHeartOfDarknessCraftableRows(items);
+  if (!normalized.length) {
+    throw new Error("Wowhead craftables normalized to empty");
+  }
+  return { source: WOWHEAD_TBC_HEART_OF_DARKNESS_URL, items: normalized };
+}
+
+async function loadHeartOfDarknessCraftablesPayload() {
+  try {
+    return await loadHeartOfDarknessCraftablesPayloadFromWowhead();
+  } catch (firstError) {
+    const fb = await readHeartOfDarknessCraftablesFallbackPayload();
+    if (fb.items.length) return fb;
+    throw firstError;
+  }
+}
+
+function heartOfDarknessCraftableCatalogMaps(catalogItems) {
+  const byId = new Map();
+  const byNameLower = new Map();
+  for (const row of catalogItems || []) {
+    const id = Number(row?.itemID || 0);
+    if (id > 0) byId.set(id, row);
+    const nm = String(row?.itemName || "").trim().toLowerCase();
+    if (nm) byNameLower.set(nm, row);
+  }
+  return { byId, byNameLower };
+}
+
+function sanitizeHeartOfDarknessItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((row) => {
+      if (typeof row === "string") {
+        return { itemName: String(row || "").trim(), profession: "", hodNeeded: 1 };
+      }
+      if (!row || typeof row !== "object") return null;
+      return {
+        itemID: Number(row.itemID || row.itemId || 0),
+        itemName: String(row.itemName || row.name || "").trim(),
+        profession: String(row.profession || "").trim(),
+        hodNeeded: Number(row.hodNeeded || row.hodCount || row.count || row.quantity || 1),
+      };
+    })
+    .map((row) =>
+      row
+        ? {
+            ...row,
+            itemID: Number.isFinite(Number(row.itemID)) ? Math.max(0, Number(row.itemID)) : 0,
+            hodNeeded: Number.isFinite(Number(row.hodNeeded))
+              ? Math.max(1, Math.min(20, Math.floor(Number(row.hodNeeded))))
+              : 1,
+          }
+        : null
+    )
+    .filter((row) => {
+      if (!row) return false;
+      const name = String(row.itemName || "").trim();
+      const id = Number(row.itemID || 0);
+      return Boolean(name) || (Number.isFinite(id) && id > 0);
+    })
+    .slice(0, 30);
+}
+
+function heartOfDarknessUnitsFromItems(items) {
+  return (Array.isArray(items) ? items : []).reduce((sum, it) => {
+    const v = Number(it?.hodNeeded ?? 1);
+    const n = Number.isFinite(v) ? Math.max(1, Math.min(20, Math.floor(v))) : 1;
+    return sum + n;
+  }, 0);
+}
+
+function heartOfDarknessEntryTotal(row) {
+  return heartOfDarknessUnitsFromItems(row?.items);
+}
+
+function enrichSanitizedHeartOfDarknessItems(items, catalogMaps) {
+  const { byId, byNameLower } = catalogMaps;
+  return (Array.isArray(items) ? items : []).map((row) => {
+    if (!row || typeof row !== "object") return row;
+    let cat = null;
+    const id = Number(row.itemID || 0);
+    if (id > 0) cat = byId.get(id) || null;
+    if (!cat) {
+      const nm = String(row.itemName || "").trim().toLowerCase();
+      if (nm) cat = byNameLower.get(nm) || null;
+    }
+    const hodNeeded = cat
+      ? Math.max(1, Math.min(20, Math.floor(Number(cat.hodNeeded || 1))))
+      : Math.max(1, Math.min(20, Math.floor(Number(row.hodNeeded || 1))));
+    const itemName = String(row.itemName || "").trim() || (cat ? String(cat.itemName || "").trim() : "");
+    const profession = String(row.profession || "").trim() || (cat ? String(cat.profession || "").trim() : "");
+    return {
+      ...row,
+      itemID: Number.isFinite(id) && id > 0 ? id : Number(row.itemID || 0),
+      itemName,
+      profession,
+      hodNeeded,
+    };
+  });
+}
+
+async function getHeartOfDarknessCraftableCatalogMaps() {
+  const payload = await getOrRefreshCachedPayload(HEART_OF_DARKNESS_CRAFTABLES_CACHE_KEY, {
+    ttlMs: 24 * 3600_000,
+    maxStaleMs: 7 * 24 * 3600_000,
+    loader: loadHeartOfDarknessCraftablesPayload,
+  });
+  return heartOfDarknessCraftableCatalogMaps(payload.items);
 }
 
 function normalizeGargulItemName(itemLink, fallback) {
@@ -9560,6 +10078,22 @@ app.get("/nether-vortex.html", (req, res) => {
     return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/nether-vortex.html")}`);
   }
   res.sendFile(path.join(publicDir, "p2-preparation.html"));
+});
+
+app.get("/p3-preparation.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/p3-preparation.html")}`);
+  }
+  res.sendFile(path.join(publicDir, "p3-preparation.html"));
+});
+
+app.get("/heart-of-darkness.html", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/heart-of-darkness.html")}`);
+  }
+  res.sendFile(path.join(publicDir, "p3-preparation.html"));
 });
 
 app.get("/privacy.html", (_req, res) => {
@@ -12882,19 +13416,6 @@ app.delete("/api/admin/p2-demand/item", async (req, res) => {
   }
 });
 
-app.get("/api/nether-vortex/craftables", async (_req, res) => {
-  try {
-    const payload = await getOrRefreshCachedPayload(NETHER_VORTEX_CRAFTABLES_CACHE_KEY, {
-      ttlMs: 24 * 3600_000,
-      maxStaleMs: 7 * 24 * 3600_000,
-      loader: loadNetherVortexCraftablesPayload,
-    });
-    return res.json({ ok: true, ...payload });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: error?.message || "Failed to load craftable items" });
-  }
-});
-
 app.put("/api/nether-vortex/needs/my", async (req, res) => {
   try {
     const session = getSessionFromRequest(req);
@@ -12979,6 +13500,204 @@ app.put("/api/nether-vortex/needs/my", async (req, res) => {
   }
 });
 
+app.get("/api/nether-vortex/craftables", async (_req, res) => {
+  try {
+    const payload = await getOrRefreshCachedPayload(NETHER_VORTEX_CRAFTABLES_CACHE_KEY, {
+      ttlMs: 24 * 3600_000,
+      maxStaleMs: 7 * 24 * 3600_000,
+      loader: loadNetherVortexCraftablesPayload,
+    });
+    return res.json({ ok: true, ...payload });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load craftable items" });
+  }
+});
+
+app.get("/api/heart-of-darkness/craftables", async (_req, res) => {
+  try {
+    const payload = await getOrRefreshCachedPayload(HEART_OF_DARKNESS_CRAFTABLES_CACHE_KEY, {
+      ttlMs: 24 * 3600_000,
+      maxStaleMs: 7 * 24 * 3600_000,
+      loader: loadHeartOfDarknessCraftablesPayload,
+    });
+    return res.json({ ok: true, ...payload });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load craftable items" });
+  }
+});
+
+app.get("/api/heart-of-darkness/needs", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    const userId = String(session?.user?.id || "").trim();
+    const rows = await buildHeartOfDarknessGuildNeedRows();
+    const myEntries = userId ? rows.filter((row) => row.userId === userId) : [];
+    const myEntry = myEntries[0] || null;
+    const totalNeeded = rows.reduce((sum, row) => sum + heartOfDarknessEntryTotal(row), 0);
+    await ensureP3DemandAdminChecksStore();
+    const checkedKeys = [...(p3DemandAdminChecksState.checkedKeys || [])];
+    const checkedHod = heartOfDarknessCheckedHodFromEntries(rows, checkedKeys);
+    return res.json({
+      ok: true,
+      authenticated: Boolean(userId),
+      entries: rows,
+      myEntry,
+      myEntries,
+      totalNeeded,
+      checkedKeys,
+      checkedHod,
+      openHod: Math.max(0, totalNeeded - checkedHod),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Heart of Darkness tracker" });
+  }
+});
+
+app.get("/api/admin/p3-demand", async (req, res) => {
+  try {
+    if (!requireAdminSession(req, res)) return;
+    await ensureP3DemandAdminChecksStore();
+    const entries = await buildHeartOfDarknessGuildNeedRows();
+    const checkedKeys = [...(p3DemandAdminChecksState.checkedKeys || [])];
+    const totalNeeded = entries.reduce((sum, row) => sum + heartOfDarknessEntryTotal(row), 0);
+    const checkedHod = heartOfDarknessCheckedHodFromEntries(entries, checkedKeys);
+    return res.json({
+      ok: true,
+      entries,
+      checkedKeys,
+      totalNeeded,
+      checkedHod,
+      openHod: Math.max(0, totalNeeded - checkedHod),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load P3 demand admin view" });
+  }
+});
+
+app.patch("/api/admin/p3-demand/check", async (req, res) => {
+  try {
+    if (!requireAdminSession(req, res)) return;
+    const userId = String(req.body?.userId || "").trim();
+    const itemID = Math.max(0, Math.floor(Number(req.body?.itemID ?? req.body?.itemId ?? 0)));
+    const checked = Boolean(req.body?.checked);
+    const entryKey =
+      String(req.body?.entryKey || "").trim() || (userId ? hodEntryKey(userId, req.body?.requestCharacterName) : "");
+    if ((!entryKey && !userId) || !itemID) {
+      return res.status(400).json({ ok: false, error: "entryKey (or userId) and itemID are required" });
+    }
+    const key = p3DemandAdminItemCheckKey(entryKey || userId, itemID);
+    await ensureP3DemandAdminChecksStore();
+    const set = new Set(p3DemandAdminChecksState.checkedKeys || []);
+    if (checked) set.add(key);
+    else {
+      set.delete(key);
+      if (userId) set.delete(p2DemandLegacyCheckKey(userId, itemID));
+    }
+    p3DemandAdminChecksState = { checkedKeys: [...set], updatedAt: Date.now() };
+    p3DemandAdminChecksWriteChain = p3DemandAdminChecksWriteChain.catch(() => {}).then(async () => {
+      await persistP3DemandAdminChecksStore();
+    });
+    await p3DemandAdminChecksWriteChain;
+    return res.json({ ok: true, key, checked, checkedKeys: [...set] });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update demand check" });
+  }
+});
+
+app.delete("/api/admin/p3-demand/item", async (req, res) => {
+  try {
+    if (!requireAdminSession(req, res)) return;
+    const userId = String(req.body?.userId || "").trim();
+    const entryKey = String(req.body?.entryKey || "").trim();
+    const itemID = Math.max(0, Math.floor(Number(req.body?.itemID ?? req.body?.itemId ?? 0)));
+    const result = await adminDeleteP3DemandItem(entryKey || userId, itemID, { entryKey, userId });
+    return res.json({ ok: true, deleted: true, ...result });
+  } catch (error) {
+    const status = Number(error?.statusCode) || 500;
+    return res.status(status).json({ ok: false, error: error?.message || "Failed to delete demand item" });
+  }
+});
+
+app.put("/api/heart-of-darkness/needs/my", async (req, res) => {
+  try {
+    const session = getSessionFromRequest(req);
+    if (!session?.user?.id) {
+      return res.status(401).json({ ok: false, error: "Login required" });
+    }
+    const neededCount = 0;
+    let items = sanitizeHeartOfDarknessItems(req.body?.items);
+    const requestCharacterName = sanitizeNvRequestCharacterName(req.body?.requestCharacterName);
+    const requestCharacterRole = sanitizeNvRequestCharacterRole(req.body?.requestCharacterRole);
+    if (items.length && !requestCharacterName) {
+      return res.status(400).json({
+        ok: false,
+        error: "Choose which character these craftables are for (Main or Alt).",
+      });
+    }
+    try {
+      const catalogMaps = await getHeartOfDarknessCraftableCatalogMaps();
+      items = enrichSanitizedHeartOfDarknessItems(items, catalogMaps);
+    } catch {
+      /* catalog optional */
+    }
+    await ensureHeartOfDarknessStore();
+    const userId = String(session.user.id || "");
+    const displayName = String(session.user.globalName || session.user.username || "Unknown");
+    const updatedAt = Date.now();
+
+    try {
+      hodUpsertCurrent({
+        userId,
+        displayName,
+        items,
+        neededCount,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      });
+    } catch (error) {
+      console.warn("[item-needs-db] hodUpsertCurrent failed:", error?.message || error);
+    }
+
+    const entryKey = hodEntryKey(userId, requestCharacterName);
+    heartOfDarknessWriteChain = heartOfDarknessWriteChain.catch(() => {}).then(async () => {
+      const prev = heartOfDarknessState.entries || [];
+      const idx = prev.findIndex(
+        (row) => String(row?.entryKey || hodEntryKey(row?.userId, row?.requestCharacterName)) === entryKey
+      );
+      if (!items.length) {
+        if (idx >= 0) prev.splice(idx, 1);
+        heartOfDarknessState.entries = prev;
+        await persistHeartOfDarknessStore();
+        return;
+      }
+      const nextEntry = {
+        entryKey,
+        userId,
+        displayName,
+        neededCount,
+        items,
+        updatedAt,
+        requestCharacterName,
+        requestCharacterRole,
+      };
+      if (idx >= 0) prev[idx] = nextEntry;
+      else prev.push(nextEntry);
+      heartOfDarknessState.entries = prev;
+      await persistHeartOfDarknessStore();
+    });
+    await heartOfDarknessWriteChain;
+    return res.json({
+      ok: true,
+      entryKey,
+      requestCharacterName,
+      requestCharacterRole,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save Heart of Darkness need" });
+  }
+});
+
 app.put("/api/p2-preparation/materials/current", async (req, res) => {
   try {
     const session = getSessionFromRequest(req);
@@ -13005,8 +13724,8 @@ app.put("/api/p2-preparation/materials/current", async (req, res) => {
 /**
  * Admin-only audit feed for Item Need Submissions.
  *
- * `?kind=nv|p2` selects which feed to read; `nv` returns Nether Vortex
- * submissions (latest 200 PUTs across all users with their items), `p2`
+ * `?kind=nv|hod|p2` selects which feed to read; `nv` returns Nether Vortex
+ * submissions, `hod` returns Heart of Darkness submissions, `p2`
  * returns every change to a P2 raid material count.
  */
 app.get("/api/admin/item-needs/history", async (req, res) => {
@@ -13018,6 +13737,10 @@ app.get("/api/admin/item-needs/history", async (req, res) => {
     if (kind === "p2") {
       const materialId = req.query?.materialId ? String(req.query.materialId) : undefined;
       return res.json({ ok: true, kind: "p2", rows: p2GetHistory({ limit, materialId }) });
+    }
+    if (kind === "hod") {
+      const userId = req.query?.userId ? String(req.query.userId) : undefined;
+      return res.json({ ok: true, kind: "hod", rows: hodGetHistory({ limit, userId }) });
     }
     const userId = req.query?.userId ? String(req.query.userId) : undefined;
     return res.json({ ok: true, kind: "nv", rows: nvGetHistory({ limit, userId }) });
@@ -15013,6 +15736,17 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     endMs: Date.UTC(2026, 6, 31, 4, 0, 0),
     reportCodes: ["wD3bchXFCYL496Pt"],
   },
+  {
+    badgeId: "hyjal-first-clear",
+    label: "Hyjal First Clear",
+    description:
+      "Attended the guild's first Mount Hyjal full clear on 30 August 2026 (5/5, Archimonde kill). Awarded to every canonical user with a Warcraft Logs appearance in the guild's Hyjal clear log from that night.",
+    icon: "/images/achievements/hyjal-first-clear.png",
+    /* August 30 2026 00:00 CEST = August 29 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 7, 29, 22, 0, 0),
+    endMs: Date.UTC(2026, 7, 31, 4, 0, 0),
+    reportCodes: [],
+  },
 ];
 
 const SPECIFIC_RAID_ATTENDANCE_AWARDS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -15323,6 +16057,7 @@ function resolveSpecificRaidAttendanceAwards() {
  * already shipped under `/public/images/`.
  */
 const PHASE_1_EVENT_BADGE_IDS = new Set(["aoe-cleave"]);
+const PHASE_3_EVENT_BADGE_IDS = new Set(["hyjal-first-clear"]);
 
 const BADGE_CATALOG = [
   {
@@ -15383,7 +16118,9 @@ const BADGE_CATALOG = [
     phase: "P2",
     description: "Serpentshrine Cavern and Tempest Keep event awards.",
     badges: [
-      ...SPECIFIC_RAID_ATTENDANCE_BADGES.filter((cfg) => !PHASE_1_EVENT_BADGE_IDS.has(cfg.badgeId)).map((cfg) => ({
+      ...SPECIFIC_RAID_ATTENDANCE_BADGES.filter(
+        (cfg) => !PHASE_1_EVENT_BADGE_IDS.has(cfg.badgeId) && !PHASE_3_EVENT_BADGE_IDS.has(cfg.badgeId)
+      ).map((cfg) => ({
         id: cfg.badgeId,
         name: cfg.label,
         icon: cfg.icon,
@@ -15419,8 +16156,18 @@ const BADGE_CATALOG = [
     id: "phase-3-t6",
     label: "Phase 3 — Tier 6",
     phase: "P3",
-    description: "Reserved for Hyjal, Black Temple, and Sunwell Plateau event badges.",
-    badges: [],
+    description: "Mount Hyjal, Black Temple, and Sunwell Plateau event badges.",
+    badges: [
+      ...SPECIFIC_RAID_ATTENDANCE_BADGES.filter((cfg) => PHASE_3_EVENT_BADGE_IDS.has(cfg.badgeId)).map(
+        (cfg) => ({
+          id: cfg.badgeId,
+          name: cfg.label,
+          icon: cfg.icon,
+          phase: "P3",
+          description: cfg.description,
+        })
+      ),
+    ],
   },
 ];
 
@@ -20120,6 +20867,8 @@ function raidImageFromTitle(title) {
   // Distinct Blizzard encounter portraits (same boss icons WCL uses in rankings); assets.rpglogs.com hotlinks often 403 off-site.
   if (text.includes("magtheridon")) return "/raid-images/magtheridon.png";
   if (text.includes("gruul")) return "/raid-images/gruul.png";
+  if (text.includes("hyjal") || text.includes("mount hyjal")) return "/raid-images/hyjal.png";
+  if (text.includes("black temple") || text === "bt") return "/raid-images/black-temple.png";
   return "/raid-images/kara.png";
 }
 
@@ -20130,6 +20879,8 @@ function raidImageFromRaidName(raidName) {
   if (text.includes("karazhan") || text === "kara") return "/raid-images/kara.png";
   if (text.includes("magtheridon")) return "/raid-images/magtheridon.png";
   if (text.includes("gruul")) return "/raid-images/gruul.png";
+  if (text.includes("hyjal") || text.includes("mount hyjal")) return "/raid-images/hyjal.png";
+  if (text.includes("black temple") || text === "bt") return "/raid-images/black-temple.png";
   return raidImageFromTitle(raidName || "");
 }
 
@@ -20175,6 +20926,8 @@ function eventDmHeaderImageUrl(eventDetail, eventTitle = "") {
   else if (raidName === "Magtheridon's Lair") headerPath = "/raid-images/event-header-magtheridon.png";
   else if (raidName === "Serpentshrine Cavern") headerPath = "/raid-images/event-header-ssc.png";
   else if (raidName === "Tempest Keep") headerPath = "/raid-images/event-header-tk.png";
+  else if (raidName === "Hyjal Summit") headerPath = "/raid-images/event-header-hyjal.png";
+  else if (raidName === "Black Temple") headerPath = "/raid-images/event-header-black-temple.png";
   const fallback = absoluteUrlFromPublicBase(headerPath || raidImageFromTitle(String(eventTitle || "")));
   return fallback || "";
 }
@@ -20224,6 +20977,8 @@ function trackedRaidNameFromEventTitle(eventTitle) {
   if (text.includes("karazhan") || /\bkara\b/.test(text)) return "Karazhan";
   if (text.includes("gruul")) return "Gruul's Lair";
   if (text.includes("magtheridon")) return "Magtheridon's Lair";
+  if (text.includes("hyjal") || text.includes("mount hyjal")) return "Hyjal Summit";
+  if (text.includes("black temple") || /\bbt\b/.test(text)) return "Black Temple";
   return null;
 }
 
@@ -20318,6 +21073,18 @@ function wclPhase2RaidWeekdaysNormalized() {
   return days.length ? new Set(days) : null;
 }
 
+function wclPhase3RaidWeekdaysNormalized() {
+  const raw = String(
+    process.env.WCL_P3_RAID_WEEKDAYS || process.env.WCL_P2_RAID_WEEKDAYS || "sunday,thursday"
+  ).trim();
+  if (!raw || raw === "*") return null;
+  const days = raw
+    .split(",")
+    .map((d) => normalizeText(d.trim().toLowerCase()))
+    .filter(Boolean);
+  return days.length ? new Set(days) : null;
+}
+
 /** @deprecated Use {@link wclPhase2RaidWeekdaysNormalized}. */
 function wclSscRaidWeekdaysNormalized() {
   return wclPhase2RaidWeekdaysNormalized();
@@ -20333,6 +21100,11 @@ function trackedRaidAllowedOnCalendarWeekday(raidName, weekdayNorm, options = {}
   if (raidName === "Gruul's Lair" || raidName === "Magtheridon's Lair") return weekdayNorm === "thursday";
   if (raidName === "Serpentshrine Cavern" || raidName === "Tempest Keep") {
     const allowed = wclPhase2RaidWeekdaysNormalized();
+    if (!allowed) return true;
+    return allowed.has(weekdayNorm);
+  }
+  if (raidName === "Hyjal Summit" || raidName === "Black Temple") {
+    const allowed = wclPhase3RaidWeekdaysNormalized();
     if (!allowed) return true;
     return allowed.has(weekdayNorm);
   }
@@ -23577,7 +24349,126 @@ function buildPhase2RaidOverviewPayload({
   };
 }
 
+function buildPhase3RaidOverviewPayload({
+  effectiveReports,
+  raidSummary,
+  calendarEntries,
+  raidRankingPayloads,
+  coreParseMetrics,
+  coreParseContext,
+}) {
+  const summaryByRaid = new Map((raidSummary || []).map((row) => [row.raidName, row]));
+  const reportByCode = new Map((effectiveReports || []).map((r) => [String(r.code || ""), r]));
+  const kpiRankings = coreParseContext?.raidRankingPayloads ?? raidRankingPayloads ?? [];
+  const kpiSnapshots = coreParseContext?.raidSnapshots ?? [];
+  const linksState = coreParseContext?.linksState ?? null;
+  const wclDisplayByLower = coreParseContext?.wclDisplayByLower ?? new Map();
+  const clearsByRaid = new Map();
+  const lastClearByRaid = new Map();
+
+  for (const entry of calendarEntries || []) {
+    const raidName = entry?.raidName;
+    if (!raidName) continue;
+    if (entry.isFullClear) {
+      clearsByRaid.set(raidName, (clearsByRaid.get(raidName) || 0) + 1);
+      const prev = lastClearByRaid.get(raidName) || 0;
+      const ts = Number(entry.startTime) || 0;
+      if (ts > prev) lastClearByRaid.set(raidName, ts);
+    }
+  }
+
+  const raids = PHASE3_RAID_CATALOG.map((meta) => {
+    const row = summaryByRaid.get(meta.raidKey) || { raidName: meta.raidKey, bosses: [], bestClear: null };
+    const bossRows = Array.isArray(row.bosses) ? row.bosses : [];
+    const bossesTotal = bossRows.length || (TRACKED_RAIDS[meta.raidKey] || []).length;
+    const bossesCleared = bossRows.filter((b) => b?.bestKill).length;
+    const progression =
+      bossesTotal > 0 ? Math.round((bossesCleared / bossesTotal) * 1000) / 10 : 0;
+    const bestClear = row.bestClear || null;
+    const coreAverageParse = coreAverageParsePercentForRaid(
+      meta.raidKey,
+      kpiSnapshots,
+      kpiRankings,
+      linksState,
+      wclDisplayByLower,
+      reportByCode
+    );
+    const lastClearMs = lastClearByRaid.get(meta.raidKey) || bestClear?.reportStartTime || null;
+
+    return {
+      id: meta.id,
+      name: meta.name,
+      shortName: meta.shortName,
+      size: meta.size,
+      tier: meta.tier,
+      color: meta.color,
+      imageUrl: meta.imageUrl,
+      headerImageUrl: meta.headerImageUrl,
+      bosses: { total: bossesTotal, cleared: bossesCleared },
+      progression,
+      progressionTone: phase3ProgressionTone(progression),
+      bestTime: formatPhase3Duration(bestClear?.durationMs),
+      bestTimeMs: bestClear?.durationMs || null,
+      lastClear: formatPhase3ShortDate(lastClearMs),
+      lastClearMs: lastClearMs || null,
+      totalClears: clearsByRaid.get(meta.raidKey) || 0,
+      coreAverageParse:
+        coreAverageParse != null && Number.isFinite(Number(coreAverageParse))
+          ? Number(coreAverageParse)
+          : null,
+      coreAverageParseTone: phase3ProgressionTone(coreAverageParse),
+      wclUrl: bestClear?.reportCode
+        ? `https://fresh.warcraftlogs.com/reports/${bestClear.reportCode}`
+        : null,
+      bossRows: bossRows.map((b) => ({
+        bossName: b.bossName,
+        bestKill: b.bestKill || null,
+      })),
+    };
+  });
+
+  const totalBosses = raids.reduce((sum, r) => sum + (r.bosses?.total || 0), 0);
+  const totalKilled = raids.reduce((sum, r) => sum + (r.bosses?.cleared || 0), 0);
+  const totalClears = raids.reduce((sum, r) => sum + (r.totalClears || 0), 0);
+  const parseValues = raids
+    .map((r) => r.coreAverageParse)
+    .filter((v) => v != null && Number.isFinite(Number(v)));
+  const coreAverageParse =
+    parseValues.length > 0
+      ? Math.round((parseValues.reduce((a, b) => a + Number(b), 0) / parseValues.length) * 10) / 10
+      : coreParseMetrics?.value != null && Number.isFinite(Number(coreParseMetrics.value))
+        ? Number(coreParseMetrics.value)
+        : null;
+  const overallProgression =
+    totalBosses > 0 ? Math.round((totalKilled / totalBosses) * 1000) / 10 : 0;
+
+  return {
+    raids,
+    summary: {
+      totalBosses,
+      totalKilled,
+      totalClears,
+      overallProgression,
+      overallProgressionTone: phase3ProgressionTone(overallProgression),
+      coreAverageParse,
+      coreAverageParseTone: phase3ProgressionTone(coreAverageParse),
+      coreRaiderCount: Number(coreParseMetrics?.coreAssigned || 0),
+      coreRaiderWithParseCount: Number(coreParseMetrics?.coreWithParse || 0),
+      raidInstanceLabel: `${raids.length}×T6`,
+      reportsScanned: effectiveReports?.length || 0,
+    },
+  };
+}
+
 app.get("/api/raids/phase2/overview", async (req, res) => {
+  return serveRaidOverview(req, res, buildPhase2RaidOverviewPayload, "phase2-overview");
+});
+
+app.get("/api/raids/phase3/overview", async (req, res) => {
+  return serveRaidOverview(req, res, buildPhase3RaidOverviewPayload, "phase3-overview");
+});
+
+async function serveRaidOverview(req, res, buildPayloadFn, logTag) {
   const guildId = Number(req.query.guildId || process.env.VOTING_GUILD_ID || 817080);
   const limit = Math.min(
     wclMaxGuildReportsLimit(),
@@ -23693,10 +24584,10 @@ app.get("/api/raids/phase2/overview", async (req, res) => {
         rhWclLinksState
       );
     } catch (err) {
-      console.warn("[phase2-overview] core parse / rankings skipped:", err?.message || err);
+      console.warn(`[${logTag}] core parse / rankings skipped:`, err?.message || err);
     }
 
-    const payload = buildPhase2RaidOverviewPayload({
+    const payload = buildPayloadFn({
       effectiveReports,
       raidSummary,
       calendarEntries,
@@ -23720,7 +24611,7 @@ app.get("/api/raids/phase2/overview", async (req, res) => {
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message || "Unknown server error" });
   }
-});
+}
 
 app.get("/api/wcl/guild/:guildId/boss-times", async (req, res) => {
   const guildId = Number(req.params.guildId);
