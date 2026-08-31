@@ -338,7 +338,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260831plb-hyjal-first-clear-v2";
+const API_BUILD_ID = "20260831plb-hyjal-first-clear-v3";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -8415,7 +8415,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_identityActivityCutoff", cutoff);
   }
   if (path === "/api/leaderboard") {
-    params.set("_leaderboardBundleVersion", "v4-double-trouble-pulse");
+    params.set("_leaderboardBundleVersion", "v5-hyjal-first-clear");
   }
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
