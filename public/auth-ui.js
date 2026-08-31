@@ -12,7 +12,6 @@ async function mountAuthHeaderWidget() {
       nav.querySelector('a[href="/debuff-uptime.html"]') ||
       nav.querySelector('a[href="/profile.html"]') ||
       nav.querySelector('a[href="/p3-preparation.html"]') ||
-      nav.querySelector('a[href="/p2-preparation.html"]') ||
       nav.querySelector('a[href="/admin.html"]')
     );
   }
@@ -38,6 +37,13 @@ async function mountAuthHeaderWidget() {
     else sep.classList.add("nav-auth-hidden");
   }
 
+  function removePhase2NavLink() {
+    if (!nav) return;
+    for (const link of nav.querySelectorAll('a[href="/p2-preparation.html"], a[href="/nether-vortex.html"]')) {
+      link.remove();
+    }
+  }
+
   function ensurePhase3NavLink() {
     if (!nav) return null;
     let phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
@@ -46,10 +52,8 @@ async function mountAuthHeaderWidget() {
       phase3Link.href = "/p3-preparation.html";
       phase3Link.textContent = "Phase 3";
       phase3Link.classList.add("nav-auth-member");
-      const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
       const adminLink = nav.querySelector('a[href="/admin.html"]');
-      const anchor = phase2Link || adminLink;
-      if (anchor) nav.insertBefore(phase3Link, anchor);
+      if (adminLink) nav.insertBefore(phase3Link, adminLink);
       else nav.appendChild(phase3Link);
     }
     phase3Link.classList.add("nav-auth-hidden");
@@ -72,22 +76,6 @@ async function mountAuthHeaderWidget() {
     else phase3Link.classList.add("nav-auth-hidden");
   }
 
-  function ensurePhase2NavLink() {
-    if (!nav) return null;
-    let phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
-    if (!phase2Link) {
-      phase2Link = document.createElement("a");
-      phase2Link.href = "/p2-preparation.html";
-      phase2Link.textContent = "Phase 2";
-      phase2Link.classList.add("nav-auth-member");
-      const adminLink = nav.querySelector('a[href="/admin.html"]');
-      if (adminLink) nav.insertBefore(phase2Link, adminLink);
-      else nav.appendChild(phase2Link);
-    }
-    phase2Link.classList.add("nav-auth-hidden");
-    return phase2Link;
-  }
-
   function ensureProfileNavLink() {
     if (!nav) return null;
     let profileLink = nav.querySelector('a[href="/profile.html"]');
@@ -96,10 +84,10 @@ async function mountAuthHeaderWidget() {
       profileLink.href = "/profile.html";
       profileLink.textContent = "Profile";
       profileLink.classList.add("nav-auth-member");
-      const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+      const phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
       const adminLink = nav.querySelector('a[href="/admin.html"]');
-      // Insert before Phase 2 / Admin so the order reads Hall of Fame · Profile · Phase 2 · Admin.
-      const anchor = phase2Link || adminLink;
+      // Insert before Phase 3 / Admin so the order reads Hall of Fame · Profile · Phase 3 · Admin.
+      const anchor = phase3Link || adminLink;
       if (anchor) nav.insertBefore(profileLink, anchor);
       else nav.appendChild(profileLink);
     }
@@ -119,22 +107,6 @@ async function mountAuthHeaderWidget() {
     }
     if (isAuthenticated) profileLink.classList.remove("nav-auth-hidden");
     else profileLink.classList.add("nav-auth-hidden");
-  }
-
-  function updatePhase2NavState(isAuthenticated) {
-    const phase2Link = ensurePhase2NavLink();
-    if (!phase2Link) return;
-    const onPhase2 =
-      currentPath === "/p2-preparation.html" || currentPath === "/nether-vortex.html";
-    if (onPhase2 && isAuthenticated) {
-      phase2Link.classList.add("nav-current");
-      phase2Link.setAttribute("aria-current", "page");
-    } else {
-      phase2Link.classList.remove("nav-current");
-      phase2Link.removeAttribute("aria-current");
-    }
-    if (isAuthenticated) phase2Link.classList.remove("nav-auth-hidden");
-    else phase2Link.classList.add("nav-auth-hidden");
   }
 
   function ensureAdminNavLink() {
@@ -175,9 +147,9 @@ async function mountAuthHeaderWidget() {
       debuffLink.title = "Debuff uptime (Warcraft Logs)";
       debuffLink.classList.add("nav-auth-member");
       const profileLink = nav.querySelector('a[href="/profile.html"]');
-      const phase2Link = nav.querySelector('a[href="/p2-preparation.html"]');
+      const phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
       const adminLink = nav.querySelector('a[href="/admin.html"]');
-      const anchor = profileLink || phase2Link || adminLink;
+      const anchor = profileLink || phase3Link || adminLink;
       if (anchor) nav.insertBefore(debuffLink, anchor);
       else nav.appendChild(debuffLink);
     }
@@ -201,28 +173,19 @@ async function mountAuthHeaderWidget() {
     else debuffLink.classList.add("nav-auth-hidden");
   }
 
-  function updateMemberNavChrome({
-    showProfile,
-    showPhase2,
-    showPhase3,
-    showDebuffs,
-    showAdmin,
-  }) {
-    updateNavMemberSeparatorVisible(
-      Boolean(showProfile || showPhase2 || showPhase3 || showDebuffs || showAdmin)
-    );
+  function updateMemberNavChrome({ showProfile, showPhase3, showDebuffs, showAdmin }) {
+    updateNavMemberSeparatorVisible(Boolean(showProfile || showPhase3 || showDebuffs || showAdmin));
   }
 
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
+    removePhase2NavLink();
     updatePhase3NavState(false);
-    updatePhase2NavState(false);
     updateAdminNavState(false);
     updateProfileNavState(false);
     updateDebuffUptimeNavState(false);
     updateMemberNavChrome({
       showProfile: false,
-      showPhase2: false,
       showPhase3: false,
       showDebuffs: false,
       showAdmin: false,
@@ -268,14 +231,13 @@ async function mountAuthHeaderWidget() {
     });
     const showAdmin = Boolean(payload?.isAdmin);
     const showDebuffs = Boolean(payload?.canAccessDebuffUptime ?? payload?.isRaidLead);
+    removePhase2NavLink();
     updatePhase3NavState(true);
-    updatePhase2NavState(true);
     updateAdminNavState(showAdmin);
     updateProfileNavState(true);
     updateDebuffUptimeNavState(showDebuffs);
     updateMemberNavChrome({
       showProfile: true,
-      showPhase2: true,
       showPhase3: true,
       showDebuffs,
       showAdmin,
