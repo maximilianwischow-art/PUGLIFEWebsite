@@ -338,7 +338,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260831plb-hyjal-first-clear-v1";
+const API_BUILD_ID = "20260831plb-hyjal-first-clear-v2";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -15740,12 +15740,12 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     badgeId: "hyjal-first-clear",
     label: "Hyjal First Clear",
     description:
-      "Attended the guild's first Mount Hyjal full clear on 30 August 2026 (5/5, Archimonde kill). Awarded to every canonical user with a Warcraft Logs appearance in the guild's Hyjal clear log from that night.",
+      "Attended the guild's first Mount Hyjal full clear on 30 August 2026 (5/5, Archimonde kill). Awarded to every canonical user with a Warcraft Logs appearance in report b8d4KDATxjWnrfpJ (mh, 30.08.2026).",
     icon: "/images/achievements/hyjal-first-clear.png",
     /* August 30 2026 00:00 CEST = August 29 2026 22:00 UTC */
     startMs: Date.UTC(2026, 7, 29, 22, 0, 0),
     endMs: Date.UTC(2026, 7, 31, 4, 0, 0),
-    reportCodes: [],
+    reportCodes: ["b8d4KDATxjWnrfpJ"],
   },
 ];
 
@@ -15947,6 +15947,35 @@ function wclUserIdsForSpecificRaidAttendanceBadge(cfg) {
   }
 }
 
+/** Resolve canonical user ids from pinned WCL report codes when `raid_appearances` is empty or stale. */
+async function userIdsForPinnedWclReportCodes(reportCodes) {
+  const codes = (Array.isArray(reportCodes) ? reportCodes : [])
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+  if (!codes.length) return new Set();
+  /** @type {Set<number>} */
+  const out = new Set();
+  for (const code of codes) {
+    try {
+      const meta = await fetchEventReportMetaFromWcl({ reportCode: code, queryWcl });
+      for (const entry of meta.appearanceEntries || []) {
+        const characterName = String(entry?.characterName || "").trim();
+        if (!characterName) continue;
+        let owner = null;
+        try {
+          owner = identityResolveOwnerForCharacterName(characterName);
+        } catch {
+          owner = null;
+        }
+        if (owner?.userId) out.add(owner.userId);
+      }
+    } catch (error) {
+      console.warn(`[badges] pinned WCL report lookup failed for ${code}:`, error?.message || error);
+    }
+  }
+  return out;
+}
+
 async function refreshSpecificRaidAttendanceAwardsCache() {
   /** @type {Map<string, Set<number>>} */
   const out = new Map();
@@ -15964,6 +15993,13 @@ async function refreshSpecificRaidAttendanceAwardsCache() {
       }
     } else {
       userIds = wclUserIdsForSpecificRaidAttendanceBadge(cfg);
+      const pinnedCodes = Array.isArray(cfg.reportCodes)
+        ? cfg.reportCodes.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      if (pinnedCodes.length && userIds.size === 0) {
+        const fromWcl = await userIdsForPinnedWclReportCodes(pinnedCodes);
+        for (const uid of fromWcl) userIds.add(uid);
+      }
       const rhEventIds = Array.isArray(cfg.raidHelperEventIds) ? cfg.raidHelperEventIds : [];
       if (rhEventIds.length) {
         for (const eid of rhEventIds) {
