@@ -13,6 +13,8 @@ const TARGETS = [
   { name: "Scroll of Agility V", itemId: 27498, spellHints: ["agility v", "scroll of agility"] },
   { name: "Scroll of Strength V", itemId: 27503, spellHints: ["strength v", "scroll of strength"] },
   { name: "Scroll of Spirit V", itemId: 27501, spellHints: ["spirit v", "scroll of spirit"] },
+  { name: "Flask of Chromatic Resistance", itemId: 22849, spellHints: ["chromatic resistance"] },
+  { name: "Flask of Chromatic Wonder", itemId: 33208, spellHints: ["chromatic wonder"] },
   { name: "Flask of Pure Death", itemId: 22866, spellHints: ["pure death"] },
   { name: "Flask of Relentless Assault", itemId: 22854, spellHints: ["relentless assault"] },
   { name: "Flask of Blinding Light", itemId: 22861, spellHints: ["blinding light"] },
