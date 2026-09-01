@@ -1936,6 +1936,7 @@ const WCL_USAGE_COL_SHORT = {
   "destruction-potion": "Destr",
   "fel-mana-potion": "Fel Mana",
   "super-mana-potion": "Super Mana",
+  "mana-potion-injector": "Mana Inj",
   "scroll-agility-v": "Scr Agi",
   "scroll-strength-v": "Scr Str",
   "scroll-spirit-v": "Scr Spi",
