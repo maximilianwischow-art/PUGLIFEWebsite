@@ -280,6 +280,109 @@
   border-radius: 10px;
 }
 
+.rankings-matrix-host {
+  display: grid;
+  gap: 12px;
+}
+
+.rankings-matrix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rankings-matrix-legend-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.rankings-matrix-legend-item--flask {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #bbf7d0;
+}
+
+.rankings-matrix-legend-item--potion {
+  border-color: rgba(168, 85, 247, 0.35);
+  color: #e9d5ff;
+}
+
+.rankings-matrix-wrap {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.rankings-matrix-table {
+  min-width: 720px;
+}
+
+.rankings-matrix-table th,
+.rankings-matrix-table td {
+  vertical-align: top;
+}
+
+.rankings-matrix-sticky,
+.rankings-matrix-name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: rgba(12, 10, 22, 0.98);
+  min-width: 120px;
+}
+
+.rankings-matrix-raid-col {
+  min-width: 132px;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+}
+
+.rankings-matrix-data {
+  min-width: 132px;
+}
+
+.rankings-matrix-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rankings-matrix-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.rankings-matrix-line strong {
+  color: #fff;
+}
+
+.rankings-matrix-line--flask {
+  color: #86efac;
+}
+
+.rankings-matrix-line--potion {
+  color: #d8b4fe;
+}
+
+.rankings-matrix-empty {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.rankings-matrix-total {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 @media (max-width: 700px) {
   .rankings-board-meta {
     grid-template-columns: 1fr;

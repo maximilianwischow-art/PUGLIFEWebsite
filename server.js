@@ -97,6 +97,10 @@ import {
   usageConsumableCatalogForApi,
   leaderboardUsageConsumableCatalogForApi,
 } from "./lib/wcl/consumables-usage.mjs";
+import {
+  buildP3ConsumablesMatrixFromReports,
+  isPhase3RaidKey,
+} from "./lib/wcl/p3-consumables-matrix.mjs";
 import { leaderboardReportRowsFromEventPayload } from "./lib/wcl/leaderboard-report-codes.mjs";
 import { fetchEventReportMetaFromWcl } from "./lib/wcl/import-event-report.mjs";
 import {
@@ -338,7 +342,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260831plb-remove-phase2-nav-v1";
+const API_BUILD_ID = "20260901plb-p3-marks-rankings-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -26663,6 +26667,17 @@ const RANKINGS_BOARDS = Object.freeze([
     description:
       "Tracked consumable uses (pots, scrolls, runes, flame cap) across the last six logged 25-man raids. Top 3 earn Consumables badges.",
   },
+  {
+    id: "p3-consumables",
+    label: "P3 Marks",
+    badgeId: "consumables-last6-1st",
+    badgeIcon: "/images/achievements/hyjal-first-clear.png",
+    metricLabel: "Uses",
+    windowLabel: "Phase 3 raids",
+    view: "matrix",
+    description:
+      "Per-raid flask and potion usage across Mount Hyjal and Black Temple logs. Track Shattrath flasks plus haste and destruction potions to decide who earns Marks of the Illidari.",
+  },
 ]);
 
 async function buildRankingsDeathsLadder(limit = 50) {
@@ -26761,6 +26776,126 @@ async function buildRankingsConsumablesLadder(limit = 50) {
   }
 }
 
+function formatP3RaidColumnLabel(part) {
+  const raidKey = String(part?.raidKey || "").trim();
+  const raidShort =
+    raidKey === "Hyjal Summit" ? "Hyjal" : raidKey === "Black Temple" ? "BT" : raidKey || "Raid";
+  const startedAt = Number(part?.reportStartTime || 0);
+  if (startedAt > 0) {
+    const date = formatPhase3ShortDate(startedAt);
+    if (date) return `${raidShort} · ${date}`;
+  }
+  const title = String(part?.reportTitle || "").trim();
+  if (title) return `${raidShort} · ${title}`;
+  return raidShort;
+}
+
+async function buildRankingsP3ConsumablesMatrix() {
+  await ensureGargulLootHistoryStore();
+  const eventPayload = await buildRaidLeadEventReportsPayload();
+  const allRaids = Array.isArray(eventPayload?.allRaids) ? eventPayload.allRaids : [];
+  const raidByCode = new Map(
+    allRaids
+      .map((raid) => [String(raid?.reportCode || "").trim(), raid])
+      .filter(([code]) => code)
+  );
+  const candidateRows = twentyFiveManReportCodesFromEventPayload(eventPayload, { lastRaids: 0 });
+  const fingerprint = candidateRows
+    .map((row) => row.reportCode)
+    .sort()
+    .join(",");
+  const cacheKey = `wcl-p3-consumables-matrix-v1-${fingerprint || "empty"}`;
+
+  try {
+    const payload = await getOrRefreshCachedPayload(cacheKey, {
+      ttlMs: 60 * 60 * 1000,
+      maxStaleMs: 24 * 60 * 60 * 1000,
+      loader: async () => {
+        const reportParts = [];
+        const failedReports = [];
+        const batchSize = 2;
+
+        for (let i = 0; i < candidateRows.length; i += batchSize) {
+          const batch = candidateRows.slice(i, i + batchSize);
+          const batchResults = await Promise.all(
+            batch.map(async (row) => {
+              const code = String(row.reportCode || "").trim();
+              if (!code) return null;
+              try {
+                const usagePayload = await getOrRefreshCachedPayload(`wcl-consumables-usage-v1-${code}`, {
+                  ttlMs: 60 * 60 * 1000,
+                  maxStaleMs: 24 * 60 * 60 * 1000,
+                  loader: () => buildWclConsumablesUsagePayload({ reportCode: code }),
+                });
+                if (!usagePayload?.ok) {
+                  failedReports.push({ reportCode: code, error: usagePayload?.error || "Usage load failed" });
+                  return null;
+                }
+
+                const raidMeta = raidByCode.get(code);
+                let raidKey = String(raidMeta?.reportRaidName || "").trim();
+                if (!isPhase3RaidKey(raidKey)) {
+                  const report = await loadWclReportFightsForDebuffs(code, { queryWcl });
+                  raidKey = String(primaryTrackedRaidNameFromReport(report) || "").trim();
+                }
+                if (!isPhase3RaidKey(raidKey)) return null;
+
+                return {
+                  reportCode: code,
+                  raidKey,
+                  reportTitle: usagePayload.reportTitle || raidMeta?.reportTitle || null,
+                  reportStartTime:
+                    Number(row.reportStartTime || 0) || Number(raidMeta?.reportStartTime || 0) || null,
+                  players: Array.isArray(usagePayload.players) ? usagePayload.players : [],
+                };
+              } catch (error) {
+                failedReports.push({ reportCode: code, error: error?.message || "Usage load failed" });
+                return null;
+              }
+            })
+          );
+          for (const part of batchResults) {
+            if (part) reportParts.push(part);
+          }
+        }
+
+        reportParts.sort(
+          (a, b) => Number(a.reportStartTime || 0) - Number(b.reportStartTime || 0)
+        );
+
+        const matrixPayload = buildP3ConsumablesMatrixFromReports(reportParts, {
+          formatRaidLabel: formatP3RaidColumnLabel,
+        });
+
+        return {
+          ok: true,
+          mode: "p3-matrix",
+          ...matrixPayload,
+          failedReports,
+        };
+      },
+    });
+
+    return {
+      ...payload,
+      updatedAt: Date.now(),
+      source: payload?.ok ? "p3-consumables-matrix" : "p3-consumables-empty",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      mode: "p3-matrix",
+      reports: [],
+      catalog: [],
+      matrix: [],
+      reportsScanned: 0,
+      updatedAt: null,
+      source: "p3-consumables-error",
+      error: error?.message || "Failed to load P3 consumables matrix",
+    };
+  }
+}
+
 app.get("/api/rankings", async (req, res) => {
   try {
     const boardId = String(req.query.board || "deaths").trim().toLowerCase() || "deaths";
@@ -26768,7 +26903,10 @@ app.get("/api/rankings", async (req, res) => {
     const board = RANKINGS_BOARDS.find((row) => row.id === boardId) || RANKINGS_BOARDS[0];
 
     let ladder;
-    if (board.id === "consumables") {
+    let matrixPayload = null;
+    if (board.id === "p3-consumables") {
+      matrixPayload = await buildRankingsP3ConsumablesMatrix();
+    } else if (board.id === "consumables") {
       ladder = await buildRankingsConsumablesLadder(limit);
     } else {
       ladder = await buildRankingsDeathsLadder(limit);
@@ -26780,12 +26918,16 @@ app.get("/api/rankings", async (req, res) => {
       guildId: votingGuildId,
       boards: RANKINGS_BOARDS,
       board,
-      entries: ladder.entries || [],
-      updatedAt: ladder.updatedAt || null,
-      source: ladder.source || null,
-      reportsScanned: ladder.reportsScanned ?? null,
-      fightsScanned: ladder.fightsScanned ?? null,
-      error: ladder.error || null,
+      view: board.view || "ladder",
+      entries: ladder?.entries || [],
+      reports: matrixPayload?.reports || [],
+      catalog: matrixPayload?.catalog || [],
+      matrix: matrixPayload?.matrix || [],
+      updatedAt: matrixPayload?.updatedAt ?? ladder?.updatedAt ?? null,
+      source: matrixPayload?.source ?? ladder?.source ?? null,
+      reportsScanned: matrixPayload?.reportsScanned ?? ladder?.reportsScanned ?? null,
+      fightsScanned: ladder?.fightsScanned ?? null,
+      error: matrixPayload?.error ?? ladder?.error ?? null,
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load rankings" });
