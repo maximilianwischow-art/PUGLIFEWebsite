@@ -342,7 +342,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260901plb-p3-marks-rankings-v2";
+const API_BUILD_ID = "20260901plb-p3-marks-rankings-v3";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -8422,7 +8422,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_leaderboardBundleVersion", "v5-hyjal-first-clear");
   }
   if (path === "/api/rankings") {
-    params.set("_rankingsBoardsVersion", "v2-p3-marks");
+    params.set("_rankingsBoardsVersion", "v3-mana-pots");
   }
   const entries = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
   const query = new URLSearchParams(entries).toString();
@@ -11941,7 +11941,7 @@ async function buildWclConsumablesUsageLeaderboardPayload({ lastRaids = 0 } = {}
     const batchResults = await Promise.all(
       batch.map(async (code) => {
         try {
-          const payload = await getOrRefreshCachedPayload(`wcl-consumables-usage-v1-${code}`, {
+          const payload = await getOrRefreshCachedPayload(`wcl-consumables-usage-v2-${code}`, {
             ttlMs: 60 * 60 * 1000,
             maxStaleMs: 24 * 60 * 60 * 1000,
             loader: () => buildWclConsumablesUsagePayload({ reportCode: code }),
@@ -12988,7 +12988,7 @@ app.get("/api/raid-lead/wcl-consumables-usage", async (req, res) => {
       });
     }
 
-    const cacheKey = `wcl-consumables-usage-v1-${reportCode}`;
+    const cacheKey = `wcl-consumables-usage-v2-${reportCode}`;
     const loader = () => buildWclConsumablesUsagePayload({ reportCode });
     const payload = refresh
       ? await forceRefreshCachedPayload(cacheKey, loader)
@@ -26679,7 +26679,7 @@ const RANKINGS_BOARDS = Object.freeze([
     windowLabel: "Phase 3 raids",
     view: "matrix",
     description:
-      "Per-raid flask and potion usage across Mount Hyjal and Black Temple logs. Track Shattrath flasks plus haste and destruction potions to decide who earns Marks of the Illidari.",
+      "Per-raid flask and potion usage across Mount Hyjal and Black Temple logs. Track Shattrath flasks plus haste, destruction, and mana potions to decide who earns Marks of the Illidari.",
   },
 ]);
 
@@ -26807,7 +26807,7 @@ async function buildRankingsP3ConsumablesMatrix() {
     .map((row) => row.reportCode)
     .sort()
     .join(",");
-  const cacheKey = `wcl-p3-consumables-matrix-v1-${fingerprint || "empty"}`;
+  const cacheKey = `wcl-p3-consumables-matrix-v2-${fingerprint || "empty"}`;
 
   try {
     const payload = await getOrRefreshCachedPayload(cacheKey, {
@@ -26825,7 +26825,7 @@ async function buildRankingsP3ConsumablesMatrix() {
               const code = String(row.reportCode || "").trim();
               if (!code) return null;
               try {
-                const usagePayload = await getOrRefreshCachedPayload(`wcl-consumables-usage-v1-${code}`, {
+                const usagePayload = await getOrRefreshCachedPayload(`wcl-consumables-usage-v2-${code}`, {
                   ttlMs: 60 * 60 * 1000,
                   maxStaleMs: 24 * 60 * 60 * 1000,
                   loader: () => buildWclConsumablesUsagePayload({ reportCode: code }),

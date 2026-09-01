@@ -1935,6 +1935,7 @@ const WCL_USAGE_COL_SHORT = {
   "haste-potion": "Haste",
   "destruction-potion": "Destr",
   "fel-mana-potion": "Fel Mana",
+  "super-mana-potion": "Super Mana",
   "scroll-agility-v": "Scr Agi",
   "scroll-strength-v": "Scr Str",
   "scroll-spirit-v": "Scr Spi",
