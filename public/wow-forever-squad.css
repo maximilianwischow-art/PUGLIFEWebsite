@@ -1,0 +1,810 @@
+/* Alliance / Warcraft Forever skin — scoped to the Forever subpage only. */
+
+body.wf-alliance {
+  --alliance-blue-dark: #071525;
+  --alliance-blue: #123a68;
+  --alliance-blue-light: #2867a0;
+  --royal-blue: #174f8a;
+  --stormwind-blue: #0e3159;
+
+  --gold-dark: #7a531c;
+  --gold: #c8953e;
+  --gold-light: #e8c675;
+  --gold-highlight: #f4dea1;
+
+  --steel-dark: #151a20;
+  --steel: #292f36;
+  --steel-light: #48515b;
+
+  --parchment: #d8c49a;
+  --parchment-light: #eee1c1;
+
+  --background: #060b11;
+  --surface: #0b131d;
+  --surface-raised: #101b28;
+  --surface-hover: #152538;
+
+  --text-primary: #f3eee4;
+  --text-secondary: #aeb9c5;
+  --text-muted: #6f7e8d;
+
+  --success: #4fa66a;
+  --warning: #d9a441;
+  --danger: #b74a46;
+  --arcane: #62b9ed;
+
+  --gold-border: rgba(232, 198, 117, 0.34);
+  --gold-border-strong: rgba(200, 149, 62, 0.62);
+  --steel-border: rgba(72, 81, 91, 0.55);
+
+  --font-display: "Cinzel", "Morpheus", serif;
+  --font-ui: "Nunito", "Inter", sans-serif;
+  --radius-panel: 10px;
+  --radius-control: 8px;
+  --shadow-panel: 0 18px 40px rgba(0, 0, 0, 0.38);
+
+  --bg: var(--background);
+  --bg2: var(--surface);
+  --card: var(--surface-raised);
+  --card2: var(--surface-hover);
+  --text: var(--text-primary);
+  --text2: var(--text-secondary);
+  --muted: var(--text-muted);
+  --text-dim: var(--text-secondary);
+  --border: var(--steel-border);
+  --border2: var(--gold-border);
+  --pink: var(--gold-light);
+  --pink-l: var(--gold-highlight);
+  --purple: var(--alliance-blue-light);
+  --purple-l: var(--arcane);
+
+  --surface-base-bg: linear-gradient(180deg, rgba(16, 27, 40, 0.96), rgba(11, 19, 29, 0.98));
+  --surface-base-border: var(--steel-border);
+  --surface-elevated-bg: linear-gradient(180deg, rgba(21, 37, 56, 0.96), rgba(11, 19, 29, 0.98));
+  --surface-elevated-border: rgba(40, 103, 160, 0.35);
+  --surface-highlight-bg:
+    linear-gradient(160deg, rgba(18, 58, 104, 0.48), rgba(11, 19, 29, 0.96)),
+    linear-gradient(180deg, rgba(122, 83, 28, 0.08), transparent 42%);
+  --surface-highlight-border: var(--gold-border);
+
+  --bg-overlay-a: 0.28;
+  --bg-overlay-b: 0.7;
+  --bg-overlay-c: 0.92;
+  --bg-accent-opacity: 0.16;
+
+  color: var(--text-primary);
+  background: var(--background);
+  font-family: var(--font-ui);
+}
+
+body.wf-alliance::selection {
+  background: rgba(40, 103, 160, 0.55);
+  color: var(--gold-highlight);
+}
+
+body.wf-alliance::before {
+  background:
+    radial-gradient(52% 38% at 86% 4%, rgba(232, 198, 117, 0.16), transparent 62%),
+    radial-gradient(46% 34% at 8% 10%, rgba(40, 103, 160, 0.34), transparent 66%),
+    radial-gradient(28% 22% at 50% 100%, rgba(14, 49, 89, 0.45), transparent 70%),
+    linear-gradient(180deg, rgba(6, 11, 17, 0.18) 0%, rgba(6, 11, 17, 0.72) 52%, rgba(6, 11, 17, 0.96) 100%),
+    linear-gradient(180deg, var(--alliance-blue-dark), var(--background));
+}
+
+body.wf-alliance .stars {
+  display: none;
+}
+
+body.wf-alliance .hero {
+  padding-top: 16px;
+}
+
+body.wf-alliance .hero-brand {
+  max-width: min(100%, 1120px);
+  aspect-ratio: 1024 / 345;
+}
+
+body.wf-alliance .hero-banner {
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-panel);
+  box-shadow:
+    0 0 0 1px rgba(7, 21, 37, 0.7),
+    0 0 32px rgba(18, 58, 104, 0.4),
+    0 18px 42px rgba(0, 0, 0, 0.52);
+  filter: none;
+}
+
+body.wf-alliance .wf-command-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 18px;
+  flex-wrap: wrap;
+  width: min(100%, 1120px);
+  margin: 14px auto 0;
+  padding: 8px 4px 2px;
+}
+
+body.wf-alliance .hero-sub {
+  margin: 0;
+  color: var(--gold-light);
+  letter-spacing: 0.28em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85);
+}
+
+body.wf-alliance .auth-top-right {
+  position: static;
+  justify-content: flex-end;
+  margin: 0;
+  min-width: 0;
+  top: auto;
+  right: auto;
+}
+
+body.wf-alliance .top-nav {
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-panel);
+  background: rgba(7, 21, 37, 0.78);
+  box-shadow:
+    inset 0 0 0 1px rgba(244, 222, 161, 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+body.wf-alliance .top-nav a {
+  font-family: var(--font-ui);
+  border-radius: 6px;
+  border-color: rgba(40, 103, 160, 0.45);
+  background: rgba(14, 49, 89, 0.45);
+  color: var(--text-primary);
+}
+
+body.wf-alliance .top-nav a::before {
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--alliance-blue-light) 0%, var(--royal-blue) 55%, var(--stormwind-blue) 100%);
+}
+
+body.wf-alliance .top-nav a:hover {
+  border-color: var(--gold-border);
+  box-shadow: 0 0 14px rgba(200, 149, 62, 0.28);
+  color: var(--gold-highlight);
+  transform: none;
+}
+
+body.wf-alliance .top-nav a.nav-current {
+  border-color: var(--gold-border-strong);
+  color: var(--gold-highlight);
+  box-shadow:
+    0 0 16px rgba(200, 149, 62, 0.28),
+    inset 0 0 18px rgba(18, 58, 104, 0.35);
+}
+
+body.wf-alliance .top-nav a.nav-current::before {
+  opacity: 0.35;
+}
+
+body.wf-alliance .top-nav-sep {
+  background: linear-gradient(180deg, transparent, var(--gold), transparent);
+}
+
+body.wf-alliance .hero-divider {
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  opacity: 0.55;
+  height: 1px;
+}
+
+body.wf-alliance .auth-chip,
+body.wf-alliance .auth-chip-link,
+body.wf-alliance .auth-chip-btn {
+  border-color: var(--gold-border);
+  background: rgba(14, 49, 89, 0.55);
+  color: var(--text-primary);
+}
+
+body.wf-alliance .auth-chip-link:hover,
+body.wf-alliance .auth-chip-btn:hover {
+  color: var(--gold-highlight);
+  border-color: var(--gold-border-strong);
+  box-shadow: 0 0 12px rgba(200, 149, 62, 0.22);
+}
+
+body.wf-alliance .top-nav a:focus-visible,
+body.wf-alliance .auth-chip-link:focus-visible,
+body.wf-alliance .auth-chip-btn:focus-visible,
+body.wf-alliance .wf-tile:focus-visible,
+body.wf-alliance .wf-save:focus-visible,
+body.wf-alliance .wf-clear:focus-visible,
+body.wf-alliance .wf-faction button:focus-visible,
+body.wf-alliance .wf-gender button:focus-visible,
+body.wf-alliance .wf-name-input:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+body.wf-alliance .card,
+body.wf-alliance .panel {
+  background: var(--surface-base-bg);
+  border: 1px solid var(--surface-base-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+body.wf-alliance .panel::before,
+body.wf-alliance .card::before {
+  background: linear-gradient(90deg, transparent, var(--gold-light), transparent);
+  opacity: 0.55;
+}
+
+body.wf-alliance .card::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 1px solid rgba(232, 198, 117, 0.08);
+  border-radius: 6px;
+  pointer-events: none;
+  box-shadow:
+    inset 10px 0 0 -9px rgba(200, 149, 62, 0.28),
+    inset -10px 0 0 -9px rgba(200, 149, 62, 0.28);
+}
+
+body.wf-alliance .surface-highlight {
+  background: var(--surface-highlight-bg);
+  border-color: var(--surface-highlight-border);
+}
+
+body.wf-alliance .section-title,
+body.wf-alliance .card h2 {
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+  background: linear-gradient(92deg, var(--gold-highlight) 0%, var(--gold-light) 42%, var(--parchment-light) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 12px rgba(0, 0, 0, 0.65));
+}
+
+body.wf-alliance .subtle {
+  color: var(--text-secondary);
+}
+
+body.wf-alliance .footer {
+  border-top-color: var(--gold-border);
+  color: var(--text-muted);
+}
+
+body.wf-alliance .footer-legal-links a {
+  color: var(--gold-light);
+}
+
+body.wf-alliance .footer-legal-links a:hover {
+  color: var(--gold-highlight);
+}
+
+body.wf-alliance .dots .dot {
+  background: var(--gold);
+}
+
+body.wf-alliance .dots .dot.big {
+  background: var(--gold-light);
+}
+
+body.wf-alliance .cookie-notice {
+  border-color: var(--gold-border);
+  background: rgba(7, 21, 37, 0.96);
+  color: var(--text-secondary);
+}
+
+body.wf-alliance .cookie-notice a {
+  color: var(--gold-light);
+}
+
+body.wf-alliance .cookie-notice-btn {
+  border-color: var(--gold-border-strong);
+  background: rgba(14, 49, 89, 0.7);
+  color: var(--gold-highlight);
+}
+
+.wf-kicker {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold-light);
+}
+
+.wf-lede {
+  max-width: 64ch;
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.wf-countdown {
+  margin-top: 18px;
+}
+
+.wf-countdown-units {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wf-count-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 86px;
+  padding: 10px 8px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--gold-border);
+  background: linear-gradient(180deg, rgba(14, 49, 89, 0.5), rgba(7, 21, 37, 0.78));
+  box-shadow: inset 0 0 0 1px rgba(244, 222, 161, 0.05);
+}
+
+.wf-count-unit b {
+  font-family: var(--font-display);
+  font-size: clamp(26px, 4.4vw, 40px);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--gold-highlight);
+}
+
+.wf-count-unit span {
+  margin-top: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.wf-countdown.is-live .wf-countdown-units {
+  grid-template-columns: 1fr;
+}
+
+.wf-countdown.is-live .wf-count-unit b {
+  font-size: clamp(22px, 3vw, 32px);
+}
+
+.wf-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.wf-fact {
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--gold-border);
+  background: linear-gradient(180deg, rgba(14, 49, 89, 0.45), rgba(7, 21, 37, 0.72));
+}
+
+.wf-fact b {
+  display: block;
+  font-size: 15px;
+  color: var(--gold-highlight);
+}
+
+.wf-fact span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wf-grid {
+  display: grid;
+  gap: 18px;
+}
+
+@media (min-width: 960px) {
+  .wf-creator-grid {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    align-items: start;
+  }
+}
+
+.wf-step {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--arcane);
+}
+
+.wf-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 10px;
+}
+
+.wf-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--steel-border);
+  background: linear-gradient(180deg, rgba(16, 27, 40, 0.95), rgba(7, 21, 37, 0.96));
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: center;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.wf-tile img {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--steel-dark);
+  box-shadow: inset 0 0 0 1px rgba(244, 222, 161, 0.08);
+}
+
+.wf-portrait--skyborne {
+  filter: hue-rotate(165deg) saturate(1.4) brightness(1.12);
+}
+
+.wf-tile.is-active {
+  border-color: var(--gold-border-strong);
+  background: linear-gradient(180deg, rgba(122, 83, 28, 0.38), rgba(11, 19, 29, 0.96));
+  color: var(--gold-highlight);
+  box-shadow: 0 0 16px rgba(200, 149, 62, 0.18);
+}
+
+.wf-tile.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: grayscale(0.8);
+}
+
+.wf-tile.is-new {
+  box-shadow: inset 0 0 0 1px rgba(98, 185, 237, 0.35);
+}
+
+.wf-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wf-pill--new {
+  color: var(--arcane);
+  border: 1px solid rgba(98, 185, 237, 0.45);
+  background: rgba(14, 49, 89, 0.55);
+}
+
+.wf-faction,
+.wf-gender {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wf-faction button,
+.wf-gender button,
+.wf-save,
+.wf-clear {
+  padding: 8px 14px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--steel-border);
+  background: rgba(14, 49, 89, 0.55);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.wf-faction button.is-active.alliance,
+.wf-tile[data-faction="alliance"].is-active {
+  border-color: rgba(98, 185, 237, 0.7);
+  color: var(--arcane);
+  background: linear-gradient(180deg, rgba(23, 79, 138, 0.55), rgba(7, 21, 37, 0.92));
+}
+
+.wf-faction button.is-active.horde {
+  border-color: rgba(183, 74, 70, 0.75);
+  color: #f0b4b1;
+}
+
+.wf-gender button.is-active {
+  border-color: var(--gold-border-strong);
+  background: linear-gradient(180deg, rgba(122, 83, 28, 0.42), rgba(11, 19, 29, 0.96));
+  color: var(--gold-highlight);
+}
+
+.wf-save {
+  border-color: var(--gold-border-strong);
+  background: linear-gradient(180deg, #c8953e 0%, #7a531c 100%);
+  color: #1a1208;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 8px 18px rgba(122, 83, 28, 0.28);
+}
+
+.wf-save:hover:not(:disabled) {
+  background: linear-gradient(180deg, #e8c675 0%, #c8953e 100%);
+}
+
+.wf-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wf-clear:hover,
+.wf-faction button:hover,
+.wf-gender button:hover {
+  border-color: var(--gold-border);
+}
+
+.wf-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.wf-preview {
+  position: sticky;
+  top: 16px;
+  text-align: center;
+  border-color: var(--gold-border);
+  background: linear-gradient(180deg, rgba(18, 58, 104, 0.28), rgba(11, 19, 29, 0.96));
+}
+
+.wf-preview img {
+  width: 96px;
+  height: 96px;
+  border-radius: 10px;
+  object-fit: cover;
+  margin: 8px auto 0;
+  box-shadow: 0 0 0 1px var(--gold-border);
+}
+
+.wf-preview-name {
+  margin: 10px 0 0;
+  font-family: var(--font-display);
+  font-size: 24px;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.wf-main-line,
+.wf-card-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+.wf-card-main {
+  align-items: flex-start;
+}
+
+.wf-main-kicker {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.wf-main-name {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid var(--gold-border-strong);
+  border-radius: 6px;
+  background: rgba(14, 49, 89, 0.55);
+  color: var(--gold-highlight);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  box-shadow:
+    0 0 0 1px rgba(244, 222, 161, 0.12),
+    0 0 14px rgba(200, 149, 62, 0.18);
+}
+
+.wf-card-main .wf-main-name {
+  font-size: 13px;
+  padding: 3px 10px;
+}
+
+.wf-preview-note {
+  margin-top: 10px;
+}
+
+.wf-name-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  max-width: 420px;
+}
+
+.wf-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wf-name-field span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.wf-name-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--steel-border);
+  background: rgba(6, 11, 17, 0.72);
+  color: var(--text-primary);
+}
+
+.wf-name-input:focus {
+  outline: none;
+  border-color: var(--gold-border-strong);
+  box-shadow: 0 0 0 1px rgba(200, 149, 62, 0.25);
+}
+
+.wf-status {
+  min-height: 1.4em;
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+.wf-status.error {
+  color: var(--danger);
+}
+
+.wf-status.ok {
+  color: var(--success);
+}
+
+.wf-squad-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.wf-card {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--steel-border);
+  background: rgba(11, 19, 29, 0.82);
+}
+
+.wf-card img {
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.wf-card strong {
+  display: block;
+}
+
+.wf-card small {
+  display: block;
+  color: var(--text-muted);
+}
+
+.wf-table-wrap {
+  overflow-x: auto;
+  margin-top: 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid rgba(216, 196, 154, 0.22);
+  background: linear-gradient(180deg, rgba(216, 196, 154, 0.08), rgba(11, 19, 29, 0.86));
+}
+
+.wf-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.wf-matrix th,
+.wf-matrix td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(72, 81, 91, 0.45);
+  text-align: center;
+}
+
+.wf-matrix thead th {
+  background: rgba(14, 49, 89, 0.45);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.wf-matrix th:first-child,
+.wf-matrix td:first-child {
+  text-align: left;
+  white-space: nowrap;
+}
+
+.wf-matrix .yes {
+  color: var(--gold-light);
+  font-weight: 800;
+}
+
+.wf-matrix .new {
+  color: var(--arcane);
+  font-weight: 800;
+}
+
+.wf-sources a {
+  color: var(--gold-light);
+}
+
+.wf-sources a:hover {
+  color: var(--gold-highlight);
+}
+
+.wf-sources li {
+  margin: 6px 0;
+  color: var(--text-secondary);
+}
+
+.wf-class-warrior { color: #c79c6e; }
+.wf-class-paladin { color: #f58cba; }
+.wf-class-hunter { color: #abd473; }
+.wf-class-rogue { color: #fff569; }
+.wf-class-priest { color: #f5f5f5; }
+.wf-class-shaman { color: #0070dd; }
+.wf-class-mage { color: #69ccf0; }
+.wf-class-warlock { color: #9482c9; }
+.wf-class-druid { color: #ff7d0a; }
+
+.wf-race-human { color: #e8d5a3; }
+.wf-race-dwarf { color: #c69b6d; }
+.wf-race-nightelf { color: #5ab0a0; }
+.wf-race-gnome { color: #c9a0dc; }
+.wf-race-skyborne { color: #62b9ed; }
+.wf-race-orc { color: #e06a3a; }
+.wf-race-undead { color: #8fb59a; }
+.wf-race-tauren { color: #d08a4a; }
+.wf-race-troll { color: #4caf7a; }
+
+.wf-faction-alliance { color: #69ccf0; }
+.wf-faction-horde { color: #e05c4a; }
+
+@media (max-width: 640px) {
+  .wf-name-row {
+    grid-template-columns: 1fr;
+  }
+
+  body.wf-alliance .wf-command-bar {
+    justify-content: center;
+    text-align: center;
+  }
+
+  body.wf-alliance .auth-top-right {
+    justify-content: center;
+    width: 100%;
+  }
+}

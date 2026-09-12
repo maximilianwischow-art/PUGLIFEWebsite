@@ -44,6 +44,43 @@ async function mountAuthHeaderWidget() {
     }
   }
 
+  function ensureForeverNavLink() {
+    if (!nav) return null;
+    let foreverLink =
+      nav.querySelector('a[href="/wow-forever"]') ||
+      nav.querySelector('a[href="/wow-forever-squad.html"]');
+    if (!foreverLink) {
+      foreverLink = document.createElement("a");
+      foreverLink.href = "/wow-forever";
+      foreverLink.textContent = "Forever";
+      foreverLink.title = "The WoW Forever Squad";
+      const sep = ensureNavMemberSeparator();
+      if (sep) nav.insertBefore(foreverLink, sep);
+      else {
+        const anchor = firstMemberNavAnchor();
+        if (anchor) nav.insertBefore(foreverLink, anchor);
+        else nav.appendChild(foreverLink);
+      }
+    }
+    return foreverLink;
+  }
+
+  function updateForeverNavState() {
+    const foreverLink = ensureForeverNavLink();
+    if (!foreverLink) return;
+    const onForever =
+      currentPath === "/wow-forever" ||
+      currentPath === "/wow-forever/" ||
+      currentPath === "/wow-forever-squad.html";
+    if (onForever) {
+      foreverLink.classList.add("nav-current");
+      foreverLink.setAttribute("aria-current", "page");
+    } else {
+      foreverLink.classList.remove("nav-current");
+      foreverLink.removeAttribute("aria-current");
+    }
+  }
+
   function ensurePhase3NavLink() {
     if (!nav) return null;
     let phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
@@ -180,6 +217,7 @@ async function mountAuthHeaderWidget() {
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
     removePhase2NavLink();
+    updateForeverNavState();
     updatePhase3NavState(false);
     updateAdminNavState(false);
     updateProfileNavState(false);
@@ -232,6 +270,7 @@ async function mountAuthHeaderWidget() {
     const showAdmin = Boolean(payload?.isAdmin);
     const showDebuffs = Boolean(payload?.canAccessDebuffUptime ?? payload?.isRaidLead);
     removePhase2NavLink();
+    updateForeverNavState();
     updatePhase3NavState(true);
     updateAdminNavState(showAdmin);
     updateProfileNavState(true);

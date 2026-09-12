@@ -178,6 +178,10 @@ import {
   profileSetPicture,
   profileSetMainCharacter,
   profileGetHistory,
+  wowForeverGetByUserId,
+  wowForeverUpsert,
+  wowForeverListAll,
+  wowForeverDeleteByUserId,
   p2UpsertMaterial,
   p2GetAllCurrent,
   p2GetHistory,
@@ -259,6 +263,14 @@ import {
   addonTokenResolveUserId,
   addonTokenFromRequest,
 } from "./lib/addon-auth.mjs";
+import {
+  publicCatalog as wowForeverPublicCatalog,
+  validateWowForeverPick,
+  parseForeverCharacterName as wowForeverParseName,
+  raceById as wowForeverRaceById,
+  classById as wowForeverClassById,
+  isNewCombo as wowForeverIsNewCombo,
+} from "./lib/wow-forever-data.mjs";
 
 /**
  * Phase 4 cutover flag. When set, `/api/profile/me/badges` reads from the
@@ -467,6 +479,17 @@ app.get("/heart-of-darkness.html", (req, res) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   res.sendFile(path.join(publicDir, "p3-preparation.html"));
 });
+
+function sendWowForeverSquadPage(req, res) {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) {
+    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/wow-forever")}`);
+  }
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "wow-forever-squad.html"));
+}
+
+app.get(["/wow-forever", "/wow-forever/", "/wow-forever-squad.html"], sendWowForeverSquadPage);
 
 /** Browsers may still send `If-None-Match` after a prior ETag; Express then returns 304 with an empty body and the
  * client reuses whatever document it had — which breaks HTML when inline `<style>` changes but the URL does not.
@@ -16496,6 +16519,108 @@ app.put("/api/profile/me/main-character", async (req, res) => {
     return res.json({ ok: true, profile: publicProfileFromDb(userId) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to update main character" });
+  }
+});
+
+function resolveForeverPickerMainCharacterName(discordUserId) {
+  const id = String(discordUserId || "").trim();
+  if (!id) return "";
+  const fromProfile = String(profileGetByUserId(id)?.mainCharacterName || "").trim();
+  if (fromProfile) return fromProfile;
+  try {
+    return String(resolveLinkedWowCharacterByDiscordUserId(id) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function publicWowForeverPick(row) {
+  if (!row) return null;
+  const race = wowForeverRaceById(row.race);
+  const cls = wowForeverClassById(row.classId);
+  const avatarUrl =
+    row.userId && row.avatar
+      ? `https://cdn.discordapp.com/avatars/${row.userId}/${row.avatar}.png?size=64`
+      : "";
+  const names = wowForeverParseName(row.characterName) || { givenName: "", familyName: "", characterName: "" };
+  return {
+    ...row,
+    givenName: names.givenName,
+    familyName: names.familyName,
+    characterName: names.characterName || row.characterName,
+    mainCharacterName: resolveForeverPickerMainCharacterName(row.userId),
+    raceName: race?.name || row.race,
+    className: cls?.name || row.classId,
+    classColor: cls?.color || "#cbd5e1",
+    isNewRace: Boolean(race?.isNewRace),
+    isNewCombo: wowForeverIsNewCombo(row.race, row.classId),
+    avatarUrl,
+  };
+}
+
+/** GET /api/wow-forever/catalog — Classic+ race/class matrix (Discord session required). */
+app.get("/api/wow-forever/catalog", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  return res.json({ ok: true, catalog: wowForeverPublicCatalog() });
+});
+
+/** GET /api/wow-forever/me — caller's Forever pick. */
+app.get("/api/wow-forever/me", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const pick = publicWowForeverPick(wowForeverGetByUserId(session.user.id));
+    return res.json({ ok: true, pick });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Forever pick" });
+  }
+});
+
+/** PUT /api/wow-forever/me — save race / gender / class for The WoW Forever Squad. */
+app.put("/api/wow-forever/me", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const parsed = validateWowForeverPick(req.body || {});
+    if (!parsed.ok) return res.status(400).json({ ok: false, error: parsed.error });
+    const row = wowForeverUpsert({
+      userId: String(session.user.id),
+      displayName: String(session.user.globalName || session.user.username || ""),
+      avatar: String(session.user.avatar || ""),
+      characterName: parsed.pick.characterName,
+      race: parsed.pick.race,
+      faction: parsed.pick.faction,
+      gender: parsed.pick.gender,
+      classId: parsed.pick.classId,
+    });
+    return res.json({ ok: true, pick: publicWowForeverPick(row) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save Forever pick" });
+  }
+});
+
+/** DELETE /api/wow-forever/me — clear the caller's Forever pick. */
+app.delete("/api/wow-forever/me", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    wowForeverDeleteByUserId(session.user.id);
+    return res.json({ ok: true, pick: null });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to clear Forever pick" });
+  }
+});
+
+/** GET /api/wow-forever/squad — every locked-in Forever roll. */
+app.get("/api/wow-forever/squad", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const picks = wowForeverListAll().map(publicWowForeverPick);
+    return res.json({ ok: true, picks, count: picks.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Forever squad" });
   }
 });
 

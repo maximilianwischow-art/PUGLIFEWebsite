@@ -1,0 +1,471 @@
+(() => {
+  const ZAM = "https://wow.zamimg.com/images/wow/icons/large";
+
+  const state = {
+    catalog: null,
+    pick: null,
+    squad: [],
+    faction: "alliance",
+    race: "",
+    gender: "male",
+    classId: "",
+    saving: false,
+  };
+
+  const el = {
+    faction: document.getElementById("wfFaction"),
+    races: document.getElementById("wfRaces"),
+    gender: document.getElementById("wfGender"),
+    classes: document.getElementById("wfClasses"),
+    name: document.getElementById("wfName"),
+    familyName: document.getElementById("wfFamilyName"),
+    save: document.getElementById("wfSave"),
+    clear: document.getElementById("wfClear"),
+    status: document.getElementById("wfStatus"),
+    preview: document.getElementById("wfPreview"),
+    squad: document.getElementById("wfSquad"),
+    squadMeta: document.getElementById("wfSquadMeta"),
+    matrix: document.getElementById("wfMatrix"),
+    sources: document.getElementById("wfSources"),
+    notes: document.getElementById("wfNotes"),
+    countdown: document.getElementById("wfCountdown"),
+    countdownLabel: document.getElementById("wfCountdownLabel"),
+    countdownUnits: document.getElementById("wfCountdownUnits"),
+  };
+
+  const countdown = {
+    beta: "2026-09-17",
+    launch: "2026-11-04",
+    timer: null,
+  };
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function raceById(id) {
+    return (state.catalog?.races || []).find((r) => r.id === id) || null;
+  }
+
+  function classById(id) {
+    return (state.catalog?.classes || []).find((c) => c.id === id) || null;
+  }
+
+  function classesFor(raceId, faction) {
+    const race = raceById(raceId);
+    if (!race) return [];
+    const key = race.faction === "both" ? `${race.id}:${faction}` : race.id;
+    return [...(state.catalog?.classesByRace?.[key] || [])];
+  }
+
+  function isNewCombo(raceId, classId) {
+    const race = raceById(raceId);
+    if (!race) return false;
+    if (race.isNewRace) return true;
+    const vanilla = state.catalog?.vanillaClassesByRace?.[raceId] || [];
+    return !vanilla.includes(classId);
+  }
+
+  function portraitUrl(race, gender) {
+    if (!race) return "";
+    const g = gender === "female" ? "female" : "male";
+    if (race.portraitKey === "skyborne" || race.id === "skyborne") {
+      return `${ZAM}/achievement_character_nightelf_${g}.jpg`;
+    }
+    const key = race.id === "undead" || race.portraitKey === "scourge" ? "undead" : race.id;
+    return `${ZAM}/achievement_character_${key}_${g}.jpg`;
+  }
+
+  function portraitClass(race) {
+    if (race && (race.portraitKey === "skyborne" || race.id === "skyborne")) return " wf-portrait--skyborne";
+    return "";
+  }
+
+  function classIconUrl(classId) {
+    return `${ZAM}/classicon_${classId}.jpg`;
+  }
+
+  function parseForeverInstant(isoDate) {
+    const s = String(isoDate || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return Date.parse(`${s}T00:00:00Z`);
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? t : NaN;
+  }
+
+  function padCount(n) {
+    return String(Math.max(0, n | 0)).padStart(2, "0");
+  }
+
+  function countdownTarget() {
+    const launch = parseForeverInstant(countdown.launch);
+    const now = Date.now();
+    if (Number.isFinite(launch) && now < launch) {
+      return { at: launch, label: "Full release in", live: false };
+    }
+    return { at: 0, label: "World of Warcraft: Forever", live: true };
+  }
+
+  function renderCountdown() {
+    if (!el.countdownUnits || !el.countdownLabel) return;
+    const target = countdownTarget();
+    el.countdownLabel.textContent = target.label;
+    el.countdown?.classList.toggle("is-live", target.live);
+    if (target.live) {
+      el.countdownUnits.innerHTML = `<div class="wf-count-unit"><b>Live now</b><span>Classic+</span></div>`;
+      return;
+    }
+    let remaining = Math.max(0, target.at - Date.now());
+    const total = Math.floor(remaining / 1000);
+    const parts = [
+      { value: Math.floor(total / 86400), label: "Days" },
+      { value: Math.floor((total % 86400) / 3600), label: "Hours" },
+      { value: Math.floor((total % 3600) / 60), label: "Minutes" },
+      { value: total % 60, label: "Seconds" },
+    ];
+    el.countdownUnits.innerHTML = parts
+      .map((part) => `<div class="wf-count-unit"><b>${padCount(part.value)}</b><span>${part.label}</span></div>`)
+      .join("");
+  }
+
+  function startCountdown() {
+    renderCountdown();
+    if (countdown.timer) clearInterval(countdown.timer);
+    countdown.timer = setInterval(renderCountdown, 1000);
+  }
+
+  function setStatus(message, kind) {
+    if (!el.status) return;
+    el.status.textContent = message || "";
+    el.status.className = `wf-status${kind ? ` ${kind}` : ""}`;
+  }
+
+  async function api(path, options) {
+    const res = await fetch(path, {
+      credentials: "include",
+      headers: { Accept: "application/json", ...(options?.body ? { "Content-Type": "application/json" } : {}) },
+      ...options,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      window.location.href = `/auth/discord/login?next=${encodeURIComponent("/wow-forever")}`;
+      throw new Error("Login required");
+    }
+    if (!res.ok || payload?.ok === false) {
+      throw new Error(payload?.error || `Request failed (${res.status})`);
+    }
+    return payload;
+  }
+
+  function typedName() {
+    const given = String(el.name?.value || "").trim();
+    const family = String(el.familyName?.value || "").trim();
+    return [given, family].filter(Boolean).join(" ");
+  }
+
+  function applySavedPick(pick) {
+    if (!pick) return;
+    state.faction = pick.faction || "alliance";
+    state.race = pick.race || "";
+    state.gender = pick.gender || "male";
+    state.classId = pick.classId || "";
+    if (el.name) el.name.value = pick.givenName || String(pick.characterName || "").split(" ")[0] || "";
+    if (el.familyName) {
+      el.familyName.value =
+        pick.familyName ||
+        String(pick.characterName || "")
+          .split(" ")
+          .slice(1)
+          .join(" ") ||
+        "";
+    }
+  }
+
+  function renderFaction() {
+    if (!el.faction) return;
+    el.faction.innerHTML = ["alliance", "horde"]
+      .map((side) => {
+        const label = side === "alliance" ? "Alliance" : "Horde";
+        const active = state.faction === side ? " is-active" : "";
+        return `<button type="button" class="${side}${active}" data-faction="${side}">${label}</button>`;
+      })
+      .join("");
+    el.faction.querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.faction = btn.getAttribute("data-faction") || "alliance";
+        const race = raceById(state.race);
+        if (race && race.faction !== "both" && race.faction !== state.faction) {
+          state.race = "";
+          state.classId = "";
+        } else if (state.classId && !classesFor(state.race, state.faction).includes(state.classId)) {
+          state.classId = "";
+        }
+        render();
+      });
+    });
+  }
+
+  function renderRaces() {
+    if (!el.races) return;
+    const races = (state.catalog?.races || []).filter(
+      (r) => r.faction === "both" || r.faction === state.faction
+    );
+    el.races.innerHTML = races
+      .map((race) => {
+        const active = state.race === race.id ? " is-active" : "";
+        const neu = race.isNewRace ? " is-new" : "";
+        const pill = race.isNewRace ? `<span class="wf-pill wf-pill--new">New</span>` : "";
+        return `<button type="button" class="wf-tile${active}${neu}" data-race="${escapeHtml(race.id)}" data-faction="${escapeHtml(race.faction)}">
+          <img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="56" height="56" />
+          <span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span>
+          ${pill}
+        </button>`;
+      })
+      .join("");
+    el.races.querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.race = btn.getAttribute("data-race") || "";
+        if (state.classId && !classesFor(state.race, state.faction).includes(state.classId)) {
+          state.classId = "";
+        }
+        render();
+      });
+    });
+  }
+
+  function renderGender() {
+    if (!el.gender) return;
+    el.gender.innerHTML = ["male", "female"]
+      .map((g) => {
+        const active = state.gender === g ? " is-active" : "";
+        const label = g === "male" ? "Male" : "Female";
+        return `<button type="button"${active ? ' class="is-active"' : ""} data-gender="${g}">${label}</button>`;
+      })
+      .join("");
+    el.gender.querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.gender = btn.getAttribute("data-gender") || "male";
+        render();
+      });
+    });
+  }
+
+  function renderClasses() {
+    if (!el.classes) return;
+    const allowed = new Set(classesFor(state.race, state.faction));
+    el.classes.innerHTML = (state.catalog?.classes || [])
+      .map((cls) => {
+        const ok = !state.race || allowed.has(cls.id);
+        const active = state.classId === cls.id ? " is-active" : "";
+        const disabled = ok ? "" : " is-disabled";
+        const neu = state.race && ok && isNewCombo(state.race, cls.id) ? " is-new" : "";
+        const pill = neu ? `<span class="wf-pill wf-pill--new">New</span>` : "";
+        return `<button type="button" class="wf-tile${active}${disabled}${neu}" data-class="${escapeHtml(cls.id)}" ${ok ? "" : "disabled"}>
+          <img src="${escapeHtml(classIconUrl(cls.id))}" alt="" width="56" height="56" />
+          <span class="wf-class-${escapeHtml(cls.id)}">${escapeHtml(cls.name)}</span>
+          ${pill}
+        </button>`;
+      })
+      .join("");
+    el.classes.querySelectorAll("button:not([disabled])").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.classId = btn.getAttribute("data-class") || "";
+        render();
+      });
+    });
+  }
+
+  function currentMainLabel(pick) {
+    const main = String(pick?.mainCharacterName || "").trim();
+    if (!main) return "";
+    return `<p class="wf-main-line"><span class="wf-main-kicker">Current main</span><span class="wf-main-name">${escapeHtml(main)}</span></p>`;
+  }
+
+  function renderPreview() {
+    if (!el.preview) return;
+    const race = raceById(state.race);
+    const cls = classById(state.classId);
+    const name = typedName();
+    if (!race) {
+      el.preview.innerHTML = `<p class="wf-kicker">Preview</p><p class="subtle">Pick a race to start.</p>`;
+      return;
+    }
+    const comboHtml = cls
+      ? `<span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span> <span class="wf-class-${escapeHtml(cls.id)}">${escapeHtml(cls.name)}</span>`
+      : `<span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span>`;
+    const neu = cls && isNewCombo(race.id, cls.id);
+    const lockedMain = state.pick ? currentMainLabel(state.pick) : "";
+    el.preview.innerHTML = `
+      <p class="wf-kicker wf-faction-${escapeHtml(state.faction)}">${state.faction === "alliance" ? "Alliance" : "Horde"}</p>
+      <img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="96" height="96" />
+      <p class="wf-preview-name wf-class-${escapeHtml(cls?.id || "")}">${escapeHtml(name || (cls ? `${race.name} ${cls.name}` : race.name))}</p>
+      ${lockedMain}
+      <p class="subtle">${escapeHtml(state.gender === "female" ? "Female" : "Male")} ${comboHtml}</p>
+      ${neu ? `<p><span class="wf-pill wf-pill--new">New Forever combo</span></p>` : ""}
+      ${race.note ? `<p class="subtle wf-preview-note">${escapeHtml(race.note)}</p>` : ""}
+    `;
+  }
+
+  function renderSquad() {
+    if (!el.squad || !el.squadMeta) return;
+    const picks = state.squad || [];
+    el.squadMeta.textContent = picks.length
+      ? `${picks.length} raider${picks.length === 1 ? "" : "s"} locked in`
+      : "Nobody has locked a Forever character yet. Be first.";
+    el.squad.innerHTML = picks
+      .map((p) => {
+        const race = raceById(p.race) || { id: p.race, name: p.raceName, portraitKey: p.race };
+        const title = p.characterName || p.raceName || "Raider";
+        const neu = p.isNewCombo ? `<span class="wf-pill wf-pill--new">New</span>` : "";
+        const main = String(p.mainCharacterName || "").trim();
+        return `<article class="wf-card">
+          <img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="56" height="56" />
+          <div>
+            <strong class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(title)}</strong>
+            ${main ? `<small class="wf-card-main"><span class="wf-main-kicker">Current main</span><span class="wf-main-name">${escapeHtml(main)}</span></small>` : ""}
+            <small>
+              <span class="wf-faction-${escapeHtml(p.faction || "")}">${escapeHtml((p.faction || "").toUpperCase())}</span>
+              · <span class="wf-race-${escapeHtml(p.race || "")}">${escapeHtml(p.raceName || p.race)}</span>
+              <span class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(p.className || p.classId)}</span>
+            </small>
+            ${neu}
+          </div>
+        </article>`;
+      })
+      .join("");
+  }
+
+  function renderMatrix() {
+    if (!el.matrix || !state.catalog) return;
+    const classes = state.catalog.classes || [];
+    const rows = [];
+    for (const race of state.catalog.races || []) {
+      const factions = race.faction === "both" ? ["alliance", "horde"] : [race.faction];
+      for (const faction of factions) {
+        const allowed = new Set(classesFor(race.id, faction));
+        const label = race.faction === "both" ? `${race.name} (${faction === "alliance" ? "A" : "H"})` : race.name;
+        const cells = classes
+          .map((cls) => {
+            if (!allowed.has(cls.id)) return "<td></td>";
+            const neu = isNewCombo(race.id, cls.id);
+            return `<td class="${neu ? "new" : "yes"}">${neu ? "NEW" : "✓"}</td>`;
+          })
+          .join("");
+        rows.push(`<tr><td class="wf-race-${escapeHtml(race.id)}">${escapeHtml(label)}</td>${cells}</tr>`);
+      }
+    }
+    el.matrix.innerHTML = `<thead><tr><th>Race</th>${classes
+      .map((c) => `<th class="wf-class-${escapeHtml(c.id)}">${escapeHtml(c.name)}</th>`)
+      .join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
+  }
+
+  function renderSources() {
+    if (!el.sources) return;
+    el.sources.innerHTML = (state.catalog?.sources || [])
+      .map(
+        (s) =>
+          `<li><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.name)}</a> — ${escapeHtml(s.note || "")}</li>`
+      )
+      .join("");
+    if (el.notes) {
+      el.notes.innerHTML = (state.catalog?.notes || []).map((n) => escapeHtml(n)).join("<br /><br />");
+    }
+  }
+
+  function render() {
+    renderFaction();
+    renderRaces();
+    renderGender();
+    renderClasses();
+    renderPreview();
+    if (el.save) el.save.disabled = !(state.race && state.gender && state.classId) || state.saving;
+  }
+
+  async function savePick() {
+    if (state.saving) return;
+    state.saving = true;
+    setStatus("Saving…");
+    render();
+    try {
+      const payload = await api("/api/wow-forever/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          race: state.race,
+          faction: state.faction,
+          gender: state.gender,
+          classId: state.classId,
+          givenName: el.name?.value || "",
+          familyName: el.familyName?.value || "",
+        }),
+      });
+      state.pick = payload.pick;
+      applySavedPick(payload.pick);
+      setStatus("Locked in.", "ok");
+      await loadSquad();
+    } catch (error) {
+      setStatus(error.message || "Could not save.", "error");
+    } finally {
+      state.saving = false;
+      render();
+    }
+  }
+
+  async function clearPick() {
+    if (state.saving) return;
+    state.saving = true;
+    setStatus("Clearing…");
+    try {
+      await api("/api/wow-forever/me", { method: "DELETE" });
+      state.pick = null;
+      state.race = "";
+      state.classId = "";
+      if (el.name) el.name.value = "";
+      if (el.familyName) el.familyName.value = "";
+      setStatus("Pick cleared.");
+      await loadSquad();
+    } catch (error) {
+      setStatus(error.message || "Could not clear.", "error");
+    } finally {
+      state.saving = false;
+      render();
+    }
+  }
+
+  async function loadSquad() {
+    const payload = await api("/api/wow-forever/squad");
+    state.squad = payload.picks || [];
+    renderSquad();
+  }
+
+  async function boot() {
+    try {
+      const [catalogRes, meRes] = await Promise.all([
+        api("/api/wow-forever/catalog"),
+        api("/api/wow-forever/me"),
+      ]);
+      state.catalog = catalogRes.catalog;
+      state.pick = meRes.pick;
+      if (state.catalog?.beta) countdown.beta = state.catalog.beta;
+      if (state.catalog?.launch) countdown.launch = state.catalog.launch;
+      applySavedPick(meRes.pick);
+      renderSources();
+      renderMatrix();
+      render();
+      startCountdown();
+      await loadSquad();
+    } catch (error) {
+      setStatus(error.message || "Failed to load Forever data.", "error");
+    }
+  }
+
+  el.save?.addEventListener("click", savePick);
+  el.clear?.addEventListener("click", clearPick);
+  el.name?.addEventListener("input", renderPreview);
+  el.familyName?.addEventListener("input", renderPreview);
+
+  startCountdown();
+  boot();
+})();
