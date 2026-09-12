@@ -10,6 +10,7 @@
     gender: "male",
     classId: "",
     saving: false,
+    editing: true,
   };
 
   const el = {
@@ -20,9 +21,15 @@
     name: document.getElementById("wfName"),
     familyName: document.getElementById("wfFamilyName"),
     save: document.getElementById("wfSave"),
+    cancel: document.getElementById("wfCancel"),
     clear: document.getElementById("wfClear"),
     status: document.getElementById("wfStatus"),
     preview: document.getElementById("wfPreview"),
+    creator: document.getElementById("wfCreator"),
+    heading: document.getElementById("wf-create-heading"),
+    lede: document.getElementById("wfCreateLede"),
+    locked: document.getElementById("wfLocked"),
+    editor: document.getElementById("wfEditor"),
     squad: document.getElementById("wfSquad"),
     squadMeta: document.getElementById("wfSquadMeta"),
     matrix: document.getElementById("wfMatrix"),
@@ -165,6 +172,30 @@
     return [given, family].filter(Boolean).join(" ");
   }
 
+  function isOwnPick(pick) {
+    const mine = String(state.pick?.userId || "").trim();
+    const theirs = String(pick?.userId || "").trim();
+    return Boolean(mine && theirs && mine === theirs);
+  }
+
+  function startChange() {
+    if (!state.pick) return;
+    state.editing = true;
+    applySavedPick(state.pick);
+    setStatus("Change race, class, or name, then save.");
+    render();
+    el.creator?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.races?.querySelector("button.is-active")?.focus();
+  }
+
+  function cancelChange() {
+    if (!state.pick) return;
+    state.editing = false;
+    applySavedPick(state.pick);
+    setStatus("");
+    render();
+  }
+
   function applySavedPick(pick) {
     if (!pick) return;
     state.faction = pick.faction || "alliance";
@@ -304,6 +335,9 @@
     const name = typedName();
     if (!race) {
       el.preview.innerHTML = `<p class="wf-kicker">Preview</p><p class="subtle">Pick a race to start.</p>`;
+      el.preview.classList.remove("is-changeable");
+      el.preview.removeAttribute("role");
+      el.preview.removeAttribute("tabindex");
       return;
     }
     const comboHtml = cls
@@ -312,6 +346,17 @@
     const neu = cls && isNewCombo(race.id, cls.id);
     const lockedMain = state.pick ? currentMainLabel(state.pick) : "";
     const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="96" height="96" />`;
+    const canChange = Boolean(state.pick && !state.editing);
+    el.preview.classList.toggle("is-changeable", canChange);
+    if (canChange) {
+      el.preview.setAttribute("role", "button");
+      el.preview.setAttribute("tabindex", "0");
+      el.preview.setAttribute("aria-label", "Change your Forever character");
+    } else {
+      el.preview.removeAttribute("role");
+      el.preview.removeAttribute("tabindex");
+      el.preview.removeAttribute("aria-label");
+    }
     el.preview.innerHTML = `
       <p class="wf-kicker wf-faction-${escapeHtml(state.faction)}">${state.faction === "alliance" ? "Alliance" : "Horde"}</p>
       ${state.pick ? portraitFrameWrap(portrait, state.pick) : portrait}
@@ -320,8 +365,51 @@
       ${lockedMain}
       <p class="subtle">${escapeHtml(state.gender === "female" ? "Female" : "Male")} ${comboHtml}</p>
       ${neu ? `<p><span class="wf-pill wf-pill--new">New Forever combo</span></p>` : ""}
+      ${canChange ? `<p class="wf-change-hint">Click to change race and class</p>` : ""}
       ${race.note ? `<p class="subtle wf-preview-note">${escapeHtml(race.note)}</p>` : ""}
     `;
+  }
+
+  function renderLocked() {
+    const lockedView = Boolean(state.pick && !state.editing);
+    if (el.heading) {
+      el.heading.textContent = !state.pick
+        ? "Create a Forever roll"
+        : state.editing
+          ? "Change your Forever roll"
+          : "Your Forever character";
+    }
+    if (el.lede) {
+      el.lede.textContent = lockedView
+        ? "Click your character to change race and class."
+        : "Combos follow the BlizzCon 12 Sep 2026 demo. Skyborne pick a faction at create.";
+    }
+    if (el.editor) el.editor.hidden = lockedView;
+    if (el.cancel) el.cancel.hidden = !(state.pick && state.editing);
+    if (el.save) el.save.textContent = state.pick ? "Save changes" : "Lock in my Forever character";
+    if (!el.locked) return;
+    el.locked.hidden = !lockedView;
+    if (!lockedView) {
+      el.locked.innerHTML = "";
+      return;
+    }
+    const pick = state.pick;
+    const race = raceById(pick.race) || { id: pick.race, name: pick.raceName, portraitKey: pick.race };
+    const name = pick.characterName || `${pick.raceName || pick.race} ${pick.className || pick.classId}`;
+    const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, pick.gender))}" alt="" width="96" height="96" />`;
+    el.locked.innerHTML = `<button type="button" class="wf-locked-card" id="wfChangeTrigger">
+      ${portraitFrameWrap(portrait, pick)}
+      <span class="wf-locked-copy">
+        <strong class="wf-class-${escapeHtml(pick.classId || "")}">${escapeHtml(name)}</strong>
+        <small>
+          <span class="wf-faction-${escapeHtml(pick.faction || "")}">${escapeHtml((pick.faction || "").toUpperCase())}</span>
+          · <span class="wf-race-${escapeHtml(pick.race || "")}">${escapeHtml(pick.raceName || pick.race)}</span>
+          <span class="wf-class-${escapeHtml(pick.classId || "")}">${escapeHtml(pick.className || pick.classId)}</span>
+        </small>
+        <span class="wf-change-hint">Click to change race and class</span>
+      </span>
+    </button>`;
+    document.getElementById("wfChangeTrigger")?.addEventListener("click", startChange);
   }
 
   function renderSquad() {
@@ -337,7 +425,8 @@
         const neu = p.isNewCombo ? `<span class="wf-pill wf-pill--new">New</span>` : "";
         const main = String(p.mainCharacterName || "").trim();
         const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="56" height="56" />`;
-        return `<article class="wf-card">
+        const mine = isOwnPick(p);
+        return `<article class="wf-card${mine ? " is-mine" : ""}"${mine ? ' data-change="1" role="button" tabindex="0" aria-label="Change your Forever character"' : ""}>
           ${portraitFrameWrap(portrait, p)}
           <div>
             <strong class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(title)}</strong>
@@ -348,6 +437,7 @@
               <span class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(p.className || p.classId)}</span>
             </small>
             ${p.frameLabel ? `<span class="wf-frame-chip is-tier-${Number(p.frameTier) || 1}">${escapeHtml(p.frameLabel)}</span>` : ""}
+            ${mine ? `<span class="wf-change-hint">Click to change</span>` : ""}
             ${neu}
           </div>
         </article>`;
@@ -393,6 +483,7 @@
   }
 
   function render() {
+    renderLocked();
     renderFaction();
     renderRaces();
     renderGender();
@@ -418,9 +509,11 @@
           familyName: el.familyName?.value || "",
         }),
       });
+      const updating = Boolean(state.pick);
       state.pick = payload.pick;
+      state.editing = false;
       applySavedPick(payload.pick);
-      setStatus("Locked in.", "ok");
+      setStatus(updating ? "Changes saved." : "Locked in.", "ok");
       await loadSquad();
     } catch (error) {
       setStatus(error.message || "Could not save.", "error");
@@ -437,6 +530,7 @@
     try {
       await api("/api/wow-forever/me", { method: "DELETE" });
       state.pick = null;
+      state.editing = true;
       state.race = "";
       state.classId = "";
       if (el.name) el.name.value = "";
@@ -465,6 +559,7 @@
       ]);
       state.catalog = catalogRes.catalog;
       state.pick = meRes.pick;
+      state.editing = !meRes.pick;
       if (state.catalog?.beta) countdown.beta = state.catalog.beta;
       if (state.catalog?.launch) countdown.launch = state.catalog.launch;
       applySavedPick(meRes.pick);
@@ -479,9 +574,30 @@
   }
 
   el.save?.addEventListener("click", savePick);
+  el.cancel?.addEventListener("click", cancelChange);
   el.clear?.addEventListener("click", clearPick);
   el.name?.addEventListener("input", renderPreview);
   el.familyName?.addEventListener("input", renderPreview);
+  el.preview?.addEventListener("click", () => {
+    if (state.pick && !state.editing) startChange();
+  });
+  el.preview?.addEventListener("keydown", (event) => {
+    if (!state.pick || state.editing) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      startChange();
+    }
+  });
+  el.squad?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-change='1']")) startChange();
+  });
+  el.squad?.addEventListener("keydown", (event) => {
+    if (!event.target.closest("[data-change='1']")) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      startChange();
+    }
+  });
 
   startCountdown();
   boot();

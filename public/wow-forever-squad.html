@@ -19,7 +19,7 @@
     />
     <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260913plb-wow-forever-frames-v9" />
+    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260913plb-wow-forever-change-v2" />
   </head>
   <body class="wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -85,12 +85,15 @@
           </div>
         </section>
 
-        <section class="card wf-grid wf-creator-grid" aria-labelledby="wf-create-heading">
+        <section class="card wf-grid wf-creator-grid" id="wfCreator" aria-labelledby="wf-create-heading">
           <div>
             <p class="wf-kicker">Your character</p>
             <h2 id="wf-create-heading" class="section-title">Create a Forever roll</h2>
-            <p class="subtle">Combos follow the BlizzCon 12 Sep 2026 demo. Skyborne pick a faction at create.</p>
+            <p class="subtle" id="wfCreateLede">Combos follow the BlizzCon 12 Sep 2026 demo. Skyborne pick a faction at create.</p>
 
+            <div id="wfLocked" hidden></div>
+
+            <div id="wfEditor">
             <p class="wf-step">1. Faction</p>
             <div class="wf-faction" id="wfFaction" role="group" aria-label="Faction"></div>
 
@@ -133,9 +136,11 @@
 
             <div class="wf-actions">
               <button type="button" class="wf-save" id="wfSave">Lock in my Forever character</button>
+              <button type="button" class="wf-clear" id="wfCancel" hidden>Cancel</button>
               <button type="button" class="wf-clear" id="wfClear">Clear</button>
             </div>
             <p class="wf-status" id="wfStatus" role="status"></p>
+            </div>
           </div>
           <aside class="card wf-preview" id="wfPreview" aria-live="polite"></aside>
         </section>
@@ -178,7 +183,7 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/wow-forever-squad.js?v=20260913plb-wow-forever-frames-v2"></script>
+    <script defer src="/wow-forever-squad.js?v=20260913plb-wow-forever-change-v2"></script>
     <script defer src="/auth-ui.js?v=20260912plb-wow-forever-squad-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

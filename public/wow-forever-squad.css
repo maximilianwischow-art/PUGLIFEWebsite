@@ -215,7 +215,10 @@ body.wf-alliance .wf-save:focus-visible,
 body.wf-alliance .wf-clear:focus-visible,
 body.wf-alliance .wf-faction button:focus-visible,
 body.wf-alliance .wf-gender button:focus-visible,
-body.wf-alliance .wf-name-input:focus-visible {
+body.wf-alliance .wf-name-input:focus-visible,
+body.wf-alliance .wf-locked-card:focus-visible,
+body.wf-alliance .wf-card.is-mine:focus-visible,
+body.wf-alliance .wf-preview.is-changeable:focus-visible {
   outline: 2px solid var(--gold-light);
   outline-offset: 2px;
 }
@@ -580,6 +583,15 @@ body.wf-alliance .wf-preview {
   overflow: visible;
 }
 
+.wf-preview.is-changeable {
+  cursor: pointer;
+}
+
+.wf-preview.is-changeable:hover {
+  border-color: var(--gold-border-strong);
+  box-shadow: 0 0 16px rgba(200, 149, 62, 0.22);
+}
+
 .wf-preview img {
   width: 96px;
   height: 96px;
@@ -738,6 +750,71 @@ body.wf-alliance .wf-preview {
   border: 1px solid var(--steel-border);
   background: rgba(11, 19, 29, 0.82);
   overflow: visible;
+}
+
+.wf-locked-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  margin: 12px 0 0;
+  padding: 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--gold-border);
+  background: rgba(11, 19, 29, 0.82);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wf-card.is-mine,
+.wf-locked-card {
+  cursor: pointer;
+}
+
+.wf-card.is-mine {
+  border-color: var(--gold-border);
+}
+
+.wf-card.is-mine:hover,
+.wf-locked-card:hover {
+  border-color: var(--gold-border-strong);
+  box-shadow: 0 0 14px rgba(200, 149, 62, 0.24);
+}
+
+.wf-locked-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wf-locked-copy strong {
+  display: block;
+}
+
+.wf-locked-copy small {
+  display: block;
+  color: var(--text-muted);
+}
+
+.wf-change-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold-highlight);
+}
+
+.wf-locked-card img {
+  width: 56px;
+  height: 56px;
+  border-radius: 4px;
+  object-fit: cover;
 }
 
 .wf-card img {
