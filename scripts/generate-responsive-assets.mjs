@@ -9,6 +9,7 @@ const outDir = path.join(publicDir, "responsive");
 
 const assets = [
   { source: "plb-hero-banner.png", widths: [480, 768, 960] },
+  { source: "wow-forever-hero.jpg", widths: [768, 1024] },
   { source: "welcome-popup-hyjal.png", widths: [480, 960, 1440] },
   { source: "site-bg-fel.png", widths: [960, 1440, 1920] },
   { source: "raid-images/kara.png", widths: [320, 640, 960] },

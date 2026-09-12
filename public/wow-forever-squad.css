@@ -101,7 +101,7 @@ body.wf-alliance .hero {
 
 body.wf-alliance .hero-brand {
   max-width: min(100%, 1120px);
-  aspect-ratio: 1024 / 345;
+  aspect-ratio: 1024 / 344;
 }
 
 body.wf-alliance .hero-banner {
@@ -313,11 +313,23 @@ body.wf-alliance .cookie-notice-btn {
 }
 
 .wf-lede {
-  max-width: 62ch;
-  margin: 10px 0 0;
-  color: var(--text-secondary);
-  line-height: 1.55;
+  width: 100%;
+  max-width: none;
+  margin: 12px 0 0;
+  color: var(--parchment);
+  font-family: var(--font-ui);
   font-size: 16px;
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.65;
+}
+
+.wf-lede p {
+  margin: 0;
+}
+
+.wf-lede p + p {
+  margin-top: 1em;
 }
 
 .wf-countdown {
