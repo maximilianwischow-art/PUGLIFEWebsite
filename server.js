@@ -16534,6 +16534,42 @@ function resolveForeverPickerMainCharacterName(discordUserId) {
   }
 }
 
+const FOREVER_FRAME_TIERS = Object.freeze([
+  { tier: 1, min: 0, id: "initiate", label: "Initiate" },
+  { tier: 2, min: 1, id: "proven", label: "Proven" },
+  { tier: 3, min: 3, id: "veteran", label: "Veteran" },
+  { tier: 4, min: 5, id: "champion", label: "Champion" },
+  { tier: 5, min: 7, id: "legend", label: "Legend" },
+]);
+
+function foreverAchievementCount(discordUserId) {
+  const id = String(discordUserId || "").trim();
+  if (!id) return 0;
+  try {
+    const user = identityUserGetByDiscordId(id);
+    if (!user?.id) return 0;
+    return (badgeStateGetByUserId(user.id) || []).filter(
+      (row) => row?.earned && !GUILD_ROLE_BADGE_IDS.has(String(row.badgeId || ""))
+    ).length;
+  } catch {
+    return 0;
+  }
+}
+
+function foreverFrameFromAchievementCount(count) {
+  const n = Math.max(0, Number(count) || 0);
+  let chosen = FOREVER_FRAME_TIERS[0];
+  for (const row of FOREVER_FRAME_TIERS) {
+    if (n >= row.min) chosen = row;
+  }
+  return {
+    achievementCount: n,
+    frameTier: chosen.tier,
+    frameId: chosen.id,
+    frameLabel: chosen.label,
+  };
+}
+
 function publicWowForeverPick(row) {
   if (!row) return null;
   const race = wowForeverRaceById(row.race);
@@ -16543,12 +16579,14 @@ function publicWowForeverPick(row) {
       ? `https://cdn.discordapp.com/avatars/${row.userId}/${row.avatar}.png?size=64`
       : "";
   const names = wowForeverParseName(row.characterName) || { givenName: "", familyName: "", characterName: "" };
+  const frame = foreverFrameFromAchievementCount(foreverAchievementCount(row.userId));
   return {
     ...row,
     givenName: names.givenName,
     familyName: names.familyName,
     characterName: names.characterName || row.characterName,
     mainCharacterName: resolveForeverPickerMainCharacterName(row.userId),
+    ...frame,
     raceName: race?.name || row.race,
     className: cls?.name || row.classId,
     classColor: cls?.color || "#cbd5e1",

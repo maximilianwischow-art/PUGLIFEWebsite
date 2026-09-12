@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="wfFrameProven" x1="6" y1="2" x2="58" y2="62">
+      <stop offset="0%" stop-color="#b6e3c2"/>
+      <stop offset="42%" stop-color="#4fa66a"/>
+      <stop offset="100%" stop-color="#1f5c36"/>
+    </linearGradient>
+  </defs>
+  <rect x="1.6" y="1.6" width="60.8" height="60.8" rx="8" stroke="url(#wfFrameProven)" stroke-width="3.2"/>
+  <rect x="6" y="6" width="52" height="52" rx="4.2" stroke="#143322" stroke-width="1.15"/>
+  <path d="M8 20V8h12M56 20V8H44M8 44v12h12M56 44v12H44" stroke="url(#wfFrameProven)" stroke-width="2.3" stroke-linecap="square"/>
+  <path d="M20 8h6M38 8h6M20 56h6M38 56h6M8 20v6M8 38v6M56 20v6M56 38v6" stroke="#8ed6a3" stroke-width="1.4" opacity="0.85"/>
+  <circle cx="11.2" cy="11.2" r="1.7" fill="#d8f5e2"/>
+  <circle cx="52.8" cy="11.2" r="1.7" fill="#d8f5e2"/>
+  <circle cx="11.2" cy="52.8" r="1.7" fill="#2f7a48"/>
+  <circle cx="52.8" cy="52.8" r="1.7" fill="#2f7a48"/>
+  <path d="M32 4.4l2.1 2.1-2.1 2.1-2.1-2.1z" fill="#8ed6a3" stroke="#1f5c36" stroke-width="0.6"/>
+</svg>

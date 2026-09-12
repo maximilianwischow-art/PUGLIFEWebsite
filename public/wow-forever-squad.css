@@ -313,10 +313,11 @@ body.wf-alliance .cookie-notice-btn {
 }
 
 .wf-lede {
-  max-width: 64ch;
+  max-width: 62ch;
   margin: 10px 0 0;
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: 1.55;
+  font-size: 16px;
 }
 
 .wf-countdown {
@@ -325,7 +326,7 @@ body.wf-alliance .cookie-notice-btn {
 
 .wf-countdown-units {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -563,13 +564,27 @@ body.wf-alliance .cookie-notice-btn {
   background: linear-gradient(180deg, rgba(18, 58, 104, 0.28), rgba(11, 19, 29, 0.96));
 }
 
+body.wf-alliance .wf-preview {
+  overflow: visible;
+}
+
 .wf-preview img {
   width: 96px;
   height: 96px;
-  border-radius: 10px;
+  border-radius: 8px;
   object-fit: cover;
   margin: 8px auto 0;
   box-shadow: 0 0 0 1px var(--gold-border);
+}
+
+.wf-preview .wf-portrait-frame {
+  margin: 10px auto 0;
+}
+
+.wf-preview .wf-portrait-frame img {
+  margin: 0;
+  box-shadow: none;
+  border-radius: 4px;
 }
 
 .wf-preview-name {
@@ -592,6 +607,18 @@ body.wf-alliance .cookie-notice-btn {
 
 .wf-card-main {
   align-items: flex-start;
+}
+
+.wf-card .wf-card-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.wf-card .wf-main-kicker,
+.wf-card .wf-main-name {
+  display: block;
 }
 
 .wf-main-kicker {
@@ -622,6 +649,9 @@ body.wf-alliance .cookie-notice-btn {
 .wf-card-main .wf-main-name {
   font-size: 13px;
   padding: 3px 10px;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
 }
 
 .wf-preview-note {
@@ -681,30 +711,146 @@ body.wf-alliance .cookie-notice-btn {
 
 .wf-squad-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
+  padding: 4px 2px 8px;
 }
 
 .wf-card {
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: auto 1fr;
   gap: 10px;
   align-items: center;
   padding: 10px;
   border-radius: var(--radius-control);
   border: 1px solid var(--steel-border);
   background: rgba(11, 19, 29, 0.82);
+  overflow: visible;
 }
 
 .wf-card img {
   width: 56px;
   height: 56px;
-  border-radius: 6px;
+  border-radius: 4px;
   object-fit: cover;
 }
 
+.wf-portrait-frame {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: max-content;
+  flex: 0 0 auto;
+  padding: 8px;
+  border-radius: 10px;
+  isolation: isolate;
+  background: #070c12;
+}
+
+.wf-portrait-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+}
+
+.wf-portrait-frame img {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+.wf-portrait-frame.is-tier-1 {
+  color: #8a939c;
+  box-shadow: 0 0 0 1px rgba(138, 147, 156, 0.28);
+}
+
+.wf-portrait-frame.is-tier-1::before {
+  background-image: url("/images/wow-forever/frame-initiate.svg");
+}
+
+.wf-portrait-frame.is-tier-2 {
+  color: #4fa66a;
+  box-shadow: 0 0 10px rgba(79, 166, 106, 0.28);
+}
+
+.wf-portrait-frame.is-tier-2::before {
+  background-image: url("/images/wow-forever/frame-proven.svg");
+}
+
+.wf-portrait-frame.is-tier-3 {
+  color: #62b9ed;
+  box-shadow: 0 0 12px rgba(98, 185, 237, 0.32);
+}
+
+.wf-portrait-frame.is-tier-3::before {
+  background-image: url("/images/wow-forever/frame-veteran.svg");
+}
+
+.wf-portrait-frame.is-tier-4 {
+  color: #c084fc;
+  box-shadow: 0 0 14px rgba(168, 85, 247, 0.38);
+}
+
+.wf-portrait-frame.is-tier-4::before {
+  background-image: url("/images/wow-forever/frame-champion.svg");
+}
+
+.wf-portrait-frame.is-tier-5 {
+  color: #f4dea1;
+  padding: 9px;
+  box-shadow:
+    0 0 16px rgba(200, 149, 62, 0.55),
+    0 0 28px rgba(232, 198, 117, 0.28);
+}
+
+.wf-portrait-frame.is-tier-5::before {
+  background-image: url("/images/wow-forever/frame-legend.svg");
+}
+
+.wf-frame-legend {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.wf-frame-tag {
+  margin: 8px 0 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold-highlight);
+}
+
+.wf-frame-chip {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.wf-frame-chip.is-tier-1 { color: #8a939c; }
+.wf-frame-chip.is-tier-2 { color: #4fa66a; }
+.wf-frame-chip.is-tier-3 { color: #62b9ed; }
+.wf-frame-chip.is-tier-4 { color: #c084fc; }
+.wf-frame-chip.is-tier-5 { color: #f4dea1; }
+
 .wf-card strong {
   display: block;
+}
+
+.wf-card > div {
+  min-width: 0;
 }
 
 .wf-card small {

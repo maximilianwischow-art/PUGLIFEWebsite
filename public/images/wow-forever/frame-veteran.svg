@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="wfFrameVeteran" x1="4" y1="0" x2="60" y2="64">
+      <stop offset="0%" stop-color="#d7f0ff"/>
+      <stop offset="40%" stop-color="#62b9ed"/>
+      <stop offset="100%" stop-color="#1a5f96"/>
+    </linearGradient>
+  </defs>
+  <rect x="1.4" y="1.4" width="61.2" height="61.2" rx="8" stroke="url(#wfFrameVeteran)" stroke-width="3.4"/>
+  <rect x="5.8" y="5.8" width="52.4" height="52.4" rx="4.4" stroke="#0d2f4c" stroke-width="1.2"/>
+  <path d="M7.5 21V7.5H21M56.5 21V7.5H43M7.5 43v13.5H21M56.5 43v13.5H43" stroke="url(#wfFrameVeteran)" stroke-width="2.4" stroke-linecap="square"/>
+  <path d="M21 7.5c3 2 6 2 11 2s8 0 11-2M21 56.5c3-2 6-2 11-2s8 0 11 2" stroke="#9ed8f8" stroke-width="1.15"/>
+  <circle cx="11" cy="11" r="1.85" fill="#e7f6ff"/>
+  <circle cx="53" cy="11" r="1.85" fill="#e7f6ff"/>
+  <circle cx="11" cy="53" r="1.85" fill="#2a7ab3"/>
+  <circle cx="53" cy="53" r="1.85" fill="#2a7ab3"/>
+  <path d="M32 3.6l2.6 2.6-2.6 2.6-2.6-2.6z" fill="#8fd0f6" stroke="#123a68" stroke-width="0.7"/>
+  <circle cx="32" cy="6.2" r="1.05" fill="#f4fbff"/>
+</svg>

@@ -124,7 +124,6 @@
       { value: Math.floor(total / 86400), label: "Days" },
       { value: Math.floor((total % 86400) / 3600), label: "Hours" },
       { value: Math.floor((total % 3600) / 60), label: "Minutes" },
-      { value: total % 60, label: "Seconds" },
     ];
     el.countdownUnits.innerHTML = parts
       .map((part) => `<div class="wf-count-unit"><b>${padCount(part.value)}</b><span>${part.label}</span></div>`)
@@ -284,6 +283,20 @@
     return `<p class="wf-main-line"><span class="wf-main-kicker">Current main</span><span class="wf-main-name">${escapeHtml(main)}</span></p>`;
   }
 
+  function frameCaption(pick) {
+    const count = Number(pick?.achievementCount) || 0;
+    const label = String(pick?.frameLabel || "").trim();
+    if (!label) return "";
+    return `${label} · ${count} raid achievement${count === 1 ? "" : "s"}`;
+  }
+
+  function portraitFrameWrap(imgHtml, pick) {
+    const tier = Number(pick?.frameTier) || 0;
+    if (!tier) return imgHtml;
+    const title = frameCaption(pick) || `Tier ${tier}`;
+    return `<div class="wf-portrait-frame is-tier-${tier}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${imgHtml}</div>`;
+  }
+
   function renderPreview() {
     if (!el.preview) return;
     const race = raceById(state.race);
@@ -298,9 +311,11 @@
       : `<span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span>`;
     const neu = cls && isNewCombo(race.id, cls.id);
     const lockedMain = state.pick ? currentMainLabel(state.pick) : "";
+    const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="96" height="96" />`;
     el.preview.innerHTML = `
       <p class="wf-kicker wf-faction-${escapeHtml(state.faction)}">${state.faction === "alliance" ? "Alliance" : "Horde"}</p>
-      <img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="96" height="96" />
+      ${state.pick ? portraitFrameWrap(portrait, state.pick) : portrait}
+      ${state.pick && state.pick.frameLabel ? `<p class="wf-frame-tag">${escapeHtml(frameCaption(state.pick))}</p>` : ""}
       <p class="wf-preview-name wf-class-${escapeHtml(cls?.id || "")}">${escapeHtml(name || (cls ? `${race.name} ${cls.name}` : race.name))}</p>
       ${lockedMain}
       <p class="subtle">${escapeHtml(state.gender === "female" ? "Female" : "Male")} ${comboHtml}</p>
@@ -313,7 +328,7 @@
     if (!el.squad || !el.squadMeta) return;
     const picks = state.squad || [];
     el.squadMeta.textContent = picks.length
-      ? `${picks.length} raider${picks.length === 1 ? "" : "s"} locked in`
+      ? `${picks.length} raider${picks.length === 1 ? "" : "s"} locked in · frames rank raid achievements`
       : "Nobody has locked a Forever character yet. Be first.";
     el.squad.innerHTML = picks
       .map((p) => {
@@ -321,8 +336,9 @@
         const title = p.characterName || p.raceName || "Raider";
         const neu = p.isNewCombo ? `<span class="wf-pill wf-pill--new">New</span>` : "";
         const main = String(p.mainCharacterName || "").trim();
+        const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="56" height="56" />`;
         return `<article class="wf-card">
-          <img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="56" height="56" />
+          ${portraitFrameWrap(portrait, p)}
           <div>
             <strong class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(title)}</strong>
             ${main ? `<small class="wf-card-main"><span class="wf-main-kicker">Current main</span><span class="wf-main-name">${escapeHtml(main)}</span></small>` : ""}
@@ -331,6 +347,7 @@
               · <span class="wf-race-${escapeHtml(p.race || "")}">${escapeHtml(p.raceName || p.race)}</span>
               <span class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(p.className || p.classId)}</span>
             </small>
+            ${p.frameLabel ? `<span class="wf-frame-chip is-tier-${Number(p.frameTier) || 1}">${escapeHtml(p.frameLabel)}</span>` : ""}
             ${neu}
           </div>
         </article>`;

@@ -19,7 +19,7 @@
     />
     <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260912plb-wow-forever-alliance-v6" />
+    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260913plb-wow-forever-frames-v5" />
   </head>
   <body class="wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -60,10 +60,7 @@
           <p class="wf-kicker">BlizzCon 2026 · Classic+</p>
           <h2 class="section-title">The WoW Forever Squad</h2>
           <p class="wf-lede">
-            World of Warcraft: Forever is the Classic+ branch announced today. Year One Azeroth,
-            level cap 60, new zones, and race/class combos vanilla never shipped — including
-            Undead Paladins, Dwarf Shamans, Orc Mages, and the new Skyborne elves.
-            Lock your roll so the guild can see who is going Alliance, Horde, and which new combo you want.
+            We're going Alliance for WoW Forever. Lock in a character so we can see who we'll meet again as friends — and who we'll meet as foes.
           </p>
           <div class="wf-countdown" id="wfCountdown">
             <p class="wf-kicker" id="wfCountdownLabel">Full release in</p>
@@ -95,14 +92,14 @@
             <p class="wf-step">4. Class</p>
             <div class="wf-tiles" id="wfClasses"></div>
 
-            <p class="wf-step">5. Name <span class="subtle">(optional · Forever allows a family name)</span></p>
+            <p class="wf-step">5. Name <span class="subtle">(optional · 2–24 letters each · family name allowed)</span></p>
             <div class="wf-name-row">
               <label class="wf-name-field">
                 <span>Given name</span>
                 <input
                   id="wfName"
                   class="wf-name-input"
-                  maxlength="12"
+                  maxlength="24"
                   autocomplete="off"
                   spellcheck="false"
                   placeholder="Jaina"
@@ -114,7 +111,7 @@
                 <input
                   id="wfFamilyName"
                   class="wf-name-input"
-                  maxlength="12"
+                  maxlength="24"
                   autocomplete="off"
                   spellcheck="false"
                   placeholder="Proudmoore"
@@ -136,6 +133,7 @@
           <p class="wf-kicker">Guild board</p>
           <h2 id="wf-squad-heading" class="section-title">Squad picks</h2>
           <p class="subtle" id="wfSquadMeta">Loading squad…</p>
+          <p class="subtle wf-frame-legend">Portrait frames by raid achievements: Initiate (0) · Proven (1+) · Veteran (3+) · Champion (5+) · Legend (7+)</p>
           <div class="wf-squad-grid" id="wfSquad"></div>
         </section>
 
@@ -169,7 +167,7 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/wow-forever-squad.js?v=20260912plb-wow-forever-squad-v8"></script>
+    <script defer src="/wow-forever-squad.js?v=20260913plb-wow-forever-frames-v2"></script>
     <script defer src="/auth-ui.js?v=20260912plb-wow-forever-squad-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

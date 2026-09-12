@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="wfFrameInitiate" x1="8" y1="4" x2="56" y2="60">
+      <stop offset="0%" stop-color="#c9d0d6"/>
+      <stop offset="45%" stop-color="#8b949c"/>
+      <stop offset="100%" stop-color="#4e565e"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="7" stroke="url(#wfFrameInitiate)" stroke-width="3"/>
+  <rect x="6.2" y="6.2" width="51.6" height="51.6" rx="4" stroke="#2c333a" stroke-width="1.2"/>
+  <path d="M9 18V9h9M55 18V9h-9M9 46v9h9M55 46v9h-9" stroke="url(#wfFrameInitiate)" stroke-width="2.1" stroke-linecap="square"/>
+  <circle cx="11" cy="11" r="1.45" fill="#d7dde3"/>
+  <circle cx="53" cy="11" r="1.45" fill="#d7dde3"/>
+  <circle cx="11" cy="53" r="1.45" fill="#9aa3ab"/>
+  <circle cx="53" cy="53" r="1.45" fill="#9aa3ab"/>
+</svg>
