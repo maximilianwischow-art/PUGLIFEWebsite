@@ -9,6 +9,8 @@
     race: "",
     gender: "male",
     classId: "",
+    role: "",
+    specId: "",
     saving: false,
     editing: true,
   };
@@ -18,6 +20,12 @@
     races: document.getElementById("wfRaces"),
     gender: document.getElementById("wfGender"),
     classes: document.getElementById("wfClasses"),
+    roleWrap: document.getElementById("wfRoleWrap"),
+    roles: document.getElementById("wfRoles"),
+    specMenu: document.getElementById("wfSpecMenu"),
+    specLabel: document.getElementById("wfSpecLabel"),
+    specs: document.getElementById("wfSpecs"),
+    nameStepNum: document.getElementById("wfNameStepNum"),
     name: document.getElementById("wfName"),
     familyName: document.getElementById("wfFamilyName"),
     save: document.getElementById("wfSave"),
@@ -94,6 +102,85 @@
 
   function classIconUrl(classId) {
     return `${ZAM}/classicon_${classId}.jpg`;
+  }
+
+  function spellIconUrl(icon) {
+    if (!icon) return "";
+    const file = String(icon).replace(/\.jpg$/i, "");
+    return `${ZAM}/${file}.jpg`;
+  }
+
+  function rolesForClass(classId) {
+    const row = state.catalog?.classRoles?.[classId] || {};
+    return (state.catalog?.roles || []).filter((role) => Array.isArray(row[role.id]) && row[role.id].length);
+  }
+
+  function specsForRole(classId, roleId) {
+    return [...(state.catalog?.classRoles?.[classId]?.[roleId] || [])];
+  }
+
+  function needsDpsSpecPicker(classId, roleId) {
+    return roleId === "dps" && specsForRole(classId, roleId).length >= 2;
+  }
+
+  function roleById(id) {
+    return (state.catalog?.roles || []).find((role) => role.id === id) || null;
+  }
+
+  function specById(classId, roleId, specId) {
+    return specsForRole(classId, roleId).find((spec) => spec.id === specId) || null;
+  }
+
+  function showSpecMenu() {
+    return Boolean(state.classId && needsDpsSpecPicker(state.classId, state.role));
+  }
+
+  function canSavePick() {
+    if (!(state.race && state.gender && state.classId && state.role) || state.saving) return false;
+    if (needsDpsSpecPicker(state.classId, state.role) && !state.specId) return false;
+    return true;
+  }
+
+  function reconcileRoleAndSpec() {
+    const roles = rolesForClass(state.classId);
+    if (!roles.some((role) => role.id === state.role)) {
+      state.role = roles.length === 1 ? roles[0].id : "";
+    }
+    const specs = specsForRole(state.classId, state.role);
+    if (needsDpsSpecPicker(state.classId, state.role)) {
+      if (!specs.some((spec) => spec.id === state.specId)) state.specId = "";
+      return;
+    }
+    if (specs.length === 1) {
+      state.specId = specs[0].id;
+      return;
+    }
+    if (!specs.some((spec) => spec.id === state.specId)) {
+      state.specId = specs[0]?.id || "";
+    }
+  }
+
+  function roleSpecLabel(pick) {
+    const roleId = pick?.role || "";
+    const specId = pick?.specId || "";
+    const roleName = pick?.roleName || roleById(roleId)?.name || "";
+    const spec = specById(pick?.classId, roleId, specId);
+    const specName = pick?.specShortName || pick?.specName || spec?.shortName || spec?.name || "";
+    if (roleName && specName && specName.toLowerCase() !== roleName.toLowerCase()) {
+      return `${roleName} · ${specName}`;
+    }
+    return roleName || specName;
+  }
+
+  function roleBadgeHtml(pick) {
+    const role = roleById(pick?.role);
+    if (!role) return "";
+    const label = roleSpecLabel(pick) || role.name;
+    return `<img class="wf-role-badge wf-role-badge-${escapeHtml(role.id)}" src="${escapeHtml(spellIconUrl(role.icon))}" alt="${escapeHtml(role.name)}" title="${escapeHtml(label)}" width="22" height="22" />`;
+  }
+
+  function portraitStack(imgHtml, pick) {
+    return `<div class="wf-portrait-wrap">${portraitFrameWrap(imgHtml, pick)}${roleBadgeHtml(pick)}</div>`;
   }
 
   function parseForeverInstant(isoDate) {
@@ -202,6 +289,9 @@
     state.race = pick.race || "";
     state.gender = pick.gender || "male";
     state.classId = pick.classId || "";
+    state.role = pick.role || "";
+    state.specId = pick.specId || "";
+    reconcileRoleAndSpec();
     if (el.name) el.name.value = pick.givenName || String(pick.characterName || "").split(" ")[0] || "";
     if (el.familyName) {
       el.familyName.value =
@@ -230,8 +320,12 @@
         if (race && race.faction !== "both" && race.faction !== state.faction) {
           state.race = "";
           state.classId = "";
+          state.role = "";
+          state.specId = "";
         } else if (state.classId && !classesFor(state.race, state.faction).includes(state.classId)) {
           state.classId = "";
+          state.role = "";
+          state.specId = "";
         }
         render();
       });
@@ -260,6 +354,8 @@
         state.race = btn.getAttribute("data-race") || "";
         if (state.classId && !classesFor(state.race, state.faction).includes(state.classId)) {
           state.classId = "";
+          state.role = "";
+          state.specId = "";
         }
         render();
       });
@@ -303,6 +399,82 @@
     el.classes.querySelectorAll("button:not([disabled])").forEach((btn) => {
       btn.addEventListener("click", () => {
         state.classId = btn.getAttribute("data-class") || "";
+        reconcileRoleAndSpec();
+        render();
+      });
+    });
+  }
+
+  function renderRoles() {
+    if (el.roleWrap) el.roleWrap.hidden = !state.classId;
+    if (el.nameStepNum) {
+      const nameNum = 5 + (state.classId ? 1 : 0) + (showSpecMenu() ? 1 : 0);
+      el.nameStepNum.textContent = `${nameNum}. Name`;
+    }
+    if (!el.roles) return;
+    if (!state.classId) {
+      el.roles.innerHTML = "";
+      if (el.specMenu) el.specMenu.hidden = true;
+      return;
+    }
+    const allowed = new Set(rolesForClass(state.classId).map((role) => role.id));
+    const cls = classById(state.classId);
+    el.roles.innerHTML = (state.catalog?.roles || [])
+      .map((role) => {
+        const ok = allowed.has(role.id);
+        const active = state.role === role.id ? " is-active" : "";
+        const disabled = ok ? "" : " is-disabled";
+        const hasMenu = ok && needsDpsSpecPicker(state.classId, role.id);
+        const expanded = hasMenu && state.role === "dps";
+        const title = ok
+          ? hasMenu
+            ? `${role.name} — pick a spec`
+            : role.name
+          : `${cls?.name || "This class"} cannot play ${role.name}`;
+        return `<button type="button" class="wf-role wf-role-${escapeHtml(role.id)}${active}${disabled}${hasMenu ? " has-menu" : ""}" data-role="${escapeHtml(role.id)}" ${ok ? "" : "disabled"} ${hasMenu ? 'aria-haspopup="true" aria-controls="wfSpecMenu"' : ""} aria-expanded="${expanded ? "true" : "false"}" title="${escapeHtml(title)}">
+          <img src="${escapeHtml(spellIconUrl(role.icon))}" alt="" width="28" height="28" />
+          <span>${escapeHtml(role.name)}</span>
+        </button>`;
+      })
+      .join("");
+    el.roles.querySelectorAll("button:not([disabled])").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.role = btn.getAttribute("data-role") || "";
+        reconcileRoleAndSpec();
+        render();
+      });
+    });
+    renderSpecs();
+  }
+
+  function renderSpecs() {
+    if (!el.specMenu || !el.specs) return;
+    const open = showSpecMenu();
+    el.specMenu.hidden = !open;
+    if (!open) {
+      el.specs.innerHTML = "";
+      return;
+    }
+    const specs = specsForRole(state.classId, "dps");
+    const cls = classById(state.classId);
+    if (el.specLabel) {
+      el.specLabel.textContent = `${cls?.name || "Class"} DPS spec`;
+    }
+    el.specs.innerHTML = specs
+      .map((spec) => {
+        const active = state.specId === spec.id ? " is-active" : "";
+        const label = spec.shortName || spec.name;
+        const sub = spec.shortName && spec.shortName !== spec.name ? `<small>${escapeHtml(spec.name)}</small>` : "";
+        return `<button type="button" class="wf-tile wf-spec-tile${active}" data-spec="${escapeHtml(spec.id)}">
+          <img src="${escapeHtml(spellIconUrl(spec.icon))}" alt="" width="48" height="48" />
+          <span>${escapeHtml(label)}</span>
+          ${sub}
+        </button>`;
+      })
+      .join("");
+    el.specs.querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.specId = btn.getAttribute("data-spec") || "";
         render();
       });
     });
@@ -343,6 +515,7 @@
     const comboHtml = cls
       ? `<span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span> <span class="wf-class-${escapeHtml(cls.id)}">${escapeHtml(cls.name)}</span>`
       : `<span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span>`;
+    const roleLabel = roleSpecLabel({ classId: state.classId, role: state.role, specId: state.specId });
     const neu = cls && isNewCombo(race.id, cls.id);
     const lockedMain = state.pick ? currentMainLabel(state.pick) : "";
     const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="96" height="96" />`;
@@ -359,11 +532,11 @@
     }
     el.preview.innerHTML = `
       <p class="wf-kicker wf-faction-${escapeHtml(state.faction)}">${state.faction === "alliance" ? "Alliance" : "Horde"}</p>
-      ${state.pick ? portraitFrameWrap(portrait, state.pick) : portrait}
+      ${portraitStack(portrait, { ...(state.pick || {}), classId: state.classId, role: state.role, specId: state.specId })}
       ${state.pick && state.pick.frameLabel ? `<p class="wf-frame-tag">${escapeHtml(frameCaption(state.pick))}</p>` : ""}
       <p class="wf-preview-name wf-class-${escapeHtml(cls?.id || "")}">${escapeHtml(name || (cls ? `${race.name} ${cls.name}` : race.name))}</p>
       ${lockedMain}
-      <p class="subtle">${escapeHtml(state.gender === "female" ? "Female" : "Male")} ${comboHtml}</p>
+      <p class="subtle">${escapeHtml(state.gender === "female" ? "Female" : "Male")} ${comboHtml}${roleLabel ? ` · ${escapeHtml(roleLabel)}` : ""}</p>
       ${neu ? `<p><span class="wf-pill wf-pill--new">New Forever combo</span></p>` : ""}
       ${canChange ? `<p class="wf-change-hint">Click to change race and class</p>` : ""}
       ${race.note ? `<p class="subtle wf-preview-note">${escapeHtml(race.note)}</p>` : ""}
@@ -398,13 +571,14 @@
     const name = pick.characterName || `${pick.raceName || pick.race} ${pick.className || pick.classId}`;
     const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, pick.gender))}" alt="" width="96" height="96" />`;
     el.locked.innerHTML = `<button type="button" class="wf-locked-card" id="wfChangeTrigger">
-      ${portraitFrameWrap(portrait, pick)}
+      ${portraitStack(portrait, pick)}
       <span class="wf-locked-copy">
         <strong class="wf-class-${escapeHtml(pick.classId || "")}">${escapeHtml(name)}</strong>
         <small>
           <span class="wf-faction-${escapeHtml(pick.faction || "")}">${escapeHtml((pick.faction || "").toUpperCase())}</span>
           · <span class="wf-race-${escapeHtml(pick.race || "")}">${escapeHtml(pick.raceName || pick.race)}</span>
           <span class="wf-class-${escapeHtml(pick.classId || "")}">${escapeHtml(pick.className || pick.classId)}</span>
+          ${roleSpecLabel(pick) ? ` · ${escapeHtml(roleSpecLabel(pick))}` : ""}
         </small>
         <span class="wf-change-hint">Click to change race and class</span>
       </span>
@@ -427,7 +601,7 @@
         const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="56" height="56" />`;
         const mine = isOwnPick(p);
         return `<article class="wf-card${mine ? " is-mine" : ""}"${mine ? ' data-change="1" role="button" tabindex="0" aria-label="Change your Forever character"' : ""}>
-          ${portraitFrameWrap(portrait, p)}
+          ${portraitStack(portrait, p)}
           <div>
             <strong class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(title)}</strong>
             ${main ? `<small class="wf-card-main"><span class="wf-main-kicker">Current main</span><span class="wf-main-name">${escapeHtml(main)}</span></small>` : ""}
@@ -435,6 +609,7 @@
               <span class="wf-faction-${escapeHtml(p.faction || "")}">${escapeHtml((p.faction || "").toUpperCase())}</span>
               · <span class="wf-race-${escapeHtml(p.race || "")}">${escapeHtml(p.raceName || p.race)}</span>
               <span class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(p.className || p.classId)}</span>
+              ${roleSpecLabel(p) ? ` · ${escapeHtml(roleSpecLabel(p))}` : ""}
             </small>
             ${p.frameLabel ? `<span class="wf-frame-chip is-tier-${Number(p.frameTier) || 1}">${escapeHtml(p.frameLabel)}</span>` : ""}
             ${mine ? `<span class="wf-change-hint">Click to change</span>` : ""}
@@ -488,8 +663,9 @@
     renderRaces();
     renderGender();
     renderClasses();
+    renderRoles();
     renderPreview();
-    if (el.save) el.save.disabled = !(state.race && state.gender && state.classId) || state.saving;
+    if (el.save) el.save.disabled = !canSavePick();
   }
 
   async function savePick() {
@@ -505,6 +681,8 @@
           faction: state.faction,
           gender: state.gender,
           classId: state.classId,
+          role: state.role,
+          specId: state.specId,
           givenName: el.name?.value || "",
           familyName: el.familyName?.value || "",
         }),
@@ -533,6 +711,8 @@
       state.editing = true;
       state.race = "";
       state.classId = "";
+      state.role = "";
+      state.specId = "";
       if (el.name) el.name.value = "";
       if (el.familyName) el.familyName.value = "";
       setStatus("Pick cleared.");

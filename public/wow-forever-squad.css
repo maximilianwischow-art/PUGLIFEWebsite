@@ -215,6 +215,8 @@ body.wf-alliance .wf-save:focus-visible,
 body.wf-alliance .wf-clear:focus-visible,
 body.wf-alliance .wf-faction button:focus-visible,
 body.wf-alliance .wf-gender button:focus-visible,
+body.wf-alliance .wf-role:focus-visible,
+body.wf-alliance .wf-spec-tile:focus-visible,
 body.wf-alliance .wf-name-input:focus-visible,
 body.wf-alliance .wf-locked-card:focus-visible,
 body.wf-alliance .wf-card.is-mine:focus-visible,
@@ -500,7 +502,8 @@ body.wf-alliance .cookie-notice-btn {
 }
 
 .wf-faction,
-.wf-gender {
+.wf-gender,
+.wf-roles {
   display: inline-flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -508,6 +511,7 @@ body.wf-alliance .cookie-notice-btn {
 
 .wf-faction button,
 .wf-gender button,
+.wf-role,
 .wf-save,
 .wf-clear {
   padding: 8px 14px;
@@ -539,6 +543,87 @@ body.wf-alliance .cookie-notice-btn {
   color: var(--gold-highlight);
 }
 
+.wf-roles {
+  align-items: stretch;
+}
+
+.wf-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+
+.wf-role img {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.wf-role.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: grayscale(0.8);
+}
+
+.wf-role-tank.is-active {
+  border-color: rgba(98, 185, 237, 0.7);
+  color: var(--arcane);
+  background: linear-gradient(180deg, rgba(23, 79, 138, 0.55), rgba(7, 21, 37, 0.92));
+}
+
+.wf-role-dps.is-active {
+  border-color: rgba(196, 90, 64, 0.8);
+  color: #f0b4b1;
+  background: linear-gradient(180deg, rgba(122, 42, 28, 0.5), rgba(11, 19, 29, 0.96));
+}
+
+.wf-role-heal.is-active {
+  border-color: rgba(90, 176, 114, 0.75);
+  color: #b7e3c2;
+  background: linear-gradient(180deg, rgba(24, 92, 48, 0.5), rgba(7, 21, 37, 0.92));
+}
+
+.wf-spec-menu {
+  margin-top: 8px;
+  padding: 10px;
+  width: max-content;
+  max-width: 100%;
+  border-radius: var(--radius-control);
+  border: 1px solid rgba(196, 90, 64, 0.45);
+  background: linear-gradient(180deg, rgba(72, 28, 22, 0.35), rgba(7, 21, 37, 0.92));
+  box-shadow: inset 0 1px 0 rgba(244, 222, 161, 0.06);
+}
+
+.wf-spec-label {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #f0b4b1;
+}
+
+.wf-specs {
+  display: flex;
+  flex-wrap: wrap;
+  grid-template-columns: none;
+}
+
+.wf-spec-tile img {
+  width: 48px;
+  height: 48px;
+}
+
+.wf-spec-tile small {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
 .wf-save {
   border-color: var(--gold-border-strong);
   background: linear-gradient(180deg, #c8953e 0%, #7a531c 100%);
@@ -560,7 +645,8 @@ body.wf-alliance .cookie-notice-btn {
 
 .wf-clear:hover,
 .wf-faction button:hover,
-.wf-gender button:hover {
+.wf-gender button:hover,
+.wf-role:hover:not(:disabled):not(.is-disabled) {
   border-color: var(--gold-border);
 }
 
@@ -592,17 +678,21 @@ body.wf-alliance .wf-preview {
   box-shadow: 0 0 16px rgba(200, 149, 62, 0.22);
 }
 
-.wf-preview img {
+.wf-preview img:not(.wf-role-badge) {
   width: 96px;
   height: 96px;
   border-radius: 8px;
   object-fit: cover;
-  margin: 8px auto 0;
+  margin: 0;
   box-shadow: 0 0 0 1px var(--gold-border);
 }
 
-.wf-preview .wf-portrait-frame {
+.wf-preview .wf-portrait-wrap {
   margin: 10px auto 0;
+}
+
+.wf-preview .wf-portrait-frame {
+  margin: 0;
 }
 
 .wf-preview .wf-portrait-frame img {
@@ -810,18 +900,78 @@ body.wf-alliance .wf-preview {
   color: var(--gold-highlight);
 }
 
-.wf-locked-card img {
+.wf-locked-card img:not(.wf-role-badge) {
   width: 56px;
   height: 56px;
   border-radius: 4px;
   object-fit: cover;
 }
 
-.wf-card img {
+.wf-card img:not(.wf-role-badge) {
   width: 56px;
   height: 56px;
   border-radius: 4px;
   object-fit: cover;
+}
+
+.wf-portrait-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: max-content;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.wf-role-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  z-index: 4;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1px rgba(7, 12, 18, 0.92),
+    0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.wf-preview .wf-role-badge {
+  top: -6px;
+  right: -6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.wf-portrait-wrap:has(.wf-portrait-frame) .wf-role-badge {
+  top: 4px;
+  right: 4px;
+}
+
+.wf-preview .wf-portrait-wrap:has(.wf-portrait-frame) .wf-role-badge {
+  top: 5px;
+  right: 5px;
+}
+
+.wf-role-badge-tank {
+  box-shadow:
+    0 0 0 1px rgba(98, 185, 237, 0.85),
+    0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.wf-role-badge-dps {
+  box-shadow:
+    0 0 0 1px rgba(196, 90, 64, 0.9),
+    0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.wf-role-badge-heal {
+  box-shadow:
+    0 0 0 1px rgba(90, 176, 114, 0.9),
+    0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
 .wf-portrait-frame {

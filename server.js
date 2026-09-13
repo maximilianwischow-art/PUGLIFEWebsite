@@ -269,6 +269,8 @@ import {
   parseForeverCharacterName as wowForeverParseName,
   raceById as wowForeverRaceById,
   classById as wowForeverClassById,
+  roleById as wowForeverRoleById,
+  specById as wowForeverSpecById,
   isNewCombo as wowForeverIsNewCombo,
 } from "./lib/wow-forever-data.mjs";
 
@@ -16580,6 +16582,8 @@ function publicWowForeverPick(row) {
       : "";
   const names = wowForeverParseName(row.characterName) || { givenName: "", familyName: "", characterName: "" };
   const frame = foreverFrameFromAchievementCount(foreverAchievementCount(row.userId));
+  const role = wowForeverRoleById(row.role);
+  const spec = wowForeverSpecById(row.classId, row.role, row.specId);
   return {
     ...row,
     givenName: names.givenName,
@@ -16590,6 +16594,9 @@ function publicWowForeverPick(row) {
     raceName: race?.name || row.race,
     className: cls?.name || row.classId,
     classColor: cls?.color || "#cbd5e1",
+    roleName: role?.name || "",
+    specName: spec?.name || "",
+    specShortName: spec?.shortName || spec?.name || "",
     isNewRace: Boolean(race?.isNewRace),
     isNewCombo: wowForeverIsNewCombo(row.race, row.classId),
     avatarUrl,
@@ -16631,6 +16638,8 @@ app.put("/api/wow-forever/me", (req, res) => {
       faction: parsed.pick.faction,
       gender: parsed.pick.gender,
       classId: parsed.pick.classId,
+      role: parsed.pick.role,
+      specId: parsed.pick.specId,
     });
     return res.json({ ok: true, pick: publicWowForeverPick(row) });
   } catch (error) {

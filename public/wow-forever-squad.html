@@ -19,7 +19,7 @@
     />
     <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260913plb-wow-forever-change-v2" />
+    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260913plb-wow-forever-role-v2" />
   </head>
   <body class="wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -106,7 +106,16 @@
             <p class="wf-step">4. Class</p>
             <div class="wf-tiles" id="wfClasses"></div>
 
-            <p class="wf-step">5. Name <span class="subtle">(optional · 2–24 letters each · family name allowed)</span></p>
+            <div id="wfRoleWrap" hidden>
+              <p class="wf-step">5. Role</p>
+              <div class="wf-roles" id="wfRoles" role="group" aria-label="Role"></div>
+              <div class="wf-spec-menu" id="wfSpecMenu" hidden>
+                <p class="wf-spec-label" id="wfSpecLabel">DPS spec</p>
+                <div class="wf-tiles wf-specs" id="wfSpecs" role="group" aria-label="DPS spec"></div>
+              </div>
+            </div>
+
+            <p class="wf-step" id="wfNameStep"><span id="wfNameStepNum">5. Name</span> <span class="subtle">(optional · 2–24 letters each · family name allowed)</span></p>
             <div class="wf-name-row">
               <label class="wf-name-field">
                 <span>Given name</span>
@@ -183,7 +192,7 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/wow-forever-squad.js?v=20260913plb-wow-forever-change-v2"></script>
+    <script defer src="/wow-forever-squad.js?v=20260913plb-wow-forever-role-v2"></script>
     <script defer src="/auth-ui.js?v=20260912plb-wow-forever-squad-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
