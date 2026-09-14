@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v7";
+  const ASSET_V = "20260914plb-tavern-v8";
 
   const RACES = ["human", "dwarf", "nightelf", "gnome", "skyborne", "orc", "undead", "tauren", "troll"];
   const GENDERS = ["male", "female"];
@@ -43,22 +43,29 @@
     }
   }
 
-  const TABLE_SEATS = [
-    { x: 32, y: 96, scale: 1.18 },
-    { x: 50, y: 98, scale: 1.22 },
-    { x: 68, y: 96, scale: 1.18 },
-    { x: 18, y: 92, scale: 1.08 },
-    { x: 82, y: 92, scale: 1.08 },
-    { x: 8, y: 86, scale: 1.0 },
-    { x: 92, y: 86, scale: 1.0 },
-    { x: 12, y: 76, scale: 0.92 },
-    { x: 88, y: 76, scale: 0.92 },
-    { x: 6, y: 66, scale: 0.84 },
-    { x: 94, y: 66, scale: 0.84 },
-    { x: 26, y: 88, scale: 1.02 },
-    { x: 74, y: 88, scale: 1.02 },
-    { x: 40, y: 94, scale: 1.12 },
-    { x: 60, y: 94, scale: 1.12 },
+  // Priority order: front table first, then walls — positions chosen to stay apart.
+  const SPACED_SEATS = [
+    { x: 50, y: 96, scale: 1.18 },
+    { x: 26, y: 94, scale: 1.14 },
+    { x: 74, y: 94, scale: 1.14 },
+    { x: 12, y: 86, scale: 1.04 },
+    { x: 88, y: 86, scale: 1.04 },
+    { x: 38, y: 78, scale: 0.96 },
+    { x: 62, y: 78, scale: 0.96 },
+    { x: 8, y: 68, scale: 0.88 },
+    { x: 92, y: 68, scale: 0.88 },
+    { x: 22, y: 58, scale: 0.8 },
+    { x: 78, y: 58, scale: 0.8 },
+    { x: 50, y: 52, scale: 0.74 },
+    { x: 16, y: 44, scale: 0.68 },
+    { x: 84, y: 44, scale: 0.68 },
+    { x: 34, y: 36, scale: 0.62 },
+    { x: 66, y: 36, scale: 0.62 },
+    { x: 50, y: 28, scale: 0.56 },
+    { x: 10, y: 32, scale: 0.58 },
+    { x: 90, y: 32, scale: 0.58 },
+    { x: 24, y: 24, scale: 0.52 },
+    { x: 76, y: 24, scale: 0.52 },
   ];
 
   function crowdLevel(count) {
@@ -78,7 +85,58 @@
   }
 
   function nearTableSeat(x, y) {
-    return TABLE_SEATS.some((seat) => Math.abs(seat.x - x) < 6 && Math.abs(seat.y - y) < 7);
+    return SPACED_SEATS.some((seat) => Math.abs(seat.x - x) < 6 && Math.abs(seat.y - y) < 7);
+  }
+
+  function figWidthPct(race, scale, crowd) {
+    const heightPct = 36 * (HEIGHT[race] || 0.8) * scale * crowd;
+    return heightPct * 0.52;
+  }
+
+  function seatKey(seat) {
+    return `${seat.x}:${seat.y}`;
+  }
+
+  function seatsTooClose(seatA, seatB, raceA, raceB, scaleA, scaleB, crowd, tightness) {
+    const wA = figWidthPct(raceA, scaleA, crowd);
+    const wB = figWidthPct(raceB, scaleB, crowd);
+    const minDx = (wA + wB) * tightness;
+    const minDy = Math.max(8, Math.min(wA, wB) * 0.55);
+    return Math.abs(seatA.x - seatB.x) < minDx && Math.abs(seatA.y - seatB.y) < minDy;
+  }
+
+  function assignSpacedSeats(picks, level, crowd) {
+    const tightness = level === "packed" ? 0.38 : level === "busy" ? 0.46 : 0.62;
+    const pool =
+      level === "open"
+        ? SPACED_SEATS
+        : SPACED_SEATS.concat(overflowSeats(Math.max(0, picks.length - SPACED_SEATS.length), level));
+    const placed = [];
+    const used = new Set();
+    const seats = [];
+    for (const pick of picks) {
+      let chosen = null;
+      for (const candidate of pool) {
+        if (onTabletop(candidate.x, candidate.y) || used.has(seatKey(candidate))) continue;
+        const clash = placed.some((entry) =>
+          seatsTooClose(candidate, entry.seat, pick.race, entry.pick.race, candidate.scale, entry.seat.scale, crowd, tightness)
+        );
+        if (!clash) {
+          chosen = candidate;
+          break;
+        }
+      }
+      if (!chosen) {
+        chosen =
+          pool.find((candidate) => !onTabletop(candidate.x, candidate.y) && !used.has(seatKey(candidate))) ||
+          pool.find((candidate) => !used.has(seatKey(candidate))) ||
+          pool[0];
+      }
+      used.add(seatKey(chosen));
+      placed.push({ pick, seat: chosen });
+      seats.push(chosen);
+    }
+    return seats;
   }
 
   function overflowSeats(needed, level) {
@@ -106,10 +164,8 @@
     return out;
   }
 
-  function seatsForCount(count) {
-    const level = crowdLevel(count);
-    if (count <= TABLE_SEATS.length) return TABLE_SEATS.slice(0, count);
-    return TABLE_SEATS.concat(overflowSeats(count - TABLE_SEATS.length, level));
+  function seatsForPicks(picks, level, crowd) {
+    return assignSpacedSeats(picks, level, crowd);
   }
 
   const el = {
@@ -250,7 +306,7 @@
     const ordered = sortPicks(list);
     const crowd = crowdScale(ordered.length);
     const level = crowdLevel(ordered.length);
-    const seats = seatsForCount(ordered.length);
+    const seats = seatsForPicks(ordered, level, crowd);
     if (el.root) el.root.dataset.crowd = level;
     const keepOpen = openUid;
     const frag = document.createDocumentFragment();
