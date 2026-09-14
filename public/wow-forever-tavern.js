@@ -1,6 +1,26 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v8";
+  const ASSET_V = "20260914plb-tavern-v9";
+  const TZ = "Europe/Berlin";
+
+  const TIME_THEMES = {
+    night: {
+      label: "Late night · empty halls",
+      empty: "The tavern sleeps. Only embers keep watch.",
+    },
+    morning: {
+      label: "Morning light · For the Alliance",
+      empty: "Shutters open. The first stool is yours.",
+    },
+    midday: {
+      label: "Midday · bright tables",
+      empty: "Sun on the boards — the tavern waits for company.",
+    },
+    evening: {
+      label: "Evening · tankards out",
+      empty: "The first round is poured. Who sits down first?",
+    },
+  };
 
   const RACES = ["human", "dwarf", "nightelf", "gnome", "skyborne", "orc", "undead", "tauren", "troll"];
   const GENDERS = ["male", "female"];
@@ -173,12 +193,42 @@
     stage: document.getElementById("wfTavernStage"),
     empty: document.getElementById("wfTavernEmpty"),
     tip: document.getElementById("wfTavernTip"),
+    wordmarkSub: document.getElementById("wfTavernWordmarkSub"),
   };
 
   let lastKey = "";
   let openUid = "";
   let lastPicks = [];
   let ownUserId = "";
+  let lastPeriod = "";
+
+  function berlinHour(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: TZ,
+      hour: "numeric",
+      hour12: false,
+    }).formatToParts(date);
+    return Number(parts.find((p) => p.type === "hour")?.value || 0);
+  }
+
+  function timePeriod(date = new Date()) {
+    const hour = berlinHour(date);
+    if (hour >= 23 || hour < 7) return "night";
+    if (hour < 11) return "morning";
+    if (hour < 17) return "midday";
+    return "evening";
+  }
+
+  function applyTimeTheme(force) {
+    if (!el.root) return;
+    const period = timePeriod();
+    if (!force && period === lastPeriod) return;
+    lastPeriod = period;
+    el.root.dataset.time = period;
+    const theme = TIME_THEMES[period] || TIME_THEMES.evening;
+    if (el.wordmarkSub) el.wordmarkSub.textContent = theme.label;
+    if (el.empty && !lastPicks.length) el.empty.textContent = theme.empty;
+  }
 
   function assetUrl(rel) {
     return `${ASSET_BASE}/${rel}?v=${ASSET_V}`;
@@ -290,12 +340,19 @@
     if (!el.stage) return;
     ownUserId = String(options?.ownUserId || "").trim();
     const list = Array.isArray(picks) ? picks : [];
+    applyTimeTheme();
     const key = signature(list, ownUserId);
     if (key === lastKey) return;
     lastKey = key;
     lastPicks = list;
 
-    if (el.empty) el.empty.hidden = list.length > 0;
+    if (el.empty) {
+      el.empty.hidden = list.length > 0;
+      if (!list.length) {
+        const theme = TIME_THEMES[lastPeriod] || TIME_THEMES.evening;
+        el.empty.textContent = theme.empty;
+      }
+    }
     if (!list.length) {
       if (el.root) delete el.root.dataset.crowd;
       el.stage.innerHTML = "";
@@ -403,8 +460,15 @@
     if (event.key === "Escape") closeTip();
   });
 
+  applyTimeTheme(true);
+  setInterval(() => applyTimeTheme(), 60_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") applyTimeTheme(true);
+  });
+
   window.WowForeverTavern = {
     render,
     sprites: SPRITES,
+    timePeriod,
   };
 })();

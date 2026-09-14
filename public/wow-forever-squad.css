@@ -1268,6 +1268,199 @@ body.wf-alliance .hero-brand.wf-tavern {
   }
 }
 
+.wf-tavern-atmosphere {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.wf-tavern-light,
+.wf-tavern-window,
+.wf-tavern-motes,
+.wf-tavern-foam {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+}
+
+/* Midday — brighter daylight through shutters */
+.wf-tavern[data-time="midday"] .wf-tavern-bg {
+  filter: brightness(1.18) saturate(1.08) contrast(1.02);
+}
+
+.wf-tavern[data-time="midday"] .wf-tavern-fire {
+  opacity: 0.35;
+  filter: brightness(0.85);
+}
+
+.wf-tavern[data-time="midday"] .wf-tavern-light {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 55% 40% at 50% 18%, rgba(255, 236, 190, 0.34), transparent 70%),
+    linear-gradient(180deg, rgba(255, 245, 220, 0.18), transparent 42%);
+  mix-blend-mode: soft-light;
+}
+
+.wf-tavern[data-time="midday"] .wf-tavern-window {
+  opacity: 1;
+  background:
+    linear-gradient(105deg, transparent 18%, rgba(255, 240, 200, 0.16) 32%, transparent 48%),
+    linear-gradient(250deg, transparent 22%, rgba(255, 250, 230, 0.12) 40%, transparent 58%);
+  mix-blend-mode: screen;
+}
+
+.wf-tavern[data-time="midday"] .wf-tavern-motes {
+  opacity: 0.55;
+  background-image:
+    radial-gradient(circle, rgba(255, 248, 220, 0.7) 0 1px, transparent 2px),
+    radial-gradient(circle, rgba(255, 236, 180, 0.45) 0 1px, transparent 2px);
+  background-size: 140px 90px, 210px 130px;
+  background-position: 10% 20%, 60% 40%;
+  animation: wf-tavern-motes 18s linear infinite;
+  mix-blend-mode: screen;
+}
+
+/* Morning — cool soft open */
+.wf-tavern[data-time="morning"] .wf-tavern-bg {
+  filter: brightness(1.06) saturate(0.95) hue-rotate(-4deg);
+}
+
+.wf-tavern[data-time="morning"] .wf-tavern-fire {
+  opacity: 0.5;
+}
+
+.wf-tavern[data-time="morning"] .wf-tavern-light {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 50% 36% at 72% 12%, rgba(190, 220, 255, 0.22), transparent 68%),
+    linear-gradient(180deg, rgba(210, 230, 255, 0.14), transparent 38%);
+  mix-blend-mode: soft-light;
+}
+
+.wf-tavern[data-time="morning"] .wf-tavern-window {
+  opacity: 1;
+  background: linear-gradient(120deg, transparent 30%, rgba(200, 230, 255, 0.14) 48%, transparent 62%);
+  mix-blend-mode: screen;
+}
+
+/* Evening — warm beer hall */
+.wf-tavern[data-time="evening"] .wf-tavern-bg {
+  filter: brightness(1.02) saturate(1.12) sepia(0.12);
+}
+
+.wf-tavern[data-time="evening"] .wf-tavern-fire {
+  opacity: 1;
+  width: 26%;
+  height: 32%;
+  background: radial-gradient(ellipse at 45% 70%, rgba(255, 150, 40, 0.42), rgba(255, 90, 10, 0.12) 46%, transparent 72%);
+}
+
+.wf-tavern[data-time="evening"] .wf-tavern-light {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 78%, rgba(180, 90, 20, 0.28), transparent 72%),
+    radial-gradient(ellipse 40% 30% at 18% 55%, rgba(255, 170, 60, 0.16), transparent 70%),
+    linear-gradient(180deg, transparent 45%, rgba(80, 30, 8, 0.22));
+  mix-blend-mode: soft-light;
+}
+
+.wf-tavern[data-time="evening"] .wf-tavern-foam {
+  opacity: 0.85;
+  background-image:
+    radial-gradient(circle, rgba(255, 220, 140, 0.55) 0 2px, transparent 3px),
+    radial-gradient(circle, rgba(255, 200, 100, 0.35) 0 1.5px, transparent 3px),
+    radial-gradient(circle, rgba(255, 240, 200, 0.4) 0 1px, transparent 2px);
+  background-size: 90px 110px, 140px 160px, 70px 90px;
+  background-position: 12% 80%, 55% 70%, 78% 85%;
+  animation: wf-tavern-foam 9s ease-in-out infinite;
+  mix-blend-mode: screen;
+  mask-image: linear-gradient(180deg, transparent 35%, #000 62%, #000 92%, transparent);
+}
+
+.wf-tavern[data-time="evening"] .wf-tavern-wordmark-sub {
+  color: #ffd9a0;
+}
+
+/* Night — empty & dark */
+.wf-tavern[data-time="night"] .wf-tavern-bg {
+  filter: brightness(0.48) saturate(0.55) contrast(1.08) hue-rotate(-12deg);
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-fire {
+  opacity: 0.55;
+  filter: brightness(0.75) saturate(0.8);
+  animation-duration: 4.2s;
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-light {
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 35% 28% at 14% 48%, rgba(255, 120, 40, 0.18), transparent 70%),
+    radial-gradient(ellipse 80% 70% at 50% 40%, transparent 30%, rgba(2, 6, 18, 0.72) 100%),
+    linear-gradient(180deg, rgba(4, 10, 28, 0.55), rgba(2, 4, 14, 0.35) 40%, rgba(0, 0, 0, 0.55));
+  mix-blend-mode: multiply;
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-window {
+  opacity: 0.7;
+  background:
+    radial-gradient(ellipse 18% 14% at 78% 18%, rgba(140, 180, 255, 0.22), transparent 70%),
+    radial-gradient(circle at 22% 16%, rgba(180, 210, 255, 0.12) 0 1px, transparent 2px),
+    radial-gradient(circle at 68% 12%, rgba(200, 220, 255, 0.1) 0 1px, transparent 2px),
+    radial-gradient(circle at 84% 22%, rgba(160, 190, 255, 0.14) 0 1px, transparent 2px);
+  mix-blend-mode: screen;
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-fig {
+  filter: brightness(0.72) saturate(0.85);
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-name {
+  opacity: 0.72;
+  background: rgba(4, 10, 22, 0.72);
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-wordmark-title {
+  color: #9eb6d4;
+  text-shadow:
+    0 1px 0 #0a1424,
+    0 2px 10px rgba(0, 0, 0, 0.9),
+    0 0 16px rgba(90, 130, 200, 0.28);
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-wordmark-sub {
+  color: #7f97b8;
+}
+
+.wf-tavern[data-time="night"] .wf-tavern-empty {
+  background: rgba(4, 10, 22, 0.78);
+  color: #a8bdd8;
+}
+
+@keyframes wf-tavern-motes {
+  from {
+    background-position: 10% 20%, 60% 40%;
+  }
+  to {
+    background-position: 18% 8%, 52% 28%;
+  }
+}
+
+@keyframes wf-tavern-foam {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.75;
+  }
+  50% {
+    transform: translateY(-10px);
+    opacity: 0.95;
+  }
+}
+
 .wf-tavern-stage {
   position: absolute;
   inset: 0;
@@ -1546,7 +1739,9 @@ body.wf-alliance .hero-brand.wf-tavern {
 
 @media (prefers-reduced-motion: reduce) {
   .wf-tavern-fig-idle,
-  .wf-tavern-fire {
+  .wf-tavern-fire,
+  .wf-tavern-motes,
+  .wf-tavern-foam {
     animation: none;
   }
 }
