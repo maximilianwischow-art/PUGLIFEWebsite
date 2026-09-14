@@ -687,20 +687,6 @@ body.wf-alliance .wf-preview {
   box-shadow: 0 0 0 1px var(--gold-border);
 }
 
-.wf-preview img.wf-worn-bust:not(.wf-role-badge),
-.wf-locked-card img.wf-worn-bust:not(.wf-role-badge) {
-  width: 148px;
-  height: 196px;
-  object-fit: contain;
-  object-position: center bottom;
-  background: rgba(4, 8, 16, 0.85);
-}
-
-.wf-card img.wf-worn-bust {
-  object-fit: cover;
-  object-position: center 18%;
-}
-
 .wf-preview .wf-portrait-wrap {
   margin: 10px auto 0;
 }
