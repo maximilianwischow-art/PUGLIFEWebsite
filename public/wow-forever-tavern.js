@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v20";
+  const ASSET_V = "20260914plb-tavern-v21";
   const TZ = "Europe/Berlin";
 
   const TIME_THEMES = {
@@ -78,6 +78,18 @@
     "druid:tank": "feral-bear",
     "druid:dps": "balance",
     "druid:heal": "restoration",
+  };
+  // If role/spec were never locked, still show a class-typical worn look.
+  const DEFAULT_SPEC_BY_CLASS = {
+    warrior: "arms",
+    paladin: "retribution",
+    hunter: "marksmanship",
+    rogue: "combat",
+    priest: "holy",
+    shaman: "enhancement",
+    mage: "frost",
+    warlock: "affliction",
+    druid: "balance",
   };
   const HEIGHT = {
     gnome: 0.5,
@@ -300,7 +312,7 @@
     const r = String(role || "").toLowerCase();
     const s = String(specId || "").toLowerCase();
     if (s && SPEC_GEAR[`${c}:${s}`]) return s;
-    return DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] || "";
+    return DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] || DEFAULT_SPEC_BY_CLASS[c] || "";
   }
 
   function spriteFor(race, gender, classId, role, specId) {

@@ -1,6 +1,6 @@
 (() => {
   const ZAM = "https://wow.zamimg.com/images/wow/icons/large";
-  const WORN_ASSET_V = "20260914plb-tavern-v20";
+  const WORN_ASSET_V = "20260914plb-tavern-v21";
   const FORM_SPECS = new Set(["feral-bear", "feral-cat"]);
   const DEFAULT_SPEC_BY_CLASS_ROLE = {
     "warrior:tank": "protection",
@@ -19,6 +19,17 @@
     "druid:tank": "feral-bear",
     "druid:dps": "balance",
     "druid:heal": "restoration",
+  };
+  const DEFAULT_SPEC_BY_CLASS = {
+    warrior: "arms",
+    paladin: "retribution",
+    hunter: "marksmanship",
+    rogue: "combat",
+    priest: "holy",
+    shaman: "enhancement",
+    mage: "frost",
+    warlock: "affliction",
+    druid: "balance",
   };
 
   const state = {
@@ -131,10 +142,15 @@
     if (s) {
       const specs = specsForRole(c, r);
       if (!specs.length || specs.some((spec) => spec.id === s)) return s;
+      if (DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] === s || DEFAULT_SPEC_BY_CLASS[c] === s) return s;
+      // Spec id present even if role catalog not loaded yet.
+      if (Object.values(DEFAULT_SPEC_BY_CLASS_ROLE).includes(s) || Object.values(DEFAULT_SPEC_BY_CLASS).includes(s)) {
+        return s;
+      }
     }
     const fromRole = specsForRole(c, r);
     if (fromRole.length === 1) return fromRole[0].id;
-    return DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] || fromRole[0]?.id || "";
+    return DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] || DEFAULT_SPEC_BY_CLASS[c] || fromRole[0]?.id || "";
   }
 
   function wornSpriteUrl({ raceId, gender, classId, role, specId }) {
