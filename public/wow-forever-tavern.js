@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v11";
+  const ASSET_V = "20260914plb-tavern-v19";
   const TZ = "Europe/Berlin";
 
   const TIME_THEMES = {
@@ -308,24 +308,31 @@
     const g = gender === "female" ? "female" : "male";
     const c = String(classId || "warrior").toLowerCase();
     const spec = resolveSpecId(c, role, specId);
+    const raceKey = RACES.includes(r) ? r : "human";
+    const fallbackBody = `bodies/${raceKey}-${g}.webp`;
     const base =
       SPRITES[`${r}:${g}:${c}`] || {
-        body: `bodies/${RACES.includes(r) ? r : "human"}-${g}.webp`,
+        body: fallbackBody,
         gear: CLASSES.includes(c) ? `gear/${c}.webp` : "gear/warrior.webp",
         height: HEIGHT[r] || 0.8,
       };
     if (FORM_SPECS.has(spec) && SPEC_GEAR[`${c}:${spec}`]) {
       return {
         body: SPEC_GEAR[`${c}:${spec}`],
+        fallbackBody: "",
         gear: "",
         height: spec === "feral-bear" ? Math.max(base.height, 0.92) : Math.min(base.height, 0.78),
         isForm: true,
         spec,
       };
     }
+    // Prefer fully worn race×gender×class×spec composites when present.
+    const worn = spec ? `worn/${raceKey}-${g}-${c}-${spec}.webp` : "";
     return {
       ...base,
-      gear: SPEC_GEAR[`${c}:${spec}`] || base.gear,
+      body: worn || fallbackBody,
+      fallbackBody: worn ? fallbackBody : "",
+      gear: "",
       isForm: false,
       spec,
     };
@@ -457,6 +464,7 @@
       }`.trim();
       const classId = String(pick.classId || "").toLowerCase();
       const role = String(pick.role || "").toLowerCase();
+      const raceId = String(pick.race || "").toLowerCase();
       const fig = document.createElement("button");
       fig.type = "button";
       fig.className = `wf-tavern-fig${mine ? " is-mine" : ""}${faction ? ` is-${faction}` : ""}${
@@ -466,6 +474,7 @@
       fig.dataset.uid = String(pick.userId || "");
       if (classId) fig.dataset.class = classId;
       if (role) fig.dataset.role = role;
+      if (raceId) fig.dataset.race = raceId;
       if (sprite.spec) fig.dataset.spec = sprite.spec;
       fig.setAttribute("aria-label", label);
       fig.style.left = `${x}%`;
@@ -477,27 +486,33 @@
       idle.style.animationDelay = `${(index % 9) * 0.18}s`;
       const nameEl = document.createElement("span");
       nameEl.className = "wf-tavern-name";
-      nameEl.textContent = shortName(name, level);
+      const nameText = document.createElement("span");
+      nameText.textContent = shortName(name, level);
+      nameEl.append(nameText);
+      const classBits = [pick.className || pick.classId, pick.specShortName || pick.specName].filter(Boolean);
+      if (classBits.length && level !== "packed") {
+        const tag = document.createElement("span");
+        tag.className = "wf-tavern-class-tag";
+        tag.textContent = classBits.join(" · ");
+        nameEl.append(tag);
+      }
       const spriteEl = document.createElement("span");
       spriteEl.className = "wf-tavern-sprite";
       const body = document.createElement("img");
       body.className = "wf-tavern-body";
       body.src = assetUrl(sprite.body);
       body.alt = "";
-      body.width = 180;
-      body.height = 240;
       body.decoding = "async";
-      spriteEl.append(body);
-      if (sprite.gear) {
-        const gear = document.createElement("img");
-        gear.className = "wf-tavern-gear";
-        gear.src = assetUrl(sprite.gear);
-        gear.alt = "";
-        gear.width = 180;
-        gear.height = 240;
-        gear.decoding = "async";
-        spriteEl.append(gear);
+      if (sprite.fallbackBody) {
+        body.addEventListener(
+          "error",
+          () => {
+            body.src = assetUrl(sprite.fallbackBody);
+          },
+          { once: true }
+        );
       }
+      spriteEl.append(body);
       idle.append(nameEl, spriteEl);
       fig.append(idle);
       frag.append(fig);

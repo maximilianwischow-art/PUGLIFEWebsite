@@ -1736,34 +1736,43 @@ body.wf-alliance .hero-brand.wf-tavern {
 }
 
 .wf-tavern-sprite {
-  display: block;
   position: relative;
+  display: block;
   height: 100%;
+  aspect-ratio: 3 / 4;
   width: auto;
+  margin-inline: auto;
+  overflow: visible;
 }
 
-.wf-tavern-body {
+.wf-tavern-body,
+.wf-tavern-gear {
   display: block;
-  position: relative;
-  z-index: 1;
-  height: 100%;
-  width: auto;
-  max-width: none;
-  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62));
   user-select: none;
   pointer-events: none;
 }
 
-.wf-tavern-fig.is-alliance .wf-tavern-body {
-  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 7px rgba(90, 150, 255, 0.28));
+/*
+ * Worn race×class×spec sprites carry their own look.
+ * Keep only a soft ground shadow — no heavy class color wash.
+ */
+.wf-tavern-fig:not(.is-form) .wf-tavern-gear {
+  display: none;
 }
 
-.wf-tavern-fig.is-horde .wf-tavern-body {
-  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 7px rgba(220, 70, 50, 0.28));
+.wf-tavern-body {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  z-index: 1;
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62));
 }
 
-.wf-tavern-fig.is-mine .wf-tavern-name {
-  color: var(--gold-highlight);
+.wf-tavern-fig.is-form .wf-tavern-gear {
+  display: none;
 }
 
 .wf-tavern-fig.is-mine .wf-tavern-sprite::after {
@@ -1774,85 +1783,23 @@ body.wf-alliance .hero-brand.wf-tavern {
   border-radius: 50%;
   background: radial-gradient(ellipse, rgba(244, 222, 161, 0.55), transparent 70%);
   pointer-events: none;
+  z-index: 3;
 }
 
-.wf-tavern-gear {
-  position: absolute;
-  left: -18%;
-  top: -6%;
-  width: 136%;
-  height: 108%;
-  object-fit: contain;
-  object-position: center center;
-  pointer-events: none;
-  user-select: none;
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
-  z-index: 0;
+.wf-tavern-fig.is-mine .wf-tavern-name {
+  color: var(--gold-highlight);
 }
 
-.wf-tavern-fig[data-class="paladin"] .wf-tavern-gear,
-.wf-tavern-fig[data-class="warrior"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(244, 222, 161, 0.35));
+.wf-tavern-class-tag {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(230, 236, 248, 0.88);
+  text-shadow: 0 1px 3px #000;
+  white-space: nowrap;
 }
 
-.wf-tavern-fig[data-class="mage"] .wf-tavern-gear,
-.wf-tavern-fig[data-class="priest"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(105, 204, 240, 0.4));
-}
-
-.wf-tavern-fig[data-class="warlock"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(148, 130, 201, 0.45));
-}
-
-.wf-tavern-fig[data-class="druid"] .wf-tavern-gear,
-.wf-tavern-fig[data-class="shaman"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(255, 125, 10, 0.28));
-}
-
-.wf-tavern-fig[data-class="hunter"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(171, 212, 115, 0.35));
-}
-
-.wf-tavern-fig[data-class="rogue"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(255, 245, 105, 0.28));
-}
-
-/* Spec-specific aura hues (lore schools / weapon fantasy) */
-.wf-tavern-fig[data-spec="fire"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(255, 110, 30, 0.55));
-}
-.wf-tavern-fig[data-spec="frost"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(140, 210, 255, 0.55));
-}
-.wf-tavern-fig[data-spec="arcane"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(180, 120, 255, 0.5));
-}
-.wf-tavern-fig[data-spec="shadow"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="affliction"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="subtlety"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(120, 70, 200, 0.5));
-}
-.wf-tavern-fig[data-spec="holy"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="discipline"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="retribution"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(255, 220, 120, 0.5));
-}
-.wf-tavern-fig[data-spec="elemental"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="enhancement"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(80, 160, 255, 0.5));
-}
-.wf-tavern-fig[data-spec="demonology"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="destruction"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(90, 220, 70, 0.4));
-}
-.wf-tavern-fig[data-spec="balance"] .wf-tavern-gear,
-.wf-tavern-fig[data-spec="restoration"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(120, 220, 90, 0.4));
-}
-.wf-tavern-fig[data-spec="protection"] .wf-tavern-gear,
-.wf-tavern-fig[data-role="tank"] .wf-tavern-gear {
-  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(200, 180, 120, 0.42));
-}
 .wf-tavern-fig.is-form .wf-tavern-body {
   filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 10px rgba(255, 140, 40, 0.28));
 }
@@ -1869,6 +1816,9 @@ body.wf-alliance .hero-brand.wf-tavern {
   z-index: 2;
   margin: 0 0 2px;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   color: #7ec8ff;
   font-family: Tahoma, "Nunito", sans-serif;
   font-size: clamp(9px, 1.05vw, 12px);
@@ -1876,6 +1826,7 @@ body.wf-alliance .hero-brand.wf-tavern {
   letter-spacing: 0.01em;
   line-height: 1.15;
   white-space: nowrap;
+  text-align: center;
   text-shadow:
     0 0 3px #000,
     1px 1px 0 #000,
