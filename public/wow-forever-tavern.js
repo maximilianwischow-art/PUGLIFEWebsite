@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v21";
+  const ASSET_V = "20260914plb-tavern-v22";
   const TZ = "Europe/Berlin";
 
   const TIME_THEMES = {
@@ -128,28 +128,28 @@
     }
   }
 
-  // Priority order: front table first, then walls — positions chosen to stay apart.
+  // Priority order: front table first, then walls — keep clear of the left fireplace.
   const SPACED_SEATS = [
     { x: 50, y: 96, scale: 1.18 },
-    { x: 26, y: 94, scale: 1.14 },
+    { x: 28, y: 94, scale: 1.14 },
     { x: 74, y: 94, scale: 1.14 },
-    { x: 12, y: 86, scale: 1.04 },
+    { x: 14, y: 90, scale: 1.04 },
     { x: 88, y: 86, scale: 1.04 },
-    { x: 38, y: 78, scale: 0.96 },
+    { x: 40, y: 78, scale: 0.96 },
     { x: 62, y: 78, scale: 0.96 },
-    { x: 8, y: 68, scale: 0.88 },
+    { x: 24, y: 72, scale: 0.9 },
     { x: 92, y: 68, scale: 0.88 },
-    { x: 22, y: 58, scale: 0.8 },
+    { x: 34, y: 62, scale: 0.82 },
     { x: 78, y: 58, scale: 0.8 },
     { x: 50, y: 52, scale: 0.74 },
-    { x: 16, y: 44, scale: 0.68 },
+    { x: 28, y: 48, scale: 0.7 },
     { x: 84, y: 44, scale: 0.68 },
-    { x: 34, y: 36, scale: 0.62 },
+    { x: 42, y: 38, scale: 0.64 },
     { x: 66, y: 36, scale: 0.62 },
     { x: 50, y: 28, scale: 0.56 },
-    { x: 10, y: 32, scale: 0.58 },
+    { x: 18, y: 28, scale: 0.56 },
     { x: 90, y: 32, scale: 0.58 },
-    { x: 24, y: 24, scale: 0.52 },
+    { x: 32, y: 22, scale: 0.52 },
     { x: 76, y: 24, scale: 0.52 },
   ];
 
@@ -167,6 +167,15 @@
     const dx = (x - 50) / 26;
     const dy = (y - 66) / 15;
     return dx * dx + dy * dy < 1 && y < 90 && y > 50;
+  }
+
+  /** Left-wall hearth in tavern-bg — chars here look like they stand in the fire. */
+  function inFireplace(x, y) {
+    return x < 22 && y > 46 && y < 84;
+  }
+
+  function blockedSeat(x, y) {
+    return onTabletop(x, y) || inFireplace(x, y);
   }
 
   function nearTableSeat(x, y) {
@@ -202,7 +211,7 @@
     for (const pick of picks) {
       let chosen = null;
       for (const candidate of pool) {
-        if (onTabletop(candidate.x, candidate.y) || used.has(seatKey(candidate))) continue;
+        if (blockedSeat(candidate.x, candidate.y) || used.has(seatKey(candidate))) continue;
         const clash = placed.some((entry) =>
           seatsTooClose(candidate, entry.seat, pick.race, entry.pick.race, candidate.scale, entry.seat.scale, crowd, tightness)
         );
@@ -213,7 +222,7 @@
       }
       if (!chosen) {
         chosen =
-          pool.find((candidate) => !onTabletop(candidate.x, candidate.y) && !used.has(seatKey(candidate))) ||
+          pool.find((candidate) => !blockedSeat(candidate.x, candidate.y) && !used.has(seatKey(candidate))) ||
           pool.find((candidate) => !used.has(seatKey(candidate))) ||
           pool[0];
       }
@@ -233,7 +242,7 @@
       const stagger = row % 2 ? colGap * 0.46 : 0;
       const scale = 0.46 + (y / 100) * 0.62;
       for (let x = 5 + stagger; x <= 97 && out.length < needed; x += colGap) {
-        if (onTabletop(x, y) || nearTableSeat(x, y)) continue;
+        if (blockedSeat(x, y) || nearTableSeat(x, y)) continue;
         out.push({ x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, scale });
       }
       row += 1;
@@ -241,9 +250,9 @@
     let extra = 0;
     while (out.length < needed && extra < 180) {
       const i = out.length;
-      const x = 5 + ((i * 5.3) % 90);
-      const y = 20 + (Math.floor(i / 16) % 5) * 5.5;
-      if (!onTabletop(x, y)) out.push({ x, y, scale: 0.42 });
+      const x = 24 + ((i * 5.3) % 72);
+      const y = 20 + (Math.floor(i / 14) % 5) * 5.5;
+      if (!blockedSeat(x, y)) out.push({ x, y, scale: 0.42 });
       extra += 1;
     }
     return out;
