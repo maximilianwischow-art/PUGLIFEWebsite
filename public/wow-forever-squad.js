@@ -16,7 +16,7 @@
   };
 
   const el = {
-    faction: document.getElementById("wfFaction"),
+    faction: null,
     races: document.getElementById("wfRaces"),
     gender: document.getElementById("wfGender"),
     classes: document.getElementById("wfClasses"),
@@ -285,7 +285,7 @@
 
   function applySavedPick(pick) {
     if (!pick) return;
-    state.faction = pick.faction || "alliance";
+    state.faction = "alliance";
     state.race = pick.race || "";
     state.gender = pick.gender || "male";
     state.classId = pick.classId || "";
@@ -305,44 +305,20 @@
   }
 
   function renderFaction() {
-    if (!el.faction) return;
-    el.faction.innerHTML = ["alliance", "horde"]
-      .map((side) => {
-        const label = side === "alliance" ? "Alliance" : "Horde";
-        const active = state.faction === side ? " is-active" : "";
-        return `<button type="button" class="${side}${active}" data-faction="${side}">${label}</button>`;
-      })
-      .join("");
-    el.faction.querySelectorAll("button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.faction = btn.getAttribute("data-faction") || "alliance";
-        const race = raceById(state.race);
-        if (race && race.faction !== "both" && race.faction !== state.faction) {
-          state.race = "";
-          state.classId = "";
-          state.role = "";
-          state.specId = "";
-        } else if (state.classId && !classesFor(state.race, state.faction).includes(state.classId)) {
-          state.classId = "";
-          state.role = "";
-          state.specId = "";
-        }
-        render();
-      });
-    });
+    state.faction = "alliance";
   }
 
   function renderRaces() {
     if (!el.races) return;
     const races = (state.catalog?.races || []).filter(
-      (r) => r.faction === "both" || r.faction === state.faction
+      (r) => r.faction === "alliance" || r.faction === "both"
     );
     el.races.innerHTML = races
       .map((race) => {
         const active = state.race === race.id ? " is-active" : "";
         const neu = race.isNewRace ? " is-new" : "";
         const pill = race.isNewRace ? `<span class="wf-pill wf-pill--new">New</span>` : "";
-        return `<button type="button" class="wf-tile${active}${neu}" data-race="${escapeHtml(race.id)}" data-faction="${escapeHtml(race.faction)}">
+        return `<button type="button" class="wf-tile${active}${neu}" data-race="${escapeHtml(race.id)}" data-faction="alliance">
           <img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="56" height="56" />
           <span class="wf-race-${escapeHtml(race.id)}">${escapeHtml(race.name)}</span>
           ${pill}
@@ -352,6 +328,7 @@
     el.races.querySelectorAll("button").forEach((btn) => {
       btn.addEventListener("click", () => {
         state.race = btn.getAttribute("data-race") || "";
+        state.faction = "alliance";
         if (state.classId && !classesFor(state.race, state.faction).includes(state.classId)) {
           state.classId = "";
           state.role = "";
@@ -408,7 +385,7 @@
   function renderRoles() {
     if (el.roleWrap) el.roleWrap.hidden = !state.classId;
     if (el.nameStepNum) {
-      const nameNum = 5 + (state.classId ? 1 : 0) + (showSpecMenu() ? 1 : 0);
+      const nameNum = 4 + (state.classId ? 1 : 0) + (showSpecMenu() ? 1 : 0);
       el.nameStepNum.textContent = `${nameNum}. Name`;
     }
     if (!el.roles) return;
@@ -555,7 +532,7 @@
     if (el.lede) {
       el.lede.textContent = lockedView
         ? "Click your character to change race and class."
-        : "Combos follow the BlizzCon 12 Sep 2026 demo. Skyborne pick a faction at create.";
+        : "Alliance only · Combos follow the BlizzCon 12 Sep 2026 demo.";
     }
     if (el.editor) el.editor.hidden = lockedView;
     if (el.cancel) el.cancel.hidden = !(state.pick && state.editing);
@@ -625,10 +602,12 @@
     const classes = state.catalog.classes || [];
     const rows = [];
     for (const race of state.catalog.races || []) {
-      const factions = race.faction === "both" ? ["alliance", "horde"] : [race.faction];
+      if (race.faction === "horde") continue;
+      const factions = race.faction === "both" ? ["alliance"] : [race.faction];
       for (const faction of factions) {
+        if (faction !== "alliance") continue;
         const allowed = new Set(classesFor(race.id, faction));
-        const label = race.faction === "both" ? `${race.name} (${faction === "alliance" ? "A" : "H"})` : race.name;
+        const label = race.name;
         const cells = classes
           .map((cls) => {
             if (!allowed.has(cls.id)) return "<td></td>";

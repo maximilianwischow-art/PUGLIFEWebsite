@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v1";
+  const ASSET_V = "20260914plb-tavern-v7";
 
   const RACES = ["human", "dwarf", "nightelf", "gnome", "skyborne", "orc", "undead", "tauren", "troll"];
   const GENDERS = ["male", "female"];
@@ -264,11 +264,13 @@
       const mine = ownUserId && String(pick.userId || "") === ownUserId;
       const faction = pick.faction === "horde" ? "horde" : pick.faction === "alliance" ? "alliance" : "";
       const label = `${name}, ${pick.raceName || pick.race || ""} ${pick.className || pick.classId || ""}`.trim();
+      const classId = String(pick.classId || "").toLowerCase();
       const fig = document.createElement("button");
       fig.type = "button";
       fig.className = `wf-tavern-fig${mine ? " is-mine" : ""}${faction ? ` is-${faction}` : ""}`;
       fig.setAttribute("role", "listitem");
       fig.dataset.uid = String(pick.userId || "");
+      if (classId) fig.dataset.class = classId;
       fig.setAttribute("aria-label", label);
       fig.style.left = `${x}%`;
       fig.style.bottom = `${Math.max(3, 100 - y)}%`;
@@ -293,8 +295,8 @@
       gear.className = "wf-tavern-gear";
       gear.src = assetUrl(sprite.gear);
       gear.alt = "";
-      gear.width = 80;
-      gear.height = 80;
+      gear.width = 180;
+      gear.height = 240;
       gear.decoding = "async";
       spriteEl.append(body, gear);
       idle.append(nameEl, spriteEl);

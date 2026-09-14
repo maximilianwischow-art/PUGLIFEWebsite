@@ -1374,6 +1374,8 @@ body.wf-alliance .hero-brand.wf-tavern {
 
 .wf-tavern-body {
   display: block;
+  position: relative;
+  z-index: 1;
   height: 100%;
   width: auto;
   max-width: none;
@@ -1406,13 +1408,43 @@ body.wf-alliance .hero-brand.wf-tavern {
 
 .wf-tavern-gear {
   position: absolute;
-  right: -10%;
-  bottom: 10%;
-  width: 42%;
-  height: auto;
+  left: -18%;
+  top: -6%;
+  width: 136%;
+  height: 108%;
+  object-fit: contain;
+  object-position: center center;
   pointer-events: none;
   user-select: none;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
+  z-index: 0;
+}
+
+.wf-tavern-fig[data-class="paladin"] .wf-tavern-gear,
+.wf-tavern-fig[data-class="warrior"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(244, 222, 161, 0.35));
+}
+
+.wf-tavern-fig[data-class="mage"] .wf-tavern-gear,
+.wf-tavern-fig[data-class="priest"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(105, 204, 240, 0.4));
+}
+
+.wf-tavern-fig[data-class="warlock"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(148, 130, 201, 0.45));
+}
+
+.wf-tavern-fig[data-class="druid"] .wf-tavern-gear,
+.wf-tavern-fig[data-class="shaman"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(255, 125, 10, 0.28));
+}
+
+.wf-tavern-fig[data-class="hunter"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(171, 212, 115, 0.35));
+}
+
+.wf-tavern-fig[data-class="rogue"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(255, 245, 105, 0.28));
 }
 
 .wf-tavern-name {
