@@ -101,7 +101,7 @@ body.wf-alliance .hero {
 
 body.wf-alliance .hero-brand {
   max-width: min(100%, 1120px);
-  aspect-ratio: 1024 / 344;
+  aspect-ratio: 2 / 1;
 }
 
 body.wf-alliance .hero-banner {
@@ -1191,5 +1191,330 @@ body.wf-alliance .wf-preview {
   body.wf-alliance .auth-top-right {
     justify-content: center;
     width: 100%;
+  }
+}
+
+/* Interactive tavern hero */
+body.wf-alliance .hero-brand.wf-tavern {
+  position: relative;
+  display: block;
+  overflow: visible;
+  min-height: 220px;
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-panel);
+  box-shadow:
+    0 0 0 1px rgba(7, 21, 37, 0.7),
+    0 0 32px rgba(18, 58, 104, 0.4),
+    0 18px 42px rgba(0, 0, 0, 0.52);
+  background: #120c08;
+}
+
+.wf-tavern-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-dark) rgba(7, 21, 37, 0.8);
+}
+
+@media (max-width: 820px) {
+  .wf-tavern-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+}
+
+.wf-tavern-inner {
+  position: relative;
+  height: 100%;
+  min-width: max(100%, 820px);
+  aspect-ratio: 2 / 1;
+}
+
+.wf-tavern-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center bottom;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+.wf-tavern-fire {
+  position: absolute;
+  left: 12%;
+  top: 42%;
+  width: 22%;
+  height: 28%;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 45% 70%, rgba(255, 140, 40, 0.32), rgba(255, 80, 0, 0.08) 46%, transparent 72%);
+  mix-blend-mode: screen;
+  animation: wf-tavern-fire 2.6s ease-in-out infinite;
+}
+
+@keyframes wf-tavern-fire {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+.wf-tavern-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.wf-tavern-wordmark {
+  position: absolute;
+  left: 50%;
+  top: 5%;
+  z-index: 4;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  text-align: center;
+}
+
+.wf-tavern-wordmark-title {
+  font-family: var(--font-display);
+  font-size: clamp(18px, 3.1vw, 34px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--gold-highlight);
+  text-shadow:
+    0 1px 0 #3a2408,
+    0 2px 10px rgba(0, 0, 0, 0.85),
+    0 0 18px rgba(200, 149, 62, 0.35);
+}
+
+.wf-tavern-wordmark-sub {
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: clamp(9px, 1.2vw, 13px);
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: #d8ecff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+
+.wf-tavern-empty {
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  z-index: 4;
+  margin: 0;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(7, 21, 37, 0.62);
+  color: var(--gold-light);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 4px #000;
+  pointer-events: none;
+}
+
+.wf-tavern-empty[hidden] {
+  display: none;
+}
+
+.wf-tavern-fig {
+  position: absolute;
+  width: max-content;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  transform: translateX(-50%);
+  cursor: pointer;
+  appearance: none;
+}
+
+.wf-tavern-fig:focus-visible {
+  outline: 2px solid var(--gold-highlight);
+  outline-offset: 3px;
+}
+
+.wf-tavern-fig-idle {
+  display: block;
+  position: relative;
+  height: 100%;
+  width: auto;
+  animation: wf-tavern-idle 3.4s ease-in-out infinite;
+}
+
+@keyframes wf-tavern-idle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.wf-tavern-sprite {
+  display: block;
+  position: relative;
+  height: 100%;
+  width: auto;
+}
+
+.wf-tavern-body {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: none;
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62));
+  user-select: none;
+  pointer-events: none;
+}
+
+.wf-tavern-fig.is-alliance .wf-tavern-body {
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 7px rgba(90, 150, 255, 0.28));
+}
+
+.wf-tavern-fig.is-horde .wf-tavern-body {
+  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.62)) drop-shadow(0 0 7px rgba(220, 70, 50, 0.28));
+}
+
+.wf-tavern-fig.is-mine .wf-tavern-name {
+  color: var(--gold-highlight);
+}
+
+.wf-tavern-fig.is-mine .wf-tavern-sprite::after {
+  content: "";
+  position: absolute;
+  inset: auto 18% -6% 18%;
+  height: 10%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(244, 222, 161, 0.55), transparent 70%);
+  pointer-events: none;
+}
+
+.wf-tavern-gear {
+  position: absolute;
+  right: -10%;
+  bottom: 10%;
+  width: 42%;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+}
+
+.wf-tavern-name {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  z-index: 2;
+  margin: 0 0 2px;
+  transform: translateX(-50%);
+  color: #7ec8ff;
+  font-family: Tahoma, "Nunito", sans-serif;
+  font-size: clamp(9px, 1.05vw, 12px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+  white-space: nowrap;
+  text-shadow:
+    0 0 3px #000,
+    1px 1px 0 #000,
+    -1px -1px 0 #000,
+    1px -1px 0 #000,
+    -1px 1px 0 #000;
+  pointer-events: none;
+}
+
+.wf-tavern[data-crowd="busy"] .wf-tavern-name {
+  font-size: clamp(8px, 0.9vw, 10px);
+  max-width: 7.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wf-tavern[data-crowd="packed"] .wf-tavern-name {
+  opacity: 0;
+  font-size: 9px;
+}
+
+.wf-tavern[data-crowd="packed"] .wf-tavern-fig:hover .wf-tavern-name,
+.wf-tavern[data-crowd="packed"] .wf-tavern-fig:focus-visible .wf-tavern-name,
+.wf-tavern[data-crowd="packed"] .wf-tavern-fig.is-mine .wf-tavern-name {
+  opacity: 1;
+}
+
+.wf-tavern-tip {
+  position: absolute;
+  z-index: 8;
+  min-width: 200px;
+  max-width: min(280px, 86%);
+  padding: 10px 12px;
+  border: 1px solid var(--gold-border);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(16, 27, 40, 0.96), rgba(7, 21, 37, 0.96));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.wf-tavern-tip[hidden] {
+  display: none;
+}
+
+.wf-tavern-tip strong {
+  display: block;
+  font-size: 14px;
+}
+
+.wf-tavern-tip small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+.wf-tavern-tip-change {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--gold-light);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+@media (max-width: 720px) {
+  body.wf-alliance .hero-brand.wf-tavern {
+    min-height: 200px;
+  }
+
+  .wf-tavern-name {
+    font-size: 10px;
+  }
+
+  .wf-tavern-fig {
+    max-width: 28%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wf-tavern-fig-idle,
+  .wf-tavern-fire {
+    animation: none;
   }
 }

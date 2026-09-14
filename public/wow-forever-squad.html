@@ -9,7 +9,7 @@
     />
     <title>PUG LIFE BALANCE · The WoW Forever Squad</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="preload" as="image" href="/responsive/wow-forever-hero-1024w.webp?v=20260913plb-wow-forever-hero-v2" imagesrcset="/responsive/wow-forever-hero-768w.webp?v=20260913plb-wow-forever-hero-v2 768w, /responsive/wow-forever-hero-1024w.webp?v=20260913plb-wow-forever-hero-v2 1024w" imagesizes="(max-width: 1120px) 100vw, 1120px" type="image/webp" fetchpriority="high" />
+    <link rel="preload" as="image" href="/images/wow-forever/tavern/tavern-bg.webp?v=20260914plb-tavern-v1" type="image/webp" fetchpriority="high" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://wow.zamimg.com" />
@@ -19,26 +19,38 @@
     />
     <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
-    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260913plb-wow-forever-role-v2" />
+    <link rel="stylesheet" href="/wow-forever-squad.css?v=20260914plb-tavern-v6" />
   </head>
   <body class="wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
     <div class="app-wrap">
       <header class="hero">
-        <div class="hero-brand">
+        <div class="hero-brand wf-tavern" id="wfTavern">
           <h1 class="visually-hidden">PUG LIFE BALANCE · The WoW Forever Squad</h1>
-          <img
-            class="hero-banner"
-            src="/wow-forever-hero.jpg?v=20260913plb-wow-forever-hero-v2"
-            srcset="/responsive/wow-forever-hero-768w.webp?v=20260913plb-wow-forever-hero-v2 768w, /responsive/wow-forever-hero-1024w.webp?v=20260913plb-wow-forever-hero-v2 1024w"
-            alt="PUG LIFE BALANCE — For the Alliance"
-            width="1024"
-            height="344"
-            decoding="async"
-            loading="eager"
-            fetchpriority="high"
-            sizes="(max-width: 1120px) 100vw, 1120px"
-          />
+          <div class="wf-tavern-scroll">
+            <div class="wf-tavern-inner">
+              <picture>
+                <source type="image/webp" srcset="/images/wow-forever/tavern/tavern-bg.webp?v=20260914plb-tavern-v1" />
+                <img
+                  class="wf-tavern-bg"
+                  src="/images/wow-forever/tavern/tavern-bg.jpg?v=20260914plb-tavern-v1"
+                  alt="PUG LIFE BALANCE tavern — For the Alliance"
+                  width="1600"
+                  height="800"
+                  decoding="async"
+                  fetchpriority="high"
+                />
+              </picture>
+              <div class="wf-tavern-fire" aria-hidden="true"></div>
+              <div class="wf-tavern-stage" id="wfTavernStage" role="list" aria-label="Forever tavern"></div>
+              <div class="wf-tavern-wordmark" aria-hidden="true">
+                <span class="wf-tavern-wordmark-title">PUG LIFE BALANCE</span>
+                <span class="wf-tavern-wordmark-sub">For the Alliance</span>
+              </div>
+              <p class="wf-tavern-empty" id="wfTavernEmpty">The tavern is waiting for the first raider.</p>
+            </div>
+          </div>
+          <div class="wf-tavern-tip" id="wfTavernTip" hidden></div>
         </div>
         <div class="wf-command-bar">
           <p class="hero-sub">For the Alliance · Thunderstrike EU</p>
@@ -192,7 +204,8 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/wow-forever-squad.js?v=20260913plb-wow-forever-role-v2"></script>
+    <script defer src="/wow-forever-tavern.js?v=20260914plb-tavern-v6"></script>
+    <script defer src="/wow-forever-squad.js?v=20260914plb-tavern-v6"></script>
     <script defer src="/auth-ui.js?v=20260912plb-wow-forever-squad-v1"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>

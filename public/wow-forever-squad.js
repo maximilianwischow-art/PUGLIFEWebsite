@@ -725,10 +725,25 @@
     }
   }
 
+  function renderTavern() {
+    window.WowForeverTavern?.render(state.squad || [], {
+      ownUserId: state.pick?.userId || "",
+    });
+  }
+
   async function loadSquad() {
     const payload = await api("/api/wow-forever/squad");
     state.squad = payload.picks || [];
     renderSquad();
+    renderTavern();
+  }
+
+  function startTavernPoll() {
+    if (countdown.tavernPoll) clearInterval(countdown.tavernPoll);
+    countdown.tavernPoll = setInterval(() => {
+      if (document.hidden) return;
+      loadSquad().catch(() => {});
+    }, 25000);
   }
 
   async function boot() {
@@ -748,6 +763,7 @@
       render();
       startCountdown();
       await loadSquad();
+      startTavernPoll();
     } catch (error) {
       setStatus(error.message || "Failed to load Forever data.", "error");
     }
@@ -778,6 +794,7 @@
       startChange();
     }
   });
+  document.addEventListener("wf-tavern-change", startChange);
 
   startCountdown();
   boot();
