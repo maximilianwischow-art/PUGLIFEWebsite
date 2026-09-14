@@ -830,6 +830,183 @@ body.wf-alliance .wf-preview {
   padding: 4px 2px 8px;
 }
 
+.wf-roster-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 14px;
+}
+
+.wf-roster-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.wf-roster-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--steel-border);
+  border-radius: var(--radius-control);
+  background: rgba(7, 14, 24, 0.55);
+}
+
+.wf-roster-group-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold-light);
+}
+
+.wf-roster-slot {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  min-height: 52px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(180, 160, 110, 0.35);
+  border-radius: 6px;
+  background: rgba(11, 19, 29, 0.55);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wf-roster-slot.is-filled {
+  border-style: solid;
+  border-color: var(--steel-border);
+  background: rgba(11, 19, 29, 0.82);
+  cursor: grab;
+}
+
+.wf-roster-slot.is-filled:active {
+  cursor: grabbing;
+}
+
+.wf-roster-slot.is-target {
+  border-color: var(--gold-highlight);
+  box-shadow: 0 0 0 1px rgba(200, 149, 62, 0.35);
+}
+
+.wf-roster-slot.is-drop-target,
+.wf-roster-bench.is-drop-target {
+  border-color: var(--gold-highlight);
+  box-shadow: 0 0 0 2px rgba(200, 149, 62, 0.45);
+  background: rgba(40, 28, 10, 0.72);
+}
+
+.wf-roster-chip.is-dragging,
+.wf-roster-slot.is-dragging {
+  opacity: 0.45;
+}
+
+.wf-roster-slot:focus-visible {
+  outline: 2px solid var(--gold-highlight);
+  outline-offset: 2px;
+}
+
+.wf-roster-slot img {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.wf-roster-slot-empty {
+  color: rgba(200, 210, 230, 0.55);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.wf-roster-slot strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.wf-roster-slot small {
+  display: block;
+  color: rgba(200, 210, 230, 0.78);
+  font-size: 11px;
+}
+
+.wf-roster-bench-title {
+  margin: 18px 0 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--gold-light);
+}
+
+.wf-roster-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid var(--steel-border);
+  border-radius: 999px;
+  background: rgba(11, 19, 29, 0.82);
+  color: inherit;
+  font: inherit;
+  cursor: grab;
+}
+
+.wf-roster-chip:active {
+  cursor: grabbing;
+}
+
+.wf-roster-bench {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px dashed transparent;
+  border-radius: var(--radius-control);
+}
+
+.wf-roster-chip.is-selected {
+  border-color: var(--gold-highlight);
+  box-shadow: 0 0 0 1px rgba(200, 149, 62, 0.45);
+}
+
+.wf-roster-chip:focus-visible {
+  outline: 2px solid var(--gold-highlight);
+  outline-offset: 2px;
+}
+
+.wf-roster-chip img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.wf-roster-chip-empty {
+  margin: 0;
+  color: rgba(200, 210, 230, 0.6);
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .wf-roster-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .wf-roster-board {
+    grid-template-columns: 1fr;
+  }
+}
+
 .wf-card {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1640,6 +1817,51 @@ body.wf-alliance .hero-brand.wf-tavern {
   filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(255, 245, 105, 0.28));
 }
 
+/* Spec-specific aura hues (lore schools / weapon fantasy) */
+.wf-tavern-fig[data-spec="fire"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(255, 110, 30, 0.55));
+}
+.wf-tavern-fig[data-spec="frost"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(140, 210, 255, 0.55));
+}
+.wf-tavern-fig[data-spec="arcane"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(180, 120, 255, 0.5));
+}
+.wf-tavern-fig[data-spec="shadow"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="affliction"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="subtlety"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(120, 70, 200, 0.5));
+}
+.wf-tavern-fig[data-spec="holy"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="discipline"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="retribution"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(255, 220, 120, 0.5));
+}
+.wf-tavern-fig[data-spec="elemental"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="enhancement"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(80, 160, 255, 0.5));
+}
+.wf-tavern-fig[data-spec="demonology"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="destruction"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(90, 220, 70, 0.4));
+}
+.wf-tavern-fig[data-spec="balance"] .wf-tavern-gear,
+.wf-tavern-fig[data-spec="restoration"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(120, 220, 90, 0.4));
+}
+.wf-tavern-fig[data-spec="protection"] .wf-tavern-gear,
+.wf-tavern-fig[data-role="tank"] .wf-tavern-gear {
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 10px rgba(200, 180, 120, 0.42));
+}
+.wf-tavern-fig.is-form .wf-tavern-body {
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 10px rgba(255, 140, 40, 0.28));
+}
+.wf-tavern-fig[data-spec="feral-bear"].is-form .wf-tavern-body {
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.75)) drop-shadow(0 0 12px rgba(180, 120, 40, 0.35));
+}
+.wf-tavern-fig[data-spec="feral-cat"].is-form .wf-tavern-body {
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.7)) drop-shadow(0 0 12px rgba(100, 180, 255, 0.3));
+}
 .wf-tavern-name {
   position: absolute;
   left: 50%;

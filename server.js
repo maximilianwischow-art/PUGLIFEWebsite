@@ -182,6 +182,8 @@ import {
   wowForeverUpsert,
   wowForeverListAll,
   wowForeverDeleteByUserId,
+  wowForeverRaidRosterGet,
+  wowForeverRaidRosterSave,
   p2UpsertMaterial,
   p2GetAllCurrent,
   p2GetHistory,
@@ -16670,6 +16672,73 @@ app.get("/api/wow-forever/squad", (req, res) => {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load Forever squad" });
   }
 });
+
+/** GET /api/wow-forever/raid-roster — shared 20-man Forever raid board. */
+app.get("/api/wow-forever/raid-roster", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const roster = wowForeverRaidRosterGet();
+    const pickByUser = new Map(wowForeverListAll().map((p) => [String(p.userId), p]));
+    const slots = roster.slots.map((userId) => {
+      const uid = String(userId || "").trim();
+      if (!uid) return null;
+      const pick = pickByUser.get(uid);
+      return pick ? publicWowForeverPick(pick) : null;
+    });
+    return res.json({
+      ok: true,
+      slotCount: roster.slotCount,
+      slots,
+      userIds: roster.slots,
+      updatedAt: roster.updatedAt,
+      updatedBy: roster.updatedBy,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Forever raid roster" });
+  }
+});
+
+/**
+ * PUT /api/wow-forever/raid-roster — replace the 20-man board.
+ * Body: { slots: string[] } length 20, each value a Discord userId or "".
+ */
+app.put("/api/wow-forever/raid-roster", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const incoming = Array.isArray(req.body?.slots) ? req.body.slots : null;
+    if (!incoming) return res.status(400).json({ ok: false, error: "slots array required" });
+    const pickByUser = new Map(wowForeverListAll().map((p) => [String(p.userId), p]));
+    const normalized = Array.from({ length: 20 }, (_, i) => String(incoming[i] || "").trim());
+    for (const uid of normalized) {
+      if (!uid) continue;
+      if (!pickByUser.has(uid)) {
+        return res.status(400).json({ ok: false, error: "Raid roster slots must reference locked Squad picks" });
+      }
+    }
+    const roster = wowForeverRaidRosterSave(normalized, session.user.id);
+    const slots = roster.slots.map((userId) => {
+      const uid = String(userId || "").trim();
+      if (!uid) return null;
+      const pick = pickByUser.get(uid);
+      return pick ? publicWowForeverPick(pick) : null;
+    });
+    return res.json({
+      ok: true,
+      slotCount: roster.slotCount,
+      slots,
+      userIds: roster.slots,
+      updatedAt: roster.updatedAt,
+      updatedBy: roster.updatedBy,
+    });
+  } catch (error) {
+    const msg = error?.message || "Failed to save Forever raid roster";
+    const status = /only occupy one/i.test(msg) ? 400 : 500;
+    return res.status(status).json({ ok: false, error: msg });
+  }
+});
+
 
 /**
  * PUT /api/profile/me/picture — upload (raw body, `Content-Type` declares mime).

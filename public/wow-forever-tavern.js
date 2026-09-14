@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v9";
+  const ASSET_V = "20260914plb-tavern-v11";
   const TZ = "Europe/Berlin";
 
   const TIME_THEMES = {
@@ -26,6 +26,59 @@
   const GENDERS = ["male", "female"];
   const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"];
 
+  // Per-spec gear overlays (lore-accurate weapons/armor). Fallback: gear/{class}.webp
+  const SPEC_GEAR = {
+    "warrior:protection": "gear/warrior-protection.webp",
+    "warrior:arms": "gear/warrior-arms.webp",
+    "warrior:fury": "gear/warrior-fury.webp",
+    "paladin:protection": "gear/paladin-protection.webp",
+    "paladin:retribution": "gear/paladin-retribution.webp",
+    "paladin:holy": "gear/paladin-holy.webp",
+    "hunter:beast-mastery": "gear/hunter-beast-mastery.webp",
+    "hunter:marksmanship": "gear/hunter-marksmanship.webp",
+    "hunter:survival": "gear/hunter-survival.webp",
+    "rogue:assassination": "gear/rogue-assassination.webp",
+    "rogue:combat": "gear/rogue-combat.webp",
+    "rogue:subtlety": "gear/rogue-subtlety.webp",
+    "priest:shadow": "gear/priest-shadow.webp",
+    "priest:holy": "gear/priest-holy.webp",
+    "priest:discipline": "gear/priest-discipline.webp",
+    "shaman:elemental": "gear/shaman-elemental.webp",
+    "shaman:enhancement": "gear/shaman-enhancement.webp",
+    "shaman:restoration": "gear/shaman-restoration.webp",
+    "mage:arcane": "gear/mage-arcane.webp",
+    "mage:fire": "gear/mage-fire.webp",
+    "mage:frost": "gear/mage-frost.webp",
+    "warlock:affliction": "gear/warlock-affliction.webp",
+    "warlock:demonology": "gear/warlock-demonology.webp",
+    "warlock:destruction": "gear/warlock-destruction.webp",
+    "druid:balance": "gear/druid-balance.webp",
+    "druid:restoration": "gear/druid-restoration.webp",
+    "druid:feral-bear": "gear/druid-feral-bear.webp",
+    "druid:feral-cat": "gear/druid-feral-cat.webp",
+  };
+
+  // Druid animal forms replace the race body with a full creature silhouette.
+  const FORM_SPECS = new Set(["feral-bear", "feral-cat"]);
+
+  const DEFAULT_SPEC_BY_CLASS_ROLE = {
+    "warrior:tank": "protection",
+    "warrior:dps": "arms",
+    "paladin:tank": "protection",
+    "paladin:dps": "retribution",
+    "paladin:heal": "holy",
+    "hunter:dps": "marksmanship",
+    "rogue:dps": "combat",
+    "priest:dps": "shadow",
+    "priest:heal": "holy",
+    "shaman:dps": "elemental",
+    "shaman:heal": "restoration",
+    "mage:dps": "frost",
+    "warlock:dps": "affliction",
+    "druid:tank": "feral-bear",
+    "druid:dps": "balance",
+    "druid:heal": "restoration",
+  };
   const HEIGHT = {
     gnome: 0.5,
     dwarf: 0.64,
@@ -242,17 +295,40 @@
       .replace(/"/g, "&quot;");
   }
 
-  function spriteFor(race, gender, classId) {
+  function resolveSpecId(classId, role, specId) {
+    const c = String(classId || "").toLowerCase();
+    const r = String(role || "").toLowerCase();
+    const s = String(specId || "").toLowerCase();
+    if (s && SPEC_GEAR[`${c}:${s}`]) return s;
+    return DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] || "";
+  }
+
+  function spriteFor(race, gender, classId, role, specId) {
     const r = String(race || "human").toLowerCase();
     const g = gender === "female" ? "female" : "male";
     const c = String(classId || "warrior").toLowerCase();
-    return (
+    const spec = resolveSpecId(c, role, specId);
+    const base =
       SPRITES[`${r}:${g}:${c}`] || {
         body: `bodies/${RACES.includes(r) ? r : "human"}-${g}.webp`,
         gear: CLASSES.includes(c) ? `gear/${c}.webp` : "gear/warrior.webp",
         height: HEIGHT[r] || 0.8,
-      }
-    );
+      };
+    if (FORM_SPECS.has(spec) && SPEC_GEAR[`${c}:${spec}`]) {
+      return {
+        body: SPEC_GEAR[`${c}:${spec}`],
+        gear: "",
+        height: spec === "feral-bear" ? Math.max(base.height, 0.92) : Math.min(base.height, 0.78),
+        isForm: true,
+        spec,
+      };
+    }
+    return {
+      ...base,
+      gear: SPEC_GEAR[`${c}:${spec}`] || base.gear,
+      isForm: false,
+      spec,
+    };
   }
 
   function sortPicks(picks) {
@@ -371,19 +447,26 @@
       const base = seats[index] || seats[seats.length - 1];
       const x = Math.min(96, Math.max(4, base.x));
       const y = Math.min(97, Math.max(18, base.y));
-      const sprite = spriteFor(pick.race, pick.gender, pick.classId);
+      const sprite = spriteFor(pick.race, pick.gender, pick.classId, pick.role, pick.specId);
       const figH = sprite.height * base.scale * crowd;
       const name = displayName(pick);
       const mine = ownUserId && String(pick.userId || "") === ownUserId;
       const faction = pick.faction === "horde" ? "horde" : pick.faction === "alliance" ? "alliance" : "";
-      const label = `${name}, ${pick.raceName || pick.race || ""} ${pick.className || pick.classId || ""}`.trim();
+      const label = `${name}, ${pick.raceName || pick.race || ""} ${pick.className || pick.classId || ""}${
+        pick.specName || pick.specShortName ? ` ${pick.specShortName || pick.specName}` : ""
+      }`.trim();
       const classId = String(pick.classId || "").toLowerCase();
+      const role = String(pick.role || "").toLowerCase();
       const fig = document.createElement("button");
       fig.type = "button";
-      fig.className = `wf-tavern-fig${mine ? " is-mine" : ""}${faction ? ` is-${faction}` : ""}`;
+      fig.className = `wf-tavern-fig${mine ? " is-mine" : ""}${faction ? ` is-${faction}` : ""}${
+        sprite.isForm ? " is-form" : ""
+      }`;
       fig.setAttribute("role", "listitem");
       fig.dataset.uid = String(pick.userId || "");
       if (classId) fig.dataset.class = classId;
+      if (role) fig.dataset.role = role;
+      if (sprite.spec) fig.dataset.spec = sprite.spec;
       fig.setAttribute("aria-label", label);
       fig.style.left = `${x}%`;
       fig.style.bottom = `${Math.max(3, 100 - y)}%`;
@@ -404,14 +487,17 @@
       body.width = 180;
       body.height = 240;
       body.decoding = "async";
-      const gear = document.createElement("img");
-      gear.className = "wf-tavern-gear";
-      gear.src = assetUrl(sprite.gear);
-      gear.alt = "";
-      gear.width = 180;
-      gear.height = 240;
-      gear.decoding = "async";
-      spriteEl.append(body, gear);
+      spriteEl.append(body);
+      if (sprite.gear) {
+        const gear = document.createElement("img");
+        gear.className = "wf-tavern-gear";
+        gear.src = assetUrl(sprite.gear);
+        gear.alt = "";
+        gear.width = 180;
+        gear.height = 240;
+        gear.decoding = "async";
+        spriteEl.append(gear);
+      }
       idle.append(nameEl, spriteEl);
       fig.append(idle);
       frag.append(fig);

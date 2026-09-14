@@ -5,6 +5,10 @@
     catalog: null,
     pick: null,
     squad: [],
+    rosterSlots: Array.from({ length: 20 }, () => ""),
+    rosterUpdatedAt: 0,
+    selectedRosterUid: "",
+    rosterSaving: false,
     faction: "alliance",
     race: "",
     gender: "male",
@@ -40,6 +44,11 @@
     editor: document.getElementById("wfEditor"),
     squad: document.getElementById("wfSquad"),
     squadMeta: document.getElementById("wfSquadMeta"),
+    roster: document.getElementById("wfRoster"),
+    rosterBench: document.getElementById("wfRosterBench"),
+    rosterMeta: document.getElementById("wfRosterMeta"),
+    rosterStatus: document.getElementById("wfRosterStatus"),
+    rosterClear: document.getElementById("wfRosterClear"),
     matrix: document.getElementById("wfMatrix"),
     sources: document.getElementById("wfSources"),
     notes: document.getElementById("wfNotes"),
@@ -595,6 +604,229 @@
         </article>`;
       })
       .join("");
+    renderRaidRoster();
+  }
+
+  function pickByUserId(userId) {
+    const uid = String(userId || "").trim();
+    if (!uid) return null;
+    return (state.squad || []).find((p) => String(p.userId || "") === uid) || null;
+  }
+
+  function setRosterStatus(msg, kind) {
+    if (!el.rosterStatus) return;
+    el.rosterStatus.textContent = msg || "";
+    el.rosterStatus.className = `wf-status${kind ? ` ${kind}` : ""}`;
+  }
+
+  function rosterRoleCounts(slots) {
+    let tank = 0;
+    let heal = 0;
+    let dps = 0;
+    for (const uid of slots) {
+      const pick = pickByUserId(uid);
+      if (!pick) continue;
+      const role = String(pick.role || "").toLowerCase();
+      if (role === "tank") tank += 1;
+      else if (role === "heal" || role === "healer") heal += 1;
+      else if (pick.classId) dps += 1;
+    }
+    return { tank, heal, dps };
+  }
+
+  function renderRaidRoster() {
+    if (!el.roster || !el.rosterBench || !el.rosterMeta) return;
+    const slots = Array.from({ length: 20 }, (_, i) => String(state.rosterSlots[i] || "").trim());
+    const filled = slots.filter(Boolean).length;
+    const counts = rosterRoleCounts(slots);
+    el.rosterMeta.textContent = `${filled}/20 seated · ${counts.tank} tank · ${counts.heal} heal · ${counts.dps} dps`;
+
+    const groups = [];
+    for (let g = 0; g < 4; g += 1) {
+      const rows = [];
+      for (let s = 0; s < 5; s += 1) {
+        const index = g * 5 + s;
+        const uid = slots[index];
+        const pick = pickByUserId(uid);
+        const selected = Boolean(state.selectedRosterUid);
+        if (pick) {
+          const race = raceById(pick.race) || { id: pick.race, name: pick.raceName, portraitKey: pick.race };
+          const title = pick.characterName || pick.raceName || "Raider";
+          const detail = [pick.className || pick.classId, roleSpecLabel(pick)].filter(Boolean).join(" · ");
+          rows.push(`<button type="button" class="wf-roster-slot is-filled${selected ? " is-target" : ""}" data-slot="${index}" draggable="true" aria-label="Clear ${escapeHtml(title)} from group ${g + 1}">
+            <img src="${escapeHtml(portraitUrl(race, pick.gender))}" alt="" width="36" height="36" draggable="false" />
+            <span>
+              <strong class="wf-class-${escapeHtml(pick.classId || "")}">${escapeHtml(title)}</strong>
+              <small>${escapeHtml(detail || pick.raceName || "")}</small>
+            </span>
+          </button>`);
+        } else {
+          rows.push(`<button type="button" class="wf-roster-slot${selected ? " is-target" : ""}" data-slot="${index}" aria-label="Raid slot ${index + 1}">
+            <span class="wf-roster-slot-empty">Empty · ${index + 1}</span>
+          </button>`);
+        }
+      }
+      groups.push(`<div class="wf-roster-group"><p class="wf-roster-group-title">Group ${g + 1}</p>${rows.join("")}</div>`);
+    }
+    el.roster.innerHTML = groups.join("");
+
+    const seated = new Set(slots.filter(Boolean));
+    const available = (state.squad || []).filter((p) => !seated.has(String(p.userId || "")));
+    if (!available.length) {
+      el.rosterBench.innerHTML = `<p class="wf-roster-chip-empty">${
+        (state.squad || []).length ? "Everyone locked in is already on the roster." : "Lock Squad picks first, then seat them here."
+      }</p>`;
+      return;
+    }
+    el.rosterBench.innerHTML = available
+      .map((p) => {
+        const race = raceById(p.race) || { id: p.race, name: p.raceName, portraitKey: p.race };
+        const title = p.characterName || p.raceName || "Raider";
+        const uid = String(p.userId || "");
+        const selected = state.selectedRosterUid === uid ? " is-selected" : "";
+        return `<button type="button" class="wf-roster-chip${selected}" data-bench="${escapeHtml(uid)}" draggable="true" aria-pressed="${selected ? "true" : "false"}">
+          <img src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="28" height="28" draggable="false" />
+          <span class="wf-class-${escapeHtml(p.classId || "")}">${escapeHtml(title)}</span>
+        </button>`;
+      })
+      .join("");
+  }
+
+  let rosterDrag = null;
+  let rosterDidDrag = false;
+
+  function currentRosterSlots() {
+    return Array.from({ length: 20 }, (_, i) => String(state.rosterSlots[i] || "").trim());
+  }
+
+  function readRosterDrag(event) {
+    if (rosterDrag?.uid) return rosterDrag;
+    try {
+      const raw = event.dataTransfer?.getData("application/x-wf-roster") || event.dataTransfer?.getData("text/plain") || "";
+      const parsed = JSON.parse(raw);
+      const uid = String(parsed?.uid || "").trim();
+      if (!uid) return null;
+      const fromSlot = Number.isInteger(parsed.fromSlot) ? parsed.fromSlot : Number(parsed.fromSlot);
+      return {
+        uid,
+        fromSlot: Number.isInteger(fromSlot) && fromSlot >= 0 && fromSlot <= 19 ? fromSlot : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function writeRosterDrag(event, payload) {
+    rosterDrag = {
+      uid: String(payload.uid || "").trim(),
+      fromSlot: Number.isInteger(payload.fromSlot) ? payload.fromSlot : null,
+    };
+    const json = JSON.stringify(rosterDrag);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-wf-roster", json);
+    event.dataTransfer.setData("text/plain", json);
+  }
+
+  function clearRosterDrag() {
+    rosterDrag = null;
+    el.roster?.querySelectorAll(".is-drop-target, .is-dragging").forEach((node) => {
+      node.classList.remove("is-drop-target", "is-dragging");
+    });
+    el.rosterBench?.querySelectorAll(".is-dragging").forEach((node) => node.classList.remove("is-dragging"));
+    el.rosterBench?.classList.remove("is-drop-target");
+  }
+
+  async function seatRaiderInSlot(uid, targetIndex, fromSlot) {
+    const selected = String(uid || "").trim();
+    if (!selected || !Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex > 19) return;
+    const slots = currentRosterSlots();
+    if (Number.isInteger(fromSlot) && fromSlot >= 0 && fromSlot <= 19) {
+      if (fromSlot === targetIndex) return;
+      const moving = slots[fromSlot];
+      if (moving !== selected) return;
+      const swapped = slots[targetIndex] || "";
+      slots[fromSlot] = swapped;
+      slots[targetIndex] = selected;
+      await persistRaidRoster(slots, swapped ? "Raiders swapped." : "Raider moved.");
+      return;
+    }
+    const next = slots.map((id) => (id === selected ? "" : id));
+    next[targetIndex] = selected;
+    await persistRaidRoster(next, "Raider seated.");
+  }
+
+  async function unseatRaider(uid, fromSlot) {
+    const selected = String(uid || "").trim();
+    if (!selected) return;
+    const slots = currentRosterSlots();
+    if (Number.isInteger(fromSlot) && fromSlot >= 0 && fromSlot <= 19) {
+      if (slots[fromSlot] !== selected) return;
+      slots[fromSlot] = "";
+    } else {
+      for (let i = 0; i < slots.length; i += 1) {
+        if (slots[i] === selected) slots[i] = "";
+      }
+    }
+    await persistRaidRoster(slots, "Raider returned to Available.");
+  }
+
+  async function persistRaidRoster(nextSlots, okMessage) {
+    if (state.rosterSaving) return;
+    state.rosterSaving = true;
+    setRosterStatus("Saving roster…");
+    try {
+      const payload = await api("/api/wow-forever/raid-roster", {
+        method: "PUT",
+        body: JSON.stringify({ slots: nextSlots }),
+      });
+      state.rosterSlots = Array.from({ length: 20 }, (_, i) => String(payload.userIds?.[i] || "").trim());
+      state.rosterUpdatedAt = Number(payload.updatedAt) || 0;
+      state.selectedRosterUid = "";
+      setRosterStatus(okMessage || "Roster saved.", "ok");
+      renderRaidRoster();
+    } catch (error) {
+      setRosterStatus(error.message || "Could not save roster.", "error");
+    } finally {
+      state.rosterSaving = false;
+    }
+  }
+
+  async function onRosterSlotClick(index) {
+    const slots = currentRosterSlots();
+    const selected = String(state.selectedRosterUid || "").trim();
+    const current = slots[index] || "";
+    if (selected) {
+      await seatRaiderInSlot(selected, index, null);
+      return;
+    }
+    if (current) {
+      slots[index] = "";
+      await persistRaidRoster(slots, "Slot cleared.");
+    }
+  }
+
+  async function clearRaidRoster() {
+    if (state.rosterSaving) return;
+    if (!state.rosterSlots.some(Boolean)) {
+      setRosterStatus("Roster is already empty.");
+      return;
+    }
+    if (!window.confirm("Clear the entire 20-man raid roster?")) return;
+    await persistRaidRoster(Array.from({ length: 20 }, () => ""), "Roster cleared.");
+  }
+
+  async function loadRaidRoster() {
+    const payload = await api("/api/wow-forever/raid-roster");
+    const known = new Set((state.squad || []).map((p) => String(p.userId || "")));
+    const incoming = Array.from({ length: 20 }, (_, i) => String(payload.userIds?.[i] || "").trim());
+    const pruned = incoming.map((uid) => (uid && known.has(uid) ? uid : ""));
+    state.rosterSlots = pruned;
+    state.rosterUpdatedAt = Number(payload.updatedAt) || 0;
+    if (pruned.join("|") !== incoming.join("|")) {
+      await persistRaidRoster(pruned, "Roster cleaned of missing Squad picks.");
+      return;
+    }
+    renderRaidRoster();
   }
 
   function renderMatrix() {
@@ -715,6 +947,7 @@
     state.squad = payload.picks || [];
     renderSquad();
     renderTavern();
+    await loadRaidRoster();
   }
 
   function startTavernPoll() {
@@ -773,6 +1006,104 @@
       startChange();
     }
   });
+  el.rosterBench?.addEventListener("click", (event) => {
+    if (rosterDidDrag) {
+      rosterDidDrag = false;
+      return;
+    }
+    const chip = event.target.closest("[data-bench]");
+    if (!chip) return;
+    const uid = chip.getAttribute("data-bench") || "";
+    state.selectedRosterUid = state.selectedRosterUid === uid ? "" : uid;
+    renderRaidRoster();
+  });
+  el.rosterBench?.addEventListener("dragstart", (event) => {
+    const chip = event.target.closest("[data-bench]");
+    if (!chip) return;
+    const uid = chip.getAttribute("data-bench") || "";
+    if (!uid) return;
+    rosterDidDrag = true;
+    writeRosterDrag(event, { uid, fromSlot: null });
+    chip.classList.add("is-dragging");
+    state.selectedRosterUid = uid;
+  });
+  el.rosterBench?.addEventListener("dragend", () => {
+    clearRosterDrag();
+    setTimeout(() => {
+      rosterDidDrag = false;
+    }, 0);
+  });
+  el.rosterBench?.addEventListener("dragover", (event) => {
+    const drag = readRosterDrag(event);
+    if (!drag || drag.fromSlot == null) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    el.rosterBench.classList.add("is-drop-target");
+  });
+  el.rosterBench?.addEventListener("dragleave", (event) => {
+    if (!el.rosterBench.contains(event.relatedTarget)) el.rosterBench.classList.remove("is-drop-target");
+  });
+  el.rosterBench?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const drag = readRosterDrag(event);
+    clearRosterDrag();
+    if (!drag || drag.fromSlot == null) return;
+    unseatRaider(drag.uid, drag.fromSlot);
+  });
+  el.roster?.addEventListener("click", (event) => {
+    if (rosterDidDrag) {
+      rosterDidDrag = false;
+      return;
+    }
+    const slot = event.target.closest("[data-slot]");
+    if (!slot) return;
+    const index = Number(slot.getAttribute("data-slot"));
+    if (!Number.isInteger(index) || index < 0 || index > 19) return;
+    onRosterSlotClick(index);
+  });
+  el.roster?.addEventListener("dragstart", (event) => {
+    const slot = event.target.closest("[data-slot].is-filled");
+    if (!slot) return;
+    const index = Number(slot.getAttribute("data-slot"));
+    const uid = currentRosterSlots()[index] || "";
+    if (!uid || !Number.isInteger(index)) return;
+    rosterDidDrag = true;
+    writeRosterDrag(event, { uid, fromSlot: index });
+    slot.classList.add("is-dragging");
+    state.selectedRosterUid = uid;
+  });
+  el.roster?.addEventListener("dragend", () => {
+    clearRosterDrag();
+    setTimeout(() => {
+      rosterDidDrag = false;
+    }, 0);
+  });
+  el.roster?.addEventListener("dragover", (event) => {
+    const slot = event.target.closest("[data-slot]");
+    if (!slot || !readRosterDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    el.roster.querySelectorAll(".is-drop-target").forEach((node) => {
+      if (node !== slot) node.classList.remove("is-drop-target");
+    });
+    slot.classList.add("is-drop-target");
+  });
+  el.roster?.addEventListener("dragleave", (event) => {
+    const slot = event.target.closest("[data-slot]");
+    if (!slot) return;
+    if (!slot.contains(event.relatedTarget)) slot.classList.remove("is-drop-target");
+  });
+  el.roster?.addEventListener("drop", (event) => {
+    const slot = event.target.closest("[data-slot]");
+    if (!slot) return;
+    event.preventDefault();
+    const index = Number(slot.getAttribute("data-slot"));
+    const drag = readRosterDrag(event);
+    clearRosterDrag();
+    if (!drag || !Number.isInteger(index) || index < 0 || index > 19) return;
+    seatRaiderInSlot(drag.uid, index, drag.fromSlot);
+  });
+  el.rosterClear?.addEventListener("click", clearRaidRoster);
   document.addEventListener("wf-tavern-change", startChange);
 
   startCountdown();
