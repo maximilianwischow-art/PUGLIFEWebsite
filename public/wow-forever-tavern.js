@@ -1,6 +1,6 @@
 (() => {
   const ASSET_BASE = "/images/wow-forever/tavern";
-  const ASSET_V = "20260914plb-tavern-v19";
+  const ASSET_V = "20260914plb-tavern-v20";
   const TZ = "Europe/Berlin";
 
   const TIME_THEMES = {

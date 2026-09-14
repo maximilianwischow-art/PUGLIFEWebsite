@@ -1,5 +1,25 @@
 (() => {
   const ZAM = "https://wow.zamimg.com/images/wow/icons/large";
+  const WORN_ASSET_V = "20260914plb-tavern-v20";
+  const FORM_SPECS = new Set(["feral-bear", "feral-cat"]);
+  const DEFAULT_SPEC_BY_CLASS_ROLE = {
+    "warrior:tank": "protection",
+    "warrior:dps": "arms",
+    "paladin:tank": "protection",
+    "paladin:dps": "retribution",
+    "paladin:heal": "holy",
+    "hunter:dps": "marksmanship",
+    "rogue:dps": "combat",
+    "priest:dps": "shadow",
+    "priest:heal": "holy",
+    "shaman:dps": "elemental",
+    "shaman:heal": "restoration",
+    "mage:dps": "frost",
+    "warlock:dps": "affliction",
+    "druid:tank": "feral-bear",
+    "druid:dps": "balance",
+    "druid:heal": "restoration",
+  };
 
   const state = {
     catalog: null,
@@ -102,6 +122,49 @@
     }
     const key = race.id === "undead" || race.portraitKey === "scourge" ? "undead" : race.id;
     return `${ZAM}/achievement_character_${key}_${g}.jpg`;
+  }
+
+  function resolveWornSpecId(classId, role, specId) {
+    const c = String(classId || "").toLowerCase();
+    const r = String(role || "").toLowerCase();
+    const s = String(specId || "").toLowerCase();
+    if (s) {
+      const specs = specsForRole(c, r);
+      if (!specs.length || specs.some((spec) => spec.id === s)) return s;
+    }
+    const fromRole = specsForRole(c, r);
+    if (fromRole.length === 1) return fromRole[0].id;
+    return DEFAULT_SPEC_BY_CLASS_ROLE[`${c}:${r}`] || fromRole[0]?.id || "";
+  }
+
+  function wornSpriteUrl({ raceId, gender, classId, role, specId }) {
+    const r = String(raceId || "").toLowerCase();
+    const g = gender === "female" ? "female" : "male";
+    const c = String(classId || "").toLowerCase();
+    const spec = resolveWornSpecId(c, role, specId);
+    if (!r || !c || !spec) return "";
+    if (FORM_SPECS.has(spec)) {
+      return `/images/wow-forever/tavern/gear/druid-${spec}.webp?v=${WORN_ASSET_V}`;
+    }
+    return `/images/wow-forever/tavern/worn/${r}-${g}-${c}-${spec}.webp?v=${WORN_ASSET_V}`;
+  }
+
+  /** Class/spec-aware portrait for cards; falls back to race icon if worn asset 404s. */
+  function characterPortraitHtml(race, gender, { classId, role, specId } = {}, size = 96) {
+    const fallback = portraitUrl(race, gender);
+    const worn = wornSpriteUrl({
+      raceId: race?.id || race,
+      gender,
+      classId,
+      role,
+      specId,
+    });
+    const cls = `${portraitClass(race).trim()}`.trim();
+    if (!worn) {
+      return `<img class="${escapeHtml(cls)}" src="${escapeHtml(fallback)}" alt="" width="${size}" height="${size}" />`;
+    }
+    const classes = ["wf-worn-bust", cls].filter(Boolean).join(" ");
+    return `<img class="${escapeHtml(classes)}" src="${escapeHtml(worn)}" alt="" width="${size}" height="${size}" data-fallback="${escapeHtml(fallback)}" onerror="this.onerror=null;this.src=this.dataset.fallback;this.classList.remove('wf-worn-bust')" />`;
   }
 
   function portraitClass(race) {
@@ -504,7 +567,11 @@
     const roleLabel = roleSpecLabel({ classId: state.classId, role: state.role, specId: state.specId });
     const neu = cls && isNewCombo(race.id, cls.id);
     const lockedMain = state.pick ? currentMainLabel(state.pick) : "";
-    const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, state.gender))}" alt="" width="96" height="96" />`;
+    const portrait = characterPortraitHtml(race, state.gender, {
+      classId: state.classId,
+      role: state.role,
+      specId: state.specId,
+    }, 96);
     const canChange = Boolean(state.pick && !state.editing);
     el.preview.classList.toggle("is-changeable", canChange);
     if (canChange) {
@@ -555,7 +622,7 @@
     const pick = state.pick;
     const race = raceById(pick.race) || { id: pick.race, name: pick.raceName, portraitKey: pick.race };
     const name = pick.characterName || `${pick.raceName || pick.race} ${pick.className || pick.classId}`;
-    const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, pick.gender))}" alt="" width="96" height="96" />`;
+    const portrait = characterPortraitHtml(race, pick.gender, pick, 96);
     el.locked.innerHTML = `<button type="button" class="wf-locked-card" id="wfChangeTrigger">
       ${portraitStack(portrait, pick)}
       <span class="wf-locked-copy">
@@ -584,7 +651,7 @@
         const title = p.characterName || p.raceName || "Raider";
         const neu = p.isNewCombo ? `<span class="wf-pill wf-pill--new">New</span>` : "";
         const main = String(p.mainCharacterName || "").trim();
-        const portrait = `<img class="${portraitClass(race).trim()}" src="${escapeHtml(portraitUrl(race, p.gender))}" alt="" width="56" height="56" />`;
+        const portrait = characterPortraitHtml(race, p.gender, p, 56);
         const mine = isOwnPick(p);
         return `<article class="wf-card${mine ? " is-mine" : ""}"${mine ? ' data-change="1" role="button" tabindex="0" aria-label="Change your Forever character"' : ""}>
           ${portraitStack(portrait, p)}
