@@ -185,6 +185,7 @@ function badgeTooltipGlowColor(badgeId, rarity) {
     "tk-0730-2026": "#a855f7",
     "ssc-0611-2026": "#a855f7",
     "hyjal-first-clear": "#22c55e",
+    "bt-first-illidan-kill": "#22c55e",
     "double-trouble-ssc": "#14b8a6",
     "double-trouble-tk": "#a855f7",
   };
@@ -1511,6 +1512,7 @@ const LEADERBOARD_ROW_FIRST_CLEAR_BADGE_IDS = [
 
 /** Newest event-night badges first — prepend future dated IDs here. */
 const LEADERBOARD_ROW_EVENT_BADGE_RECENCY = [
+  "bt-first-illidan-kill",
   "hyjal-first-clear",
   "tk-0730-2026",
   "double-trouble-ssc",
@@ -1961,6 +1963,13 @@ function rosterAchievementBadgesHtml(player) {
         "Hyjal First Clear — Attended the guild's first Mount Hyjal full clear on 30 August 2026 (5/5, Archimonde kill).",
       alt: "Hyjal First Clear",
       ok: playerEarnedSpecificEventBadge(player, "hyjal-first-clear"),
+    },
+    {
+      file: "bt-first-illidan-kill.png",
+      title:
+        "BT First Illidan Kill — Attended the guild's first Black Temple raid with an Illidan Stormrage kill on 20 September 2026 (WCL reports TKZ6qwz3pncvAyXQ, GN2Y1mgTDtMkLbCv).",
+      alt: "BT First Illidan Kill",
+      ok: playerEarnedSpecificEventBadge(player, "bt-first-illidan-kill"),
     },
     {
       file: "tk-0730-2026.png",

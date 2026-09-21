@@ -8446,7 +8446,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_identityActivityCutoff", cutoff);
   }
   if (path === "/api/leaderboard") {
-    params.set("_leaderboardBundleVersion", "v5-hyjal-first-clear");
+    params.set("_leaderboardBundleVersion", "v6-bt-first-illidan-kill");
   }
   if (path === "/api/rankings") {
     params.set("_rankingsBoardsVersion", "v5-all-tbc-flasks");
@@ -15781,6 +15781,17 @@ const SPECIFIC_RAID_ATTENDANCE_BADGES = [
     endMs: Date.UTC(2026, 7, 31, 4, 0, 0),
     reportCodes: ["b8d4KDATxjWnrfpJ"],
   },
+  {
+    badgeId: "bt-first-illidan-kill",
+    label: "BT First Illidan Kill",
+    description:
+      "Attended the guild's first Black Temple raid with an Illidan Stormrage kill on 20 September 2026. Awarded to every canonical user with a Warcraft Logs appearance in report TKZ6qwz3pncvAyXQ (Illi & MH, 20.09.2026) or GN2Y1mgTDtMkLbCv.",
+    icon: "/images/achievements/bt-first-illidan-kill.png",
+    /* September 20 2026 00:00 CEST = September 19 2026 22:00 UTC */
+    startMs: Date.UTC(2026, 8, 19, 22, 0, 0),
+    endMs: Date.UTC(2026, 8, 21, 4, 0, 0),
+    reportCodes: ["TKZ6qwz3pncvAyXQ", "GN2Y1mgTDtMkLbCv"],
+  },
 ];
 
 const SPECIFIC_RAID_ATTENDANCE_AWARDS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -16127,7 +16138,7 @@ function resolveSpecificRaidAttendanceAwards() {
  * already shipped under `/public/images/`.
  */
 const PHASE_1_EVENT_BADGE_IDS = new Set(["aoe-cleave"]);
-const PHASE_3_EVENT_BADGE_IDS = new Set(["hyjal-first-clear"]);
+const PHASE_3_EVENT_BADGE_IDS = new Set(["hyjal-first-clear", "bt-first-illidan-kill"]);
 
 const BADGE_CATALOG = [
   {

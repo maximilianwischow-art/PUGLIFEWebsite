@@ -635,6 +635,10 @@
         typeof plb.playerEarnedSpecificEventBadge === "function"
           ? (p) => plb.playerEarnedSpecificEventBadge(p, "hyjal-first-clear")
           : () => false,
+      "bt-first-illidan-kill":
+        typeof plb.playerEarnedSpecificEventBadge === "function"
+          ? (p) => plb.playerEarnedSpecificEventBadge(p, "bt-first-illidan-kill")
+          : () => false,
     };
 
     // Synthetic "player" — feeding the user's primary linked name as
