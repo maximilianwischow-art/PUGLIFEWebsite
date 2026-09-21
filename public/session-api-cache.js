@@ -3,7 +3,7 @@
  * Only stores successful responses (HTTP ok, not `{ ok: false }`). Cleared on logout via `clearAll()`.
  */
 (function () {
-  const PREFIX = "plb-api-v2:";
+  const PREFIX = "plb-api-v3:";
   const TTL_MS = 5 * 60 * 1000;
   const inFlight = new Set();
 
@@ -19,6 +19,9 @@
       if (p === "/api/heart-of-darkness/needs") return true;
       if (p === "/api/raids/phase2/overview") return true;
       if (p === "/api/raids/phase3/overview") return true;
+      // Catalog shape changes with new badges; stale-while-revalidate would keep
+      // an old Phase 3 grid (e.g. Hyjal-only) after a deploy until the tab dies.
+      if (p === "/api/badge-tooltips") return true;
       return false;
     } catch {
       return true;

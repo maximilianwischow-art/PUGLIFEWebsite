@@ -109,7 +109,7 @@ async function ensureBadgeCatalogLoaded() {
   if (leaderboardBadgeCatalogPromise) return leaderboardBadgeCatalogPromise;
   leaderboardBadgeCatalogPromise = (async () => {
     try {
-      const payload = await lbApiGetJson("/api/badge-tooltips");
+      const payload = await lbApiGetJson("/api/badge-tooltips", { skipCache: true });
       const categories = Array.isArray(payload?.categories) ? payload.categories : [];
       window.plbAchievementBadgeCombos = Array.isArray(payload?.combos) ? payload.combos : [];
       const ui = window.plbBadgeCatalogUi;
