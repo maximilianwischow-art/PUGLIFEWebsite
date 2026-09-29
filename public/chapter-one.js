@@ -134,9 +134,13 @@
     return beat.label || "Milestone";
   }
 
-  function panelShell({ id, art, content, centered }) {
+  function panelShell({ id, art, artSrcset, artSizes, artWidth, artHeight, content, centered }) {
+    const srcsetAttr = artSrcset ? ` srcset="${esc(artSrcset)}"` : "";
+    const sizesAttr = artSizes ? ` sizes="${esc(artSizes)}"` : "";
+    const w = Number(artWidth) > 0 ? Number(artWidth) : 1440;
+    const h = Number(artHeight) > 0 ? Number(artHeight) : 960;
     return `<section class="ch1-panel${centered ? " ch1-panel--center" : ""}" id="${esc(id || "")}" data-panel>
-      <img class="ch1-panel-bg" src="${esc(art || FALLBACK_ART)}" alt="" width="1440" height="960" loading="lazy" decoding="async" />
+      <img class="ch1-panel-bg" src="${esc(art || FALLBACK_ART)}"${srcsetAttr}${sizesAttr} alt="" width="${w}" height="${h}" loading="lazy" decoding="async" />
       <div class="ch1-panel-shade" aria-hidden="true"></div>
       <div class="ch1-panel-glow" aria-hidden="true"></div>
       <div class="ch1-panel-inner">${content}</div>
@@ -287,6 +291,11 @@
     return panelShell({
       id: "ch1-chapter-two",
       art: "/wow-forever-hero.jpg",
+      artSrcset:
+        "/responsive/wow-forever-hero-768w.webp 768w, /responsive/wow-forever-hero-1024w.webp 1024w, /responsive/wow-forever-hero-1536w.webp 1536w, /wow-forever-hero.jpg 1672w",
+      artSizes: "100vw",
+      artWidth: 1672,
+      artHeight: 941,
       centered: true,
       content: `<div class="ch1-panel-hero">
         <p class="ch1-panel-kicker">Chapter 2</p>
