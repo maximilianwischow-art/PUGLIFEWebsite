@@ -117,12 +117,13 @@ body.wf-alliance .hero-banner {
 body.wf-alliance .wf-command-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px 18px;
   flex-wrap: wrap;
   width: min(100%, 1120px);
   margin: 14px auto 0;
   padding: 8px 4px 2px;
+  text-align: center;
 }
 
 body.wf-alliance .hero-sub {
@@ -134,7 +135,7 @@ body.wf-alliance .hero-sub {
 
 body.wf-alliance .auth-top-right {
   position: static;
-  justify-content: flex-end;
+  justify-content: center;
   margin: 0;
   min-width: 0;
   top: auto;
