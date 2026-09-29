@@ -8,12 +8,7 @@ async function mountAuthHeaderWidget() {
 
   function firstMemberNavAnchor() {
     if (!nav) return null;
-    return (
-      nav.querySelector('a[href="/debuff-uptime.html"]') ||
-      nav.querySelector('a[href="/profile.html"]') ||
-      nav.querySelector('a[href="/p3-preparation.html"]') ||
-      nav.querySelector('a[href="/admin.html"]')
-    );
+    return nav.querySelector('a[href="/profile.html"]') || nav.querySelector('a[href="/admin.html"]');
   }
 
   function ensureNavMemberSeparator() {
@@ -37,11 +32,46 @@ async function mountAuthHeaderWidget() {
     else sep.classList.add("nav-auth-hidden");
   }
 
-  function removePhase2NavLink() {
+  function removeRetiredNavLinks() {
     if (!nav) return;
-    for (const link of nav.querySelectorAll('a[href="/p2-preparation.html"], a[href="/nether-vortex.html"]')) {
+    for (const link of nav.querySelectorAll(
+      'a[href="/p2-preparation.html"], a[href="/nether-vortex.html"], a[href="/p3-preparation.html"], a[href="/heart-of-darkness.html"], a[href="/debuff-uptime.html"], a[href="/voting.html"]'
+    )) {
       link.remove();
     }
+    for (const link of nav.querySelectorAll('a[href="/home.html"]')) {
+      link.href = "/chapter-1";
+      link.textContent = "Chapter 1";
+      link.title = "Chapter 1 · From Strangers to Community";
+      link.classList.remove("nav-current");
+      link.removeAttribute("aria-current");
+    }
+  }
+
+  function ensureChapterOneNavLink() {
+    if (!nav) return null;
+    let chapterLink =
+      nav.querySelector('a[href="/chapter-1"]') || nav.querySelector('a[href="/chapter-one.html"]');
+    if (!chapterLink) {
+      chapterLink = document.createElement("a");
+      chapterLink.href = "/chapter-1";
+      chapterLink.textContent = "Chapter 1";
+      chapterLink.title = "Chapter 1 · From Strangers to Community";
+      const joinLink = nav.querySelector('a[href="/join.html"]') || nav.querySelector('a[href="/"]');
+      if (joinLink && joinLink.nextSibling) nav.insertBefore(chapterLink, joinLink.nextSibling);
+      else if (joinLink) nav.appendChild(chapterLink);
+      else nav.insertBefore(chapterLink, nav.firstChild);
+    }
+    const onChapter =
+      currentPath === "/chapter-1" || currentPath === "/chapter-1/" || currentPath === "/chapter-one.html";
+    if (onChapter) {
+      chapterLink.classList.add("nav-current");
+      chapterLink.setAttribute("aria-current", "page");
+    } else {
+      chapterLink.classList.remove("nav-current");
+      chapterLink.removeAttribute("aria-current");
+    }
+    return chapterLink;
   }
 
   function ensureForeverNavLink() {
@@ -81,38 +111,6 @@ async function mountAuthHeaderWidget() {
     }
   }
 
-  function ensurePhase3NavLink() {
-    if (!nav) return null;
-    let phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
-    if (!phase3Link) {
-      phase3Link = document.createElement("a");
-      phase3Link.href = "/p3-preparation.html";
-      phase3Link.textContent = "Phase 3";
-      phase3Link.classList.add("nav-auth-member");
-      const adminLink = nav.querySelector('a[href="/admin.html"]');
-      if (adminLink) nav.insertBefore(phase3Link, adminLink);
-      else nav.appendChild(phase3Link);
-    }
-    phase3Link.classList.add("nav-auth-hidden");
-    return phase3Link;
-  }
-
-  function updatePhase3NavState(isAuthenticated) {
-    const phase3Link = ensurePhase3NavLink();
-    if (!phase3Link) return;
-    const onPhase3 =
-      currentPath === "/p3-preparation.html" || currentPath === "/heart-of-darkness.html";
-    if (onPhase3 && isAuthenticated) {
-      phase3Link.classList.add("nav-current");
-      phase3Link.setAttribute("aria-current", "page");
-    } else {
-      phase3Link.classList.remove("nav-current");
-      phase3Link.removeAttribute("aria-current");
-    }
-    if (isAuthenticated) phase3Link.classList.remove("nav-auth-hidden");
-    else phase3Link.classList.add("nav-auth-hidden");
-  }
-
   function ensureProfileNavLink() {
     if (!nav) return null;
     let profileLink = nav.querySelector('a[href="/profile.html"]');
@@ -121,11 +119,8 @@ async function mountAuthHeaderWidget() {
       profileLink.href = "/profile.html";
       profileLink.textContent = "Profile";
       profileLink.classList.add("nav-auth-member");
-      const phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
       const adminLink = nav.querySelector('a[href="/admin.html"]');
-      // Insert before Phase 3 / Admin so the order reads Hall of Fame · Profile · Phase 3 · Admin.
-      const anchor = phase3Link || adminLink;
-      if (anchor) nav.insertBefore(profileLink, anchor);
+      if (adminLink) nav.insertBefore(profileLink, adminLink);
       else nav.appendChild(profileLink);
     }
     profileLink.classList.add("nav-auth-hidden");
@@ -174,60 +169,14 @@ async function mountAuthHeaderWidget() {
     else adminLink.classList.add("nav-auth-hidden");
   }
 
-  function ensureDebuffUptimeNavLink() {
-    if (!nav) return null;
-    let debuffLink = nav.querySelector('a[href="/debuff-uptime.html"]');
-    if (!debuffLink) {
-      debuffLink = document.createElement("a");
-      debuffLink.href = "/debuff-uptime.html";
-      debuffLink.textContent = "Debuffs";
-      debuffLink.title = "Debuff uptime (Warcraft Logs)";
-      debuffLink.classList.add("nav-auth-member");
-      const profileLink = nav.querySelector('a[href="/profile.html"]');
-      const phase3Link = nav.querySelector('a[href="/p3-preparation.html"]');
-      const adminLink = nav.querySelector('a[href="/admin.html"]');
-      const anchor = profileLink || phase3Link || adminLink;
-      if (anchor) nav.insertBefore(debuffLink, anchor);
-      else nav.appendChild(debuffLink);
-    }
-    debuffLink.textContent = "Debuffs";
-    debuffLink.title = "Debuff uptime (Warcraft Logs)";
-    debuffLink.classList.add("nav-auth-hidden");
-    return debuffLink;
-  }
-
-  function updateDebuffUptimeNavState(isRaidLead) {
-    const debuffLink = ensureDebuffUptimeNavLink();
-    if (!debuffLink) return;
-    if (currentPath === "/debuff-uptime.html" && isRaidLead) {
-      debuffLink.classList.add("nav-current");
-      debuffLink.setAttribute("aria-current", "page");
-    } else {
-      debuffLink.classList.remove("nav-current");
-      debuffLink.removeAttribute("aria-current");
-    }
-    if (isRaidLead) debuffLink.classList.remove("nav-auth-hidden");
-    else debuffLink.classList.add("nav-auth-hidden");
-  }
-
-  function updateMemberNavChrome({ showProfile, showPhase3, showDebuffs, showAdmin }) {
-    updateNavMemberSeparatorVisible(Boolean(showProfile || showPhase3 || showDebuffs || showAdmin));
-  }
-
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
-    removePhase2NavLink();
+    removeRetiredNavLinks();
+    ensureChapterOneNavLink();
     updateForeverNavState();
-    updatePhase3NavState(false);
     updateAdminNavState(false);
     updateProfileNavState(false);
-    updateDebuffUptimeNavState(false);
-    updateMemberNavChrome({
-      showProfile: false,
-      showPhase3: false,
-      showDebuffs: false,
-      showAdmin: false,
-    });
+    updateNavMemberSeparatorVisible(false);
   };
 
   try {
@@ -268,19 +217,12 @@ async function mountAuthHeaderWidget() {
       window.location.reload();
     });
     const showAdmin = Boolean(payload?.isAdmin);
-    const showDebuffs = Boolean(payload?.canAccessDebuffUptime ?? payload?.isRaidLead);
-    removePhase2NavLink();
+    removeRetiredNavLinks();
+    ensureChapterOneNavLink();
     updateForeverNavState();
-    updatePhase3NavState(true);
     updateAdminNavState(showAdmin);
     updateProfileNavState(true);
-    updateDebuffUptimeNavState(showDebuffs);
-    updateMemberNavChrome({
-      showProfile: true,
-      showPhase3: true,
-      showDebuffs,
-      showAdmin,
-    });
+    updateNavMemberSeparatorVisible(true);
   } catch {
     renderLoggedOut();
   }

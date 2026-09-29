@@ -101,7 +101,7 @@ body.wf-alliance .hero {
 
 body.wf-alliance .hero-brand {
   max-width: min(100%, 1120px);
-  aspect-ratio: 2 / 1;
+  aspect-ratio: 16 / 9;
 }
 
 body.wf-alliance .hero-banner {

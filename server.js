@@ -131,6 +131,11 @@ import {
   resolvedTrackedRaidForFight,
 } from "./lib/compute/raid-calendar-entries.mjs";
 import {
+  CHAPTER_ONE_BADGE_IDS,
+  CHAPTER_ONE_MILESTONES,
+  buildChapterOneRecap,
+} from "./lib/compute/chapter-one-recap.mjs";
+import {
   CONSUMABLES_LAST6_BADGE_CATALOG,
   CONSUMABLES_LAST6_LEADERBOARD_RAIDS,
   consumablesLeaderboardBadgeIdsForLinkedKeys,
@@ -226,6 +231,7 @@ import {
   backupItemNeedsDb,
   badgeStateReplaceForUser,
   badgeStateGetByUserId,
+  badgeStateListEarnedByBadgeIds,
   resolveOwnerForCharacterName as identityResolveOwnerForCharacterName,
   firstClearParticipantsReplace,
   firstClearParticipantsGet,
@@ -242,12 +248,14 @@ import {
   raidAppearancesDistinctReportCount,
   raidAppearancesDistinctUserCount,
   raidAppearancesUserIdsInDateRange,
+  raidAppearancesUserIdsByReportCodes,
   raidAppearancesListReports,
   raidAppearancesRecent,
   raidAppearancesReportStartedAtMs,
   parseSummaryReplaceAll,
   parseSummaryGetByUserId,
   parseSummaryGetByMainCharacterIds,
+  parseSummaryListByUser,
   latestRaidParseSummaryReplaceAll,
   latestRaidParseSummaryGetAll,
   lootAwardsReplaceAll,
@@ -358,7 +366,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260901plb-p3-marks-rankings-v5";
+const API_BUILD_ID = "20260929plb-ch1-badge-size-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -468,20 +476,42 @@ app.get("/admin.html", async (req, res) => {
 
 app.get("/p3-preparation.html", (req, res) => {
   const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/p3-preparation.html")}`);
+  if (session?.user?.id && isP2Editor(session)) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.sendFile(path.join(publicDir, "p3-preparation.html"));
   }
-  res.setHeader("Cache-Control", "no-store, max-age=0");
-  res.sendFile(path.join(publicDir, "p3-preparation.html"));
+  return res.redirect(302, "/chapter-1");
 });
 
 app.get("/heart-of-darkness.html", (req, res) => {
   const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/heart-of-darkness.html")}`);
+  if (session?.user?.id && isP2Editor(session)) {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.sendFile(path.join(publicDir, "p3-preparation.html"));
   }
-  res.setHeader("Cache-Control", "no-store, max-age=0");
-  res.sendFile(path.join(publicDir, "p3-preparation.html"));
+  return res.redirect(302, "/chapter-1");
+});
+
+app.get("/voting.html", (_req, res) => {
+  return res.redirect(302, "/chapter-1#hall-of-fame");
+});
+
+app.get(["/chapter-1", "/chapter-1/", "/chapter-one.html"], async (_req, res) => {
+  try {
+    const raw = await readFile(path.join(publicDir, "chapter-one.html"), "utf8");
+    const html = htmlWithApiBuildAssetVersions(raw, [
+      "/styles.min.css",
+      "/wow-forever-squad.css",
+      "/chapter-one.css",
+      "/chapter-one.js",
+      "/auth-ui.js",
+    ]);
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.type("html").send(html);
+  } catch (error) {
+    console.error("Failed to serve Chapter 1 page:", error?.message || error);
+    return res.status(500).send("Failed to load Chapter 1.");
+  }
 });
 
 function sendWowForeverSquadPage(req, res) {
@@ -8448,6 +8478,9 @@ function publicSnapshotKeyFromRequest(req) {
   if (path === "/api/leaderboard") {
     params.set("_leaderboardBundleVersion", "v6-bt-first-illidan-kill");
   }
+  if (path === "/api/chapter-one") {
+    params.set("_chapterOneVersion", "v10-milestone-core-attendees");
+  }
   if (path === "/api/rankings") {
     params.set("_rankingsBoardsVersion", "v5-all-tbc-flasks");
   }
@@ -8482,6 +8515,7 @@ function shouldUsePublicSnapshot(req) {
   if (fullPath === "/api/health") return false;
   if (fullPath === "/api/raid-helper/future-events") return true;
   if (fullPath === "/api/raid-helper/events-kpi") return true;
+  if (fullPath === "/api/chapter-one") return true;
   if (fullPath === "/api/voting/hall-of-fame") return false;
   if (fullPath === "/api/leaderboard") return true;
   if (fullPath === "/api/rankings") return true;
@@ -10077,10 +10111,6 @@ app.get(["/roster", "/roster/"], (_req, res) => {
   res.sendFile(path.join(publicDir, "roster.html"));
 });
 
-app.get("/voting.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "voting.html"));
-});
-
 app.get("/p2-preparation.html", (req, res) => {
   const session = getSessionFromRequest(req);
   if (!session?.user?.id) {
@@ -10096,7 +10126,7 @@ app.get("/debuff-uptime.html", (req, res) => {
   }
   if (!canAccessDebuffUptime(session)) {
     return res.status(403).type("html").send(
-      `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Raid Lead only</title><link rel="stylesheet" href="/styles.min.css"/></head><body class="framework-bg-soft"><div class="app-wrap" style="padding:2rem"><p class="card" style="padding:1.25rem">Debuff Uptime is available to logged-in members with the <strong>Raid Lead</strong> guild role.</p><p><a href="/home.html">Back to Raid Performance</a></p></div></body></html>`
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Raid Lead only</title><link rel="stylesheet" href="/styles.min.css"/></head><body class="framework-bg-soft"><div class="app-wrap" style="padding:2rem"><p class="card" style="padding:1.25rem">Debuff Uptime is available to logged-in members with the <strong>Raid Lead</strong> guild role.</p><p><a href="/chapter-1">Back to Chapter 1</a></p></div></body></html>`
     );
   }
   res.sendFile(path.join(publicDir, "debuff-uptime.html"));
@@ -10112,22 +10142,6 @@ app.get("/nether-vortex.html", (req, res) => {
     return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/nether-vortex.html")}`);
   }
   res.sendFile(path.join(publicDir, "p2-preparation.html"));
-});
-
-app.get("/p3-preparation.html", (req, res) => {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/p3-preparation.html")}`);
-  }
-  res.sendFile(path.join(publicDir, "p3-preparation.html"));
-});
-
-app.get("/heart-of-darkness.html", (req, res) => {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/heart-of-darkness.html")}`);
-  }
-  res.sendFile(path.join(publicDir, "p3-preparation.html"));
 });
 
 app.get("/privacy.html", (_req, res) => {
@@ -11372,6 +11386,7 @@ app.post("/api/admin/public-snapshot/sync", async (req, res) => {
       `/api/wcl/guild/${guildId}/loot-received?limit=40`,
       `/api/wcl/guild/${guildId}/first-clear-participants?limit=150`,
       "/api/voting/hall-of-fame",
+      "/api/chapter-one",
     ];
     const results = [];
     for (const rel of syncPaths) {
@@ -18793,6 +18808,188 @@ app.get("/api/voting/hall-of-fame", async (_req, res) => {
     return res.json({ ok: true, ...payload, players: playersWithQuotes });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to load hall of fame" });
+  }
+});
+
+function snapshotCalendarEntriesForGuild(guildId) {
+  const prefix = `/api/wcl/guild/${guildId}/recent-raids-calendar`;
+  const merged = new Map();
+  for (const [key, hit] of Object.entries(publicDataSnapshotState.byKey || {})) {
+    if (!String(key).startsWith(prefix)) continue;
+    const entries = hit?.payload?.entries;
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const id = [
+        entry?.calendarDay || "",
+        entry?.raidName || "",
+        entry?.reportCode || "",
+        entry?.startTime || "",
+      ].join("|");
+      if (!merged.has(id)) merged.set(id, entry);
+    }
+  }
+  return [...merged.values()];
+}
+
+async function loadChapterOneRecapPayload(guildId) {
+  await ensureGargulLootHistoryStore();
+  await ensurePublicDataSnapshotStore();
+  let calendarEntries = snapshotCalendarEntriesForGuild(guildId);
+  if (!calendarEntries.length) {
+    const snapshotCalendar =
+      publicDataSnapshotState.byKey?.[`/api/wcl/guild/${guildId}/recent-raids-calendar?limit=60`]?.payload?.entries;
+    if (Array.isArray(snapshotCalendar) && snapshotCalendar.length) {
+      calendarEntries = snapshotCalendar;
+    }
+  }
+  if (!calendarEntries.length) {
+    try {
+      const limit = wclMaxGuildReportsLimit();
+      const reports = await getGuildReportsForHomeDashboard(guildId, limit, { relaxKaraSchedule: true });
+      const selectedReportCodes = Array.from(
+        new Set(
+          (gargulLootState?.selectedReportCodes || [])
+            .map((x) => String(x || "").trim())
+            .filter(Boolean)
+        )
+      );
+      const selectedSet = selectedReportCodes.length ? new Set(selectedReportCodes) : null;
+      const selectedRankByCode = new Map(selectedReportCodes.map((code, idx) => [code, idx]));
+      const calendarReports = wclReportsForHomeDashboard(reports, selectedSet);
+      calendarEntries = buildRecentRaidCalendarEntries(calendarReports, { selectedRankByCode });
+    } catch (error) {
+      console.warn("[chapter-one] calendar failed:", error?.message || error);
+    }
+  }
+
+  const allCodes = [
+    ...new Set(
+      [
+        ...calendarEntries.flatMap((entry) => {
+          const codes = Array.isArray(entry?.reportCodes) ? entry.reportCodes : [];
+          return [...codes, entry?.reportCode];
+        }),
+        ...CHAPTER_ONE_MILESTONES.flatMap((mile) =>
+          Array.isArray(mile?.reportCodes) ? mile.reportCodes : []
+        ),
+      ]
+        .map((c) => String(c || "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  let appearancesByReport = new Map();
+  try {
+    appearancesByReport = raidAppearancesUserIdsByReportCodes(allCodes);
+  } catch (error) {
+    console.warn("[chapter-one] appearances failed:", error?.message || error);
+  }
+
+  const classByUser = new Map();
+  const nameByUser = new Map();
+  try {
+    for (const character of identityCharactersListAll()) {
+      const uid = Number(character?.userId);
+      if (!Number.isInteger(uid) || uid <= 0) continue;
+      if (character?.isMain || !classByUser.has(uid)) {
+        if (character?.wowClass) classByUser.set(uid, character.wowClass);
+        if (character?.characterName) nameByUser.set(uid, character.characterName);
+      }
+    }
+  } catch (error) {
+    console.warn("[chapter-one] characters failed:", error?.message || error);
+  }
+
+  const users = identityUserListAll().map((user) => ({
+    ...user,
+    wowClass: classByUser.get(Number(user.id)) || null,
+    characterName: nameByUser.get(Number(user.id)) || null,
+  }));
+
+  const parseRowsByUser = new Map();
+  try {
+    for (const row of parseSummaryListByUser()) {
+      const uid = Number(row?.userId);
+      if (!Number.isInteger(uid) || uid <= 0) continue;
+      if (!parseRowsByUser.has(uid)) parseRowsByUser.set(uid, []);
+      parseRowsByUser.get(uid).push(row);
+    }
+  } catch (error) {
+    console.warn("[chapter-one] parses failed:", error?.message || error);
+  }
+
+  let badgesByUser = new Map();
+  try {
+    badgesByUser = badgeStateListEarnedByBadgeIds(CHAPTER_ONE_BADGE_IDS);
+  } catch (error) {
+    console.warn("[chapter-one] badges failed:", error?.message || error);
+  }
+
+  let hallOfFame = { players: [] };
+  try {
+    const hofRows = await getHallOfFameForGuild(guildId, 200);
+    const aggregated = buildHallOfFameApiPayload(hofRows, {
+      resolvePlayerKey: playerKeyForHallOfFameRow,
+    });
+    await ensureHofNotesStore();
+    await reloadHofNotesStateIfStale();
+    hallOfFame = {
+      ...aggregated,
+      players: (aggregated.players || []).map((player) => {
+        const { note } = lookupHofNoteForPlayer({
+          winnerName: player?.winnerName,
+          player: player?.player,
+        });
+        return {
+          ...player,
+          customQuote: String(note?.quote || player?.customQuote || "").trim(),
+        };
+      }),
+    };
+  } catch (error) {
+    console.warn("[chapter-one] hall of fame failed:", error?.message || error);
+  }
+
+  let firstClears = {};
+  try {
+    firstClears = firstClearParticipantsGet({
+      raidNames: ["Karazhan", "Gruul's Lair", "Magtheridon's Lair"],
+    });
+  } catch (error) {
+    console.warn("[chapter-one] first clears failed:", error?.message || error);
+  }
+
+  const gargulRows = Array.isArray(gargulLootState?.entries) ? gargulLootState.entries : [];
+  const totalItemsDistributed = gargulRows.filter(
+    (row) => row && (row.itemID || row.itemLink) && row.received !== false
+  ).length;
+
+  return buildChapterOneRecap({
+    calendarEntries,
+    appearancesByReport,
+    users,
+    parseRowsByUser,
+    badgesByUser,
+    hallOfFame,
+    firstClears,
+    kpi: { totalItemsDistributed },
+  });
+}
+
+app.get("/api/chapter-one", async (req, res) => {
+  const guildId = Number(req.query.guildId || votingGuildId || 817080);
+  if (!Number.isInteger(guildId) || guildId <= 0) {
+    return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
+  }
+  try {
+    const payload = await getOrRefreshCachedPayload(`chapter-one-v10-${guildId}`, {
+      ttlMs: 15 * 60 * 1000,
+      maxStaleMs: 60 * 60 * 1000,
+      loader: () => loadChapterOneRecapPayload(guildId),
+    });
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return res.json(payload);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load Chapter 1 recap" });
   }
 });
 
