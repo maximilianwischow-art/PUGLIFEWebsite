@@ -177,6 +177,35 @@ assert.equal(
   false
 );
 
+// Mass join on a first-clear night is suppressed (players already on the clear panel).
+const clearNightJoinRecap = buildChapterOneRecap({
+  calendarEntries: [
+    {
+      calendarDay: "2026-04-16",
+      startTime: 10,
+      raidName: "Gruul's Lair",
+      title: "gruul clear",
+      reportCode: "gruulClear",
+      reportCodes: ["gruulClear"],
+      bossesKilled: 2,
+      bossesTotal: 2,
+      isFullClear: true,
+      clearDurationMs: 3_600_000,
+    },
+  ],
+  appearancesByReport: { gruulClear: [1, 3] },
+  users: [
+    { id: 1, displayName: "Highbullet", wowClass: "Hunter", guildRole: "Core" },
+    { id: 3, displayName: "Mooman", wowClass: "Warrior", guildRole: "Raidlead" },
+  ],
+  parseRowsByUser: {},
+  badgesByUser: {},
+  hallOfFame: { players: [] },
+  kpi: {},
+});
+assert.equal(clearNightJoinRecap.timeline.some((b) => b.id === "gruul-first-clear"), true);
+assert.equal(clearNightJoinRecap.timeline.some((b) => b.kind === "core-join"), false);
+
 assert.equal(recap.hallOfFame.latestChampion.winnerName, "Highbullet");
 assert.equal(recap.raids.find((r) => r.raidName === "Black Temple").nights, 2);
 assert.equal(recap.raids.find((r) => r.raidName === "Black Temple").fastestClearHours, 3);

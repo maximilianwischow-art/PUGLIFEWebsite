@@ -366,7 +366,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260929plb-ch1-badge-size-v1";
+const API_BUILD_ID = "20260929plb-ch1-no-join-on-clear-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -8479,7 +8479,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_leaderboardBundleVersion", "v6-bt-first-illidan-kill");
   }
   if (path === "/api/chapter-one") {
-    params.set("_chapterOneVersion", "v10-milestone-core-attendees");
+    params.set("_chapterOneVersion", "v11-no-join-on-clear-nights");
   }
   if (path === "/api/rankings") {
     params.set("_rankingsBoardsVersion", "v5-all-tbc-flasks");
@@ -18981,7 +18981,7 @@ app.get("/api/chapter-one", async (req, res) => {
     return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
   }
   try {
-    const payload = await getOrRefreshCachedPayload(`chapter-one-v10-${guildId}`, {
+    const payload = await getOrRefreshCachedPayload(`chapter-one-v11-${guildId}`, {
       ttlMs: 15 * 60 * 1000,
       maxStaleMs: 60 * 60 * 1000,
       loader: () => loadChapterOneRecapPayload(guildId),
