@@ -58,6 +58,31 @@ html.ch1-scroll-snap {
   transform: scale(1.02);
 }
 
+/* Image already carries the Chapter II title — park CTA below the banner art. */
+#ch1-chapter-two {
+  align-items: flex-end;
+  padding-top: clamp(72px, 12vh, 120px);
+  padding-bottom: clamp(56px, 12vh, 112px);
+}
+
+#ch1-chapter-two .ch1-panel-shade {
+  background:
+    linear-gradient(180deg, rgba(6, 11, 17, 0.12) 0%, rgba(6, 11, 17, 0.22) 42%, rgba(6, 11, 17, 0.78) 100%),
+    radial-gradient(ellipse at 50% 28%, rgba(232, 198, 117, 0.06), transparent 50%);
+}
+
+#ch1-chapter-two .ch1-panel-inner {
+  width: min(100%, 640px);
+}
+
+#ch1-chapter-two .ch1-panel-hero {
+  gap: 16px;
+}
+
+#ch1-chapter-two .ch1-panel-lede {
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.85);
+}
+
 .ch1-panel.is-active .ch1-panel-bg {
   transform: scale(1);
 }

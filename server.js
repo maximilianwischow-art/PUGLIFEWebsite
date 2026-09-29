@@ -366,7 +366,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260929plb-ch1-forever-hero-hires-v1";
+const API_BUILD_ID = "20260929plb-ch1-chapter-two-no-overlap-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");

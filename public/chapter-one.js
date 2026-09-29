@@ -298,8 +298,6 @@
       artHeight: 941,
       centered: true,
       content: `<div class="ch1-panel-hero">
-        <p class="ch1-panel-kicker">Chapter 2</p>
-        <h2 class="ch1-panel-title ch1-panel-title--center">The Alliance journey begins</h2>
         <p class="ch1-panel-lede">World of Warcraft Forever is live. Pick your race, class, and spec — and walk into the tavern.</p>
         <div class="ch1-panel-actions">
           <a class="ch1-pill ch1-pill--gold" href="/wow-forever">Chapter 2 starts on Forever</a>
