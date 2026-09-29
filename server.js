@@ -366,7 +366,7 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 
 /** Bumped each release; exposed on `/api/health` so production deploys are easy to verify. */
-const API_BUILD_ID = "20260929plb-ch1-no-join-on-clear-v1";
+const API_BUILD_ID = "20260929plb-ch1-core-role-refresh-v1";
 
 function htmlWithApiBuildAssetVersions(html, assetPaths = []) {
   let out = String(html || "");
@@ -8479,7 +8479,7 @@ function publicSnapshotKeyFromRequest(req) {
     params.set("_leaderboardBundleVersion", "v6-bt-first-illidan-kill");
   }
   if (path === "/api/chapter-one") {
-    params.set("_chapterOneVersion", "v11-no-join-on-clear-nights");
+    params.set("_chapterOneVersion", "v12-core-role-refresh");
   }
   if (path === "/api/rankings") {
     params.set("_rankingsBoardsVersion", "v5-all-tbc-flasks");
@@ -8550,6 +8550,40 @@ async function invalidatePublicIdentityVisibilitySnapshots() {
     .then(() => persistPublicDataSnapshotStore())
     .catch((error) => console.error("[public-snapshot] invalidate failed:", error?.message || error));
   await publicDataSnapshotWriteChain;
+}
+
+/** Drop Chapter 1 public snapshots + response cache so Core roster role edits show up. */
+async function invalidateChapterOneCaches() {
+  await ensurePublicDataSnapshotStore();
+  let snapshotChanged = false;
+  for (const key of Object.keys(publicDataSnapshotState.byKey || {})) {
+    const keyPath = String(key || "").split("?")[0];
+    if (keyPath !== "/api/chapter-one") continue;
+    delete publicDataSnapshotState.byKey[key];
+    snapshotChanged = true;
+  }
+  if (snapshotChanged) {
+    publicDataSnapshotState.updatedAt = Date.now();
+    publicDataSnapshotWriteChain = publicDataSnapshotWriteChain
+      .then(() => persistPublicDataSnapshotStore())
+      .catch((error) => console.error("[public-snapshot] chapter-one invalidate failed:", error?.message || error));
+    await publicDataSnapshotWriteChain;
+  }
+  for (const key of [...apiResponseCache.keys()]) {
+    if (String(key).startsWith("chapter-one-")) apiResponseCache.delete(key);
+  }
+  try {
+    const files = await readdir(apiCacheDir);
+    await Promise.all(
+      files
+        .filter((name) => String(name).startsWith("chapter-one-") && String(name).endsWith(".json"))
+        .map((name) => unlink(path.join(apiCacheDir, name)).catch(() => {}))
+    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("[chapter-one] cache file invalidate failed:", error?.message || error);
+    }
+  }
 }
 
 async function publicFutureEventSnapshotFallback(eventId) {
@@ -15113,6 +15147,7 @@ app.put("/api/admin/identity/accounts/:userId", async (req, res) => {
       source: "admin:identity-table",
     });
     await exportIdentityLinksToRhWclStore();
+    await invalidateChapterOneCaches();
     return res.json({
       ok: true,
       user: updatedUser,
@@ -18318,6 +18353,7 @@ app.put("/api/admin/rh-wcl-links", async (req, res) => {
       source: "admin:account-assignment:replace",
       requireDiscordId: true,
     });
+    await invalidateChapterOneCaches();
     return res.json({ ok: true, saved: links.length, links });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save Raid Helper ↔ WCL links" });
@@ -18353,6 +18389,7 @@ app.put("/api/admin/rh-wcl-links/row", async (req, res) => {
       requireDiscordId: true,
     });
     const links = await exportIdentityLinksToRhWclStore();
+    await invalidateChapterOneCaches();
     return res.json({ ok: true, links });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error?.message || "Failed to save row" });
@@ -18981,11 +19018,16 @@ app.get("/api/chapter-one", async (req, res) => {
     return res.status(400).json({ ok: false, error: "guildId must be a positive integer" });
   }
   try {
-    const payload = await getOrRefreshCachedPayload(`chapter-one-v11-${guildId}`, {
-      ttlMs: 15 * 60 * 1000,
-      maxStaleMs: 60 * 60 * 1000,
-      loader: () => loadChapterOneRecapPayload(guildId),
-    });
+    const cacheKey = `chapter-one-v12-${guildId}`;
+    const forceRefresh =
+      String(req.query?.live || "") === "1" || String(req.query?.snapshot_refresh || "") === "1";
+    const payload = forceRefresh
+      ? await forceRefreshCachedPayload(cacheKey, () => loadChapterOneRecapPayload(guildId))
+      : await getOrRefreshCachedPayload(cacheKey, {
+          ttlMs: 15 * 60 * 1000,
+          maxStaleMs: 60 * 60 * 1000,
+          loader: () => loadChapterOneRecapPayload(guildId),
+        });
     res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     return res.json(payload);
   } catch (error) {
