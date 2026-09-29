@@ -52,6 +52,12 @@ html.ch1-scroll-snap {
   opacity: 0.92;
 }
 
+/* Forever hero crest sits on the top edge — keep it in frame when cover crops. */
+#ch1-chapter-two .ch1-panel-bg {
+  object-position: center top;
+  transform: scale(1.02);
+}
+
 .ch1-panel.is-active .ch1-panel-bg {
   transform: scale(1);
 }
