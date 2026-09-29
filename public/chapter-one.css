@@ -250,6 +250,7 @@ html.ch1-scroll-snap {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   text-decoration: none;
+  cursor: pointer;
   transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
 }
 

@@ -160,6 +160,7 @@
         <h2 class="ch1-panel-display">${esc(chapter.title || "From Strangers to Community")}</h2>
         <p class="ch1-panel-lede">${esc(chapter.closeout || "")}</p>
         <div class="ch1-panel-actions">
+          <button type="button" class="ch1-pill ch1-pill--gold" data-ch1-scroll-timeline>Scroll through the timeline</button>
           <a class="ch1-pill" href="/auth/discord/login?next=${encodeURIComponent("/chapter-1")}">Login</a>
           <a class="ch1-pill" href="/join.html">Join Us</a>
         </div>
@@ -357,6 +358,11 @@
 
     initScrollPanels();
     renderRaiderRows();
+    main.querySelector("[data-ch1-scroll-timeline]")?.addEventListener("click", () => {
+      const next = document.getElementById("ch1-intro")?.nextElementSibling;
+      if (!(next instanceof HTMLElement)) return;
+      next.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     document.getElementById("ch1RaiderTable")?.addEventListener("click", (event) => {
       const th = event.target.closest("th[data-sort]");
       if (!th) return;
