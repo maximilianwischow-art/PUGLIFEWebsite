@@ -8,7 +8,7 @@ function escJoin(v) {
 
 const JOIN_PAGE_NEXT = "/join.html#join-future-events";
 const JOIN_DISCORD_INVITE = "https://discord.gg/TBnt5f8DFc";
-const JOIN_EVENT_IMG_VER = "20260519join-ssc-hero";
+const JOIN_EVENT_IMG_VER = "20261113join-t6";
 const JOIN_GUILD_ID = 817080;
 const JOIN_DISCORD_CLICKED_KEY = "plb_join_discord_clicked_v1";
 const JOIN_CLASS_LABELS = ["Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Shaman", "Mage", "Warlock", "Druid"];
@@ -420,7 +420,8 @@ function joinVersionedRaidImage(path) {
 }
 
 function joinDetectEventRaids(event) {
-  const text = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
+  const title = String(event?.title || "").toLowerCase();
+  const text = `${title} ${event?.description || ""}`.toLowerCase();
   const matches = [];
   const v = (p) => joinVersionedRaidImage(p);
   if (text.includes("karazhan") || /\bkara\b/.test(text)) {
@@ -448,7 +449,23 @@ function joinDetectEventRaids(event) {
   if (text.includes("tempest keep") || /\btk\b/.test(text) || text.includes("the eye")) {
     matches.push({ id: "tk", image: v("/raid-images/pb-header-tk.png"), squareImage: v("/raid-images/tk.png"), rosterCap: 25 });
   }
-  if (text.includes("zul'aman") || text.includes("zul aman") || /\bza\b/.test(text)) {
+  if (text.includes("black temple") || /\bbt\b/.test(title) || /\billi\b/.test(title) || /\billidan\b/.test(title)) {
+    matches.push({
+      id: "bt",
+      image: v("/raid-images/pb-header-black-temple.png"),
+      squareImage: v("/raid-images/black-temple.png"),
+      rosterCap: 25,
+    });
+  }
+  if (text.includes("hyjal") || /\bmh\b/.test(title)) {
+    matches.push({
+      id: "hyjal",
+      image: v("/raid-images/pb-header-hyjal.png"),
+      squareImage: v("/raid-images/hyjal.png"),
+      rosterCap: 25,
+    });
+  }
+  if (text.includes("zul'aman") || text.includes("zul aman") || /\bza\b/.test(title)) {
     matches.push({ id: "za", image: v("/raid-images/pb-header-kara.png"), squareImage: v("/raid-images/kara.png"), rosterCap: 10 });
   }
   if (!matches.length) {
@@ -477,7 +494,7 @@ function joinUpcomingRaidHelperEvents(events, nowSec = Math.floor(Date.now() / 1
     .sort((a, b) => Number(a.startTime) - Number(b.startTime));
 }
 
-/** Next hero capsule: earliest upcoming **25-player** raid (Gruul/Mag/SSC/TK/…); avoids Kara/ZA 10-player rows when a Thu raid exists. */
+/** Next hero capsule: earliest upcoming 25-player raid (Hyjal/BT/SSC/TK/…). Kara and Zul'Aman stay off it when a Thursday raid exists. */
 function joinPickHeroNextRaidEvent(events) {
   const rows = joinUpcomingRaidHelperEvents(events);
   if (!rows.length) return null;
