@@ -547,6 +547,16 @@ app.get(
   sendGuildLeaderboardPage
 );
 
+function sendProfessionLeaderboardPage(_req, res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "profession-leaderboard.html"));
+}
+
+app.get(
+  ["/profession-leaderboard", "/profession-leaderboard/", "/profession-leaderboard.html"],
+  sendProfessionLeaderboardPage
+);
+
 /** Legacy public HTML must redirect before `express.static`, or the files on disk win. */
 app.get(
   [
@@ -16830,7 +16840,7 @@ async function getCachedForeverGuildRosterBundle({ forceRefresh = false } = {}) 
 
 /**
  * GET /api/wow-forever/guild-leaderboard
- * Live Bulwark (Forever EU) roster with race/class/level + Discord Forever-pick / profile link status.
+ * Live Bulwark (Forever EU) roster with race/class/level, primary professions, and Discord link status.
  */
 app.get("/api/wow-forever/guild-leaderboard", async (req, res) => {
   try {

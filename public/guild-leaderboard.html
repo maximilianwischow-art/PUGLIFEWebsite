@@ -21,7 +21,7 @@
     <link rel="stylesheet" href="/styles.min.css?v=20261116plb-alliance-glb-v9" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
     <link rel="stylesheet" href="/wow-forever-squad.css?v=20261116plb-alliance-glb-v9" />
-    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261116plb-alliance-glb-v9" />
+    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261116plb-prof-icons-v1" />
   </head>
   <body class="framework-bg-vivid wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -57,12 +57,16 @@
       </header>
 
       <main class="container glb-page">
+        <nav class="glb-subnav" aria-label="Guild leaderboards">
+          <a href="/guild-leaderboard" class="is-active" aria-current="page">Guild Leaderboard</a>
+          <a href="/profession-leaderboard">Profession Leaderboard</a>
+        </nav>
         <section class="card surface-elevated glb-hero-card" aria-labelledby="glb-title">
           <div class="glb-hero-copy">
             <p class="wf-kicker">World of Warcraft: Forever</p>
             <h2 id="glb-title" class="section-title">Guild Leaderboard</h2>
             <p class="glb-lede muted">
-              Live leveling roster from Blizzard for &lt;Bulwark&gt; on EU Normal — level, race, class, guild rank, and Discord link status.
+              Live leveling roster from Blizzard for &lt;Bulwark&gt; on EU Normal — level, race, class, primary professions, guild rank, and Discord link status.
             </p>
           </div>
           <div class="glb-stats" id="glbStats" aria-live="polite"></div>
@@ -110,6 +114,12 @@
                   <th scope="col">
                     <button type="button" class="glb-sort" data-sort="className">Class</button>
                   </th>
+                  <th scope="col">
+                    <button type="button" class="glb-sort" data-sort="profession1">1st profession</button>
+                  </th>
+                  <th scope="col">
+                    <button type="button" class="glb-sort" data-sort="profession2">2nd profession</button>
+                  </th>
                   <th scope="col" class="glb-col-level">
                     <button type="button" class="glb-sort is-active" data-sort="level" data-dir="desc">Level</button>
                   </th>
@@ -156,7 +166,8 @@
       </footer>
     </div>
 
-    <script defer src="/auth-ui.js?v=20261116plb-alliance-glb-v10"></script>
-    <script defer src="/guild-leaderboard.js?v=20261116plb-alliance-glb-v10"></script>
+    <script defer src="/auth-ui.js?v=20261116plb-alliance-glb-v13"></script>
+    <script defer src="/profession-icons.js?v=20261116plb-prof-icons-v1"></script>
+    <script defer src="/guild-leaderboard.js?v=20261116plb-prof-icons-v1"></script>
   </body>
 </html>

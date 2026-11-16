@@ -93,7 +93,10 @@ async function mountAuthHeaderWidget() {
       currentPath === "/guild-leaderboard" ||
       currentPath === "/guild-leaderboard/" ||
       currentPath === "/guild-leaderboard.html" ||
-      currentPath === "/wow-forever/guild";
+      currentPath === "/wow-forever/guild" ||
+      currentPath === "/profession-leaderboard" ||
+      currentPath === "/profession-leaderboard/" ||
+      currentPath === "/profession-leaderboard.html";
     const onAchievements =
       currentPath === "/achievements" ||
       currentPath === "/achievements/" ||

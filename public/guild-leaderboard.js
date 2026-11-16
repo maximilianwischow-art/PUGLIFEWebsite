@@ -64,6 +64,12 @@
       av = a.discordLinked ? (a.discordProfileExists ? 2 : 1) : 0;
       bv = b.discordLinked ? (b.discordProfileExists ? 2 : 1) : 0;
     }
+    if (key === "profession1" || key === "profession2") {
+      av = String(a?.[key]?.name || "");
+      bv = String(b?.[key]?.name || "");
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+    }
     if (typeof av === "string" || typeof bv === "string") {
       const cmp = String(av || "").localeCompare(String(bv || ""), undefined, { sensitivity: "base" });
       if (cmp !== 0) return cmp * dir;
@@ -87,6 +93,8 @@
           m.characterName,
           m.raceName,
           m.className,
+          m.profession1?.name,
+          m.profession2?.name,
           m.rankLabel,
           m.discord?.displayName,
         ]
@@ -220,6 +228,29 @@
     </div>`;
   }
 
+  function professionCell(member, key) {
+    const prof = member?.[key];
+    const name = String(prof?.name || "").trim();
+    if (!name) {
+      const hint = Number(member?.level) > 0 && Number(member.level) < 10 ? "Professions are available from level 10" : "";
+      return `<span class="glb-prof-empty"${hint ? ` title="${escapeHtml(hint)}"` : ""}>—</span>`;
+    }
+    const skill =
+      prof.skillPoints != null && prof.maxSkillPoints != null
+        ? `${prof.skillPoints}/${prof.maxSkillPoints}`
+        : prof.skillPoints != null
+          ? String(prof.skillPoints)
+          : "";
+    const title = skill ? `${name} · ${skill}` : name;
+    const icon =
+      window.plbProfessionIcons?.iconImg(name, { className: "glb-prof-icon", size: 28 }) ||
+      `<span class="glb-prof-name">${escapeHtml(name)}</span>`;
+    return `<div class="glb-prof glb-prof--icon" title="${escapeHtml(title)}">
+      ${icon}
+      ${skill ? `<span class="glb-prof-skill">${escapeHtml(skill)}</span>` : ""}
+    </div>`;
+  }
+
   function characterCell(member) {
     const classId = String(member.classId || "").trim().toLowerCase();
     const classTone = classId ? ` class-${escapeHtml(classId)}` : "";
@@ -253,7 +284,7 @@
     const rows = filteredMembers();
     el.table.hidden = false;
     if (!rows.length) {
-      el.body.innerHTML = `<tr><td colspan="7" class="glb-empty">No members match these filters.</td></tr>`;
+      el.body.innerHTML = `<tr><td colspan="9" class="glb-empty">No members match these filters.</td></tr>`;
       return;
     }
     el.body.innerHTML = rows
@@ -270,6 +301,8 @@
               ${escapeHtml(m.className || "—")}
             </span>
           </td>
+          <td>${professionCell(m, "profession1")}</td>
+          <td>${professionCell(m, "profession2")}</td>
           <td class="glb-col-level"><span class="glb-level">${escapeHtml(m.level)}</span></td>
           <td>
             <div class="glb-char">
