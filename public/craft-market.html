@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="PUG LIFE BALANCE Market Hall — Forever guild craft offers and requests for Bulwark."
+      content="PUG LIFE BALANCE Market Hall — Forever guild craft Offers and Demand for Bulwark."
     />
     <title>PUG LIFE BALANCE · Market Hall</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -22,10 +22,10 @@
       type="image/webp"
       fetchpriority="high"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20261116plb-alliance-glb-v9" />
+    <link rel="stylesheet" href="/styles.css?v=20261117plb-craft-tooltip-z1" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
     <link rel="stylesheet" href="/wow-forever-squad.css?v=20261116plb-alliance-glb-v9" />
-    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261116plb-craft-market-v3" />
+    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261116plb-craft-market-v7" />
   </head>
   <body class="framework-bg-vivid wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -73,56 +73,125 @@
             <p class="wf-kicker">World of Warcraft: Forever</p>
             <h2 id="cm-title" class="section-title">Market Hall</h2>
             <p class="glb-lede muted">
-              Guildies publish crafts from their known recipes. Request an item to post it here and ping both players in Discord.
+              Two boards: <strong>Offers</strong> (what crafters can make) and <strong>Demand</strong> (what guildies need).
+              Providing a Demand or requesting an Offer pings both players in Discord.
             </p>
           </div>
           <p id="cmStatus" class="glb-status muted" role="status">Loading Market Hall…</p>
         </section>
 
-        <section class="card surface-elevated cm-section" aria-labelledby="cm-requests-title">
-          <div class="cm-section-head">
-            <h3 id="cm-requests-title" class="glb-board-heading">Open requests</h3>
+        <section class="card surface-elevated cm-section cm-howto" aria-labelledby="cm-howto-title">
+          <h3 id="cm-howto-title" class="glb-board-heading">How it works</h3>
+          <ol class="cm-howto-steps">
+            <li>
+              <strong>Offer</strong>
+              <span>Log in → Create offer → tick recipes you know. They appear on the Offers board.</span>
+            </li>
+            <li>
+              <strong>Demand</strong>
+              <span>Need something? Post a Demand. Crafters who know the recipe click Provide.</span>
+            </li>
+            <li>
+              <strong>Discord</strong>
+              <span>Request / Provide tags both players in the Market channel so you can trade mats.</span>
+            </li>
+          </ol>
+          <div class="cm-howto-actions" id="cmHowToActions">
+            <button type="button" class="primary-btn" id="cmOpenOfferBtn">Create offer</button>
+            <button type="button" class="secondary-btn" id="cmOpenDemandBtn">Post a demand</button>
+            <a class="secondary-btn cm-login-link" id="cmLoginHint" href="/profile.html" hidden>Log in on Profile first</a>
           </div>
-          <div id="cmRequests" class="cm-request-list" aria-live="polite"></div>
         </section>
 
-        <section class="card surface-elevated cm-section" aria-labelledby="cm-listings-title">
-          <div class="cm-section-head">
-            <h3 id="cm-listings-title" class="glb-board-heading">Craft listings</h3>
-            <label class="glb-filter cm-filter">
-              <span class="visually-hidden">Filter listings</span>
-              <input id="cmListingSearch" type="search" placeholder="Search listings…" autocomplete="off" />
-            </label>
-          </div>
-          <div id="cmListings" class="cm-listing-grid" aria-live="polite"></div>
-        </section>
+        <div class="cm-boards">
+          <section class="card surface-elevated cm-section cm-board" aria-labelledby="cm-offers-title">
+            <div class="cm-section-head">
+              <div>
+                <h3 id="cm-offers-title" class="glb-board-heading">Offers</h3>
+                <p class="cm-board-lede">Crafters advertising what they can make. Click Request to ping them.</p>
+              </div>
+              <label class="glb-filter cm-filter">
+                <span class="visually-hidden">Filter offers</span>
+                <input id="cmListingSearch" type="search" placeholder="Search offers…" autocomplete="off" />
+              </label>
+            </div>
+            <div id="cmListings" class="cm-listing-grid" aria-live="polite"></div>
+          </section>
 
-        <section class="card surface-elevated cm-section" id="cmSellerCard" aria-labelledby="cm-seller-title" hidden>
-          <div class="cm-section-head">
-            <h3 id="cm-seller-title" class="glb-board-heading">My offers</h3>
-            <label class="cm-toggle">
-              <input type="checkbox" id="cmSellerEnabled" />
-              <span>Offer crafts on the Market Hall</span>
-            </label>
+          <section class="card surface-elevated cm-section cm-board" aria-labelledby="cm-demand-title">
+            <div class="cm-section-head">
+              <div>
+                <h3 id="cm-demand-title" class="glb-board-heading">Demand</h3>
+                <p class="cm-board-lede">Open needs. If you know the recipe, click Provide to claim it and Discord-tag the buyer.</p>
+              </div>
+              <label class="glb-filter cm-filter">
+                <span class="visually-hidden">Filter demand</span>
+                <input id="cmDemandSearch" type="search" placeholder="Search demand…" autocomplete="off" />
+              </label>
+            </div>
+            <div id="cmDemands" class="cm-request-list" aria-live="polite"></div>
+            <div class="cm-matched-wrap">
+              <h4 class="cm-subheading">Matched deals</h4>
+              <p class="cm-board-lede">Direct requests from Offers, plus claimed Demands — mark fulfilled when done.</p>
+              <div id="cmRequests" class="cm-request-list" aria-live="polite"></div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <dialog class="cm-dialog" id="cmOfferDialog" aria-labelledby="cmOfferDialogTitle">
+        <div class="cm-dialog-form">
+          <h3 id="cmOfferDialogTitle" class="section-title">Create offer</h3>
+          <p class="cm-dialog-body">
+            Tick recipes from your claimed Forever characters. Saving publishes them on the Offers board.
+          </p>
+          <p id="cmOfferDialogHint" class="subtle"></p>
+          <label class="glb-filter cm-filter cm-filter--grow">
+            <span class="visually-hidden">Search recipes</span>
+            <input id="cmRecipeSearch" type="search" placeholder="Search your known recipes…" autocomplete="off" />
+          </label>
+          <div id="cmRecipeList" class="cm-recipe-list" role="group" aria-label="Known recipes"></div>
+          <p id="cmOfferStatus" class="glb-status muted" role="status"></p>
+          <div class="cm-dialog-actions">
+            <button type="button" class="secondary-btn" id="cmOfferDialogClose">Cancel</button>
+            <button type="button" class="primary-btn" id="cmSaveOffersBtn">Publish offers</button>
           </div>
-          <p id="cmSellerHint" class="subtle cm-seller-hint"></p>
-          <div class="cm-offer-tools" id="cmOfferTools" hidden>
-            <label class="glb-filter cm-filter cm-filter--grow">
-              <span class="visually-hidden">Search recipes</span>
-              <input id="cmRecipeSearch" type="search" placeholder="Search your known recipes…" autocomplete="off" />
-            </label>
-            <p id="cmOfferStatus" class="glb-status muted" role="status"></p>
-            <div id="cmRecipeList" class="cm-recipe-list" role="group" aria-label="Known recipes"></div>
-            <div class="cm-offer-actions">
-              <button type="button" class="primary-btn" id="cmSaveOffersBtn">Save selected offers</button>
+        </div>
+      </dialog>
+
+      <dialog class="cm-dialog cm-dialog--ah" id="cmDemandDialog" aria-labelledby="cmDemandDialogTitle">
+        <form method="dialog" class="cm-dialog-form" id="cmDemandForm">
+          <h3 id="cmDemandDialogTitle" class="section-title">Post a demand</h3>
+          <p class="cm-dialog-body">
+            Browse all Forever craftables like the Auction House — pick a profession, search, then select an item.
+            Crafters who know it can Provide and both of you get Discord-tagged.
+          </p>
+          <div class="cm-ah-browse">
+            <div class="cm-ah-professions" id="cmCatalogProfessions" role="tablist" aria-label="Professions"></div>
+            <div class="cm-ah-panel">
+              <label class="glb-filter cm-filter cm-filter--grow">
+                <span class="visually-hidden">Search craftables</span>
+                <input id="cmCatalogSearch" type="search" placeholder="Search craftable item…" autocomplete="off" />
+              </label>
+              <div id="cmCatalogList" class="cm-ah-list" role="listbox" aria-label="Craftable items"></div>
+              <p id="cmCatalogMeta" class="cm-ah-meta subtle" aria-live="polite"></p>
             </div>
           </div>
-        </section>
-      </main>
+          <label class="cm-note-label" for="cmDemandNote">
+            Note (optional)
+            <input id="cmDemandNote" type="text" maxlength="280" placeholder="e.g. need 2 for leveling" />
+          </label>
+          <p id="cmDemandDialogStatus" class="glb-status muted" role="status"></p>
+          <div class="cm-dialog-actions">
+            <button type="submit" value="cancel" class="secondary-btn">Cancel</button>
+            <button type="submit" value="confirm" class="primary-btn" id="cmDemandConfirmBtn">Post demand</button>
+          </div>
+        </form>
+      </dialog>
 
       <dialog class="cm-dialog" id="cmRequestDialog" aria-labelledby="cmRequestDialogTitle">
         <form method="dialog" class="cm-dialog-form" id="cmRequestForm">
-          <h3 id="cmRequestDialogTitle" class="section-title">Confirm craft request</h3>
+          <h3 id="cmRequestDialogTitle" class="section-title">Request this offer</h3>
           <p id="cmRequestDialogBody" class="cm-dialog-body"></p>
           <ul id="cmRequestDialogMats" class="cm-mats"></ul>
           <label class="cm-note-label" for="cmRequestNote">
@@ -132,14 +201,16 @@
           <p id="cmRequestDialogStatus" class="glb-status muted" role="status"></p>
           <div class="cm-dialog-actions">
             <button type="submit" value="cancel" class="secondary-btn">Cancel</button>
-            <button type="submit" value="confirm" class="primary-btn" id="cmRequestConfirmBtn">Request craft</button>
+            <button type="submit" value="confirm" class="primary-btn" id="cmRequestConfirmBtn">Request &amp; ping Discord</button>
           </div>
         </form>
       </dialog>
 
       <footer class="footer">
         <div class="dots" aria-hidden="true">
-          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot big"></span>
+          <span class="dot"></span>
         </div>
         <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
         <p class="footer-sub">WoW Forever · &lt;Bulwark&gt; · EU Normal</p>
@@ -150,9 +221,9 @@
     </div>
 
     <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
-    <script defer src="/auth-ui.js?v=20261116plb-craft-market-v3"></script>
+    <script defer src="/wow-item-tooltip.js?v=20261117plb-dialog-tip-v1"></script>
+    <script defer src="/auth-ui.js?v=20261116plb-craft-market-v4"></script>
     <script defer src="/profession-icons.js?v=20261116plb-prof-icons-v1"></script>
-    <script defer src="/craft-market.js?v=20261116plb-craft-market-v3"></script>
+    <script defer src="/craft-market.js?v=20261116plb-craft-market-v7"></script>
   </body>
 </html>

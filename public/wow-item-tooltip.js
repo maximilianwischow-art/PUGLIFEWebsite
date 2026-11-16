@@ -23,6 +23,21 @@
 
   let lootTooltipEl = null;
 
+  function openModalDialogHost() {
+    const dialogs = document.querySelectorAll("dialog[open]");
+    if (!dialogs.length) return null;
+    // Prefer the last open dialog (top-most modal).
+    return dialogs[dialogs.length - 1] || null;
+  }
+
+  function mountLootTooltipHost() {
+    const panel = ensureLootTooltipEl();
+    const dialog = openModalDialogHost();
+    const host = dialog || document.body;
+    if (panel.parentNode !== host) host.appendChild(panel);
+    return panel;
+  }
+
   function ensureLootTooltipEl() {
     if (lootTooltipEl) return lootTooltipEl;
     lootTooltipEl = document.createElement("div");
@@ -47,7 +62,9 @@
   }
 
   function showLootTooltip(event, itemId, getItemMeta) {
-    const panel = ensureLootTooltipEl();
+    // Modal <dialog> uses the browser top layer — body tooltips sit behind it unless
+    // the panel is mounted inside the open dialog.
+    const panel = mountLootTooltipHost();
     const meta = typeof getItemMeta === "function" ? getItemMeta(Number(itemId)) : null;
     const fallback = `<div class="loot-tooltip-line">${escapeHtml("No item tooltip available.")}</div>`;
     const html = meta?.tooltipHtml
@@ -63,6 +80,10 @@
   function hideLootTooltip() {
     if (!lootTooltipEl) return;
     lootTooltipEl.hidden = true;
+    // Keep the panel on <body> when idle so it does not linger inside closed dialogs.
+    if (lootTooltipEl.parentNode && lootTooltipEl.parentNode !== document.body) {
+      document.body.appendChild(lootTooltipEl);
+    }
   }
 
   /**
