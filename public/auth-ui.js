@@ -8,7 +8,7 @@ async function mountAuthHeaderWidget() {
 
   function firstMemberNavAnchor() {
     if (!nav) return null;
-    return nav.querySelector('a[href="/profile.html"]') || nav.querySelector('a[href="/admin.html"]');
+    return nav.querySelector('a[href="/admin.html"]');
   }
 
   function ensureNavMemberSeparator() {
@@ -35,80 +35,77 @@ async function mountAuthHeaderWidget() {
   function removeRetiredNavLinks() {
     if (!nav) return;
     for (const link of nav.querySelectorAll(
-      'a[href="/p2-preparation.html"], a[href="/nether-vortex.html"], a[href="/p3-preparation.html"], a[href="/heart-of-darkness.html"], a[href="/debuff-uptime.html"], a[href="/voting.html"]'
+      [
+        'a[href="/p2-preparation.html"]',
+        'a[href="/nether-vortex.html"]',
+        'a[href="/p3-preparation.html"]',
+        'a[href="/heart-of-darkness.html"]',
+        'a[href="/debuff-uptime.html"]',
+        'a[href="/voting.html"]',
+        'a[href="/join.html"]',
+        'a[href="/leaderboard"]',
+        'a[href="/rankings"]',
+        'a[href="/wow-forever"]',
+        'a[href="/wow-forever-squad.html"]',
+        'a[href="/home.html"]',
+        'a[href="/chapter-1"]',
+        'a[href="/chapter-one.html"]',
+      ].join(", ")
     )) {
       link.remove();
     }
-    for (const link of nav.querySelectorAll('a[href="/home.html"]')) {
-      link.href = "/chapter-1";
-      link.textContent = "Chapter 1";
-      link.title = "Chapter 1 · From Strangers to Community";
-      link.classList.remove("nav-current");
-      link.removeAttribute("aria-current");
-    }
   }
 
-  function ensureChapterOneNavLink() {
-    if (!nav) return null;
-    let chapterLink =
-      nav.querySelector('a[href="/chapter-1"]') || nav.querySelector('a[href="/chapter-one.html"]');
-    if (!chapterLink) {
-      chapterLink = document.createElement("a");
-      chapterLink.href = "/chapter-1";
-      chapterLink.textContent = "Chapter 1";
-      chapterLink.title = "Chapter 1 · From Strangers to Community";
-      const joinLink = nav.querySelector('a[href="/join.html"]') || nav.querySelector('a[href="/"]');
-      if (joinLink && joinLink.nextSibling) nav.insertBefore(chapterLink, joinLink.nextSibling);
-      else if (joinLink) nav.appendChild(chapterLink);
-      else nav.insertBefore(chapterLink, nav.firstChild);
-    }
-    const onChapter =
-      currentPath === "/chapter-1" || currentPath === "/chapter-1/" || currentPath === "/chapter-one.html";
-    if (onChapter) {
-      chapterLink.classList.add("nav-current");
-      chapterLink.setAttribute("aria-current", "page");
-    } else {
-      chapterLink.classList.remove("nav-current");
-      chapterLink.removeAttribute("aria-current");
-    }
-    return chapterLink;
-  }
+  function ensurePrimaryNav() {
+    if (!nav) return;
 
-  function ensureForeverNavLink() {
-    if (!nav) return null;
-    let foreverLink =
-      nav.querySelector('a[href="/wow-forever"]') ||
-      nav.querySelector('a[href="/wow-forever-squad.html"]');
-    if (!foreverLink) {
-      foreverLink = document.createElement("a");
-      foreverLink.href = "/wow-forever";
-      foreverLink.textContent = "Forever";
-      foreverLink.title = "The WoW Forever Squad";
-      const sep = ensureNavMemberSeparator();
-      if (sep) nav.insertBefore(foreverLink, sep);
-      else {
-        const anchor = firstMemberNavAnchor();
-        if (anchor) nav.insertBefore(foreverLink, anchor);
-        else nav.appendChild(foreverLink);
+    function upsert(href, text, title, isCurrent) {
+      let link =
+        nav.querySelector(`a[href="${href}"]`) ||
+        (href === "/achievements"
+          ? nav.querySelector('a[href="/chapter-1"]') || nav.querySelector('a[href="/chapter-one.html"]')
+          : null);
+      if (!link) {
+        link = document.createElement("a");
+        const sep = ensureNavMemberSeparator();
+        if (sep) nav.insertBefore(link, sep);
+        else {
+          const anchor = firstMemberNavAnchor();
+          if (anchor) nav.insertBefore(link, anchor);
+          else nav.appendChild(link);
+        }
       }
+      link.href = href;
+      link.textContent = text;
+      if (title) link.title = title;
+      if (isCurrent) {
+        link.classList.add("nav-current");
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.classList.remove("nav-current");
+        link.removeAttribute("aria-current");
+      }
+      return link;
     }
-    return foreverLink;
-  }
 
-  function updateForeverNavState() {
-    const foreverLink = ensureForeverNavLink();
-    if (!foreverLink) return;
-    const onForever =
-      currentPath === "/wow-forever" ||
-      currentPath === "/wow-forever/" ||
-      currentPath === "/wow-forever-squad.html";
-    if (onForever) {
-      foreverLink.classList.add("nav-current");
-      foreverLink.setAttribute("aria-current", "page");
-    } else {
-      foreverLink.classList.remove("nav-current");
-      foreverLink.removeAttribute("aria-current");
-    }
+    const onHome = currentPath === "/" || currentPath === "/index.html" || currentPath === "/home-alliance.html";
+    const onGuild =
+      currentPath === "/guild-leaderboard" ||
+      currentPath === "/guild-leaderboard/" ||
+      currentPath === "/guild-leaderboard.html" ||
+      currentPath === "/wow-forever/guild";
+    const onAchievements =
+      currentPath === "/achievements" ||
+      currentPath === "/achievements/" ||
+      currentPath === "/chapter-1" ||
+      currentPath === "/chapter-1/" ||
+      currentPath === "/chapter-one.html";
+    const onProfile = currentPath === "/profile.html";
+
+    upsert("/", "Home", "Alliance welcome home", onHome);
+    upsert("/guild-leaderboard", "Guild LB", "Forever guild leveling leaderboard · Bulwark", onGuild);
+    upsert("/achievements", "Achievements", "TBC Classic achievements archive", onAchievements);
+    upsert("/profile.html", "Profile", "Forever Main & Twinks, TBC characters, achievements", onProfile);
   }
 
   function ensureProfileNavLink() {
@@ -118,27 +115,28 @@ async function mountAuthHeaderWidget() {
       profileLink = document.createElement("a");
       profileLink.href = "/profile.html";
       profileLink.textContent = "Profile";
-      profileLink.classList.add("nav-auth-member");
-      const adminLink = nav.querySelector('a[href="/admin.html"]');
-      if (adminLink) nav.insertBefore(profileLink, adminLink);
-      else nav.appendChild(profileLink);
+      const sep = ensureNavMemberSeparator();
+      if (sep) nav.insertBefore(profileLink, sep);
+      else {
+        const adminLink = nav.querySelector('a[href="/admin.html"]');
+        if (adminLink) nav.insertBefore(profileLink, adminLink);
+        else nav.appendChild(profileLink);
+      }
     }
-    profileLink.classList.add("nav-auth-hidden");
+    profileLink.classList.remove("nav-auth-hidden", "nav-auth-member");
     return profileLink;
   }
 
-  function updateProfileNavState(isAuthenticated) {
+  function updateProfileNavState() {
     const profileLink = ensureProfileNavLink();
     if (!profileLink) return;
-    if (currentPath === "/profile.html" && isAuthenticated) {
+    if (currentPath === "/profile.html") {
       profileLink.classList.add("nav-current");
       profileLink.setAttribute("aria-current", "page");
     } else {
       profileLink.classList.remove("nav-current");
       profileLink.removeAttribute("aria-current");
     }
-    if (isAuthenticated) profileLink.classList.remove("nav-auth-hidden");
-    else profileLink.classList.add("nav-auth-hidden");
   }
 
   function ensureAdminNavLink() {
@@ -172,10 +170,9 @@ async function mountAuthHeaderWidget() {
   const renderLoggedOut = () => {
     host.innerHTML = `<a class="auth-chip-link" href="${loginHref}">Login</a>`;
     removeRetiredNavLinks();
-    ensureChapterOneNavLink();
-    updateForeverNavState();
+    ensurePrimaryNav();
     updateAdminNavState(false);
-    updateProfileNavState(false);
+    updateProfileNavState();
     updateNavMemberSeparatorVisible(false);
   };
 
@@ -218,11 +215,10 @@ async function mountAuthHeaderWidget() {
     });
     const showAdmin = Boolean(payload?.isAdmin);
     removeRetiredNavLinks();
-    ensureChapterOneNavLink();
-    updateForeverNavState();
+    ensurePrimaryNav();
     updateAdminNavState(showAdmin);
-    updateProfileNavState(true);
-    updateNavMemberSeparatorVisible(true);
+    updateProfileNavState();
+    updateNavMemberSeparatorVisible(showAdmin);
   } catch {
     renderLoggedOut();
   }

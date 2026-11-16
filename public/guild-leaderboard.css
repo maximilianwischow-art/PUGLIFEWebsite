@@ -1,0 +1,608 @@
+.glb-page {
+  display: grid;
+  gap: 1.25rem;
+  padding-bottom: 2.5rem;
+}
+
+.glb-breakdowns {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.glb-breakdown-lede {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.glb-breakdown-grid {
+  display: grid;
+  gap: 1.1rem;
+}
+
+@media (min-width: 800px) {
+  .glb-breakdown-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.glb-breakdown-title {
+  margin: 0 0 0.55rem;
+  font-size: 0.95rem;
+  color: var(--gold-light, #e8c96a);
+}
+
+.glb-bar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.glb-bar-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.glb-bar-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+}
+
+.glb-bar-label {
+  color: rgba(226, 232, 240, 0.92);
+  font-weight: 650;
+}
+
+.glb-bar-count {
+  color: var(--gold-highlight, #f5d76e);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.glb-bar-track {
+  height: 0.85rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(8, 18, 36, 0.9);
+  border: 1px solid rgba(200, 149, 62, 0.22);
+}
+
+.glb-bar-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.glb-bar-bg {
+  fill: rgba(15, 35, 64, 0.95);
+}
+
+.glb-bar-fill {
+  fill: #2867a0;
+}
+
+/* Default Alliance gold fill for non-class charts */
+.glb-bar-row:not([class*="class-"]) .glb-bar-fill {
+  fill: #c8953e;
+}
+
+.glb-bar-row.class-warrior .glb-bar-fill,
+.glb-bar-label.class-warrior {
+  fill: #c79c6e;
+  color: #c79c6e !important;
+}
+.glb-bar-row.class-paladin .glb-bar-fill,
+.glb-bar-label.class-paladin {
+  fill: #f58cba;
+  color: #f58cba !important;
+}
+.glb-bar-row.class-hunter .glb-bar-fill,
+.glb-bar-label.class-hunter {
+  fill: #abd473;
+  color: #abd473 !important;
+}
+.glb-bar-row.class-rogue .glb-bar-fill,
+.glb-bar-label.class-rogue {
+  fill: #fff569;
+  color: #fff569 !important;
+}
+.glb-bar-row.class-priest .glb-bar-fill,
+.glb-bar-label.class-priest {
+  fill: #ffffff;
+  color: #ffffff !important;
+}
+.glb-bar-row.class-shaman .glb-bar-fill,
+.glb-bar-label.class-shaman {
+  fill: #0070dd;
+  color: #0070dd !important;
+}
+.glb-bar-row.class-mage .glb-bar-fill,
+.glb-bar-label.class-mage {
+  fill: #69ccf0;
+  color: #69ccf0 !important;
+}
+.glb-bar-row.class-warlock .glb-bar-fill,
+.glb-bar-label.class-warlock {
+  fill: #9482c9;
+  color: #9482c9 !important;
+}
+.glb-bar-row.class-druid .glb-bar-fill,
+.glb-bar-label.class-druid {
+  fill: #ff7d0a;
+  color: #ff7d0a !important;
+}
+
+.glb-bar-empty {
+  color: rgba(148, 163, 184, 0.85);
+  font-size: 0.88rem;
+}
+
+.glb-hero-card {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@media (min-width: 900px) {
+  .glb-hero-card {
+    grid-template-columns: 1.4fr 1fr;
+    align-items: end;
+  }
+}
+
+.glb-lede {
+  max-width: 42rem;
+  margin: 0.35rem 0 0;
+  line-height: 1.45;
+}
+
+.glb-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+@media (min-width: 640px) {
+  .glb-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.glb-stat {
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: rgba(8, 18, 36, 0.55);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  min-height: 4.2rem;
+}
+
+.glb-stat b {
+  display: block;
+  font-size: 1.35rem;
+  line-height: 1.1;
+  color: var(--gold-highlight, #f5d76e);
+  font-variant-numeric: tabular-nums;
+}
+
+.glb-stat span {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(203, 213, 225, 0.78);
+}
+
+.glb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.85rem;
+}
+
+.glb-board-heading {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--gold-light, #e8c96a);
+}
+
+.glb-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.glb-filter input,
+.glb-filter select,
+.glb-refresh {
+  border: 1px solid rgba(40, 103, 160, 0.5);
+  background: rgba(6, 14, 28, 0.85);
+  color: var(--text-primary, #e2e8f0);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+  font: inherit;
+  min-height: 2.25rem;
+}
+
+.glb-filter input {
+  min-width: 10rem;
+}
+
+.glb-refresh {
+  cursor: pointer;
+  border-color: rgba(212, 175, 55, 0.45);
+  color: var(--gold-highlight, #f5d76e);
+}
+
+.glb-refresh:hover {
+  border-color: rgba(212, 175, 55, 0.8);
+}
+
+.glb-refresh:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.glb-status {
+  margin: 0 0 0.75rem;
+}
+
+.glb-table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(40, 103, 160, 0.35);
+}
+
+.glb-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+  font-size: 0.95rem;
+}
+
+.glb-table th,
+.glb-table td {
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.55);
+  vertical-align: middle;
+}
+
+.glb-table thead th {
+  background: rgba(8, 18, 36, 0.9);
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.glb-table tbody tr:hover {
+  background: rgba(30, 64, 110, 0.28);
+}
+
+.glb-col-rank,
+.glb-col-level {
+  width: 4.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.glb-table th.glb-col-rank,
+.glb-table th.glb-col-level,
+.glb-table td.glb-col-rank,
+.glb-table td.glb-col-level {
+  text-align: right;
+}
+
+.glb-sort {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.glb-sort.is-active {
+  color: var(--gold-highlight, #f5d76e);
+}
+
+.glb-sort.is-active::after {
+  content: " ▾";
+  font-size: 0.7em;
+}
+
+.glb-sort.is-active[data-dir="asc"]::after {
+  content: " ▴";
+}
+
+/* Class colours — !important beats table cell inheritance; no inline styles (CSP style-src 'self'). */
+.glb-char-name.class-warrior,
+.glb-class.class-warrior {
+  color: #c79c6e !important;
+}
+.glb-char-name.class-paladin,
+.glb-class.class-paladin {
+  color: #f58cba !important;
+}
+.glb-char-name.class-hunter,
+.glb-class.class-hunter {
+  color: #abd473 !important;
+}
+.glb-char-name.class-rogue,
+.glb-class.class-rogue {
+  color: #fff569 !important;
+}
+.glb-char-name.class-priest,
+.glb-class.class-priest {
+  color: #ffffff !important;
+}
+.glb-char-name.class-shaman,
+.glb-class.class-shaman {
+  color: #0070dd !important;
+}
+.glb-char-name.class-mage,
+.glb-class.class-mage {
+  color: #69ccf0 !important;
+}
+.glb-char-name.class-warlock,
+.glb-class.class-warlock {
+  color: #9482c9 !important;
+}
+.glb-char-name.class-druid,
+.glb-class.class-druid {
+  color: #ff7d0a !important;
+}
+
+.glb-row--warrior {
+  box-shadow: inset 3px 0 0 0 #c79c6e;
+}
+.glb-row--paladin {
+  box-shadow: inset 3px 0 0 0 #f58cba;
+}
+.glb-row--hunter {
+  box-shadow: inset 3px 0 0 0 #abd473;
+}
+.glb-row--rogue {
+  box-shadow: inset 3px 0 0 0 #fff569;
+}
+.glb-row--priest {
+  box-shadow: inset 3px 0 0 0 #ffffff;
+}
+.glb-row--shaman {
+  box-shadow: inset 3px 0 0 0 #0070dd;
+}
+.glb-row--mage {
+  box-shadow: inset 3px 0 0 0 #69ccf0;
+}
+.glb-row--warlock {
+  box-shadow: inset 3px 0 0 0 #9482c9;
+}
+.glb-row--druid {
+  box-shadow: inset 3px 0 0 0 #ff7d0a;
+}
+
+.glb-class-swatch {
+  background: currentColor;
+}
+
+.glb-char {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.glb-char.has-portrait {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.glb-char-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.glb-char-name-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.glb-char-portrait,
+.glb-char-portrait-link {
+  flex: 0 0 auto;
+}
+
+.glb-char-portrait-link {
+  display: inline-flex;
+  line-height: 0;
+  border-radius: 8px;
+}
+
+.glb-char-portrait {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(200, 149, 62, 0.45);
+  background: rgba(8, 18, 36, 0.85);
+  box-shadow: 0 0 0 1px rgba(40, 103, 160, 0.25);
+}
+
+.glb-char-role {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(200, 149, 62, 0.35);
+  color: rgba(232, 198, 117, 0.95);
+  background: rgba(14, 49, 89, 0.45);
+}
+
+.glb-char-role--main {
+  border-color: rgba(244, 222, 161, 0.65);
+  color: #0b1728;
+  background: linear-gradient(180deg, rgba(232, 201, 117, 0.95), rgba(200, 149, 62, 0.9));
+}
+
+.glb-char-name {
+  font-weight: 700;
+  color: #f8fafc;
+  text-decoration: none;
+}
+
+a.glb-char-name:hover,
+a.glb-char-name:focus-visible,
+a.glb-discord-name:hover,
+a.glb-discord-name:focus-visible {
+  text-decoration: underline;
+}
+
+a.glb-discord-name {
+  font-weight: 650;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.glb-discord-avatar-link {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.glb-char-sub {
+  font-size: 0.78rem;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.glb-class {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 650;
+}
+
+.glb-class-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.65);
+}
+
+.glb-level {
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--gold-highlight, #f5d76e);
+}
+
+.glb-discord {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 11rem;
+}
+
+.glb-discord-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  background: rgba(15, 23, 42, 0.8);
+  flex: 0 0 auto;
+}
+
+.glb-discord-avatar.is-empty {
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.glb-discord-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.glb-discord-name {
+  font-weight: 650;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12rem;
+}
+
+.glb-discord-tbc {
+  font-size: 0.78rem;
+  color: rgba(148, 163, 184, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12rem;
+}
+
+.glb-discord-tbc::before {
+  content: "TBC · ";
+  color: rgba(200, 149, 62, 0.85);
+  letter-spacing: 0.04em;
+}
+
+.glb-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.glb-badge--linked {
+  color: #bbf7d0;
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(22, 101, 52, 0.35);
+}
+
+.glb-badge--profile {
+  color: #fde68a;
+  border-color: rgba(212, 175, 55, 0.45);
+  background: rgba(113, 63, 18, 0.35);
+}
+
+.glb-badge--partial {
+  color: #bfdbfe;
+  border-color: rgba(96, 165, 250, 0.4);
+  background: rgba(30, 64, 175, 0.3);
+}
+
+.glb-badge--none {
+  color: rgba(148, 163, 184, 0.95);
+  border-color: rgba(100, 116, 139, 0.4);
+  background: rgba(30, 41, 59, 0.45);
+}
+
+.glb-empty {
+  text-align: center;
+  padding: 1.5rem 0.75rem;
+  color: rgba(148, 163, 184, 0.95);
+}

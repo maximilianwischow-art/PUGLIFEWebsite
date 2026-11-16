@@ -187,6 +187,12 @@ import {
   wowForeverUpsert,
   wowForeverListAll,
   wowForeverDeleteByUserId,
+  wowForeverClaimsListAll,
+  wowForeverClaimsListByUserId,
+  wowForeverClaimGetByNameKey,
+  wowForeverClaimUpsert,
+  wowForeverClaimSetMain,
+  wowForeverClaimRelease,
   wowForeverRaidRosterGet,
   wowForeverRaidRosterSave,
   p2UpsertMaterial,
@@ -283,6 +289,13 @@ import {
   specById as wowForeverSpecById,
   isNewCombo as wowForeverIsNewCombo,
 } from "./lib/wow-forever-data.mjs";
+import {
+  attachDiscordLinkStatus as wowForeverAttachDiscordLinkStatus,
+  buildForeverClaimIndex as wowForeverBuildClaimIndex,
+  buildForeverGuildLeaderboardStats as wowForeverBuildGuildLeaderboardStats,
+  fetchForeverGuildRosterBundle as wowForeverFetchGuildRosterBundle,
+  normalizeForeverNameKey as wowForeverNormalizeNameKey,
+} from "./lib/wow-forever-guild.mjs";
 
 /**
  * Phase 4 cutover flag. When set, `/api/profile/me/badges` reads from the
@@ -480,7 +493,7 @@ app.get("/p3-preparation.html", (req, res) => {
     res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.sendFile(path.join(publicDir, "p3-preparation.html"));
   }
-  return res.redirect(302, "/chapter-1");
+  return res.redirect(302, "/achievements");
 });
 
 app.get("/heart-of-darkness.html", (req, res) => {
@@ -489,14 +502,14 @@ app.get("/heart-of-darkness.html", (req, res) => {
     res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.sendFile(path.join(publicDir, "p3-preparation.html"));
   }
-  return res.redirect(302, "/chapter-1");
+  return res.redirect(302, "/achievements");
 });
 
 app.get("/voting.html", (_req, res) => {
-  return res.redirect(302, "/chapter-1#hall-of-fame");
+  return res.redirect(302, "/achievements#hall-of-fame");
 });
 
-app.get(["/chapter-1", "/chapter-1/", "/chapter-one.html"], async (_req, res) => {
+async function sendAchievementsPage(_req, res) {
   try {
     const raw = await readFile(path.join(publicDir, "chapter-one.html"), "utf8");
     const html = htmlWithApiBuildAssetVersions(raw, [
@@ -509,21 +522,48 @@ app.get(["/chapter-1", "/chapter-1/", "/chapter-one.html"], async (_req, res) =>
     res.setHeader("Cache-Control", "no-store, max-age=0");
     return res.type("html").send(html);
   } catch (error) {
-    console.error("Failed to serve Chapter 1 page:", error?.message || error);
-    return res.status(500).send("Failed to load Chapter 1.");
+    console.error("Failed to serve Achievements page:", error?.message || error);
+    return res.status(500).send("Failed to load Achievements.");
   }
-});
-
-function sendWowForeverSquadPage(req, res) {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/wow-forever")}`);
-  }
-  res.setHeader("Cache-Control", "no-store, max-age=0");
-  res.sendFile(path.join(publicDir, "wow-forever-squad.html"));
 }
 
-app.get(["/wow-forever", "/wow-forever/", "/wow-forever-squad.html"], sendWowForeverSquadPage);
+app.get(["/achievements", "/achievements/"], sendAchievementsPage);
+
+app.get(["/chapter-1", "/chapter-1/", "/chapter-one.html"], (_req, res) => {
+  return res.redirect(302, "/achievements");
+});
+
+app.get(["/wow-forever", "/wow-forever/", "/wow-forever-squad.html"], (_req, res) => {
+  return res.redirect(302, "/");
+});
+
+function sendGuildLeaderboardPage(_req, res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "guild-leaderboard.html"));
+}
+
+app.get(
+  ["/guild-leaderboard", "/guild-leaderboard/", "/guild-leaderboard.html", "/wow-forever/guild"],
+  sendGuildLeaderboardPage
+);
+
+/** Legacy public HTML must redirect before `express.static`, or the files on disk win. */
+app.get(
+  [
+    "/join.html",
+    "/events.html",
+    "/landing.html",
+    "/home.html",
+    "/roster.html",
+    "/p2-preparation.html",
+    "/debuff-uptime.html",
+    "/nether-vortex.html",
+    "/index.html",
+    "/rankings.html",
+  ],
+  (_req, res) => res.redirect(302, "/")
+);
+app.get("/loot-history.html", (_req, res) => res.redirect(302, "/achievements"));
 
 /** Browsers may still send `If-None-Match` after a prior ETag; Express then returns 304 with an empty body and the
  * client reuses whatever document it had — which breaks HTML when inline `<style>` changes but the URL does not.
@@ -737,6 +777,9 @@ let cachedToken = null;
 let cachedTokenExpiresAt = 0;
 let cachedBlizzardToken = null;
 let cachedBlizzardTokenExpiresAt = 0;
+/** Cached Forever guild roster payload from Blizzard (raw guild + members, pre Discord link). */
+let cachedForeverGuildRoster = null;
+let cachedForeverGuildRosterExpiresAt = 0;
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || "";
 const discordClientSecret = process.env.DISCORD_CLIENT_SECRET?.trim() || "";
@@ -10089,93 +10132,48 @@ function dedupeGargulEntries(entries) {
 
 // Explicit page routes keep frontend reachable in all environments.
 app.get("/", (_req, res) => {
-  res.sendFile(path.join(publicDir, "join.html"));
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "home-alliance.html"));
 });
 
-app.get(["/leaderboard", "/leaderboard/", "/leaderboard.html"], async (_req, res) => {
-  try {
-    const raw = await readFile(path.join(publicDir, "index.html"), "utf8");
-    const html = htmlWithApiBuildAssetVersions(raw, [
-      "/styles.min.css",
-      "/events-roster-ui.js",
-      "/badge-catalog-ui.js",
-      "/leaderboard.js",
-    ]);
-    res.setHeader("Cache-Control", "no-store, max-age=0");
-    return res.type("html").send(html);
-  } catch (error) {
-    console.error("Failed to serve leaderboard page:", error?.message || error);
-    return res.status(500).send("Failed to load leaderboard page.");
-  }
+app.get(["/leaderboard", "/leaderboard/", "/leaderboard.html"], (_req, res) => {
+  return res.redirect(302, "/");
 });
 
-app.get(["/rankings", "/rankings/", "/rankings.html"], async (_req, res) => {
-  try {
-    const raw = await readFile(path.join(publicDir, "rankings.html"), "utf8");
-    const html = htmlWithApiBuildAssetVersions(raw, [
-      "/styles.min.css",
-      "/rankings.css",
-      "/rankings.js",
-    ]);
-    res.setHeader("Cache-Control", "no-store, max-age=0");
-    return res.type("html").send(html);
-  } catch (error) {
-    console.error("Failed to serve rankings page:", error?.message || error);
-    return res.status(500).send("Failed to load rankings page.");
-  }
+app.get(["/rankings", "/rankings/", "/rankings.html"], (_req, res) => {
+  return res.redirect(302, "/");
 });
 
 app.get("/home.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "home.html"));
+  return res.redirect(302, "/");
 });
 
 app.get("/landing.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "landing.html"));
+  return res.redirect(302, "/");
 });
 
-app.get("/events.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "join.html"));
+app.get(["/join.html", "/events.html"], (_req, res) => {
+  return res.redirect(302, "/");
 });
 
-app.get("/roster.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "roster.html"));
+app.get(["/roster.html", "/roster", "/roster/"], (_req, res) => {
+  return res.redirect(302, "/");
 });
 
-app.get(["/roster", "/roster/"], (_req, res) => {
-  res.sendFile(path.join(publicDir, "roster.html"));
+app.get("/p2-preparation.html", (_req, res) => {
+  return res.redirect(302, "/");
 });
 
-app.get("/p2-preparation.html", (req, res) => {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/p2-preparation.html")}`);
-  }
-  res.sendFile(path.join(publicDir, "p2-preparation.html"));
-});
-
-app.get("/debuff-uptime.html", (req, res) => {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/debuff-uptime.html")}`);
-  }
-  if (!canAccessDebuffUptime(session)) {
-    return res.status(403).type("html").send(
-      `<!doctype html><html lang="en"><head><meta charset="utf-8"/><title>Raid Lead only</title><link rel="stylesheet" href="/styles.min.css"/></head><body class="framework-bg-soft"><div class="app-wrap" style="padding:2rem"><p class="card" style="padding:1.25rem">Debuff Uptime is available to logged-in members with the <strong>Raid Lead</strong> guild role.</p><p><a href="/chapter-1">Back to Chapter 1</a></p></div></body></html>`
-    );
-  }
-  res.sendFile(path.join(publicDir, "debuff-uptime.html"));
+app.get("/debuff-uptime.html", (_req, res) => {
+  return res.redirect(302, "/");
 });
 
 app.get("/loot-history.html", (_req, res) => {
-  res.sendFile(path.join(publicDir, "loot-history.html"));
+  return res.redirect(302, "/achievements");
 });
 
-app.get("/nether-vortex.html", (req, res) => {
-  const session = getSessionFromRequest(req);
-  if (!session?.user?.id) {
-    return res.redirect(`/auth/discord/login?next=${encodeURIComponent("/nether-vortex.html")}`);
-  }
-  res.sendFile(path.join(publicDir, "p2-preparation.html"));
+app.get("/nether-vortex.html", (_req, res) => {
+  return res.redirect(302, "/");
 });
 
 app.get("/privacy.html", (_req, res) => {
@@ -10199,7 +10197,7 @@ app.get("/auth/discord/login", (req, res) => {
       );
   }
   pruneAuthMaps();
-  const next = String(req.query.next || "/voting.html");
+  const next = String(req.query.next || "/");
   const state = encodeDiscordOAuthState(next, oauthStateTtlMs);
 
   const qs = new URLSearchParams({
@@ -16545,10 +16543,12 @@ app.get("/api/profile/me", async (req, res) => {
       row = profileSetMainCharacter({ userId, displayName, mainCharacterName: null });
     }
     const characters = listLinkedWowCharactersForDiscordUserId(userId, displayName);
+    const foreverClaims = wowForeverClaimsListByUserId(userId);
     return res.json({
       ok: true,
       profile: publicProfileFromDb(userId),
       linkedCharacters: characters,
+      foreverClaims,
       pictureLimits: {
         maxBytes: PROFILE_PICTURE_MAX_BYTES,
         allowedMime: [...PROFILE_PICTURE_ALLOWED_MIME.keys()],
@@ -16797,6 +16797,258 @@ app.put("/api/wow-forever/raid-roster", (req, res) => {
     const msg = error?.message || "Failed to save Forever raid roster";
     const status = /only occupy one/i.test(msg) ? 400 : 500;
     return res.status(status).json({ ok: false, error: msg });
+  }
+});
+
+function wowForeverGuildSlug() {
+  return String(process.env.WOW_FOREVER_GUILD_SLUG || "bulwark").trim().toLowerCase() || "bulwark";
+}
+
+function wowForeverGuildCacheMs() {
+  const n = Number(process.env.WOW_FOREVER_GUILD_CACHE_MS || 5 * 60 * 1000);
+  return Number.isFinite(n) && n >= 30_000 ? Math.floor(n) : 5 * 60 * 1000;
+}
+
+async function getCachedForeverGuildRosterBundle({ forceRefresh = false } = {}) {
+  const now = Date.now();
+  if (!forceRefresh && cachedForeverGuildRoster && cachedForeverGuildRosterExpiresAt > now) {
+    return { ...cachedForeverGuildRoster, cacheHit: true };
+  }
+  const token = await getBlizzardAccessToken();
+  const region = wowClassicRegion();
+  const locale = wowClassicLocale();
+  const bundle = await wowForeverFetchGuildRosterBundle({
+    token,
+    region,
+    guildSlug: wowForeverGuildSlug(),
+    locale,
+  });
+  cachedForeverGuildRoster = bundle;
+  cachedForeverGuildRosterExpiresAt = now + wowForeverGuildCacheMs();
+  return { ...bundle, cacheHit: false };
+}
+
+/**
+ * GET /api/wow-forever/guild-leaderboard
+ * Live Bulwark (Forever EU) roster with race/class/level + Discord Forever-pick / profile link status.
+ */
+app.get("/api/wow-forever/guild-leaderboard", async (req, res) => {
+  try {
+    const forceRefresh = String(req.query?.refresh || "").trim() === "1";
+    const bundle = await getCachedForeverGuildRosterBundle({ forceRefresh });
+    const claims = wowForeverClaimsListAll();
+    const claimIndex = wowForeverBuildClaimIndex(claims);
+    const profileCache = new Map();
+    const members = wowForeverAttachDiscordLinkStatus(bundle.members, claimIndex, (userId) => {
+      const uid = String(userId || "").trim();
+      if (!uid) return null;
+      if (profileCache.has(uid)) return profileCache.get(uid);
+      const profile = profileGetByUserId(uid);
+      profileCache.set(uid, profile);
+      return profile;
+    });
+    const linkedCount = members.filter((m) => m.discordLinked).length;
+    const profileCount = members.filter((m) => m.discordProfileExists).length;
+    const stats = wowForeverBuildGuildLeaderboardStats(members, { linkedCount, profileCount });
+    return res.json({
+      ok: true,
+      guild: bundle.guild,
+      members,
+      stats,
+      fetchedAt: bundle.fetchedAt,
+      cacheHit: Boolean(bundle.cacheHit),
+      cacheExpiresAt: cachedForeverGuildRosterExpiresAt,
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    console.error("Forever guild leaderboard failed:", error?.message || error);
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      ok: false,
+      error: error?.message || "Failed to load Forever guild leaderboard",
+    });
+  }
+});
+
+/** GET /api/wow-forever/claims/me — caller's Forever Main/Twink claims. */
+app.get("/api/wow-forever/claims/me", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const claims = wowForeverClaimsListByUserId(session.user.id);
+    return res.json({ ok: true, claims });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load claims" });
+  }
+});
+
+/**
+ * GET /api/wow-forever/claims/available
+ * Unclaimed Bulwark roster members + caller's current claims.
+ */
+app.get("/api/wow-forever/claims/available", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const bundle = await getCachedForeverGuildRosterBundle();
+    const allClaims = wowForeverClaimsListAll();
+    const claimedKeys = new Set(allClaims.map((c) => c.nameKey).filter(Boolean));
+    const mine = wowForeverClaimsListByUserId(session.user.id);
+    const available = (bundle.members || [])
+      .filter((m) => m.nameKey && !claimedKeys.has(m.nameKey))
+      .map((m) => ({
+        characterName: m.characterName,
+        nameKey: m.nameKey,
+        classId: m.classId,
+        className: m.className,
+        classColor: m.classColor,
+        raceId: m.raceId,
+        raceName: m.raceName,
+        level: m.level,
+        rankLabel: m.rankLabel,
+      }));
+    return res.json({
+      ok: true,
+      claims: mine,
+      available,
+      guild: bundle.guild,
+      fetchedAt: bundle.fetchedAt,
+      cacheHit: Boolean(bundle.cacheHit),
+    });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    return res.status(status >= 400 && status < 600 ? status : 500).json({
+      ok: false,
+      error: error?.message || "Failed to load available claims",
+    });
+  }
+});
+
+/** PUT /api/wow-forever/claims — claim a roster character as main or twink. */
+app.put("/api/wow-forever/claims", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const characterName = String(req.body?.characterName || "").trim();
+    const role = String(req.body?.role || "twink").trim() === "main" ? "main" : "twink";
+    const nameKey = wowForeverNormalizeNameKey(characterName);
+    if (!nameKey) return res.status(400).json({ ok: false, error: "Character name is required" });
+
+    const bundle = await getCachedForeverGuildRosterBundle();
+    const member = (bundle.members || []).find((m) => m.nameKey === nameKey);
+    if (!member) {
+      return res.status(400).json({ ok: false, error: "Character is not on the Bulwark guild roster" });
+    }
+
+    const claim = wowForeverClaimUpsert({
+      userId: String(session.user.id),
+      displayName: String(session.user.globalName || session.user.username || ""),
+      avatar: String(session.user.avatar || ""),
+      characterName: member.characterName,
+      role,
+      classId: member.classId,
+      raceId: member.raceId,
+      level: member.level,
+    });
+    return res.json({
+      ok: true,
+      claim,
+      claims: wowForeverClaimsListByUserId(session.user.id),
+    });
+  } catch (error) {
+    const code = String(error?.code || "");
+    if (code === "CLAIM_TAKEN") return res.status(409).json({ ok: false, error: error.message });
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to claim character" });
+  }
+});
+
+/** PUT /api/wow-forever/claims/main — set which owned claim is Forever main. */
+app.put("/api/wow-forever/claims/main", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const nameKey = wowForeverNormalizeNameKey(req.body?.nameKey || req.body?.characterName || "");
+    if (!nameKey) return res.status(400).json({ ok: false, error: "Character is required" });
+    const claims = wowForeverClaimSetMain({ userId: session.user.id, nameKey });
+    return res.json({ ok: true, claims });
+  } catch (error) {
+    if (String(error?.code) === "CLAIM_NOT_OWNED") {
+      return res.status(403).json({ ok: false, error: error.message });
+    }
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to set Forever main" });
+  }
+});
+
+/** DELETE /api/wow-forever/claims/:nameKey — release a claim. */
+app.delete("/api/wow-forever/claims/:nameKey", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const nameKey = wowForeverNormalizeNameKey(decodeURIComponent(String(req.params.nameKey || "")));
+    if (!nameKey) return res.status(400).json({ ok: false, error: "Character is required" });
+    wowForeverClaimRelease({ userId: session.user.id, nameKey });
+    return res.json({ ok: true, claims: wowForeverClaimsListByUserId(session.user.id) });
+  } catch (error) {
+    if (String(error?.code) === "CLAIM_NOT_OWNED") {
+      return res.status(403).json({ ok: false, error: error.message });
+    }
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to release claim" });
+  }
+});
+
+/**
+ * GET /api/profile/public/:userId — read-only profile for Guild LB links.
+ */
+app.get("/api/profile/public/:userId", async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    let profile = publicProfileFromDb(userId);
+    if (!profile) {
+      const claimsProbe = wowForeverClaimsListByUserId(userId);
+      if (!claimsProbe.length) {
+        return res.status(404).json({ ok: false, error: "Profile not found" });
+      }
+      profile = {
+        userId,
+        displayName: claimsProbe[0]?.displayName || userId,
+        mainCharacterName: null,
+        pictureUrl: null,
+        pictureUpdatedAt: null,
+        updatedAt: 0,
+      };
+    }
+    const foreverClaims = wowForeverClaimsListByUserId(userId);
+    let linkedCharacters = [];
+    try {
+      await ensureRhWclLinksStore();
+      linkedCharacters = listLinkedWowCharactersForDiscordUserId(userId, profile.displayName || "");
+    } catch {
+      linkedCharacters = [];
+    }
+
+    let badges = [];
+    try {
+      const canonical = identityUserGetByDiscordId(userId);
+      if (canonical?.id && materializeBadgesEnabled()) {
+        const states = badgeStateGetByUserId(canonical.id).filter((s) => s?.earned);
+        badges = states.map((s) => ({
+          id: s.badgeId,
+          firstEarnedAt: s.firstEarnedAt || null,
+        }));
+      }
+    } catch {
+      badges = [];
+    }
+
+    return res.json({
+      ok: true,
+      profile,
+      foreverClaims,
+      linkedCharacters,
+      badges,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load public profile" });
   }
 });
 

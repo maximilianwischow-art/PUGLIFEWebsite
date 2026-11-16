@@ -5,60 +5,65 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="PUG Life Balance — your raider profile. Upload an avatar, choose a main character, review your earned badges."
+      content="PUG LIFE BALANCE profile — Forever Main & Twinks, TBC Classic characters, and achievements."
     />
     <title>PUG LIFE BALANCE · Profile</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Nunito:wght@300;400;600;700;800;900&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Nunito:wght@300;400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.min.css?v=20260612plb-core-roster-template-v1" />
+    <link
+      rel="preload"
+      as="image"
+      href="/images/wow-forever/gates-of-stormwind.webp"
+      type="image/webp"
+      fetchpriority="high"
+    />
+    <link rel="stylesheet" href="/styles.min.css?v=20261116plb-alliance-profile-v3" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <link rel="stylesheet" href="/wow-forever-squad.css?v=20261116plb-alliance-profile-v3" />
+    <link rel="stylesheet" href="/profile-alliance.css?v=20261116plb-alliance-profile-v3" />
   </head>
-  <body class="framework-bg-vivid">
+  <body class="framework-bg-vivid wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
     <div class="app-wrap">
       <header class="hero">
         <div class="hero-brand">
-          <h1 class="visually-hidden">PUG LIFE BALANCE</h1>
-          <img
-            class="hero-banner"
-            src="/plb-hero-banner.png"
-            srcset="/responsive/plb-hero-banner-480w.webp 480w, /responsive/plb-hero-banner-768w.webp 768w, /responsive/plb-hero-banner-960w.webp 960w"
-            alt=""
-            width="1024"
-            height="409"
-            decoding="async"
-            loading="eager"
-            fetchpriority="high"
-            sizes="(max-width: 960px) 100vw, 960px"
-          />
+          <h1 class="visually-hidden">PUG LIFE BALANCE · Profile</h1>
+          <picture>
+            <source type="image/webp" srcset="/images/wow-forever/gates-of-stormwind.webp" />
+            <img
+              class="hero-banner"
+              src="/images/wow-forever/gates-of-stormwind.jpg"
+              alt=""
+              width="1920"
+              height="1080"
+              decoding="async"
+              loading="eager"
+              fetchpriority="high"
+            />
+          </picture>
         </div>
-        <p class="hero-sub">OG PUG Thunderstrike EU</p>
+        <div class="wf-command-bar">
+          <p class="hero-sub">&lt;Bulwark&gt; · Forever EU Normal</p>
+          <div class="auth-top-right" data-auth-widget></div>
+        </div>
         <nav class="top-nav" aria-label="Main">
-          <a href="/join.html">Join Us</a>
-          <a href="/chapter-1" title="Chapter 1 · From Strangers to Community">Chapter 1</a>
-          <a href="/leaderboard">Leaderboard</a>
-          <a href="/rankings">Rankings</a>
+          <a href="/">Home</a>
+          <a href="/guild-leaderboard" title="Forever guild leveling leaderboard · Bulwark">Guild LB</a>
+          <a href="/achievements" title="TBC Classic achievements archive">Achievements</a>
+          <a href="/profile.html" class="nav-current" aria-current="page">Profile</a>
         </nav>
-        <div class="auth-top-right" data-auth-widget></div>
         <div class="hero-divider" aria-hidden="true"></div>
       </header>
 
       <main class="container profile-page">
-        <section
-          class="card profile-locked-card"
-          id="profileLockedCard"
-          aria-live="polite"
-          hidden
-        >
+        <section class="card profile-locked-card" id="profileLockedCard" aria-live="polite" hidden>
           <h3 class="section-title">Sign in to manage your profile</h3>
-          <p class="subtle">
-            Log in with Discord using the button in the top-right.
-          </p>
+          <p class="subtle">Log in with Discord using the button in the top-right.</p>
         </section>
 
         <div class="profile-shell" id="profileGrid" hidden>
@@ -78,6 +83,7 @@
               data-profile-tab="settings"
               role="tab"
               aria-selected="false"
+              id="profileSettingsTab"
             >
               Settings
             </button>
@@ -121,8 +127,22 @@
               </div>
             </section>
 
+            <section class="card profile-forever-card" aria-labelledby="profileForeverTitle">
+              <h3 class="section-title" id="profileForeverTitle">Forever · Bulwark</h3>
+              <p class="subtle profile-card-lede">Main and twinks claimed from the live guild roster.</p>
+              <div id="profileForeverOverview" class="profile-forever-overview" aria-live="polite">
+                <p class="subtle">No Forever characters claimed yet.</p>
+              </div>
+            </section>
+
+            <section class="card profile-tbc-card" aria-labelledby="profileTbcTitle">
+              <h3 class="section-title" id="profileTbcTitle">TBC Classic characters</h3>
+              <p class="subtle profile-card-lede">Archive identities linked via Account Assignment.</p>
+              <ul id="profileTbcList" class="profile-tbc-list" aria-live="polite"></ul>
+            </section>
+
             <section class="card profile-badges-card">
-              <h3 class="section-title">Badges</h3>
+              <h3 class="section-title">Achievements</h3>
               <div class="profile-role-badge-host" id="profileRoleBadgeHost" aria-live="polite" hidden></div>
               <div class="profile-badges-categories" id="profileBadgesCategories" aria-live="polite">
                 <p class="subtle">Loading badges…</p>
@@ -134,8 +154,7 @@
             <section class="card profile-picture-card">
               <h3 class="section-title">Profile picture</h3>
               <p class="subtle profile-card-lede">
-                JPEG, PNG, WebP, or GIF · max 4&nbsp;MB. Shown on the Leaderboard, Hall of Fame, and the guild roster
-                instead of the class crest.
+                JPEG, PNG, WebP, or GIF · max 4&nbsp;MB. Shown on Guild LB and Achievements when linked.
               </p>
               <div class="profile-picture-wrap">
                 <div
@@ -157,9 +176,7 @@
                     accept="image/jpeg,image/png,image/webp,image/gif"
                     hidden
                   />
-                  <button type="button" class="primary-btn" id="profilePictureChooseBtn">
-                    Choose file
-                  </button>
+                  <button type="button" class="primary-btn" id="profilePictureChooseBtn">Choose file</button>
                   <button type="button" class="secondary-btn" id="profilePictureRemoveBtn" hidden>
                     Remove picture
                   </button>
@@ -169,7 +186,7 @@
             </section>
 
             <section class="card profile-main-card">
-              <h3 class="section-title">Main character</h3>
+              <h3 class="section-title">TBC Classic main</h3>
               <div class="profile-main-row">
                 <label for="profileMainSelect" class="profile-main-label">Display this character:</label>
                 <select id="profileMainSelect" class="profile-main-select" aria-describedby="profileMainHint">
@@ -180,28 +197,27 @@
               <p class="profile-main-hint subtle" id="profileMainHint"></p>
             </section>
 
-            <section class="card profile-addon-card">
-              <h3 class="section-title">Link PUG LIFE Addon</h3>
+            <section class="card profile-forever-settings-card" aria-labelledby="profileForeverSettingsTitle">
+              <h3 class="section-title" id="profileForeverSettingsTitle">Forever Main &amp; Twinks</h3>
               <p class="subtle profile-card-lede">
-                Generate an API token for companion tools (future desktop apps). The in-game WoW addon copies a
-                voting link to your browser — it cannot use this token directly.
+                Claim unclaimed &lt;Bulwark&gt; roster characters. One Main, any number of Twinks.
               </p>
-              <p class="profile-addon-status subtle" id="profileAddonStatus" aria-live="polite"></p>
-              <div class="profile-addon-token-row" id="profileAddonTokenRow" hidden>
-                <input
-                  type="text"
-                  id="profileAddonTokenInput"
-                  class="profile-addon-token-input"
-                  readonly
-                  aria-label="Addon API token"
-                />
-                <button type="button" class="secondary-btn" id="profileAddonTokenCopyBtn">Copy token</button>
-              </div>
-              <div class="profile-addon-actions">
-                <button type="button" class="primary-btn" id="profileAddonGenerateBtn">Generate token</button>
-                <button type="button" class="secondary-btn" id="profileAddonRevokeBtn" hidden>Revoke token</button>
+              <div id="profileForeverClaimsMine" class="profile-forever-mine" aria-live="polite"></div>
+              <div class="profile-forever-claim-tools">
+                <label class="profile-forever-search-label" for="profileForeverSearch">
+                  <span class="visually-hidden">Search unclaimed characters</span>
+                  <input
+                    id="profileForeverSearch"
+                    type="search"
+                    placeholder="Search unclaimed guild characters…"
+                    autocomplete="off"
+                  />
+                </label>
+                <p id="profileForeverClaimStatus" class="profile-forever-claim-status subtle" aria-live="polite"></p>
+                <ul id="profileForeverAvailable" class="profile-forever-available"></ul>
               </div>
             </section>
+
           </div>
         </div>
       </main>
@@ -210,20 +226,19 @@
         <div class="dots" aria-hidden="true">
           <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
         </div>
-        <p><em>"PUG LIFE BALANCE — We are PUG!"</em></p>
-        <p class="footer-sub">TBC Classic · EU — Thunderstrike</p>
+        <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
+        <p class="footer-sub">WoW Forever · &lt;Bulwark&gt; · EU Normal</p>
         <p class="footer-legal-links">
           <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a>
         </p>
       </footer>
     </div>
 
-    <script defer src="/session-api-cache.js?v=20260504a"></script>
-    <script defer src="/home.js?v=20260505black1"></script>
-    <script defer src="/events-roster-ui.js?v=20260920plb-bt-first-illidan-kill-v1"></script>
-    <script defer src="/badge-catalog-ui.js?v=20260920plb-bt-first-illidan-kill-v1"></script>
-    <script defer src="/profile.js?v=20260920plb-bt-first-illidan-kill-v1"></script>
-    <script defer src="/auth-ui.js?v=20260928plb-chapter-one-recap-v1"></script>
+    <script defer src="/session-api-cache.js?v=20261116plb-alliance-profile-v3"></script>
+    <script defer src="/events-roster-ui.js?v=20261116plb-alliance-profile-v3"></script>
+    <script defer src="/badge-catalog-ui.js?v=20261116plb-alliance-profile-v3"></script>
+    <script defer src="/profile.js?v=20261116plb-alliance-profile-v3"></script>
+    <script defer src="/auth-ui.js?v=20261116plb-alliance-profile-v4"></script>
     <script defer src="/cookie-notice.js?v=20260507mobile1"></script>
   </body>
 </html>

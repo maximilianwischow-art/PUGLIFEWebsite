@@ -1,0 +1,197 @@
+/* Alliance welcome home — Gates of Stormwind full-bleed hero */
+
+body.ha-home {
+  min-height: 100vh;
+}
+
+body.ha-home .app-wrap {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.ha-shell {
+  position: relative;
+  z-index: 3;
+  padding: 0.85rem 1.1rem 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.ha-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ha-brand-mark {
+  margin: 0;
+  font-family: var(--font-display, "Cinzel", serif);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold-light, #e8c675);
+}
+
+.ha-nav.top-nav {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.ha-hero {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: min(78vh, 820px);
+  display: grid;
+  align-items: end;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.ha-hero-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.ha-hero-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 42%;
+  display: block;
+}
+
+.ha-hero-shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(6, 11, 17, 0.55) 0%, rgba(6, 11, 17, 0.18) 28%, rgba(6, 11, 17, 0.35) 58%, rgba(6, 11, 17, 0.92) 100%),
+    linear-gradient(90deg, rgba(7, 21, 37, 0.72) 0%, rgba(7, 21, 37, 0.2) 48%, rgba(7, 21, 37, 0.45) 100%);
+  pointer-events: none;
+}
+
+.ha-hero-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 42rem;
+  padding: 2.5rem 1.25rem 3rem;
+  animation: ha-rise 0.9s ease-out both;
+}
+
+.ha-brand {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-display, "Cinzel", serif);
+  font-size: clamp(0.85rem, 1.6vw, 1.05rem);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold-light, #e8c675);
+}
+
+.ha-title {
+  margin: 0;
+  font-family: var(--font-display, "Cinzel", serif);
+  font-weight: 700;
+  font-size: clamp(2.6rem, 7vw, 4.4rem);
+  line-height: 1.02;
+  letter-spacing: 0.03em;
+  color: var(--gold-highlight, #f4dea1);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+}
+
+.ha-kicker {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(232, 198, 117, 0.85);
+}
+
+.ha-lede {
+  margin: 0.85rem 0 0;
+  max-width: 34rem;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.9);
+  animation: ha-rise 1s ease-out 0.12s both;
+}
+
+.ha-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.35rem;
+  animation: ha-rise 1.05s ease-out 0.22s both;
+}
+
+.ha-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.65rem;
+  padding: 0.55rem 1.15rem;
+  border: 1px solid rgba(200, 149, 62, 0.55);
+  border-radius: 4px;
+  background: rgba(8, 22, 42, 0.72);
+  color: var(--gold-light, #e8c675);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.ha-cta:hover,
+.ha-cta:focus-visible {
+  background: rgba(23, 79, 138, 0.55);
+  border-color: var(--gold-highlight, #f4dea1);
+  color: #fff8e7;
+}
+
+.ha-cta--gold {
+  background: linear-gradient(180deg, rgba(232, 201, 117, 0.95), rgba(200, 149, 62, 0.92));
+  color: #0b1728;
+  border-color: rgba(244, 222, 161, 0.85);
+}
+
+.ha-cta--gold:hover,
+.ha-cta--gold:focus-visible {
+  background: linear-gradient(180deg, #f4dea1, #e8c675);
+  color: #071525;
+}
+
+.ha-footer {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+}
+
+@keyframes ha-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ha-hero-copy,
+  .ha-lede,
+  .ha-actions {
+    animation: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .ha-shell {
+    padding: 1rem 1.75rem 0;
+  }
+
+  .ha-hero-copy {
+    padding: 3.5rem 1.75rem 4rem;
+  }
+}

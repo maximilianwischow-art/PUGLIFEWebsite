@@ -36,13 +36,19 @@
     keyStatsHost: document.getElementById("profileKeyStats"),
     subnavButtons: document.querySelectorAll("[data-profile-tab]"),
     tabPanels: document.querySelectorAll("[data-profile-panel]"),
-    addonStatus: document.getElementById("profileAddonStatus"),
-    addonTokenRow: document.getElementById("profileAddonTokenRow"),
-    addonTokenInput: document.getElementById("profileAddonTokenInput"),
-    addonTokenCopyBtn: document.getElementById("profileAddonTokenCopyBtn"),
-    addonGenerateBtn: document.getElementById("profileAddonGenerateBtn"),
-    addonRevokeBtn: document.getElementById("profileAddonRevokeBtn"),
+    foreverOverview: document.getElementById("profileForeverOverview"),
+    tbcList: document.getElementById("profileTbcList"),
+    foreverMine: document.getElementById("profileForeverClaimsMine"),
+    foreverSearch: document.getElementById("profileForeverSearch"),
+    foreverAvailable: document.getElementById("profileForeverAvailable"),
+    foreverClaimStatus: document.getElementById("profileForeverClaimStatus"),
+    settingsTab: document.getElementById("profileSettingsTab"),
   };
+
+  const publicUserId = String(new URLSearchParams(window.location.search).get("user") || "").trim();
+  let isPublicView = false;
+  let foreverAvailableCache = [];
+  let foreverClaimsCache = [];
 
   /** Cached active-roster fetch promise so badge resolution + key stats share one network call. */
   let activeRosterPromise = null;
@@ -99,17 +105,21 @@
   function applyPictureToUI(profile) {
     const url = profile?.pictureUrl;
     if (url) {
-      els.preview.src = url;
-      els.preview.alt = "Your profile picture";
-      els.preview.classList.add("is-loaded");
-      els.placeholder.hidden = true;
-      els.removeBtn.hidden = false;
+      if (els.preview) {
+        els.preview.src = url;
+        els.preview.alt = "Profile picture";
+        els.preview.classList.add("is-loaded");
+      }
+      if (els.placeholder) els.placeholder.hidden = true;
+      if (els.removeBtn) els.removeBtn.hidden = false;
     } else {
-      els.preview.removeAttribute("src");
-      els.preview.alt = "";
-      els.preview.classList.remove("is-loaded");
-      els.placeholder.hidden = false;
-      els.removeBtn.hidden = true;
+      if (els.preview) {
+        els.preview.removeAttribute("src");
+        els.preview.alt = "";
+        els.preview.classList.remove("is-loaded");
+      }
+      if (els.placeholder) els.placeholder.hidden = false;
+      if (els.removeBtn) els.removeBtn.hidden = true;
     }
     /* Mirror the picture state on the Overview hero portrait. */
     if (els.heroPicture) {
@@ -127,18 +137,189 @@
     }
   }
 
-  function applyHeroIdentity(profile, linkedCharacters) {
+  function applyHeroIdentity(profile, linkedCharacters, foreverClaims) {
     if (!els.heroName) return;
-    const main = String(profile?.mainCharacterName || "").trim();
+    const foreverMain = (foreverClaims || []).find((c) => c.role === "main");
+    const foreverName = String(foreverMain?.characterName || "").trim();
+    const tbcMain = String(profile?.mainCharacterName || "").trim();
     const display = String(profile?.displayName || "").trim();
     const linked = Array.isArray(linkedCharacters) ? linkedCharacters.filter(Boolean) : [];
-    const primary = main || linked[0] || display || "—";
+    const primary = foreverName || tbcMain || linked[0] || display || "—";
     els.heroName.textContent = primary;
     if (els.heroMeta) {
       const extras = [];
       if (display && display !== primary) extras.push(display);
-      if (linked.length > 1) extras.push(`${linked.length} linked characters`);
+      if (foreverName) extras.push(`Forever main · ${foreverName}`);
+      else if (tbcMain && tbcMain !== primary) extras.push(`TBC main · ${tbcMain}`);
+      const twinkCount = (foreverClaims || []).filter((c) => c.role === "twink").length;
+      if (twinkCount) extras.push(`${twinkCount} twink${twinkCount === 1 ? "" : "s"}`);
+      if (linked.length) extras.push(`${linked.length} TBC linked`);
       els.heroMeta.textContent = extras.join(" · ");
+    }
+  }
+
+  function renderTbcList(linkedCharacters) {
+    if (!els.tbcList) return;
+    const names = (linkedCharacters || []).map((n) => String(n || "").trim()).filter(Boolean);
+    if (!names.length) {
+      els.tbcList.innerHTML = `<li class="subtle">No TBC Classic characters linked yet.</li>`;
+      return;
+    }
+    els.tbcList.innerHTML = names.map((n) => `<li>${escapeHtml(n)}</li>`).join("");
+  }
+
+  function renderForeverOverview(claims) {
+    if (!els.foreverOverview) return;
+    const list = Array.isArray(claims) ? claims : [];
+    if (!list.length) {
+      els.foreverOverview.innerHTML = `<p class="subtle">No Forever characters claimed yet.${
+        isPublicView ? "" : " Claim Main/Twinks in Settings."
+      }</p>`;
+      return;
+    }
+    els.foreverOverview.innerHTML = list
+      .map((c) => {
+        const tone = c.classId ? ` class-${escapeHtml(c.classId)}` : "";
+        return `<span class="profile-claim-chip${c.role === "main" ? " is-main" : ""}">
+          <span class="chip-role">${c.role === "main" ? "Main" : "Twink"}</span>
+          <span class="chip-name${tone}">${escapeHtml(c.characterName)}</span>
+          <span class="subtle">${escapeHtml(c.level || "—")}</span>
+        </span>`;
+      })
+      .join("");
+  }
+
+  function renderForeverMine(claims) {
+    if (!els.foreverMine) return;
+    const list = Array.isArray(claims) ? claims : [];
+    foreverClaimsCache = list;
+    if (!list.length) {
+      els.foreverMine.innerHTML = `<p class="subtle">You have not claimed any Bulwark characters yet.</p>`;
+      return;
+    }
+    els.foreverMine.innerHTML = list
+      .map((c) => {
+        const tone = c.classId ? ` class-${escapeHtml(c.classId)}` : "";
+        return `<span class="profile-claim-chip${c.role === "main" ? " is-main" : ""}" data-name-key="${escapeHtml(c.nameKey)}">
+          <span class="chip-role">${c.role === "main" ? "Main" : "Twink"}</span>
+          <span class="chip-name${tone}">${escapeHtml(c.characterName)}</span>
+          <span class="profile-claim-actions">
+            ${
+              c.role === "main"
+                ? ""
+                : `<button type="button" class="secondary-btn" data-forever-action="set-main" data-name-key="${escapeHtml(c.nameKey)}">Set Main</button>`
+            }
+            <button type="button" class="secondary-btn" data-forever-action="release" data-name-key="${escapeHtml(c.nameKey)}">Release</button>
+          </span>
+        </span>`;
+      })
+      .join("");
+  }
+
+  function renderForeverAvailable(rows) {
+    if (!els.foreverAvailable) return;
+    const q = String(els.foreverSearch?.value || "")
+      .trim()
+      .toLowerCase();
+    const filtered = (rows || []).filter((m) => {
+      if (!q) return true;
+      const hay = `${m.characterName} ${m.className} ${m.raceName}`.toLowerCase();
+      return hay.includes(q);
+    });
+    if (!filtered.length) {
+      els.foreverAvailable.innerHTML = `<li class="subtle">No unclaimed characters match.</li>`;
+      return;
+    }
+    els.foreverAvailable.innerHTML = filtered
+      .slice(0, 80)
+      .map((m) => {
+        const tone = m.classId ? ` class-${escapeHtml(m.classId)}` : "";
+        return `<li>
+          <div class="avail-meta">
+            <span class="avail-name${tone}">${escapeHtml(m.characterName)}</span>
+            <span class="avail-sub">${escapeHtml(m.raceName || "—")} · ${escapeHtml(m.className || "—")} · L${escapeHtml(m.level || "—")}</span>
+          </div>
+          <div class="avail-actions">
+            <button type="button" class="primary-btn" data-forever-claim="main" data-character-name="${escapeHtml(m.characterName)}">Claim Main</button>
+            <button type="button" class="secondary-btn" data-forever-claim="twink" data-character-name="${escapeHtml(m.characterName)}">Claim Twink</button>
+          </div>
+        </li>`;
+      })
+      .join("");
+  }
+
+  async function loadForeverClaimsAvailable() {
+    if (isPublicView) return;
+    try {
+      const res = await fetch("/api/wow-forever/claims/available", { credentials: "include" });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error || "Failed to load guild claims");
+      foreverClaimsCache = payload.claims || [];
+      foreverAvailableCache = payload.available || [];
+      renderForeverMine(foreverClaimsCache);
+      renderForeverOverview(foreverClaimsCache);
+      renderForeverAvailable(foreverAvailableCache);
+      setStatus(els.foreverClaimStatus, `${foreverAvailableCache.length} unclaimed on roster`, null);
+    } catch (error) {
+      setStatus(els.foreverClaimStatus, error?.message || "Failed to load claims", "error");
+    }
+  }
+
+  async function claimForeverCharacter(characterName, role) {
+    setStatus(els.foreverClaimStatus, `Claiming ${characterName}…`, "busy");
+    try {
+      const res = await fetch("/api/wow-forever/claims", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ characterName, role }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error || "Claim failed");
+      foreverClaimsCache = payload.claims || [];
+      renderForeverMine(foreverClaimsCache);
+      renderForeverOverview(foreverClaimsCache);
+      await loadForeverClaimsAvailable();
+      setStatus(els.foreverClaimStatus, `Claimed ${characterName} as ${role}.`, "success");
+    } catch (error) {
+      setStatus(els.foreverClaimStatus, error?.message || "Claim failed", "error");
+    }
+  }
+
+  async function setForeverMain(nameKey) {
+    try {
+      const res = await fetch("/api/wow-forever/claims/main", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nameKey }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error || "Failed to set main");
+      foreverClaimsCache = payload.claims || [];
+      renderForeverMine(foreverClaimsCache);
+      renderForeverOverview(foreverClaimsCache);
+      setStatus(els.foreverClaimStatus, "Forever main updated.", "success");
+    } catch (error) {
+      setStatus(els.foreverClaimStatus, error?.message || "Failed to set main", "error");
+    }
+  }
+
+  async function releaseForeverClaim(nameKey) {
+    try {
+      const res = await fetch(`/api/wow-forever/claims/${encodeURIComponent(nameKey)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error || "Failed to release");
+      foreverClaimsCache = payload.claims || [];
+      renderForeverMine(foreverClaimsCache);
+      renderForeverOverview(foreverClaimsCache);
+      await loadForeverClaimsAvailable();
+      setStatus(els.foreverClaimStatus, "Claim released.", "success");
+    } catch (error) {
+      setStatus(els.foreverClaimStatus, error?.message || "Failed to release", "error");
     }
   }
 
@@ -200,15 +381,63 @@
       showAuthedState();
       lastProfile = payload.profile || null;
       const linkedCharacters = payload.linkedCharacters || [];
+      const foreverClaims = payload.foreverClaims || [];
+      foreverClaimsCache = foreverClaims;
       applyPictureToUI(payload.profile);
-      applyHeroIdentity(payload.profile, linkedCharacters);
+      applyHeroIdentity(payload.profile, linkedCharacters, foreverClaims);
       applyMainCharacterToUI(linkedCharacters, payload?.profile?.mainCharacterName || null);
+      renderTbcList(linkedCharacters);
+      renderForeverOverview(foreverClaims);
+      renderForeverMine(foreverClaims);
       hydrateKeyStats(payload.profile, linkedCharacters).catch((error) => {
         console.warn("[profile] key stats hydrate failed:", error?.message || error);
       });
       setStatus(els.pictureStatus, "");
     } catch (error) {
       setStatus(els.pictureStatus, error?.message || "Failed to load profile", "error");
+    }
+  }
+
+  async function loadPublicProfile(userId) {
+    isPublicView = true;
+    document.body.classList.add("profile-public-view");
+    if (els.settingsTab) els.settingsTab.hidden = true;
+    try {
+      const res = await fetch(`/api/profile/public/${encodeURIComponent(userId)}`, {
+        credentials: "include",
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) throw new Error(payload?.error || "Profile not found");
+      showAuthedState();
+      lastProfile = payload.profile || null;
+      const linkedCharacters = payload.linkedCharacters || [];
+      const foreverClaims = payload.foreverClaims || [];
+      foreverClaimsCache = foreverClaims;
+      applyPictureToUI(payload.profile);
+      applyHeroIdentity(payload.profile, linkedCharacters, foreverClaims);
+      renderTbcList(linkedCharacters);
+      renderForeverOverview(foreverClaims);
+      if (els.badgesHost) {
+        const badgeIds = (payload.badges || []).map((b) => b.id).filter(Boolean);
+        if (!badgeIds.length) {
+          els.badgesHost.innerHTML = `<p class="subtle">No archived achievements on this profile yet.</p>`;
+        } else {
+          els.badgesHost.innerHTML = `<p class="subtle">${badgeIds.length} achievement badge${
+            badgeIds.length === 1 ? "" : "s"
+          } earned in TBC Classic.</p>
+            <ul class="profile-tbc-list">${badgeIds
+              .map((id) => `<li><code>${escapeHtml(id)}</code></li>`)
+              .join("")}</ul>`;
+        }
+      }
+    } catch (error) {
+      showLockedState();
+      if (els.locked) {
+        els.locked.hidden = false;
+        els.locked.innerHTML = `<h3 class="section-title">Profile unavailable</h3><p class="subtle">${escapeHtml(
+          error?.message || "Could not load profile"
+        )}</p>`;
+      }
     }
   }
 
@@ -799,96 +1028,40 @@
     });
     els.mainSaveBtn?.addEventListener("click", () => saveMainCharacter());
 
-    els.addonGenerateBtn?.addEventListener("click", () => generateAddonToken());
-    els.addonRevokeBtn?.addEventListener("click", () => revokeAddonToken());
-    els.addonTokenCopyBtn?.addEventListener("click", () => {
-      const value = String(els.addonTokenInput?.value || "").trim();
-      if (!value) return;
-      els.addonTokenInput?.focus();
-      els.addonTokenInput?.select();
-      setStatus(els.addonStatus, "Token selected — press Ctrl+C to copy.", "success");
+    els.foreverSearch?.addEventListener("input", () => renderForeverAvailable(foreverAvailableCache));
+    els.foreverAvailable?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-forever-claim]");
+      if (!btn) return;
+      const role = btn.getAttribute("data-forever-claim") || "twink";
+      const characterName = btn.getAttribute("data-character-name") || "";
+      if (!characterName) return;
+      claimForeverCharacter(characterName, role);
     });
-  }
+    els.foreverMine?.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-forever-action]");
+      if (!btn) return;
+      const action = btn.getAttribute("data-forever-action");
+      const nameKey = btn.getAttribute("data-name-key") || "";
+      if (!nameKey) return;
+      if (action === "set-main") setForeverMain(nameKey);
+      if (action === "release") releaseForeverClaim(nameKey);
+    });
 
-  function applyAddonTokenUI(status, revealedToken) {
-    const active = Boolean(status?.active);
-    if (els.addonRevokeBtn) els.addonRevokeBtn.hidden = !active;
-    if (els.addonTokenRow) els.addonTokenRow.hidden = !revealedToken;
-    if (els.addonTokenInput) els.addonTokenInput.value = revealedToken || "";
-    if (active && status?.tokenHint) {
-      setStatus(
-        els.addonStatus,
-        `Active token ending in …${status.tokenHint}. Generate a new token to rotate.`,
-        "success",
-      );
-    } else if (!revealedToken) {
-      setStatus(els.addonStatus, "No active addon token.", null);
-    }
-  }
-
-  async function loadAddonTokenStatus() {
-    try {
-      const res = await fetch("/api/profile/me/addon-token", { credentials: "include" });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload?.ok) {
-        setStatus(els.addonStatus, payload?.error || "Could not load addon token status.", "error");
-        return;
-      }
-      applyAddonTokenUI(payload, "");
-    } catch (error) {
-      setStatus(els.addonStatus, error?.message || "Could not load addon token status.", "error");
-    }
-  }
-
-  async function generateAddonToken() {
-    try {
-      setStatus(els.addonStatus, "Generating token…", "busy");
-      const res = await fetch("/api/profile/me/addon-token", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate" }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Failed to generate token");
-      }
-      applyAddonTokenUI(payload, String(payload.token || ""));
-      setStatus(els.addonStatus, payload.message || "Token generated.", "success");
-    } catch (error) {
-      setStatus(els.addonStatus, error?.message || "Failed to generate token.", "error");
-    }
-  }
-
-  async function revokeAddonToken() {
-    try {
-      setStatus(els.addonStatus, "Revoking token…", "busy");
-      const res = await fetch("/api/profile/me/addon-token", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "revoke" }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok || !payload?.ok) {
-        throw new Error(payload?.error || "Failed to revoke token");
-      }
-      applyAddonTokenUI(payload, "");
-      setStatus(els.addonStatus, "Addon token revoked.", "success");
-    } catch (error) {
-      setStatus(els.addonStatus, error?.message || "Failed to revoke token.", "error");
-    }
   }
 
   async function init() {
     bindUI();
     bindSubnav();
+    if (publicUserId) {
+      await loadPublicProfile(publicUserId);
+      return;
+    }
     const authed = await fetchAuthState();
     if (!authed) {
       showLockedState();
       return;
     }
-    await Promise.all([loadProfile(), loadBadges(), loadAddonTokenStatus()]);
+    await Promise.all([loadProfile(), loadBadges(), loadForeverClaimsAvailable()]);
   }
 
   if (document.readyState === "loading") {

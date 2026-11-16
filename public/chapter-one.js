@@ -161,8 +161,8 @@
         <p class="ch1-panel-lede">${esc(chapter.closeout || "")}</p>
         <div class="ch1-panel-actions">
           <button type="button" class="ch1-pill ch1-pill--gold" data-ch1-scroll-timeline>Scroll through the timeline</button>
-          <a class="ch1-pill" href="/auth/discord/login?next=${encodeURIComponent("/chapter-1")}">Login</a>
-          <a class="ch1-pill" href="/join.html">Join Us</a>
+          <a class="ch1-pill" href="/auth/discord/login?next=${encodeURIComponent("/achievements")}">Login</a>
+          <a class="ch1-pill" href="/">Home</a>
         </div>
       </div>`,
     });
@@ -291,17 +291,17 @@
   function renderChapterTwoPanel() {
     return panelShell({
       id: "ch1-chapter-two",
-      art: "/wow-forever-hero.jpg",
-      artSrcset:
-        "/responsive/wow-forever-hero-768w.webp 768w, /responsive/wow-forever-hero-1024w.webp 1024w, /responsive/wow-forever-hero-1536w.webp 1536w, /wow-forever-hero.jpg 1672w",
+      art: "/images/wow-forever/gates-of-stormwind.jpg",
+      artSrcset: "/images/wow-forever/gates-of-stormwind.webp 1920w, /images/wow-forever/gates-of-stormwind.jpg 1920w",
       artSizes: "100vw",
-      artWidth: 1672,
-      artHeight: 941,
+      artWidth: 1920,
+      artHeight: 1080,
       centered: true,
       content: `<div class="ch1-panel-hero">
-        <p class="ch1-panel-lede">World of Warcraft Forever is live. Pick your race, class, and spec — and walk into the tavern.</p>
+        <p class="ch1-panel-lede">Chapter 2 continues on Alliance — World of Warcraft Forever with &lt;Bulwark&gt; on EU Normal.</p>
         <div class="ch1-panel-actions">
-          <a class="ch1-pill ch1-pill--gold" href="/wow-forever">Chapter 2 starts on Forever</a>
+          <a class="ch1-pill ch1-pill--gold" href="/guild-leaderboard">Open Guild Leaderboard</a>
+          <a class="ch1-pill" href="/">Back to Home</a>
         </div>
       </div>`,
     });
@@ -387,7 +387,7 @@
       if (!res.ok || payload?.ok === false) throw new Error(payload?.error || `HTTP ${res.status}`);
       render(payload);
     } catch (error) {
-      main.innerHTML = `<section class="card"><p class="ch1-error">Could not load Chapter 1: ${esc(error.message || error)}</p></section>`;
+      main.innerHTML = `<section class="card"><p class="ch1-error">Could not load Achievements: ${esc(error.message || error)}</p></section>`;
     }
   }
 
