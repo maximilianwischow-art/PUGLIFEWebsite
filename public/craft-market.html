@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="PUG LIFE BALANCE Market Hall — Forever guild craft offers and requests for Bulwark."
+    />
+    <title>PUG LIFE BALANCE · Market Hall</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Nunito:wght@300;400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="preload"
+      as="image"
+      href="/images/wow-forever/gates-of-stormwind.webp"
+      type="image/webp"
+      fetchpriority="high"
+    />
+    <link rel="stylesheet" href="/styles.min.css?v=20261116plb-alliance-glb-v9" />
+    <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
+    <link rel="stylesheet" href="/wow-forever-squad.css?v=20261116plb-alliance-glb-v9" />
+    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261116plb-craft-market-v3" />
+  </head>
+  <body class="framework-bg-vivid wf-alliance">
+    <div class="stars" id="stars" aria-hidden="true"></div>
+    <div class="app-wrap">
+      <header class="hero">
+        <div class="hero-brand">
+          <h1 class="visually-hidden">PUG LIFE BALANCE · Market Hall</h1>
+          <picture>
+            <source type="image/webp" srcset="/images/wow-forever/gates-of-stormwind.webp" />
+            <img
+              class="hero-banner"
+              src="/images/wow-forever/gates-of-stormwind.jpg"
+              alt=""
+              width="1920"
+              height="1080"
+              decoding="async"
+              loading="eager"
+              fetchpriority="high"
+            />
+          </picture>
+        </div>
+        <div class="wf-command-bar">
+          <p class="hero-sub">&lt;Bulwark&gt; · Forever EU Normal</p>
+          <div class="auth-top-right" data-auth-widget></div>
+        </div>
+        <nav class="top-nav" aria-label="Main">
+          <a href="/">Home</a>
+          <a href="/guild-leaderboard" title="Forever guild leveling leaderboard · Bulwark">Guild LB</a>
+          <a href="/market" class="nav-current" aria-current="page" title="Forever craft Market Hall">Market</a>
+          <a href="/achievements" title="TBC Classic achievements archive">Achievements</a>
+          <a href="/profile.html" title="Forever Main &amp; Twinks, TBC characters, achievements">Profile</a>
+        </nav>
+        <div class="hero-divider" aria-hidden="true"></div>
+      </header>
+
+      <main class="container glb-page cm-page">
+        <nav class="glb-subnav" aria-label="Guild leaderboards">
+          <a href="/guild-leaderboard">Guild Leaderboard</a>
+          <a href="/profession-leaderboard">Profession Leaderboard</a>
+          <a href="/market" class="is-active" aria-current="page">Market Hall</a>
+        </nav>
+
+        <section class="card surface-elevated glb-hero-card glb-hero-card--plain" aria-labelledby="cm-title">
+          <div class="glb-hero-copy">
+            <p class="wf-kicker">World of Warcraft: Forever</p>
+            <h2 id="cm-title" class="section-title">Market Hall</h2>
+            <p class="glb-lede muted">
+              Guildies publish crafts from their known recipes. Request an item to post it here and ping both players in Discord.
+            </p>
+          </div>
+          <p id="cmStatus" class="glb-status muted" role="status">Loading Market Hall…</p>
+        </section>
+
+        <section class="card surface-elevated cm-section" aria-labelledby="cm-requests-title">
+          <div class="cm-section-head">
+            <h3 id="cm-requests-title" class="glb-board-heading">Open requests</h3>
+          </div>
+          <div id="cmRequests" class="cm-request-list" aria-live="polite"></div>
+        </section>
+
+        <section class="card surface-elevated cm-section" aria-labelledby="cm-listings-title">
+          <div class="cm-section-head">
+            <h3 id="cm-listings-title" class="glb-board-heading">Craft listings</h3>
+            <label class="glb-filter cm-filter">
+              <span class="visually-hidden">Filter listings</span>
+              <input id="cmListingSearch" type="search" placeholder="Search listings…" autocomplete="off" />
+            </label>
+          </div>
+          <div id="cmListings" class="cm-listing-grid" aria-live="polite"></div>
+        </section>
+
+        <section class="card surface-elevated cm-section" id="cmSellerCard" aria-labelledby="cm-seller-title" hidden>
+          <div class="cm-section-head">
+            <h3 id="cm-seller-title" class="glb-board-heading">My offers</h3>
+            <label class="cm-toggle">
+              <input type="checkbox" id="cmSellerEnabled" />
+              <span>Offer crafts on the Market Hall</span>
+            </label>
+          </div>
+          <p id="cmSellerHint" class="subtle cm-seller-hint"></p>
+          <div class="cm-offer-tools" id="cmOfferTools" hidden>
+            <label class="glb-filter cm-filter cm-filter--grow">
+              <span class="visually-hidden">Search recipes</span>
+              <input id="cmRecipeSearch" type="search" placeholder="Search your known recipes…" autocomplete="off" />
+            </label>
+            <p id="cmOfferStatus" class="glb-status muted" role="status"></p>
+            <div id="cmRecipeList" class="cm-recipe-list" role="group" aria-label="Known recipes"></div>
+            <div class="cm-offer-actions">
+              <button type="button" class="primary-btn" id="cmSaveOffersBtn">Save selected offers</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <dialog class="cm-dialog" id="cmRequestDialog" aria-labelledby="cmRequestDialogTitle">
+        <form method="dialog" class="cm-dialog-form" id="cmRequestForm">
+          <h3 id="cmRequestDialogTitle" class="section-title">Confirm craft request</h3>
+          <p id="cmRequestDialogBody" class="cm-dialog-body"></p>
+          <ul id="cmRequestDialogMats" class="cm-mats"></ul>
+          <label class="cm-note-label" for="cmRequestNote">
+            Note (optional)
+            <input id="cmRequestNote" type="text" maxlength="280" placeholder="e.g. need for leveling / raid prep" />
+          </label>
+          <p id="cmRequestDialogStatus" class="glb-status muted" role="status"></p>
+          <div class="cm-dialog-actions">
+            <button type="submit" value="cancel" class="secondary-btn">Cancel</button>
+            <button type="submit" value="confirm" class="primary-btn" id="cmRequestConfirmBtn">Request craft</button>
+          </div>
+        </form>
+      </dialog>
+
+      <footer class="footer">
+        <div class="dots" aria-hidden="true">
+          <span class="dot"></span><span class="dot big"></span><span class="dot"></span>
+        </div>
+        <p><em>"PUG LIFE BALANCE - We are PUG!"</em></p>
+        <p class="footer-sub">WoW Forever · &lt;Bulwark&gt; · EU Normal</p>
+        <p class="footer-legal-links">
+          <a href="/privacy.html">Privacy</a> · <a href="/imprint.html">Imprint</a>
+        </p>
+      </footer>
+    </div>
+
+    <script defer src="/session-api-cache.js?v=20260504a"></script>
+    <script defer src="/wow-item-tooltip.js?v=20260502a"></script>
+    <script defer src="/auth-ui.js?v=20261116plb-craft-market-v3"></script>
+    <script defer src="/profession-icons.js?v=20261116plb-prof-icons-v1"></script>
+    <script defer src="/craft-market.js?v=20261116plb-craft-market-v3"></script>
+  </body>
+</html>

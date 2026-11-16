@@ -195,6 +195,21 @@ import {
   wowForeverClaimRelease,
   wowForeverRaidRosterGet,
   wowForeverRaidRosterSave,
+  craftRecipeCacheGet,
+  craftRecipeCacheGetMany,
+  craftRecipeCacheUpsert,
+  craftMarketSellerGet,
+  craftMarketSellerUpsert,
+  generateCraftMarketStoreName,
+  craftMarketOffersListByUserId,
+  craftMarketOfferGetById,
+  craftMarketOffersListPublic,
+  craftMarketOffersReplaceForUser,
+  craftMarketRequestGetById,
+  craftMarketRequestsListOpen,
+  craftMarketRequestCreate,
+  craftMarketRequestSetDiscordMessageId,
+  craftMarketRequestSetStatus,
   p2UpsertMaterial,
   p2GetAllCurrent,
   p2GetHistory,
@@ -294,6 +309,9 @@ import {
   buildForeverClaimIndex as wowForeverBuildClaimIndex,
   buildForeverGuildLeaderboardStats as wowForeverBuildGuildLeaderboardStats,
   fetchForeverGuildRosterBundle as wowForeverFetchGuildRosterBundle,
+  fetchForeverCharacterKnownRecipes as wowForeverFetchCharacterKnownRecipes,
+  fetchForeverRecipeDetail as wowForeverFetchRecipeDetail,
+  foreverSlugFromCharacterName as wowForeverSlugFromCharacterName,
   normalizeForeverNameKey as wowForeverNormalizeNameKey,
 } from "./lib/wow-forever-guild.mjs";
 
@@ -556,6 +574,13 @@ app.get(
   ["/profession-leaderboard", "/profession-leaderboard/", "/profession-leaderboard.html"],
   sendProfessionLeaderboardPage
 );
+
+function sendCraftMarketPage(_req, res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.sendFile(path.join(publicDir, "craft-market.html"));
+}
+
+app.get(["/market", "/market/", "/craft-market", "/craft-market/", "/craft-market.html"], sendCraftMarketPage);
 
 /** Legacy public HTML must redirect before `express.static`, or the files on disk win. */
 app.get(
@@ -16876,6 +16901,426 @@ app.get("/api/wow-forever/guild-leaderboard", async (req, res) => {
       ok: false,
       error: error?.message || "Failed to load Forever guild leaderboard",
     });
+  }
+});
+
+function craftMarketPublicBase() {
+  return String(publicBaseUrl || "https://wow-pug.com").replace(/\/+$/, "");
+}
+
+const CRAFT_MARKET_DISCORD_DEFAULT_CHANNEL_ID = "1571918594860650537";
+
+function craftMarketDiscordChannelId() {
+  return String(process.env.CRAFT_MARKET_DISCORD_CHANNEL_ID || CRAFT_MARKET_DISCORD_DEFAULT_CHANNEL_ID).trim();
+}
+
+async function ensureCraftRecipeCached({ token, recipeId, profession = "", namespace = "", recipeName = "" }) {
+  const id = Number(recipeId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const existing = craftRecipeCacheGet(id);
+  const freshMs = 7 * 24 * 60 * 60 * 1000;
+  if (existing?.fetchedAt && Date.now() - existing.fetchedAt < freshMs && Array.isArray(existing.reagents)) {
+    if (profession && !existing.profession) {
+      return craftRecipeCacheUpsert({
+        ...existing,
+        profession,
+        recipeName: existing.recipeName || recipeName,
+      });
+    }
+    return existing;
+  }
+  const detail = await wowForeverFetchRecipeDetail({
+    token,
+    recipeId: id,
+    namespace: namespace || existing?.namespace || "",
+  }).catch(() => null);
+  if (!detail) {
+    return (
+      existing ||
+      craftRecipeCacheUpsert({
+        recipeId: id,
+        recipeName,
+        profession,
+        namespace,
+        reagents: [],
+      })
+    );
+  }
+  return craftRecipeCacheUpsert({
+    recipeId: id,
+    recipeName: detail.recipeName || recipeName,
+    profession,
+    craftedItemId: detail.craftedItemId,
+    craftedItemName: detail.craftedItemName,
+    reagents: detail.reagents,
+    namespace: detail.namespace || namespace,
+  });
+}
+
+async function loadKnownRecipesForUser(userId) {
+  const claims = wowForeverClaimsListByUserId(userId);
+  if (!claims.length) return { claims, recipes: [] };
+  const token = await getBlizzardAccessToken();
+  const byRecipe = new Map();
+  for (const claim of claims) {
+    const slug = wowForeverSlugFromCharacterName(claim.characterName);
+    if (!slug) continue;
+    const known = await wowForeverFetchCharacterKnownRecipes({ token, slug }).catch(() => []);
+    for (const row of known) {
+      const existing = byRecipe.get(row.recipeId);
+      if (existing) {
+        if (!existing.characters.includes(claim.characterName)) existing.characters.push(claim.characterName);
+        continue;
+      }
+      byRecipe.set(row.recipeId, {
+        recipeId: row.recipeId,
+        recipeName: row.recipeName,
+        profession: row.profession,
+        namespace: row.namespace,
+        characters: [claim.characterName],
+        nameKey: claim.nameKey,
+        characterName: claim.characterName,
+      });
+    }
+  }
+  return { claims, recipes: [...byRecipe.values()] };
+}
+
+async function postCraftMarketDiscordRequest({ request, offer, cache, buyerDisplayName, crafterDisplayName }) {
+  const channelId = craftMarketDiscordChannelId();
+  if (!channelId || !String(process.env.DISCORD_BOT_TOKEN || "").trim()) return null;
+  const itemName = String(cache?.craftedItemName || offer?.craftedItemName || offer?.recipeName || "craft").trim();
+  const mats = Array.isArray(cache?.reagents) ? cache.reagents : [];
+  const matsLine = mats.length
+    ? mats.map((r) => `${r.quantity || 1}× ${r.name}`).join(", ")
+    : "Mats unknown";
+  const marketUrl = `${craftMarketPublicBase()}/market`;
+  const content = [
+    `<@${request.buyerUserId}> requested **${itemName}** from <@${request.crafterUserId}>`,
+    `Crafter: **${crafterDisplayName || offer?.characterName || "Crafter"}** · Buyer: **${buyerDisplayName || "Buyer"}**`,
+    `Profession: ${offer?.profession || cache?.profession || "—"}`,
+    `Mats: ${matsLine}`,
+    `Market Hall: ${marketUrl}`,
+  ].join("\n");
+  const message = await discordBotApi(`/channels/${encodeURIComponent(channelId)}/messages`, {
+    method: "POST",
+    body: {
+      content,
+      allowed_mentions: { users: [String(request.buyerUserId), String(request.crafterUserId)] },
+    },
+  });
+  return String(message?.id || "").trim() || null;
+}
+
+function craftMarketPictureUrl(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return "";
+  const profile = profileGetByUserId(uid);
+  if (!profile?.pictureFilename) return "";
+  return `/api/profile/picture/${encodeURIComponent(uid)}?v=${profile.pictureEtag || profile.pictureUpdatedAt || 0}`;
+}
+
+function enrichCraftMarketListings(offers) {
+  const caches = craftRecipeCacheGetMany(offers.map((o) => o.recipeId));
+  const byId = new Map(caches.map((c) => [c.recipeId, c]));
+  const pictureCache = new Map();
+  return offers.map((offer) => {
+    const cache = byId.get(offer.recipeId) || null;
+    const uid = String(offer.userId || "").trim();
+    if (uid && !pictureCache.has(uid)) pictureCache.set(uid, craftMarketPictureUrl(uid));
+    return {
+      ...offer,
+      craftedItemName: cache?.craftedItemName || offer.craftedItemName || offer.recipeName,
+      craftedItemId: cache?.craftedItemId ?? offer.craftedItemId,
+      reagents: cache?.reagents || [],
+      pictureUrl: pictureCache.get(uid) || "",
+      profileHref: uid ? `/profile.html?user=${encodeURIComponent(uid)}` : "",
+    };
+  });
+}
+
+function dominantProfessionFromOffers(offerRows) {
+  const counts = new Map();
+  for (const row of offerRows || []) {
+    const prof = String(row?.profession || "").trim();
+    if (!prof) continue;
+    counts.set(prof, (counts.get(prof) || 0) + 1);
+  }
+  let best = "";
+  let bestCount = -1;
+  for (const [prof, count] of counts.entries()) {
+    if (count > bestCount) {
+      best = prof;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function ensureSellerStoreName({ userId, displayName, claims, offerRows, enabled = true }) {
+  const existing = craftMarketSellerGet(userId);
+  if (existing?.storeName) {
+    return craftMarketSellerUpsert({
+      userId,
+      displayName,
+      enabled: enabled ?? existing.enabled,
+    });
+  }
+  const mainClaim = (claims || []).find((c) => c.role === "main") || (claims || [])[0] || null;
+  const characterName =
+    String(mainClaim?.characterName || offerRows?.[0]?.characterName || displayName || "").trim() || "Guildie";
+  const profession = dominantProfessionFromOffers(offerRows) || "Crafting";
+  const storeName = generateCraftMarketStoreName(characterName, profession);
+  return craftMarketSellerUpsert({
+    userId,
+    displayName,
+    enabled: true,
+    storeName,
+    storeCharacterName: characterName,
+    storeProfession: profession,
+  });
+}
+
+/** GET /api/craft-market — public listings + open requests. */
+app.get("/api/craft-market", (req, res) => {
+  try {
+    let rawOffers = craftMarketOffersListPublic();
+    // Lazily mint store names for sellers who published before store names existed.
+    const sellersNeedingStore = new Map();
+    for (const offer of rawOffers) {
+      if (offer.storeName || !offer.userId) continue;
+      if (!sellersNeedingStore.has(offer.userId)) sellersNeedingStore.set(offer.userId, []);
+      sellersNeedingStore.get(offer.userId).push(offer);
+    }
+    for (const [userId, offerRows] of sellersNeedingStore.entries()) {
+      const seller = craftMarketSellerGet(userId);
+      const claims = wowForeverClaimsListByUserId(userId);
+      ensureSellerStoreName({
+        userId,
+        displayName: seller?.displayName || "",
+        claims,
+        offerRows,
+        enabled: true,
+      });
+    }
+    if (sellersNeedingStore.size) rawOffers = craftMarketOffersListPublic();
+    const offers = enrichCraftMarketListings(rawOffers);
+    const requests = craftMarketRequestsListOpen().map((row) => {
+      const cache = craftRecipeCacheGet(row.recipeId);
+      return {
+        ...row,
+        craftedItemName: cache?.craftedItemName || row.craftedItemName || row.recipeName,
+        craftedItemId: cache?.craftedItemId ?? row.craftedItemId ?? null,
+        reagents: cache?.reagents || [],
+      };
+    });
+    return res.json({ ok: true, offers, requests });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load craft market" });
+  }
+});
+
+/** GET /api/craft-market/me — seller panel payload. */
+app.get("/api/craft-market/me", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "").trim();
+    const seller = craftMarketSellerGet(userId);
+    const offers = craftMarketOffersListByUserId(userId);
+    const { claims, recipes } = await loadKnownRecipesForUser(userId);
+    return res.json({
+      ok: true,
+      seller: seller || { userId, displayName, enabled: false, updatedAt: 0 },
+      claims,
+      recipes,
+      offers,
+      selectedRecipeIds: offers.map((o) => o.recipeId),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to load seller panel" });
+  }
+});
+
+/** POST /api/craft-market/me/seller — enable/disable seller. */
+app.post("/api/craft-market/me/seller", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "").trim();
+    const enabled = Boolean(req.body?.enabled);
+    const claims = wowForeverClaimsListByUserId(userId);
+    if (enabled && !claims.length) {
+      return res.status(400).json({ ok: false, error: "Claim a Forever character on Profile before offering crafts" });
+    }
+    const seller = craftMarketSellerUpsert({ userId, displayName, enabled });
+    return res.json({ ok: true, seller });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to update seller status" });
+  }
+});
+
+/** PUT /api/craft-market/me/offers — replace selected recipe offers. */
+app.put("/api/craft-market/me/offers", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const userId = String(session.user.id);
+    const displayName = String(session.user.globalName || session.user.username || "").trim();
+    const claims = wowForeverClaimsListByUserId(userId);
+    if (!claims.length) {
+      return res.status(400).json({ ok: false, error: "Claim a Forever character on Profile before offering crafts" });
+    }
+    const selectedIds = [...new Set((Array.isArray(req.body?.recipeIds) ? req.body.recipeIds : []).map(Number))].filter(
+      (id) => Number.isFinite(id) && id > 0
+    );
+    const { recipes } = await loadKnownRecipesForUser(userId);
+    const byId = new Map(recipes.map((r) => [r.recipeId, r]));
+    const token = await getBlizzardAccessToken();
+    const offerRows = [];
+    for (const recipeId of selectedIds) {
+      const known = byId.get(recipeId);
+      if (!known) continue;
+      const cache = await ensureCraftRecipeCached({
+        token,
+        recipeId,
+        profession: known.profession,
+        namespace: known.namespace,
+        recipeName: known.recipeName,
+      });
+      offerRows.push({
+        recipeId,
+        recipeName: cache?.recipeName || known.recipeName,
+        profession: known.profession,
+        characterName: known.characterName,
+        nameKey: known.nameKey,
+        craftedItemId: cache?.craftedItemId ?? null,
+        craftedItemName: cache?.craftedItemName || known.recipeName,
+      });
+    }
+    const seller = ensureSellerStoreName({
+      userId,
+      displayName,
+      claims,
+      offerRows,
+      enabled: true,
+    });
+    const offers = craftMarketOffersReplaceForUser({ userId, offers: offerRows });
+    return res.json({
+      ok: true,
+      seller,
+      offers,
+      selectedRecipeIds: offers.map((o) => o.recipeId),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to save offers" });
+  }
+});
+
+/** POST /api/craft-market/requests — create open request + Discord ping. */
+app.post("/api/craft-market/requests", async (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const buyerUserId = String(session.user.id);
+    const buyerDisplayName = String(session.user.globalName || session.user.username || "").trim();
+    const offerId = Number(req.body?.offerId);
+    const note = String(req.body?.note || "").trim().slice(0, 280);
+    const offer = craftMarketOfferGetById(offerId);
+    if (!offer) return res.status(404).json({ ok: false, error: "Offer not found" });
+    const seller = craftMarketSellerGet(offer.userId);
+    if (!seller?.enabled) return res.status(400).json({ ok: false, error: "That crafter is not offering crafts right now" });
+    // Ensure buyer has a display-name row for the open-requests board (keep existing enabled flag).
+    const buyerSeller = craftMarketSellerGet(buyerUserId);
+    craftMarketSellerUpsert({
+      userId: buyerUserId,
+      displayName: buyerDisplayName,
+      enabled: Boolean(buyerSeller?.enabled),
+    });
+    const token = await getBlizzardAccessToken().catch(() => null);
+    const cache = token
+      ? await ensureCraftRecipeCached({
+          token,
+          recipeId: offer.recipeId,
+          profession: offer.profession,
+          recipeName: offer.recipeName,
+        })
+      : craftRecipeCacheGet(offer.recipeId);
+    let request;
+    try {
+      request = craftMarketRequestCreate({
+        offerId: offer.id,
+        recipeId: offer.recipeId,
+        crafterUserId: offer.userId,
+        buyerUserId,
+        buyerNote: note,
+      });
+    } catch (error) {
+      if (error?.code === "SELF_REQUEST") return res.status(400).json({ ok: false, error: error.message });
+      if (error?.code === "REQUEST_EXISTS") return res.status(409).json({ ok: false, error: error.message });
+      throw error;
+    }
+    let discordMessageId = null;
+    try {
+      discordMessageId = await postCraftMarketDiscordRequest({
+        request,
+        offer,
+        cache,
+        buyerDisplayName,
+        crafterDisplayName: seller.displayName || offer.characterName,
+      });
+      if (discordMessageId) craftMarketRequestSetDiscordMessageId(request.id, discordMessageId);
+    } catch (error) {
+      console.warn("[craft-market] Discord ping failed:", error?.message || error);
+    }
+    return res.json({
+      ok: true,
+      request: {
+        ...craftMarketRequestGetById(request.id),
+        craftedItemName: cache?.craftedItemName || offer.craftedItemName || offer.recipeName,
+        reagents: cache?.reagents || [],
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error?.message || "Failed to create request" });
+  }
+});
+
+/** POST /api/craft-market/requests/:id/fulfilled */
+app.post("/api/craft-market/requests/:id/fulfilled", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const request = craftMarketRequestSetStatus({
+      requestId: req.params.id,
+      status: "fulfilled",
+      actorUserId: session.user.id,
+    });
+    return res.json({ ok: true, request });
+  } catch (error) {
+    const code = error?.code;
+    const status = code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" || code === "NOT_OPEN" ? 400 : 500;
+    return res.status(status).json({ ok: false, error: error?.message || "Failed to fulfill request" });
+  }
+});
+
+/** POST /api/craft-market/requests/:id/cancel */
+app.post("/api/craft-market/requests/:id/cancel", (req, res) => {
+  const session = getSessionFromRequest(req);
+  if (!session?.user?.id) return res.status(401).json({ ok: false, error: "Login required" });
+  try {
+    const request = craftMarketRequestSetStatus({
+      requestId: req.params.id,
+      status: "cancelled",
+      actorUserId: session.user.id,
+    });
+    return res.json({ ok: true, request });
+  } catch (error) {
+    const code = error?.code;
+    const status = code === "NOT_FOUND" ? 404 : code === "FORBIDDEN" || code === "NOT_OPEN" ? 400 : 500;
+    return res.status(status).json({ ok: false, error: error?.message || "Failed to cancel request" });
   }
 });
 

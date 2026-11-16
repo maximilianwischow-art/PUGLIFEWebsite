@@ -797,3 +797,275 @@ a.glb-discord-avatar-link {
   padding: 1.5rem 0.75rem;
   color: rgba(148, 163, 184, 0.95);
 }
+
+/* Craft Market Hall */
+
+.cm-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.cm-section {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.cm-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.cm-filter {
+  min-width: min(100%, 16rem);
+}
+
+.cm-filter--grow {
+  width: 100%;
+  min-width: 0;
+}
+
+.cm-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 0.92rem;
+}
+
+.cm-seller-hint {
+  margin: 0;
+}
+
+.cm-offer-tools {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.cm-recipe-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.35rem;
+  border: 1px solid rgba(200, 149, 62, 0.28);
+  border-radius: 10px;
+  background: rgba(8, 18, 36, 0.45);
+}
+
+.cm-recipe-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.cm-recipe-row:hover {
+  background: rgba(23, 79, 138, 0.28);
+}
+
+.cm-recipe-row-main {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.cm-recipe-name {
+  display: block;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.cm-recipe-sub {
+  display: block;
+  font-size: 0.78rem;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.cm-offer-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cm-listing-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.cm-listing-card,
+.cm-request-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(40, 103, 160, 0.35);
+  background: rgba(8, 18, 36, 0.55);
+}
+
+.cm-listing-seller {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.cm-seller-portrait-link {
+  display: inline-flex;
+  line-height: 0;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+
+.cm-seller-portrait {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(200, 149, 62, 0.45);
+  background: rgba(8, 18, 36, 0.85);
+  box-shadow: 0 0 0 1px rgba(40, 103, 160, 0.25);
+}
+
+.cm-seller-portrait.is-empty {
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: var(--gold-light, #e8c675);
+}
+
+.cm-listing-seller-copy {
+  min-width: 0;
+}
+
+.cm-store-name {
+  margin: 0;
+  font-family: var(--font-display, "Cinzel", serif);
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+  color: var(--gold-highlight, #f4dea1);
+}
+
+.cm-listing-head,
+.cm-request-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.cm-listing-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--gold-highlight, #f4dea1);
+}
+
+.cm-item-tip.loot-item-name,
+.cm-listing-title .loot-item-name,
+.cm-request-title-row .loot-item-name,
+.cm-mats .loot-item-name {
+  cursor: help;
+  color: inherit;
+}
+
+.cm-listing-meta,
+.cm-request-meta,
+.cm-request-note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.cm-mats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.cm-mats-empty {
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.cm-listing-actions,
+.cm-request-actions,
+.cm-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.cm-request-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.cm-request-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.cm-mini-btn {
+  font-size: 0.82rem;
+  padding: 0.35rem 0.7rem;
+}
+
+.cm-dialog {
+  width: min(92vw, 28rem);
+  border: 1px solid rgba(200, 149, 62, 0.45);
+  border-radius: 12px;
+  padding: 0;
+  background: rgba(8, 18, 36, 0.98);
+  color: #e2e8f0;
+}
+
+.cm-dialog::backdrop {
+  background: rgba(2, 8, 18, 0.72);
+}
+
+.cm-dialog-form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem 1.1rem;
+}
+
+.cm-dialog-body {
+  margin: 0;
+}
+
+.cm-note-label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: rgba(203, 213, 225, 0.9);
+}
+
+.cm-note-label input {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid rgba(200, 149, 62, 0.35);
+  background: rgba(6, 14, 28, 0.85);
+  color: #e2e8f0;
+}
+
+.glb-status.is-error {
+  color: #fca5a5;
+}
+
+.glb-status.is-success {
+  color: #86efac;
+}
+
+@media (max-width: 720px) {
+  .cm-request-card {
+    grid-template-columns: 1fr;
+  }
+}

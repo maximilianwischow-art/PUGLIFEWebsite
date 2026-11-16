@@ -97,6 +97,12 @@ async function mountAuthHeaderWidget() {
       currentPath === "/profession-leaderboard" ||
       currentPath === "/profession-leaderboard/" ||
       currentPath === "/profession-leaderboard.html";
+    const onMarket =
+      currentPath === "/market" ||
+      currentPath === "/market/" ||
+      currentPath === "/craft-market" ||
+      currentPath === "/craft-market/" ||
+      currentPath === "/craft-market.html";
     const onAchievements =
       currentPath === "/achievements" ||
       currentPath === "/achievements/" ||
@@ -107,6 +113,7 @@ async function mountAuthHeaderWidget() {
 
     upsert("/", "Home", "Alliance welcome home", onHome);
     upsert("/guild-leaderboard", "Guild LB", "Forever guild leveling leaderboard · Bulwark", onGuild);
+    upsert("/market", "Market", "Forever craft Market Hall", onMarket);
     upsert("/achievements", "Achievements", "TBC Classic achievements archive", onAchievements);
     upsert("/profile.html", "Profile", "Forever Main & Twinks, TBC characters, achievements", onProfile);
   }
