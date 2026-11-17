@@ -16894,7 +16894,7 @@ app.get("/api/wow-forever/guild-leaderboard", async (req, res) => {
       profileCache.set(uid, profile);
       return profile;
     });
-    // First-observed level 60 hits (INSERT OR IGNORE — first sighting wins the timestamp).
+    // First-observed level 60 hits — hit_at is sticky (earliest sighting wins forever).
     try {
       foreverLevelMilestonesRecordMany(members, { level: 60, hitAt: Date.now() });
     } catch (error) {
