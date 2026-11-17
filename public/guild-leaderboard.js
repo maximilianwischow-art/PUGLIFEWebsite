@@ -3,6 +3,7 @@
     members: [],
     guild: null,
     stats: null,
+    level60: [],
     fetchedAt: 0,
     loading: false,
     sortKey: "level",
@@ -26,6 +27,8 @@
     byClass: document.getElementById("glbByClass"),
     byRace: document.getElementById("glbByRace"),
     levelBands: document.getElementById("glbLevelBands"),
+    level60Status: document.getElementById("glbLevel60Status"),
+    level60Body: document.getElementById("glbLevel60Body"),
   };
 
   function escapeHtml(s) {
@@ -106,6 +109,85 @@
       .sort(compareMembers);
   }
 
+  function formatLevel60When(ts) {
+    const n = Number(ts) || 0;
+    if (!n) return "—";
+    try {
+      return new Date(n).toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return formatTime(n);
+    }
+  }
+
+  function level60CharacterCell(row) {
+    const classId = String(row.classId || "").trim().toLowerCase();
+    const classTone = classId ? ` class-${escapeHtml(classId)}` : "";
+    const href = row.userId ? profileHref(row.userId) : "";
+    const pictureUrl = String(row.pictureUrl || "").trim();
+    const portrait = pictureUrl
+      ? `<img class="glb-char-portrait" src="${escapeHtml(pictureUrl)}" alt="" width="32" height="32" loading="lazy" decoding="async" />`
+      : "";
+    const portraitWrap = portrait
+      ? href
+        ? `<a class="glb-char-portrait-link" href="${escapeHtml(href)}" aria-label="Open profile">${portrait}</a>`
+        : portrait
+      : "";
+    const charName = href
+      ? `<a class="glb-char-name${classTone}" href="${escapeHtml(href)}">${escapeHtml(row.characterName)}</a>`
+      : `<span class="glb-char-name${classTone}">${escapeHtml(row.characterName)}</span>`;
+    const placeMedal =
+      Number(row.place) === 1
+        ? `<span class="glb-level60-medal" title="First to 60">1st</span>`
+        : "";
+    return `<div class="glb-char${pictureUrl ? " has-portrait" : ""}">
+      ${portraitWrap}
+      <div class="glb-char-text">
+        <div class="glb-char-name-row">${charName}${placeMedal}</div>
+      </div>
+    </div>`;
+  }
+
+  function renderLevel60() {
+    const rows = Array.isArray(state.level60) ? state.level60 : [];
+    if (el.level60Status) {
+      el.level60Status.textContent = rows.length
+        ? `${rows.length} at 60 recorded · first: ${formatLevel60When(rows[0]?.hitAt)}`
+        : "No level 60 characters recorded yet";
+    }
+    if (el.level60Body) {
+      if (!rows.length) {
+        el.level60Body.innerHTML = `<tr><td colspan="5" class="glb-empty">No level 60 achievements yet — the race is on.</td></tr>`;
+      } else {
+        el.level60Body.innerHTML = rows
+          .map((row) => {
+            const classId = String(row.classId || "").trim().toLowerCase();
+            const classTone = classId ? ` class-${escapeHtml(classId)}` : "";
+            return `<tr class="glb-row${classId ? ` glb-row--${escapeHtml(classId)}` : ""}">
+              <td class="glb-col-rank">${escapeHtml(row.place)}</td>
+              <td>${level60CharacterCell(row)}</td>
+              <td>${escapeHtml(row.raceName || "—")}</td>
+              <td>
+                <span class="glb-class${classTone}">
+                  <span class="glb-class-swatch" aria-hidden="true"></span>
+                  ${escapeHtml(row.className || "—")}
+                </span>
+              </td>
+              <td>
+                <time datetime="${escapeHtml(row.hitAt ? new Date(row.hitAt).toISOString() : "")}">${escapeHtml(formatLevel60When(row.hitAt))}</time>
+              </td>
+            </tr>`;
+          })
+          .join("");
+      }
+    }
+  }
+
   function renderStats() {
     if (!el.stats) return;
     const s = state.stats || {};
@@ -113,10 +195,10 @@
     const cards = [
       { value: s.memberCount ?? "—", label: "Members" },
       { value: s.maxLevel ?? "—", label: "Top level" },
+      { value: s.topLevelCount ?? state.level60.length ?? "—", label: "At level 60" },
       { value: s.avgLevel ?? "—", label: "Average level" },
       { value: s.nearCapCount ?? "—", label: "Level 50+" },
       { value: s.linkedCount ?? "—", label: "Discord linked" },
-      { value: s.skyborneCount ?? "—", label: "Skyborne" },
     ];
     el.stats.innerHTML = cards
       .map(
@@ -350,9 +432,11 @@
       state.members = Array.isArray(payload.members) ? payload.members : [];
       state.guild = payload.guild || null;
       state.stats = payload.stats || null;
+      state.level60 = Array.isArray(payload.level60) ? payload.level60 : [];
       state.fetchedAt = Number(payload.fetchedAt) || Date.now();
       fillClassFilter();
       renderStats();
+      renderLevel60();
       renderBreakdowns();
       renderSortButtons();
       renderTable();
@@ -362,6 +446,9 @@
       setStatus(error?.message || "Failed to load guild leaderboard");
       if (el.table) el.table.hidden = true;
       if (el.breakdowns) el.breakdowns.hidden = true;
+      if (el.level60Body) {
+        el.level60Body.innerHTML = `<tr><td colspan="5" class="glb-empty">Could not load level 60 race.</td></tr>`;
+      }
     } finally {
       state.loading = false;
       if (el.refresh) el.refresh.disabled = false;

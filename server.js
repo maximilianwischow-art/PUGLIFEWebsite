@@ -193,6 +193,8 @@ import {
   wowForeverClaimUpsert,
   wowForeverClaimSetMain,
   wowForeverClaimRelease,
+  foreverLevelMilestonesRecordMany,
+  foreverLevelMilestonesList,
   wowForeverRaidRosterGet,
   wowForeverRaidRosterSave,
   craftRecipeCacheGet,
@@ -16892,6 +16894,30 @@ app.get("/api/wow-forever/guild-leaderboard", async (req, res) => {
       profileCache.set(uid, profile);
       return profile;
     });
+    // First-observed level 60 hits (INSERT OR IGNORE — first sighting wins the timestamp).
+    try {
+      foreverLevelMilestonesRecordMany(members, { level: 60, hitAt: Date.now() });
+    } catch (error) {
+      console.warn("[forever-level-60] record failed:", error?.message || error);
+    }
+    const level60 = foreverLevelMilestonesList(60).map((row) => {
+      const live = members.find((m) => m.nameKey === row.nameKey) || null;
+      const userId = String(row.userId || live?.discord?.userId || "").trim();
+      return {
+        ...row,
+        userId,
+        characterName: live?.characterName || row.characterName,
+        classId: live?.classId || row.classId,
+        className: live?.className || row.className,
+        raceId: live?.raceId || row.raceId,
+        raceName: live?.raceName || row.raceName,
+        discordLinked: Boolean(live?.discordLinked),
+        pictureUrl: String(live?.discord?.pictureUrl || "").trim(),
+        discordDisplayName: String(live?.discord?.displayName || "").trim(),
+        stillInGuild: Boolean(live),
+        currentLevel: live?.level ?? null,
+      };
+    });
     const linkedCount = members.filter((m) => m.discordLinked).length;
     const profileCount = members.filter((m) => m.discordProfileExists).length;
     const stats = wowForeverBuildGuildLeaderboardStats(members, { linkedCount, profileCount });
@@ -16900,6 +16926,7 @@ app.get("/api/wow-forever/guild-leaderboard", async (req, res) => {
       guild: bundle.guild,
       members,
       stats,
+      level60,
       fetchedAt: bundle.fetchedAt,
       cacheHit: Boolean(bundle.cacheHit),
       cacheExpiresAt: cachedForeverGuildRosterExpiresAt,

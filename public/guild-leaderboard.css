@@ -4,6 +4,37 @@
   padding-bottom: 2.5rem;
 }
 
+.glb-level60-card {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.glb-level60-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.glb-level60-table .glb-col-rank {
+  width: 2.5rem;
+}
+
+.glb-level60-medal {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0b1728;
+  background: linear-gradient(180deg, #f4dea1, #c8953e);
+}
+
 .glb-subnav {
   display: flex;
   flex-wrap: wrap;
@@ -411,11 +442,20 @@
   border: 1px solid rgba(40, 103, 160, 0.35);
 }
 
+.glb-table-wrap.glb-level60-wrap {
+  overflow-x: visible;
+}
+
 .glb-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 1040px;
   font-size: 0.95rem;
+}
+
+.glb-table.glb-level60-table {
+  min-width: 0;
+  width: 100%;
 }
 
 .glb-table th,

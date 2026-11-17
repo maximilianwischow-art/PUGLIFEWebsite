@@ -21,7 +21,7 @@
     <link rel="stylesheet" href="/styles.min.css?v=20261116plb-alliance-glb-v9" />
     <link rel="stylesheet" href="/tailwind.css?v=20260506tw1" />
     <link rel="stylesheet" href="/wow-forever-squad.css?v=20261116plb-alliance-glb-v9" />
-    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261116plb-prof-icons-v1" />
+    <link rel="stylesheet" href="/guild-leaderboard.css?v=20261117plb-level60-v4" />
   </head>
   <body class="framework-bg-vivid wf-alliance">
     <div class="stars" id="stars" aria-hidden="true"></div>
@@ -72,6 +72,34 @@
             </p>
           </div>
           <div class="glb-stats" id="glbStats" aria-live="polite"></div>
+        </section>
+
+        <section class="card surface-elevated glb-level60-card" aria-labelledby="glb-level60-title">
+          <div class="glb-level60-head">
+            <div>
+              <h3 id="glb-level60-title" class="glb-board-heading">Level 60</h3>
+              <p class="glb-board-lede">
+                First characters to hit the Forever level cap in &lt;Bulwark&gt;. Place is by first time we saw them at 60 on the live roster.
+              </p>
+            </div>
+            <p id="glbLevel60Status" class="glb-status muted" role="status"></p>
+          </div>
+          <div class="glb-table-wrap glb-level60-wrap">
+            <table class="glb-table glb-level60-table" id="glbLevel60Table">
+              <thead>
+                <tr>
+                  <th scope="col" class="glb-col-rank">#</th>
+                  <th scope="col">Character</th>
+                  <th scope="col">Race</th>
+                  <th scope="col">Class</th>
+                  <th scope="col">Reached 60</th>
+                </tr>
+              </thead>
+              <tbody id="glbLevel60Body">
+                <tr><td colspan="5" class="glb-empty">Loading level 60 race…</td></tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="card surface-elevated glb-board-card" aria-labelledby="glb-board-title">
@@ -170,6 +198,6 @@
 
     <script defer src="/auth-ui.js?v=20261116plb-alliance-glb-v13"></script>
     <script defer src="/profession-icons.js?v=20261116plb-prof-icons-v1"></script>
-    <script defer src="/guild-leaderboard.js?v=20261116plb-prof-icons-v1"></script>
+    <script defer src="/guild-leaderboard.js?v=20261117plb-level60-v4"></script>
   </body>
 </html>
